@@ -51,7 +51,6 @@
     "dashjs": "^5.1.1",
     "date-fns": "4.1.0",
     "embla-carousel-react": "8.5.1",
-    "firebase": "^12.7.0",
     "hls.js": "^1.6.15",
     "input-otp": "1.4.1",
     "jsdom": "^27.4.0",

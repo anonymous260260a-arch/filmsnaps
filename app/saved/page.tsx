@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { Header } from '@/components/Header';
 import { MovieCard } from '@/components/MovieCard';
@@ -8,19 +8,11 @@ import { Bookmark, Film, BookOpen } from 'lucide-react';
 import Link from 'next/link';
 import { GlassButton } from '@/components/ui/glass-button';
 import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/components/AuthProvider';
 
 export default function SavedPage() {
   const { savedMovies, loading, removeMovie } = useWatchlist();
-  const { user } = useAuth();
   const { toast } = useToast();
-  const [showGuestNotice, setShowGuestNotice] = useState(false);
-
-  useEffect(() => {
-    if (!user && !localStorage.getItem('filmsnaps_hide_guest_notice')) {
-      setShowGuestNotice(true);
-    }
-  }, [user]);
+  const [showGuestNotice, setShowGuestNotice] = useState(true);
 
   const handleRemove = async (id: number, title: string) => {
     const success = await removeMovie(id);
