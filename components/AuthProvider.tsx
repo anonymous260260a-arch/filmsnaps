@@ -18,7 +18,7 @@ import {
   sendEmailVerification,
   User as FirebaseUser,
 } from 'firebase/auth';
-import { DecodedIdToken } from 'firebase-admin/auth';
+import { DecodedToken } from '@/lib/firebase/auth-rest';
 
 // Minimal type that works for server or client
 export type AuthUser = {
@@ -42,7 +42,7 @@ type AuthContextType = {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 // Helper to map serverUser to minimal AuthUser
-function mapServerUser(serverUser?: DecodedIdToken | null): AuthUser | null {
+function mapServerUser(serverUser?: DecodedToken | null): AuthUser | null {
   if (!serverUser) return null;
   return {
     uid: serverUser.uid,
@@ -56,7 +56,7 @@ export function AuthProvider({
   serverUser,
 }: {
   children: React.ReactNode;
-  serverUser?: DecodedIdToken | null;
+  serverUser?: DecodedToken | null;
 }) {
   const [user, setUser] = useState<AuthUser | null>(mapServerUser(serverUser));
   const [loading, setLoading] = useState(!serverUser);
