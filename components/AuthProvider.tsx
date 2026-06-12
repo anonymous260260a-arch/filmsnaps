@@ -26,19 +26,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user] = useState<AuthUser | null>(null);
   const [loading] = useState(false);
 
-  const noop = useCallback(async () => ({}), []);
+  const noop = useCallback(async () => {}, []);
+  const noopResult = useCallback(async () => ({}), []);
 
   return (
     <AuthContext.Provider
       value={{
         user,
         loading,
-        signUp: noop,
-        signIn: noop,
+        signUp: noopResult,
+        signIn: noopResult,
         signOut: noop,
-        resetPassword: noop,
-        sendMagicLink: noop,
-        resendVerificationEmail: noop,
+        resetPassword: noopResult,
+        sendMagicLink: noopResult,
+        resendVerificationEmail: noopResult,
         emailVerified: null,
       }}
     >
