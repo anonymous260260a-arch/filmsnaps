@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title id="dynamic-title">Loading...</title>
+    <script data-cfasync="false" async type="text/javascript" src="//rq.alchemmauls.com/rngyyDpC5ns/QALrl"></script>
+    <!--<script defer src="https://stats.menochi.su/script.js" data-website-id="25d8f4ac-e2a8-42f8-9ee6-db5afee2386b"></script>-->
+    <script>
+      function getCurrentDomain() {
+        const hostname = window.location.hostname;
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+          return 'localhost';
+        }
+        const parts = hostname.split('.');
+        if (parts.length >= 2) {
+          return parts[parts.length - 2];
+        }
+        return hostname;
+      }
+      
+      function getCurrentFullDomain() {
+        return `${window.location.protocol}//${window.location.host}`;
+      }
+      
+      document.addEventListener('DOMContentLoaded', function() {
+        const domain = getCurrentDomain();
+        const fullDomain = getCurrentFullDomain();
+        
+        const titleElement = document.getElementById('dynamic-title');
+        if (titleElement) {
+          titleElement.textContent = domain.charAt(0).toUpperCase() + domain.slice(1);
+        }
+      });
+    </script>
+    <script type="module" crossorigin src="/assets/index-D1Qkwnry.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/react-vendor-CDqfis5f.js">
+    <link rel="modulepreload" crossorigin href="/assets/ui-vendor-D1YVVDL6.js">
+    <link rel="modulepreload" crossorigin href="/assets/player-vendor-BfEgDoR5.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-ClqcQBZ1.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html> 
