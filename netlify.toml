@@ -1,0 +1,7 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+# Netlify Next.js runtime handles server-side rendering and API routes automatically
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
