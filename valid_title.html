@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="google-site-verification" content="shv4RT9vqJOrVukMqKMT7iJJSuuAMfQn8uDoEsL_Zdw" />
+  <!-- Google Analytics -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-N5F6GW7KBM"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag("js", new Date());
+    gtag("config", "G-N5F6GW7KBM");
+  </script>
+
+  <style>
+    html, body {
+      margin: 0; padding: 0; height: 100vh;
+      background: #000; color: #fff;
+      overflow-y: auto;
+      font-family: sans-serif;
+    }
+    #poster { display: none; }
+    #player-container { text-align: center; }
+    iframe { border: none; width: 100vw; height: 100vh; }
+    .fallback { text-align: center; margin-top: 20vh; }
+  </style>
+</head>
+<body>
+  <div id="poster-container"></div>
+  <div id="player-container"></div>
+
+  <script>
+    const REGION_PLAYER_MAP = [
+      { match: ["tamil nadu"], url: "https://watchout-tamil.rpmvid.com" },
+      { match: ["telangana", "andhra pradesh"], url: "https://watchout-telugu.rpmvid.com" },
+      { match: ["kerala"], url: "https://watchout-malayalam.rpmvid.com" },
+      { match: ["karnataka"], url: "https://watchout-kannada.rpmvid.com" },
+      { country: "IN", url: "https://watchout.rpmvid.com" },
+      { country: "PK", url: "https://watchout.rpmvid.com" },
+      { country: "default", url: "https://watchouteng.rpmvid.com" }
+    ];
+
+    async function getRegionBasedPlayerBaseUrl() {
+      try {
+        const ipInfo = await fetch("https://ipapi.co/json").then(res => res.json());
+        const { country_code, region } = ipInfo;
+        for (const entry of REGION_PLAYER_MAP) {
+          if (entry.match && entry.match.some(r => region.toLowerCase().includes(r))) return entry.url;
+          if (entry.country && entry.country === country_code) return entry.url;
+        }
+        return REGION_PLAYER_MAP.find(e => e.country === "default").url;
+      } catch {
+        return REGION_PLAYER_MAP.find(e => e.country === "default").url;
+      }
+    }
+
+    function sanitizeTitle(title) {
+      return title.replace(/[^a-zA-Z0-9 ]/g,"").replace(/\s+/g,".").replace(/\.{2,}/g,".").trim();
+    }
+
+    function removeOldSEO() {
+      document.head.querySelectorAll("[data-dynamic='true']").forEach(el => el.remove());
+    }
+
+    function insertMeta(name, content, attr="name") {
+      const tag = document.createElement("meta");
+      tag.setAttribute(attr, name);
+      tag.setAttribute("content", content);
+      tag.dataset.dynamic = "true";
+      document.head.appendChild(tag);
+    }
+
+    function insertLink(rel, href, as=null) {
+      const link = document.createElement("link");
+      link.rel = rel;
+      link.href = href;
+      if(as) link.as = as;
+      link.dataset.dynamic = "true";
+      document.head.appendChild(link);
+    }
+
+    async function insertSEO(data, type, year, embedUrl) {
+      removeOldSEO();
+
+      const rawTitle = data.title || data.name;
+      const overview = (data.overview || "Watch online now.").slice(0,160);
+      const poster = data.poster_path 
+        ? `https://image.tmdb.org/t/p/w500${data.poster_path}`
+        : "https://watchoutofficial2006.workers.dev/placeholder.jpg";
+      const url = window.location.href;
+
+      // Title
+      const pageTitle = `${rawTitle} (${year || ""}) | Watch Online Free`;
+      const titleTag = document.createElement("title");
+      titleTag.textContent = pageTitle;
+      titleTag.dataset.dynamic = "true";
+      document.head.appendChild(titleTag);
+
+      // Meta description + keywords
+      insertMeta("description", overview);
+      const keywords = [rawTitle, year, ...(data.genres ? data.genres.map(g=>g.name) : [])].join(", ");
+      insertMeta("keywords", keywords);
+
+      // Open Graph
+      insertMeta("og:type", "video.movie", "property");
+      insertMeta("og:title", pageTitle, "property");
+      insertMeta("og:description", overview, "property");
+      insertMeta("og:image", poster, "property");
+      insertMeta("og:url", url, "property");
+
+      // Twitter
+      insertMeta("twitter:card", "summary_large_image");
+      insertMeta("twitter:title", pageTitle);
+      insertMeta("twitter:description", overview);
+      insertMeta("twitter:image", poster);
+
+      // JSON-LD Structured Data
+      const structuredData = {
+        "@context": "https://schema.org",
+        "@type": "VideoObject",
+        "name": rawTitle,
+        "description": overview,
+        "thumbnailUrl": poster,
+        "uploadDate": new Date().toISOString(),
+        "genre": data.genres ? data.genres.map(g => g.name) : undefined,
+        "url": url,
+        "embedUrl": embedUrl, // Correct embedUrl with file_code
+        "publisher": {
+          "@type": "Organization",
+          "name": "WatchOut",
+          "logo": {
+            "@type": "ImageObject",
+            "url": "https://i.ibb.co/fdNLmRw1/Indra-Embed-removebg-preview.png"
+          }
+        }
+      };
+      const script = document.createElement("script");
+      script.type = "application/ld+json";
+      script.textContent = JSON.stringify(structuredData);
+      script.dataset.dynamic = "true";
+      document.head.appendChild(script);
+
+      // Preload poster
+      insertLink("preload", poster, "image");
+
+      // Canonical image
+      insertLink("image_src", poster);
+
+      // Insert hidden poster image
+      const img = document.createElement("img");
+      img.id = "poster";
+      img.src = poster;
+      img.alt = rawTitle;
+      img.style.display = "none";
+      const container = document.getElementById("poster-container");
+      container.innerHTML = "";
+      container.appendChild(img);
+    }
+
+    async function loadPlayer() {
+      const [type, tmdbId, season, episode] = window.location.pathname.split("/").filter(Boolean);
+      if (!tmdbId || !["movie", "tv"].includes(type)) {
+        document.getElementById("player-container").innerHTML = '<h1 class="fallback">Invalid TMDB ID or type</h1>';
+        return;
+      }
+
+      try {
+        const tmdbRes = await fetch(`https://search-proxy.watchoutofficial2006.workers.dev/${type}/${tmdbId}`);
+        const tmdbData = await tmdbRes.json();
+        const rawTitle = tmdbData.title || tmdbData.name;
+        const year = (tmdbData.release_date || tmdbData.first_air_date || "").split("-")[0];
+
+        let fullTitle = sanitizeTitle(rawTitle);
+        if (type === "movie") fullTitle = year ? `${fullTitle}.${year}` : fullTitle;
+        if (type === "tv" && season && episode) {
+          fullTitle += `.S${season.padStart(2,"0")}E${episode.padStart(2,"0")}`;
+        }
+
+        const apiRes = await fetch(`https://hlsworker.watchoutofficial2006.workers.dev/?title=${encodeURIComponent(fullTitle)}`);
+        const { result } = await apiRes.json();
+        const file = result?.files?.[0];
+
+        const playerContainer = document.getElementById("player-container");
+        if (file?.file_code) {
+          const playerBaseUrl = await getRegionBasedPlayerBaseUrl();
+          const embedUrl = `${playerBaseUrl}/#${file.file_code}`;
+
+          // Insert SEO now that we have correct embedUrl
+          await insertSEO(tmdbData, type, year, embedUrl);
+
+          playerContainer.innerHTML = `<iframe src="${embedUrl}" allowfullscreen allow="autoplay; fullscreen"></iframe>`;
+        } else {
+          const fallback = type === "tv" && season && episode
+            ? `https://player.videasy.net/tv/${tmdbId}/${season}/${episode}`
+            : `https://player.videasy.net/movie/${tmdbId}`;
+
+          await insertSEO(tmdbData, type, year, fallback);
+
+          playerContainer.innerHTML = `<iframe src="${fallback}" allowfullscreen allow="autoplay; fullscreen"></iframe>`;
+        }
+      } catch {
+        document.getElementById("player-container").innerHTML = '<h1 class="fallback">Something went wrong</h1>';
+      }
+    }
+
+    loadPlayer();
+  </script>
+</body>
+</html>

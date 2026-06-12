@@ -1,0 +1,260 @@
+<!DOCTYPE html><html lang="en"><head><script data-proxy-blocker="true" type="text/javascript">
+      (function() {
+        'use strict';
+        const PROVIDER = "vidking";
+        const TARGET_URL = "https://www.vidking.net/embed/moviewrong/1306368?color=ff0000";
+        console.log('[PROXY] 🔒 MAXIMUM SECURITY MODE ACTIVATED (' + PROVIDER + ')');
+        
+        // Prevent script manipulation of location
+        const blockNavigation = function(url) {
+          console.log('[PROXY] ❌ BLOCKED navigation attempt to:', url);
+          return false;
+        };
+
+        // AJAX Interception to catch relative and cross-origin requests
+        const originalFetch = window.fetch;
+        window.fetch = function(input, init) {
+            let url = '';
+            if (typeof input === 'string') url = input;
+            else if (input instanceof Request) url = input.url;
+            else if (input && input.toString) url = input.toString();
+
+            if (url && !url.startsWith('data:') && !url.startsWith('blob:') && !url.includes('/api/iframe-proxy/')) {
+                const isRelative = url.startsWith('/') && !url.startsWith('//');
+                const isCrossOrigin = !url.startsWith(window.location.origin) && url.startsWith('http');
+                
+                if (isRelative || isCrossOrigin) {
+                    console.log('[PROXY] 🔄 Proxying fetch:', url);
+                    const proxyUrl = '/api/iframe-proxy/' + PROVIDER + '?url=' + encodeURIComponent(url) + '&referer=' + encodeURIComponent(TARGET_URL);
+                    return originalFetch(proxyUrl, init);
+                }
+            }
+            return originalFetch(input, init);
+        };
+
+        const originalXHR = window.XMLHttpRequest.prototype.open;
+        window.XMLHttpRequest.prototype.open = function(method, url) {
+            if (typeof url === 'string' && !url.startsWith('data:') && !url.startsWith('blob:') && !url.includes('/api/iframe-proxy/')) {
+                const isRelative = url.startsWith('/') && !url.startsWith('//');
+                const isCrossOrigin = !url.startsWith(window.location.origin) && url.startsWith('http');
+                
+                if (isRelative || isCrossOrigin) {
+                    console.log('[PROXY] 🔄 Proxying XHR:', url);
+                    arguments[1] = '/api/iframe-proxy/' + PROVIDER + '?url=' + encodeURIComponent(url) + '&referer=' + encodeURIComponent(TARGET_URL);
+                }
+            }
+            return originalXHR.apply(this, arguments);
+        };
+
+        // LAYER 1: Shadow top and parent
+        const locationMock = {
+          set href(url) { blockNavigation(url); },
+          get href() { return window.location.href; },
+          assign: blockNavigation,
+          replace: blockNavigation,
+          toString: function() { return window.location.toString(); }
+        };
+
+        try {
+          Object.defineProperty(window, 'top', { get: function() { return { location: locationMock }; } });
+          Object.defineProperty(window, 'parent', { get: function() { return { location: locationMock }; } });
+        } catch(e) {}
+
+        // LAYER 2: Override window.open
+        window.open = function() {
+          console.log('[PROXY] ❌ BLOCKED window.open');
+          return { closed: true, close: function(){}, focus: function(){}, blur: function(){} };
+        };
+        
+        // LAYER 3: Override location methods
+        try {
+          Object.defineProperty(window.location, 'href', {
+            set: function(url) { blockNavigation(url); },
+            get: function() { return window.location.toString(); },
+            configurable: true
+          });
+        } catch(e) {}
+        
+        try { window.location.assign = blockNavigation; } catch(e) {}
+        try { window.location.replace = blockNavigation; } catch(e) {}
+        
+        // LAYER 4: Block all click/touch events
+        const blockClick = function(e) {
+          const target = e.target;
+          if (!target) return;
+
+          const link = target.closest('a');
+          if (link) {
+             const href = link.getAttribute('href') || link.href;
+             if (href && !href.startsWith('#') && !href.startsWith('javascript:')) {
+               e.preventDefault();
+               e.stopPropagation();
+               e.stopImmediatePropagation();
+               return blockNavigation(href);
+             }
+          }
+          
+          if (target.hasAttribute && target.hasAttribute('onclick')) {
+            const onclick = target.getAttribute('onclick');
+            if (onclick && (onclick.includes('location') || onclick.includes('open'))) {
+               e.preventDefault();
+               e.stopImmediatePropagation();
+            }
+          }
+        };
+        
+        const events = ['click', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'contextmenu', 'auxclick'];
+        events.forEach(event => {
+          document.addEventListener(event, blockClick, true);
+        });
+        
+        // LAYER 5: Block history manipulation
+        const originalPushState = history.pushState;
+        const originalReplaceState = history.replaceState;
+        
+        history.pushState = function(state, title, url) {
+          if (url && url !== window.location.href && !url.startsWith(window.location.origin)) {
+            console.log('[PROXY] ❌ BLOCKED pushState');
+            return;
+          }
+          return originalPushState.call(history, state, title, url);
+        };
+        
+        history.replaceState = function(state, title, url) {
+          if (url && url !== window.location.href && !url.startsWith(window.location.origin)) {
+            console.log('[PROXY] ❌ BLOCKED replaceState');
+            return;
+          }
+          return originalReplaceState.call(history, state, title, url);
+        };
+        
+        // LAYER 6: Block ALL form submissions
+        document.addEventListener('submit', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          console.log('[PROXY] ❌ BLOCKED form submission');
+        }, true);
+        
+        // Continuous cleanup of attributes
+        setInterval(function() {
+          try {
+            document.querySelectorAll('a[target], area[target]').forEach(el => el.removeAttribute('target'));
+            document.querySelectorAll('meta[http-equiv="refresh"]').forEach(el => el.remove());
+          } catch(e) {}
+        }, 500);
+        
+        console.log('[PROXY] 🔒 Security layers armed');
+      })();
+    </script><meta http-equiv="Content-Security-Policy" content="navigate-to 'none'; form-action 'none';">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Vidking Player - Embeddable Video Streaming Player</title>
+  <meta name="description" content="Customizable embeddable video player with full control over colors, features, and functionality. Perfect for developers building streaming websites.">
+  <meta name="keywords" content="video player, embeddable player, streaming player, iframe player, customizable video player, developer tools, streaming API">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <meta name="googlebot" content="index, follow">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:title" content="Vidking Player - Embeddable Video Streaming Player">
+  <meta property="og:description" content="Customizable embeddable video player with full control over colors, features, and functionality. Perfect for developers building streaming websites.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Vidking Player">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:image:alt" content="Vidking Player Interface">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta property="twitter:title" content="Vidking Player - Embeddable Video Streaming Player">
+  <meta property="twitter:description" content="Customizable embeddable video player with full control over colors, features, and functionality. Perfect for developers building streaming websites.">
+
+  <!-- Theme and Mobile -->
+  <meta name="theme-color" content="#161616">
+  <meta name="msapplication-TileColor" content="#da532c">
+  <meta name="msapplication-config" content="/icon/browserconfig.xml">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+
+  <!-- Favicons -->
+  <link rel="apple-touch-icon" sizes="180x180" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2Fassets%2Ficon%2Fapple-icon-180x180.png&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000">
+  <link rel="icon" type="image/png" sizes="32x32" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2Fassets%2Ficon%2Ffavicon-32x32.png&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000">
+  <link rel="icon" type="image/png" sizes="16x16" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2Fassets%2Ficon%2Ffavicon-16x16.png&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000">
+  <link rel="manifest" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2Fmanifest.json&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000">
+  <link rel="mask-icon" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2Fassets%2Ficon%2Fsafari-pinned-tab.svg&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000" color="#5bbad5">
+  <link rel="shortcut icon" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2Fassets%2Ficon%2Ffavicon.ico&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000">
+
+  <!-- DNS Prefetch / Preconnect -->
+  <link rel="dns-prefetch" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2F&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000">
+  <link rel="preconnect" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2F&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000" crossorigin="">
+
+  <!-- Sitemap -->
+  <link rel="sitemap" type="application/xml" title="Sitemap" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2Fsitemaps%2Fsitemap.xml&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000">
+
+  <script src="https://users.videasy.net/api/script.js" data-site-id="6" defer=""></script>
+
+  <!-- Structured Data -->
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Vidking",
+      "url": "https://www.vidking.net/",
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": {
+          "@type": "EntryPoint",
+          "urlTemplate": "https://www.vidking.net/search?q={search_term_string}"
+        },
+        "query-input": "required name=search_term_string"
+      },
+      "description": "Free streaming platform for movies and TV shows in HD quality",
+      "publisher": {
+        "@type": "Organization",
+        "name": "Vidking",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://www.vidking.net/assets/icon/apple-icon-180x180.png"
+        }
+      }
+    }
+    </script>
+  <script type="module" crossorigin="" src="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2Fassets%2Findex-BHKHBdRa.js&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000"></script>
+  <link rel="modulepreload" crossorigin="" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2Fassets%2Freact-core-_gb3Ltew.js&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000">
+  <link rel="modulepreload" crossorigin="" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2Fassets%2Fdata-libs-C7-QW-BW.js&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000">
+  <link rel="modulepreload" crossorigin="" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2Fassets%2Fui-libs-mQM-h5Hl.js&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000">
+  <link rel="modulepreload" crossorigin="" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2Fassets%2Freact-router-DGhTT_Qm.js&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000">
+  <link rel="stylesheet" crossorigin="" href="/api/iframe-proxy/vidking?url=https%3A%2F%2Fwww.vidking.net%2Fassets%2Findex-jX7lp-cN.css&amp;referer=https%3A%2F%2Fwww.vidking.net%2Fembed%2Fmoviewrong%2F1306368%3Fcolor%3Dff0000">
+<style>
+      /* Hide potential headers/footers/ads */
+      header, footer, .header, .footer, .ads, .ad-banner, .sidebar, #sidebar, 
+      .cookie-consent, [class*="popup"], [id*="popup"], [class*="ad-"], [id*="ad-"],
+      .vjs-ads-label, .vjs-ad-control-bar {
+         display: none !important;
+      }
+      /* Maximize player containers */
+      body, html { 
+        margin: 0 !important; 
+        padding: 0 !important; 
+        width: 100vw !important; 
+        height: 100vh !important; 
+        overflow: hidden !important; 
+        background: #000 !important; 
+      }
+      #player, .player, #movie_player, .video-js, .jwplayer, .plyr, 
+      iframe[src*="vid"], video, [class*="player"], [id*="player"] {
+         position: fixed !important;
+         top: 0 !important;
+         left: 0 !important;
+         width: 100vw !important;
+         height: 100vh !important;
+         z-index: 9999 !important;
+         background: #000;
+      }
+    </style></head>
+
+<body>
+  <div id="root"></div>
+
+
+</body></html>

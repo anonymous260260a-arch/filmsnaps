@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PrimeSrc - Movie and TV Embed Service</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta
+      name="description"
+      content="Movie and TV Streaming Embedding API for free"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="PrimeSrc - Movie and TV Embed Service" />
+    <meta
+      property="og:description"
+      content="Movie and TV Streaming Embedding API for free"
+    />
+    <meta property="og:url" content="/" />
+    <script>
+      window.appTrigger = document.createEvent("Event");
+      window.appTrigger.initEvent("appTrigger", true, true);
+    </script>
+    <script async type="text/javascript" src="/js/primesrc-753e724ee0d2d7fc5927690cd7bd85a6.js?vsn=d"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.2/css/all.min.css"
+      integrity="sha512-HK5fgLBL+xu6dm/Ii3z4xhlSUyZgTT9tuc/hSrtw6uzJOvgRr2a9jyxxT1ely+B+xFAmJKVSTbpM/CuL7qxO8w=="
+      crossorigin="anonymous"
+    />
+    <link rel="stylesheet" href="/css/app-ed2b47b57a3e4973d6c1e3ecb98cc39e.css?vsn=d" type="text/css">
+    <script>
+      window.addEventListener("load", () => {
+        if ("serviceWorker" in navigator) {
+          navigator.serviceWorker
+            .register("/sw.js")
+            .then(() => {
+              console.info("Service worker registered!");
+            })
+            .catch((error) => {
+              console.warn(`Error registering service worker:\n${error}.`);
+            });
+        }
+      });
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
+
+  </head>
+  <body>
+<script>
+  window.infoEvent = document.createEvent("Event");
+  window.infoEvent.initEvent("infoEvent", true, true);
+  const urlParams = new URLSearchParams(window.location.search);
+  let paramObj = Object.fromEntries(urlParams.entries());
+  if(window.location.pathname.startsWith("/embed/movie")){
+    paramObj["type"] = "movie"
+  }else{
+    paramObj["type"] = "tv"
+  }
+  paramObj["type"] = paramObj["type"] || props.type;
+  let url =  "/api/v1/s?" + new URLSearchParams(paramObj).toString();
+  fetch(url)
+    .then(response => {
+      if (!response.ok) {
+        response.json().then((error) => {
+          window.sErr = error.error || "Error getting server list.";
+          document.dispatchEvent(window.infoEvent);
+          window.hasInfo = true
+        }).catch(() => {
+          window.sErr = "Error getting server list.";
+          document.dispatchEvent(window.infoEvent);
+          window.hasInfo = true
+        })
+      }else{
+        response.json().then((res) => {
+          window.sInfo = res
+          document.dispatchEvent(window.infoEvent);
+          window.hasInfo = true
+        })
+      }
+    })
+    .catch(error => console.log('Request failed', error));
+</script>
+<div id="embed-root"></div>
+
+    <script>
+      document.dispatchEvent(window.appTrigger);
+      window.appTriggered = true;
+    </script>
+  </body>
+</html>

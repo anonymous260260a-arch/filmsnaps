@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script disable-devtool-auto src='https://cdn.jsdelivr.net/npm/disable-devtool@latest'></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/devtools-detector/2.0.17/devtools-detector.js"></script>
+  <script src="https://www.vidsrc.wtf/js/protected_devtoolsdetector.js" defer></script>
+  <script src="https://www.vidsrc.wtf/js/nocheats.js" defer></script>
+  <script src="https://www.vidsrc.wtf/js/path.js" defer></script>
+  <script src="https://www.vidsrc.wtf/js/mercury.js" type="text/javascript" data-cfasync="false"></script>
+  <title>VidSrc.wtf Api 3</title>
+  <script src="../../../js/fubuki.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #121212;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+
+    #videoContainer {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+
+    #target {
+      width: 100%;
+      height: 100%;
+    }
+
+    #controls {
+      position: absolute;
+      top: 10px;
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      z-index: 10;
+    }
+
+    #languageSelect {
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      border: 1px solid #333;
+      padding: 10px;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    #languageSelect option {
+      background: #333;
+    }
+
+    #languageSelect:focus {
+      outline: none;
+    }
+
+    ::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1f1f1f;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #333333;
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #555555;
+}
+
+#messageBox {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.9);
+  color: #fff;
+  padding: 20px 30px;
+  border-radius: 8px;
+  font-size: 1.1rem;
+  text-align: center;
+  z-index: 1002;
+  display: none;
+  max-width: 80%;
+}
+
+#messageBox.show {
+  display: block;
+}
+  </style>
+</head>
+<body>
+    <div id="videoContainer">
+  <iframe id="target" frameborder="0" allowfullscreen></iframe>
+  <div id="controls">
+    <select id="languageSelect"></select>
+  </div>
+  <div id="messageBox"></div>
+</div>
+
+<script>
+  function showMessage(message) {
+    const messageBox = document.getElementById('messageBox');
+    messageBox.textContent = message;
+    messageBox.classList.add('show');
+    setTimeout(() => {
+      messageBox.classList.remove('show');
+    }, 4000);
+  }
+
+  const servers = {
+    "vidfast": id => `https://vidfast.pro/movie/${id}`,
+    "moviesclub": id => `https://moviesapi.club/movie/${id}`,
+    "vidlink.pro": id => `https://vidlink.pro/movie/${id}?primaryColor=ff0044&secondaryColor=f788a6&iconColor=ff0044&title=false&poster=true&autoplay=false`,
+    "videasy": id => `https://player.videasy.net/movie/${id}`,
+    "primewire.tf": id => `https://www.primewire.tf/embed/movie?tmdb=${id}`,
+    "superflix (portuguese)": id => `https://fembed.sx/e/${id}`,
+    "frembed (french)": id => `https://frembed.mom/api/film.php?id=${id}`,
+    "godriveplayer": imdbId => `https://godriveplayer.com/player.php?imdb=${imdbId}`,
+    "vidsrc-embed.ru": id => `https://vidsrc-embed.ru/embed/movie/${id}`,
+    "vidrock.net": id => `https://vidrock.net/movie/${id}`,
+    "vidsrc.cc": id => `https://vidsrc.cc/v2/embed/movie/${id}/`,
+    "vidify.top": id => `https://player.vidify.top/embed/movie/${id}?autoplay=true&poster=true&chromecast=true&servericon=true&setting=true&pip=true&logourl=https%3A%2F%2Fwww.rgshows.ru%2Fbanner.png`,
+    "vidzee.wtf": id => `https://player.vidzee.wtf/embed/movie/${id}`,
+    "2embed.cc": id => `https://www.2embed.cc/embed/${id}`,
+    "hnembed": id => `https://hnembed.cc/embed/movie/${id}`,
+    "mostream": id => `https://mostream.us/embed.php?tmdb=${id}`,
+    "123embed.net": imdbId => `https://play2.123embed.net/movie/${imdbId}`,
+    "autoembed.cc": imdbId => `https://player.autoembed.cc/embed/movie/${imdbId}`,
+    "smashystream": id => `https://embed.smashystream.com/playere.php?tmdb=${id}`
+  };
+
+  const imdbRequiredServers = ["godriveplayer", "autoembed.cc", "123embed.net", "warezcdn", "superflix"];
+
+  async function getImdbIdFromTmdbId(tmdbId) {
+    const apiKey = 'f6e840332142f77746185ab4e67be858';
+    const url = `https://tmdb.rgshows.ru/tmdb/3/movie/${tmdbId}?api_key=${apiKey}`;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      return data.imdb_id;
+    } catch (error) {
+      console.error('Error fetching IMDb ID:', error);
+      return null;
+    }
+  }
+
+  async function loadPlayer() {
+    const tmdbId = new URLSearchParams(window.location.search).get('id');
+    if (!tmdbId) {
+      showMessage('TMDB ID is missing in the URL.');
+      return;
+    }
+
+    const imdbId = await getImdbIdFromTmdbId(tmdbId);
+    const languageSelect = document.getElementById('languageSelect');
+    const iframe = document.getElementById('target');
+
+    // Populate dropdown with predefined servers
+    for (const server in servers) {
+      const option = document.createElement('option');
+      option.value = server;
+      option.textContent = server;
+      languageSelect.appendChild(option);
+    }
+
+    // Get last used server or default to the first server
+    const lastUsedServer = localStorage.getItem('vidsrc-embedapi-server');
+    const defaultServer = Object.keys(servers)[0];
+    const selectedServer = lastUsedServer && servers[lastUsedServer] ? lastUsedServer : defaultServer;
+
+    // Set dropdown value and iframe source
+    languageSelect.value = selectedServer;
+    const id = imdbRequiredServers.includes(selectedServer) && imdbId ? imdbId : tmdbId;
+    iframe.src = servers[selectedServer](id);
+
+    // Update iframe source on dropdown change
+    languageSelect.addEventListener('change', () => {
+      const newServer = languageSelect.value;
+      const id = imdbRequiredServers.includes(newServer) && imdbId ? imdbId : tmdbId;
+      iframe.src = servers[newServer](id);
+      localStorage.setItem('vidsrc-embedapi-server', newServer);
+    });
+  }
+
+  // Initialize the player on page load
+  loadPlayer();
+</script>
+  </body>
+  </html>

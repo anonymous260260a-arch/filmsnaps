@@ -1,0 +1,21 @@
+<!DOCTYPE html><html lang="en"><head><title>Example Domain</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{background:#eee;width:60vw;margin:15vh auto;font-family:system-ui,sans-serif}h1{font-size:1.5em}div{opacity:0.8}a:link,a:visited{color:#348}</style></head><body><div><h1>Example Domain</h1><p>This domain is for use in documentation examples without needing permission. Avoid use in operations.</p><p><a href="https://iana.org/domains/example">Learn more</a></p></div>
+<script>
+      document.addEventListener('click', function(e) {
+        const link = e.target.closest('a');
+        if (link) {
+           // allow internal anchor links or javascript:void(0)
+           const href = link.getAttribute('href');
+           if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
+           
+           // If it's a proxy link (rewritten above), we assume it's safe to valid navigation 
+           // BUT the user originally asked to BLOCK <a> navigation. 
+           // "inject a script to block <a> navigation" - I should stick to this requirement strictly unless I misunderstood.
+           // However, blocking ALL navigation might make the iframe useless if it has internal tabs.
+           // The user said: "The iframe works for the main page but not for assets... blocks <a> tag navigation inside the iframe."
+           // I will keep the block logic:
+           e.preventDefault();
+           e.stopPropagation();
+           console.log('[Proxy] Navigation blocked:', href);
+        }
+      }, true);
+    </script></body></html>
