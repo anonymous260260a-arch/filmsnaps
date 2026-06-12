@@ -1,9 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  eslint: {
-    ignoreDuringBuilds: false,
-  },
 
   // Performance optimizations
   poweredByHeader: false,
@@ -95,7 +92,6 @@ const nextConfig = {
   },
 
   experimental: {
-    serverActions: true,
     optimizePackageImports: ['lucide-react', '@radix-ui/react-icons'],
   },
 };
