@@ -2,10 +2,16 @@
 // Lightweight Firebase Auth via REST API (no Admin SDK, no jwks-rsa)
 // Cloudflare Workers compatible
 
-const FIREBASE_API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY!;
-const FIREBASE_PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID!;
-
 const AUTH_BASE = 'https://identitytoolkit.googleapis.com/v1';
+
+function getApiKey(): string {
+  const key = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+  if (!key) {
+    console.error('[Firebase Auth] NEXT_PUBLIC_FIREBASE_API_KEY is not set');
+    return '';
+  }
+  return key;
+}
 
 export interface DecodedToken {
   uid: string;
@@ -46,8 +52,11 @@ export async function createSessionCookie(
   idToken: string,
   expiresInMs: number = 60 * 60 * 24 * 5 * 1000, // 5 days
 ): Promise<string> {
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error('Firebase API key not configured');
+
   const res = await fetch(
-    `${AUTH_BASE}/accounts:createSessionCookie?key=${FIREBASE_API_KEY}`,
+    `${AUTH_BASE}/accounts:createSessionCookie?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -77,9 +86,12 @@ export async function createSessionCookie(
 export async function verifySessionCookie(
   sessionCookie: string,
 ): Promise<DecodedToken | null> {
+  const apiKey = getApiKey();
+  if (!apiKey) return null;
+
   try {
     const res = await fetch(
-      `${AUTH_BASE}/accounts:verifySessionCookie?key=${FIREBASE_API_KEY}`,
+      `${AUTH_BASE}/accounts:verifySessionCookie?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
