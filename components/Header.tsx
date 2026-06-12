@@ -24,7 +24,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from './AuthProvider';
 import { useToast } from '@/hooks/use-toast';
-import { canSendAuthEmail, markAuthEmailSent } from '@/lib/authCooldown';
 import { tmdbApi, getImageUrl } from '@/lib/tmdb';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useQuery } from '@tanstack/react-query';
@@ -140,39 +139,13 @@ export function Header() {
 
   const handleResetPassword = useCallback(async () => {
     if (!user?.email || isResettingPassword) return;
-    const key = `reset-password-${user.email}`;
-    if (!canSendAuthEmail(key)) {
-      toast({ title: 'Please wait', description: 'You can request another reset in a few minutes.', variant: 'destructive' });
-      return;
-    }
-    setIsResettingPassword(true);
-    const res = await resetPassword(user.email);
-    setIsResettingPassword(false);
-    if (!res.success) {
-      toast({ title: 'Error', description: res.message ?? 'Failed to reset password', variant: 'destructive' });
-      return;
-    }
-    markAuthEmailSent(key);
-    toast({ title: 'Password Reset', description: 'Check your email for the reset link.' });
-  }, [user?.email, isResettingPassword, resetPassword, toast]);
+    toast({ title: 'Auth disabled', description: 'Password reset is not available right now.' });
+  }, [user?.email, isResettingPassword, toast]);
 
   const handleResendVerification = useCallback(async () => {
     if (!user?.email || isResendingVerification) return;
-    const key = `verify-email-${user.email}`;
-    if (!canSendAuthEmail(key)) {
-      toast({ title: 'Please wait', description: 'You recently requested a verification email.', variant: 'destructive' });
-      return;
-    }
-    setIsResendingVerification(true);
-    const res = await resendVerificationEmail();
-    setIsResendingVerification(false);
-    if (!res.success) {
-      toast({ title: 'Error', description: res.message ?? 'Failed to resend verification email', variant: 'destructive' });
-      return;
-    }
-    markAuthEmailSent(key);
-    toast({ title: 'Verification Email Sent', description: 'Please check your inbox.' });
-  }, [user?.email, isResendingVerification, resendVerificationEmail, toast]);
+    toast({ title: 'Auth disabled', description: 'Email verification is not available right now.' });
+  }, [user?.email, isResendingVerification, toast]);
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
