@@ -683,8 +683,8 @@ export function getContentTypeFromUrl(url: string): string {
 /**
  * Generate an empty response body based on content type
  */
-export function getEmptyResponseBody(contentType: string): string | Buffer {
+export function getEmptyResponseBody(contentType: string): BodyInit {
   if (contentType.includes('javascript')) return '// Blocked';
   if (contentType.includes('css')) return '/* Blocked */';
-  return Buffer.alloc(0);
+  return new Uint8Array(0);
 }
