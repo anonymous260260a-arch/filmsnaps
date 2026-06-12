@@ -6,7 +6,6 @@ import { AuthProvider } from '@/components/AuthProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { PwaInstaller } from '@/components/PwaInstaller';
 import { Metadata } from 'next';
-import { getServerUser } from '@/lib/firebase/getServerUser';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -101,7 +100,6 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const serverUser = await getServerUser(); // server-side user
   return (
     <html lang="en" suppressHydrationWarning>
       <body
@@ -110,7 +108,7 @@ export default async function RootLayout({
       >
         <ErrorBoundary>
           <Providers>
-            <AuthProvider serverUser={serverUser}>
+            <AuthProvider>
               {children}
               <Toaster />
               <PwaInstaller />

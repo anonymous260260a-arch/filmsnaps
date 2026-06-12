@@ -18,7 +18,6 @@ import {
   sendEmailVerification,
   User as FirebaseUser,
 } from 'firebase/auth';
-import { DecodedToken } from '@/lib/firebase/auth-rest';
 
 // Minimal type that works for server or client
 export type AuthUser = {
@@ -41,25 +40,13 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// Helper to map serverUser to minimal AuthUser
-function mapServerUser(serverUser?: DecodedToken | null): AuthUser | null {
-  if (!serverUser) return null;
-  return {
-    uid: serverUser.uid,
-    email: serverUser.email ?? null,
-    emailVerified: serverUser.email_verified ?? false,
-  };
-}
-
 export function AuthProvider({
   children,
-  serverUser,
 }: {
   children: React.ReactNode;
-  serverUser?: DecodedToken | null;
 }) {
-  const [user, setUser] = useState<AuthUser | null>(mapServerUser(serverUser));
-  const [loading, setLoading] = useState(!serverUser);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(true);
 
   // ----------------- Sign Up -----------------
   const signUp = useCallback(async (email: string, password: string) => {
@@ -85,13 +72,6 @@ export function AuthProvider({
     setLoading(true);
     try {
       const res = await signInWithEmailAndPassword(auth, email, password);
-      const idToken = await res.user.getIdToken();
-
-      await fetch('/api/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken }),
-      });
 
       setUser({
         uid: res.user.uid,
@@ -110,7 +90,6 @@ export function AuthProvider({
   const signOut = useCallback(async () => {
     setLoading(true);
     await firebaseSignOut(auth);
-    await fetch('/api/logout', { method: 'POST' });
     setUser(null);
     setLoading(false);
   }, []);
