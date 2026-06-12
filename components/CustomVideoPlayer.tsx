@@ -84,15 +84,15 @@ export function CustomVideoPlayer({ videoUrl, provider, onError }: VideoPlayerPr
           }
         } else if (isMPD) {
           // DASH playback using dash.js
-          const dashjs = (await import('dashjs')).default;
-          const player = dashjs.MediaPlayer().create();
+          const { MediaPlayer } = await import('dashjs');
+          const player = MediaPlayer().create();
           player.initialize(video, videoUrl, true);
-          
-          player.on(dashjs.MediaPlayer.events.MANIFEST_LOADED, () => {
+
+          player.on(MediaPlayer.events.MANIFEST_LOADED, () => {
             setLoading(false);
           });
-          
-          player.on(dashjs.MediaPlayer.events.ERROR, (e: any) => {
+
+          player.on(MediaPlayer.events.ERROR, (e: any) => {
             console.error('[CustomPlayer] DASH error:', e);
             setError('Failed to load video stream');
             setLoading(false);
