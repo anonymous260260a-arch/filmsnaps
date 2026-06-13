@@ -44,9 +44,7 @@ export class ErrorBoundary extends Component<Props, State> {
               Something went wrong
             </h1>
             <p className="text-sm text-muted-foreground mb-8 leading-relaxed">
-              {process.env.NEXT_PUBLIC_NODE_ENV === 'development'
-                ? this.state.error?.message
-                : 'An unexpected error occurred. Please try reloading the page.'}
+              Error: {this.state.error?.message || 'An unexpected error occurred. Please try reloading the page.'}
             </p>
             <GlassButton
               onClick={() => {

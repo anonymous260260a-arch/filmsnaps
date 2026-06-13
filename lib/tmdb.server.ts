@@ -2,7 +2,15 @@
 import 'server-only';
 
 const BASE = 'https://api.themoviedb.org/3';
-const KEY = process.env.TMDB_API_KEY!;
+const KEY = process.env.TMDB_API_KEY;
+
+function needsKey(): string {
+  if (!KEY) {
+    console.warn('[TMDB] API key is not configured. Set TMDB_API_KEY.');
+    return '';
+  }
+  return KEY;
+}
 
 interface GetMoviesOptions {
   genreIds?: number[];
@@ -25,19 +33,26 @@ interface GetTVOptions {
   page?: number;
 }
 export async function tmdb(path: string) {
+  const apiKey = needsKey();
+  if (!apiKey) return { results: [] };
+
   const separator = path.includes('?') ? '&' : '?';
 
-  const res = await fetch(`${BASE}${path}${separator}api_key=${KEY}`, {
-    next: { revalidate: 3600 },
-  });
+  try {
+    const res = await fetch(`${BASE}${path}${separator}api_key=${apiKey}`, {
+      next: { revalidate: 3600 },
+    });
 
-  if (!res.ok) {
-    const text = await res.text();
-    console.error('TMDB ERROR:', res.status, text);
-    throw new Error('TMDB fetch failed');
+    if (!res.ok) {
+      console.error('TMDB ERROR:', res.status, await res.text());
+      return { results: [] };
+    }
+
+    return res.json();
+  } catch (err) {
+    console.error('TMDB fetch error:', err);
+    return { results: [] };
   }
-
-  return res.json();
 }
 
 export async function tmdbMovieMeta(id: string) {
