@@ -1,15 +1,14 @@
 /**
  * Player — redirects to the provider's embed URL.
  *
- * Providers load directly on their own domain — no proxy, no
- * HTML rewriting, no sandbox, no service worker.
+ * Providers load on their own domain (cross-origin), meaning:
+ *   - The iframe content runs in a separate security context
+ *   - The provider's video player works without interference
+ *   - No proxy-induced breakage (CSS assets, font loading, etc.)
  *
- * Protection relies on:
- *   1. Browser cross-origin isolation (iframe can't access parent DOM)
- *   2. referrerPolicy="no-referrer" on the iframe
+ * Navigation protection is handled from the PARENT page (WatchClient)
+ * using beforeunload, URL polling, and popstate interception.
  */
-
-import { redirect } from 'next/navigation';
 import { getProvider } from '@/lib/movieProviders/providers';
 
 export async function GET(

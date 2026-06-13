@@ -183,39 +183,97 @@ export function shouldBlockUrl(url: string, context?: FilterContext): boolean {
 
 /**
  * Generate the navigation blocker script injected into provider HTML.
- * This is the uBlock-style defense: prevent popups, location hijacks,
- * history manipulation, form submissions, and external link clicks.
- * When protection is disabled for a provider, returns empty string.
+ * Updated with self-healing, MutationObserver, and multi-layer defenses.
+ * Blocks: popups, location hijacks, history manipulation, form submissions,
+ * external link clicks, window.name, document.domain, EventSource/WebSocket tracking.
+ * Self-heals every 1s if provider scripts strip the protection.
  */
 export function generateNavBlockerScript(
   targetUrl: string,
   provider?: ProviderDefinition,
 ): string {
-  // Skip injection if protection is disabled
   if (provider?.protection?.enabled === false) {
     return '';
   }
 
   const origin = (() => {
-    try {
-      return new URL(targetUrl).origin;
-    } catch {
-      return targetUrl;
-    }
+    try { return new URL(targetUrl).origin; } catch { return targetUrl; }
   })();
 
-  return `<!-- Navigation Blocker (uBlock-style) -->
+  return `<!-- Navigation Blocker (Fortified) -->
 <script data-nav-blocker="true">
 (function(){
   'use strict';
   var ORIGIN = ${JSON.stringify(origin)};
   var TARGET = ${JSON.stringify(targetUrl)};
 
-  console.log('[NavBlocker] Initialized for:', ORIGIN);
+  if(window.__navBlockerActive) return; // prevent double-run
+  window.__navBlockerActive = true;
 
-  // --- Popup blocking ---
-  var _open = window.open;
-  window.open = function(url) {
+  // ── Polyfill Object.assign for old browsers ──
+  var assign = Object.assign || function(t){ for(var i=1;i<arguments.length;i++){ var s=arguments[i]; if(s) for(var k in s) t[k]=s[k]; } return t; };
+
+  // ── Build a frozen location impersonator ──
+  function makeSafeLocation(){
+    var loc = {
+      href: TARGET,
+      origin: ORIGIN,
+      protocol: new URL(TARGET).protocol,
+      host: new URL(TARGET).host,
+      hostname: new URL(TARGET).hostname,
+      port: new URL(TARGET).port,
+      pathname: new URL(TARGET).pathname,
+      search: '',
+      hash: '',
+      ancestorOrigins: { length: 0, contains: function(){return false;}, item: function(){return null;} },
+      assign: function(u){ console.log('[NavBlocker] Blocked location.assign:', u); },
+      replace: function(u){ console.log('[NavBlocker] Blocked location.replace:', u); },
+      reload: function(){ location.reload(); },
+      toString: function(){ return TARGET; }
+    };
+    try { Object.freeze(loc); } catch(e){}
+    return loc;
+  }
+
+  var SAFE_LOC = makeSafeLocation();
+
+  // ── Lock an object's property descriptor with a non-replacable getter/setter ──
+  function lockLocation(obj){
+    try {
+      Object.defineProperty(obj, 'location', {
+        configurable: false,
+        enumerable: true,
+        get: function(){ return SAFE_LOC; },
+        set: function(v){ console.log('[NavBlocker] Blocked location= set:', v); }
+      });
+    } catch(e){}
+  }
+
+  // ── Initial lock on window ──
+  lockLocation(window);
+
+  // ── Also attempt to lock top / parent references (same-origin) ──
+  try {
+    if(window.top && window.top !== window) {
+      Object.defineProperty(window.top, 'location', {
+        configurable: false,
+        get: function(){ return SAFE_LOC; },
+        set: function(v){ console.log('[NavBlocker] Blocked top.location=', v); }
+      });
+    }
+  } catch(e){}
+  try {
+    if(window.parent && window.parent !== window) {
+      Object.defineProperty(window.parent, 'location', {
+        configurable: false,
+        get: function(){ return SAFE_LOC; },
+        set: function(v){ console.log('[NavBlocker] Blocked parent.location=', v); }
+      });
+    }
+  } catch(e){}
+
+  // ── Popup blocking ──
+  window.open = function(url){
     if(url && url !== 'about:blank') {
       try {
         var u = new URL(url, TARGET);
@@ -223,41 +281,62 @@ export function generateNavBlockerScript(
           console.log('[NavBlocker] Blocked popup:', url);
           return { closed:true, close:function(){}, focus:function(){}, blur:function(){} };
         }
-      } catch(e) {}
+      } catch(e){}
     }
-    return _open ? _open.apply(window, arguments) : null;
+    return null;
   };
 
-  // --- Location hijack prevention ---
-  var _location = {
-    href: TARGET, origin: ORIGIN,
-    assign: function(u){ console.log('[NavBlocker] Blocked location.assign:', u); },
-    replace: function(u){ console.log('[NavBlocker] Blocked location.replace:', u); },
-    reload: function(){ location.reload(); },
-    toString: function(){ return TARGET; }
+  // ── History manipulation ──
+  var _ps = history.pushState, _rs = history.replaceState;
+  history.pushState = function(s,t,u){
+    if(u && typeof u === 'string' && !u.startsWith(ORIGIN) && !u.startsWith('/') && !u.startsWith('#')){
+      console.log('[NavBlocker] Blocked pushState:', u); return;
+    }
+    return _ps.apply(this, arguments);
   };
-  Object.defineProperty(window, 'location', {
-    configurable: false,
-    get: function(){ return _location; },
-    set: function(v){ console.log('[NavBlocker] Blocked location set:', v); }
-  });
-  try { Object.defineProperty(window, 'top', { get: function(){ return {location:_location}; } }); } catch(e){}
-  try { Object.defineProperty(window, 'parent', { get: function(){ return {location:_location}; } }); } catch(e){}
+  history.replaceState = function(s,t,u){
+    if(u && typeof u === 'string' && !u.startsWith(ORIGIN) && !u.startsWith('/') && !u.startsWith('#')){
+      console.log('[NavBlocker] Blocked replaceState:', u); return;
+    }
+    return _rs.apply(this, arguments);
+  };
 
-  // --- Link click interception ---
+  // ── Block window.name (crypto cross-origin communication vector) ──
+  try {
+    Object.defineProperty(window, 'name', {
+      configurable: false,
+      get: function(){ return ''; },
+      set: function(v){ console.log('[NavBlocker] Blocked window.name=', v); }
+    });
+  } catch(e){}
+
+  // ── Block document.domain relaxation ──
+  try {
+    Object.defineProperty(document, 'domain', {
+      configurable: false,
+      get: function(){ return ORIGIN.replace(/^https?:\\/\\//,''); },
+      set: function(v){ console.log('[NavBlocker] Blocked document.domain=', v); }
+    });
+  } catch(e){}
+
+  // ── Block EventSource (tracking channel) ──
+  window.EventSource = function(){ console.log('[NavBlocker] Blocked EventSource'); this.readyState=2; this.CLOSED=2; };
+  window.EventSource.prototype = { CONNECTING:0, OPEN:1, CLOSED:2, close:function(){}, addEventListener:function(){}, removeEventListener:function(){}, dispatchEvent:function(){return false;} };
+
+  // ── Link click interception (capture phase) ──
   document.addEventListener('click', function(e){
     var el = e.target;
-    while(el && el !== document) {
-      if(el.tagName === 'A') {
+    while(el && el !== document){
+      if(el.tagName === 'A'){
         var href = el.getAttribute('href') || el.href;
-        if(href && !href.startsWith('#') && !href.startsWith('javascript:')) {
+        if(href && href.indexOf('#') !== 0 && href.indexOf('javascript:') !== 0){
           try {
             var u = new URL(href, TARGET);
-            if(u.origin !== ORIGIN) {
+            if(u.origin !== ORIGIN){
               e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
               console.log('[NavBlocker] Blocked external link:', href);
             }
-          } catch(e){}
+          } catch(err){}
         }
         break;
       }
@@ -265,34 +344,75 @@ export function generateNavBlockerScript(
     }
   }, true);
 
-  // --- Form submission blocking ---
+  // ── Form submission blocking ──
   document.addEventListener('submit', function(e){
     e.preventDefault(); e.stopPropagation();
     console.log('[NavBlocker] Blocked form submission');
   }, true);
 
-  // --- History manipulation prevention ---
-  var _ps = history.pushState, _rs = history.replaceState;
-  history.pushState = function(s,t,u){
-    if(u && !u.startsWith(ORIGIN) && !u.startsWith('/') && !u.startsWith('#')) {
-      console.log('[NavBlocker] Blocked pushState:', u); return;
+  // ── Context menu blocking (prevent "Open in new tab" hijacks) ──
+  document.addEventListener('contextmenu', function(e){
+    var el = e.target;
+    while(el && el !== document){
+      if(el.tagName === 'A'){
+        var href = el.getAttribute('href') || el.href;
+        if(href && href.indexOf('#') !== 0 && href.indexOf('javascript:') !== 0){
+          try {
+            var u = new URL(href, TARGET);
+            if(u.origin !== ORIGIN){
+              e.preventDefault();
+              console.log('[NavBlocker] Blocked external context menu link:', href);
+            }
+          } catch(err){}
+        }
+        break;
+      }
+      el = el.parentElement;
     }
-    return _ps.apply(this, arguments);
-  };
-  history.replaceState = function(s,t,u){
-    if(u && !u.startsWith(ORIGIN) && !u.startsWith('/') && !u.startsWith('#')) {
-      console.log('[NavBlocker] Blocked replaceState:', u); return;
-    }
-    return _rs.apply(this, arguments);
-  };
+  }, true);
 
-  // --- Continuous cleanup: strip target attributes & meta refresh ---
+  // ── Continuous cleanup ──
   setInterval(function(){
     try {
       document.querySelectorAll('a[target], area[target]').forEach(function(el){ el.removeAttribute('target'); });
       document.querySelectorAll('meta[http-equiv="refresh"]').forEach(function(el){ el.remove(); });
     } catch(e){}
   }, 500);
+
+  // ── SELF-HEALING: check every 1s if location is still frozen ──
+  setInterval(function(){
+    try {
+      // Quick test: if setting window.location.href doesn't throw, protection is intact
+      // Actually we can test by checking if the descriptor is still in place
+      var desc = Object.getOwnPropertyDescriptor(window, 'location');
+      if(!desc || desc.configurable !== false){
+        console.log('[NavBlocker] Self-heal: location was tampered');
+        lockLocation(window);
+      }
+    } catch(e){}
+  }, 1000);
+
+  // ── MutationObserver: watch for injected scripts that try to strip protections ──
+  try {
+    var observer = new MutationObserver(function(mutations){
+      for(var i=0; i<mutations.length; i++){
+        var mut = mutations[i];
+        if(mut.type === 'childList' && mut.addedNodes.length){
+          for(var j=0; j<mut.addedNodes.length; j++){
+            var node = mut.addedNodes[j];
+            if(node.tagName === 'SCRIPT' && node.getAttribute && node.getAttribute('data-nav-blocker') !== 'true'){
+              // Intercept newly injected scripts — they can't be blocked but we can re-heal
+              console.log('[NavBlocker] New script detected, re-locking location');
+              setTimeout(function(){ lockLocation(window); }, 0);
+            }
+          }
+        }
+      }
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  } catch(e){}
+
+  console.log('[NavBlocker] Fortified — self-healing, MutationObserver active');
 })();
 </script>`;
 }
@@ -313,6 +433,8 @@ export function generateNavBlockerScript(
  *   4. Service worker neutralization
  *   5. Form submission blocking
  *   6. Dynamically created element interception (scripts, images, links)
+ *   7. Self-healing — periodically re-checks and re-applies protections
+ *   8. MutationObserver — detects injected scripts trying to strip protections
  *
  * This replaces the browser's sandbox attribute entirely.
  */
@@ -347,6 +469,9 @@ export function generateRuntimeProtectionScript(
   var PROXY_PREFIX = '/api/player/' + PROVIDER_KEY + '/asset?url=';
   var BLOCKED_PATTERNS = ${patternsJson};
 
+  if(window.__runtimeSandboxActive) return;
+  window.__runtimeSandboxActive = true;
+
   function log(msg){ console.log('[RuntimeSandbox]', msg); }
   function warn(msg){ console.warn('[RuntimeSandbox]', msg); }
 
@@ -364,51 +489,107 @@ export function generateRuntimeProtectionScript(
   function proxyUrl(url){
     if(!url || typeof url !== 'string') return url;
     if(url.indexOf('blob:')===0 || url.indexOf('data:')===0) return url;
-
-    // Already proxied
     if(url.indexOf(PROXY_PREFIX) !== -1) return url;
 
     var absUrl = url;
-    // Resolve relative URLs against the provider's origin
     if(url.indexOf('://') === -1){
       if(url.charAt(0) === '/') absUrl = TARGET_ORIGIN + url;
       else absUrl = TARGET_ORIGIN + '/' + url;
     }
-
-    // Only proxy URLs to the provider's origin
     if(absUrl.indexOf(TARGET_ORIGIN) !== 0) return url;
-
-    // Skip blob/data URLs
     if(absUrl.indexOf('blob:')===0 || absUrl.indexOf('data:')===0) return absUrl;
-
     return PROXY_PREFIX + encodeURIComponent(absUrl);
+  }
+
+  // ── Build a frozen safe location object ──
+  function makeSafeLocation(){
+    var loc = {
+      href: TARGET_URL,
+      origin: TARGET_ORIGIN,
+      protocol: new URL(TARGET_URL).protocol,
+      host: new URL(TARGET_URL).host,
+      hostname: new URL(TARGET_URL).hostname,
+      port: new URL(TARGET_URL).port,
+      pathname: new URL(TARGET_URL).pathname,
+      search: '',
+      hash: '',
+      ancestorOrigins: { length: 0, contains: function(){return false;}, item: function(){return null;} },
+      assign: function(u){ warn('location.assign blocked: ' + u); },
+      replace: function(u){ warn('location.replace blocked: ' + u); },
+      reload: function(){ location.reload(); },
+      toString: function(){ return TARGET_URL; }
+    };
+    // Also freeze the nested ancestorOrigins
+    try { Object.freeze(loc.ancestorOrigins); } catch(e){}
+    try { Object.freeze(loc); } catch(e){}
+    return loc;
+  }
+
+  var SAFE_LOC = makeSafeLocation();
+
+  // ── Lock location on a window object ──
+  function lockLocation(obj){
+    try {
+      Object.defineProperty(obj, 'location', {
+        configurable: false,
+        enumerable: true,
+        get: function(){ return SAFE_LOC; },
+        set: function(v){ warn('location= blocked: ' + v); }
+      });
+    } catch(e){}
   }
 
   // ── Layer 1: Navigation / Popup prevention ──
   log('Blocking navigation & popups');
+
+  lockLocation(window);
+
+  // Attempt to lock top / parent references (same-origin when proxied)
+  try {
+    if(window.top && window.top !== window) {
+      Object.defineProperty(window.top, 'location', {
+        configurable: false,
+        get: function(){ return SAFE_LOC; },
+        set: function(v){ warn('top.location= blocked: ' + v); }
+      });
+    }
+  } catch(e){}
+  try {
+    if(window.parent && window.parent !== window) {
+      Object.defineProperty(window.parent, 'location', {
+        configurable: false,
+        get: function(){ return SAFE_LOC; },
+        set: function(v){ warn('parent.location= blocked: ' + v); }
+      });
+    }
+  } catch(e){}
 
   window.open = function(){
     warn('window.open blocked');
     return {closed:true, close:function(){}, focus:function(){}, blur:function(){}};
   };
 
-  var _location = {
-    href: TARGET_URL,
-    origin: TARGET_ORIGIN,
-    assign: function(u){ warn('location.assign blocked: ' + u); },
-    replace: function(u){ warn('location.replace blocked: ' + u); },
-    reload: function(){ location.reload(); },
-    toString: function(){ return TARGET_URL; }
-  };
+  // ── Block window.name (cross-origin communication vector) ──
   try {
-    Object.defineProperty(window, 'location', {
+    Object.defineProperty(window, 'name', {
       configurable: false,
-      get: function(){ return _location; },
-      set: function(v){ warn('location set blocked: ' + v); }
+      get: function(){ return ''; },
+      set: function(v){ warn('window.name blocked: ' + v); }
     });
   } catch(e){}
-  try { Object.defineProperty(window, 'top', { get: function(){ return {location:_location}; } }); } catch(e){}
-  try { Object.defineProperty(window, 'parent', { get: function(){ return {location:_location}; } }); } catch(e){}
+
+  // ── Block document.domain relaxation ──
+  try {
+    Object.defineProperty(document, 'domain', {
+      configurable: false,
+      get: function(){ return TARGET_ORIGIN.replace(/^https?:\\/\\//,''); },
+      set: function(v){ warn('document.domain blocked: ' + v); }
+    });
+  } catch(e){}
+
+  // ── Block EventSource tracking ──
+  window.EventSource = function(){ warn('EventSource blocked'); this.readyState=2; this.CLOSED=2; };
+  try { window.EventSource.prototype = { CONNECTING:0, OPEN:1, CLOSED:2, close:function(){}, addEventListener:function(){}, removeEventListener:function(){}, dispatchEvent:function(){return false;} }; } catch(e){}
 
   // Click blocking for external links
   document.addEventListener('click', function(e){
@@ -437,10 +618,30 @@ export function generateRuntimeProtectionScript(
     warn('Form submission blocked');
   }, true);
 
+  // Context menu blocking (prevent "Open in new tab" hijacks)
+  document.addEventListener('contextmenu', function(e){
+    var el = e.target;
+    while(el && el !== document){
+      if(el.tagName === 'A'){
+        var href = el.getAttribute('href') || el.href;
+        if(href && href.indexOf('#') !== 0 && href.indexOf('javascript:') !== 0){
+          try {
+            var u = new URL(href, TARGET_URL);
+            if(u.origin !== TARGET_ORIGIN){
+              e.preventDefault();
+              warn('Context menu link blocked: ' + href);
+            }
+          } catch(err){}
+        }
+        break;
+      }
+      el = el.parentElement;
+    }
+  }, true);
+
   // ── Layer 2: Network API interception ──
   log('Installing network interceptors');
 
-  // Intercept fetch
   var _fetch = window.fetch;
   window.fetch = function(input, init){
     var url = (typeof input === 'string') ? input : (input && input.url) || '';
@@ -456,7 +657,6 @@ export function generateRuntimeProtectionScript(
     return _fetch.apply(window, arguments);
   };
 
-  // Intercept XMLHttpRequest
   var _open = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function(method, url, async, user, pass){
     if(shouldBlockUrl(url)){
@@ -474,7 +674,6 @@ export function generateRuntimeProtectionScript(
     return _send.call(this, body);
   };
 
-  // Intercept sendBeacon
   var _beacon = navigator.sendBeacon;
   navigator.sendBeacon = function(url, data){
     if(shouldBlockUrl(url)){ warn('sendBeacon blocked: ' + url); return false; }
@@ -497,7 +696,6 @@ export function generateRuntimeProtectionScript(
         }
         return _setAttr(name, value);
       };
-      // Override src/href property setters
       try {
         if(tag === 'script' || tag === 'img'){
           var desc = Object.getOwnPropertyDescriptor(
@@ -535,18 +733,45 @@ export function generateRuntimeProtectionScript(
     try {
       document.querySelectorAll('a[target], area[target]').forEach(function(el){ el.removeAttribute('target'); });
       document.querySelectorAll('meta[http-equiv="refresh"]').forEach(function(el){ el.remove(); });
-      // Remove tracking scripts
       document.querySelectorAll('script[src*="analytics"], script[src*="tracking"], script[src*="beacon"], script[src*="pixel"]').forEach(function(s){
         if(shouldBlockUrl(s.src)){ s.remove(); log('Removed tracking script'); }
       });
-      // Remove hidden tracking iframes
       document.querySelectorAll('iframe[style*="display:none"], iframe[style*="visibility:hidden"], iframe[width="0"], iframe[height="0"]').forEach(function(f){
         f.remove(); log('Removed hidden iframe');
       });
     } catch(e){}
   }, 1000);
 
-  log('RuntimeSandbox active — protection layers: nav/popup blocking, network interception, element interception, SW neutralization');
+  // ── SELF-HEALING: re-check protections every 1s ──
+  setInterval(function(){
+    try {
+      var desc = Object.getOwnPropertyDescriptor(window, 'location');
+      if(!desc || desc.configurable !== false){
+        log('Self-heal: location was tampered');
+        lockLocation(window);
+      }
+    } catch(e){}
+  }, 1000);
+
+  // ── MutationObserver: watch for nav hijack attempts ──
+  try {
+    var observer = new MutationObserver(function(mutations){
+      for(var i=0; i<mutations.length; i++){
+        var mut = mutations[i];
+        if(mut.type === 'childList' && mut.addedNodes.length){
+          for(var j=0; j<mut.addedNodes.length; j++){
+            var node = mut.addedNodes[j];
+            if(node.tagName === 'SCRIPT'){
+              setTimeout(function(){ lockLocation(window); }, 0);
+            }
+          }
+        }
+      }
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  } catch(e){}
+
+  log('RuntimeSandbox active — all layers: nav/popup, network, elements, SW, self-healing');
 })();
 </script>`;
 }
