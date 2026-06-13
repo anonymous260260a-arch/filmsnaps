@@ -40,7 +40,143 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData }) => {
   const [selectedProvider, setSelectedProvider] = useState(Providers[0]);
   const playerContainerRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const iframeRef = useRef(null);
+  const [cpuWarning, setCpuWarning] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0); // incremented to reload iframe
 
+  // ── Parent-side navigation guard ──────────────────────────────
+  // Blocks provider iframes from navigating the parent page.
+  //
+  // With redirect-based providers (cross-origin), the iframe CAN do
+  // `top.location = '...'` to escape. The only reliable defense
+  // without sandbox or proxy is `beforeunload` — it shows a dialog
+  // to the user and gives them a chance to stay.
+  //
+  // This is the honest trade-off: no silent protection possible
+  // from a cross-origin iframe without sandbox (which providers
+  // detect and block).
+  useEffect(() => {
+    const ORIGINAL_URL = window.location.href;
+
+    // ── beforeunload: catches top.location escapes from the iframe ──
+    // Fires whenever the page is about to unload. If the iframe
+    // does `top.location = '...'` or a link with target="_top"
+    // is clicked inside the iframe, the browser fires this event.
+    const onBeforeUnload = (e) => {
+      e.preventDefault();
+      // Chrome requires returnValue to be set
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+
+    // ── Poll for URL changes (catches history manipulation) ──
+    const guardInterval = setInterval(() => {
+      if (window.location.href !== ORIGINAL_URL) {
+        console.warn('[NavGuard] URL changed — likely iframe escape attempt, reverting');
+        window.history.pushState(null, '', ORIGINAL_URL);
+      }
+    }, 500);
+
+    const onPopState = () => {
+      if (window.location.href !== ORIGINAL_URL) {
+        console.warn('[NavGuard] popState escape attempt — restoring');
+        window.history.pushState(null, '', ORIGINAL_URL);
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      window.removeEventListener('popstate', onPopState);
+      clearInterval(guardInterval);
+    };
+  }, []);
+
+  // ── End parent-side navigation guard ──────────────────────────
+
+  // ── CPU / RAM abuse watchdog + session timeout ────────────────
+  // Detects if the provider iframe is hogging the event loop via
+  // measuring timer drift. If the main thread is busy (iframe
+  // is using too much CPU), our setTimeout(0) callbacks will be
+  // delayed significantly.
+  //
+  // Also auto-refreshes the iframe every 60 minutes to reset any
+  // long-running abuse (crypto miners, memory leaks, tracker
+  // accumulation) and prevent browser memory ballooning.
+  useEffect(() => {
+    const CPU_CHECK_MS = 3000;      // check every 3 seconds
+    const CPU_WARN_MS = 300;        // lag > 300ms triggers warning
+    const CPU_CONSECUTIVE_WARN = 3; // 3 bad checks in a row
+    const SESSION_MAX_MS = 60 * 60 * 1000; // 60 min max
+
+    let cpuBadCount = 0;
+    let cpuGoodCount = 0;
+    let cpuTimeout;
+    let sessionTimeout;
+    let alive = true;
+
+    function checkCPU() {
+      if (!alive) return;
+      const expected = performance.now() + CPU_CHECK_MS;
+
+      cpuTimeout = setTimeout(() => {
+        if (!alive) return;
+        const actual = performance.now();
+        const lag = actual - expected;
+
+        if (lag > CPU_WARN_MS) {
+          cpuBadCount++;
+          cpuGoodCount = 0;
+          if (cpuBadCount >= CPU_CONSECUTIVE_WARN) {
+            console.warn('[WatchClient] CPU abuse detected —', Math.round(lag), 'ms lag');
+            setCpuWarning(true);
+          }
+        } else {
+          cpuGoodCount++;
+          if (cpuGoodCount >= 3) {
+            cpuBadCount = 0;
+            setCpuWarning(false);
+          }
+        }
+
+        checkCPU();
+      }, 0);
+    }
+
+    checkCPU();
+
+    // Session timeout — force refresh after 60 minutes to kill miners
+    sessionTimeout = setTimeout(() => {
+      if (!alive) return;
+      setRefreshKey((k) => k + 1);
+      console.log('[WatchClient] Session timeout — refreshing iframe');
+    }, SESSION_MAX_MS);
+
+    return () => {
+      alive = false;
+      clearTimeout(cpuTimeout);
+      clearTimeout(sessionTimeout);
+    };
+  }, []);
+
+  // ── When CPU abuse detected: blank the iframe, alert the user ──
+  // The iframe will stay blank for 15s, then auto-dismiss the warning.
+  // User can switch providers or dismiss.
+  useEffect(() => {
+    if (!cpuWarning || !iframeRef.current) {
+      return;
+    }
+
+    // Save and blank the iframe to reclaim CPU/RAM
+    iframeRef.current.src = 'about:blank';
+    console.warn('[WatchClient] Iframe blanked due to CPU abuse');
+
+    // Auto-dismiss the warning after 15s
+    const recovery = setTimeout(() => setCpuWarning(false), 15000);
+    return () => clearTimeout(recovery);
+  }, [cpuWarning]);
+
+  // ── End CPU/RAM watchdog ──────────────────────────────────────
   const toggleFullscreen = useCallback(() => {
     if (!playerContainerRef.current) return;
     if (!document.fullscreenElement) {
@@ -154,6 +290,26 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData }) => {
           </div>
         )}
 
+        {/* CPU Abuse Warning */}
+        {cpuWarning && (
+          <div className="flex items-center gap-3 text-sm text-red-400 bg-red-500/10 px-4 sm:px-5 py-3 rounded-xl border border-red-500/20 mb-4 sm:mb-6 backdrop-blur-sm">
+            <AlertCircle size={16} className="text-red-400 flex-shrink-0" />
+            <p className="flex-1 text-xs sm:text-sm">
+              This server is using too much CPU — it has been stopped.
+              <span className="block mt-1 text-zinc-500">
+                Switch to a different server above to continue watching.
+              </span>
+            </p>
+            <button
+              onClick={() => setCpuWarning(false)}
+              className="text-zinc-600 hover:text-zinc-300 transition-colors p-1 flex-shrink-0"
+              aria-label="Dismiss"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
         {/* Video Player */}
         <div
           ref={playerContainerRef}
@@ -162,8 +318,10 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData }) => {
           {/* Ambient glow */}
           <div className="absolute -inset-4 bg-gradient-radial from-primary/5 via-transparent to-transparent opacity-60 pointer-events-none z-0" />
           <iframe
+            ref={iframeRef}
             className="absolute inset-0 w-full h-full z-10"
             src={getEmbedUrl()}
+            key={`provider-${refreshKey}`}
             referrerPolicy="no-referrer"
             allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
             allowFullScreen

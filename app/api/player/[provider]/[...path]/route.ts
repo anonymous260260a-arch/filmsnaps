@@ -9,6 +9,7 @@ import {
   shouldBlockUrl,
   rewriteAssetUrls,
   injectProtectionIntoHtml,
+  generateRuntimeProtectionScript,
   getContentTypeFromUrl,
   getEmptyResponseBody,
 } from '@/lib/movieProviders/protection';
@@ -111,7 +112,19 @@ export async function GET(
     // Step 1: Rewrite asset URLs through proxy + block trackers
     html = rewriteAssetUrls(html, providerBaseUrl, providerKey);
 
-    // Step 2: Inject navigation blocker
+    // Step 2: Inject runtime protection script (nav blocking + network interceptor)
+    const runtimeScript = generateRuntimeProtectionScript(targetUrl, providerKey, provider);
+    if (runtimeScript) {
+      if (html.includes('</head>')) {
+        html = html.replace('</head>', runtimeScript + '\n</head>');
+      } else if (html.includes('<body')) {
+        html = html.replace('<body', runtimeScript + '\n<body');
+      } else {
+        html = runtimeScript + '\n' + html;
+      }
+    }
+
+    // Step 3: Inject navigation blocker (redundant extra layer)
     html = injectProtectionIntoHtml(html, targetUrl, provider);
 
     console.log(
@@ -127,7 +140,7 @@ export async function GET(
         'Referrer-Policy': 'no-referrer',
         'X-Content-Type-Options': 'nosniff',
         'Content-Security-Policy':
-          "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-src * data: blob:; worker-src * data: blob:; connect-src * data: blob:; img-src * data: blob:; media-src * data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline';",
+          "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-src * data: blob:; worker-src * data: blob:; connect-src * data: blob:; img-src * data: blob:; media-src * data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline'; form-action 'none'; navigate-to 'none';",
       },
     });
   } catch (error) {
