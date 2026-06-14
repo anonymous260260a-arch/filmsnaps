@@ -1,14 +1,14 @@
 /**
- * Player — redirects to the provider's embed URL.
+ * Player — direct redirect to the provider's embed page.
  *
- * Providers load on their own domain (cross-origin), meaning:
- *   - The iframe content runs in a separate security context
- *   - The provider's video player works without interference
- *   - No proxy-induced breakage (CSS assets, font loading, etc.)
- *
- * Navigation protection is handled from the PARENT page (WatchClient)
- * using beforeunload, URL polling, and popstate interception.
+ * The iframe loads from the provider's origin (cross-origin). We can't
+ * intercept window.open from inside the iframe, but we CAN:
+ *   1. Override top.open/parent.open from our parent page
+ *   2. Detect popup focus loss and reclaim focus
+ *   3. Add sandbox attribute to block popups at browser level
+ *   4. Add navigation guard to revert top.location changes
  */
+import { NextResponse } from 'next/server';
 import { getProvider } from '@/lib/movieProviders/providers';
 
 export async function GET(
@@ -19,9 +19,7 @@ export async function GET(
   const provider = getProvider(providerKey);
 
   if (!provider) {
-    return new Response(`Unknown or disabled provider: ${providerKey}`, {
-      status: 404,
-    });
+    return new NextResponse(`Unknown or disabled provider: ${providerKey}`, { status: 404 });
   }
 
   const { searchParams } = new URL(req.url);
@@ -31,16 +29,15 @@ export async function GET(
   const episode = searchParams.get('episode');
 
   if (!movieId && !tvId) {
-    return new Response('Missing id or tvId parameter', { status: 400 });
+    return new NextResponse('Missing id or tvId parameter', { status: 400 });
   }
 
-  const embedPath =
-    tvId && season && episode
-      ? provider.embed.tv(tvId, Number(season), Number(episode))
-      : provider.embed.movie(movieId!);
+  const embedPath = tvId && season && episode
+    ? provider.embed.tv(tvId, Number(season), Number(episode))
+    : provider.embed.movie(movieId!);
 
   const targetUrl = `${provider.baseUrl}${embedPath}`;
+  console.log(`[Player] Redirect:`, targetUrl);
 
-  console.log(`[Player] Redirect ${providerKey} → ${targetUrl}`);
-  return Response.redirect(targetUrl, 302);
+  return NextResponse.redirect(targetUrl, 302);
 }
