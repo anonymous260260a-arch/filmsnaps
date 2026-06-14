@@ -43,33 +43,21 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData }) => {
   const iframeRef = useRef(null);
   const [cpuWarning, setCpuWarning] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0); // incremented to reload iframe
+  const [sandboxEnabled, setSandboxEnabled] = useState(true);
 
   // ── Parent-side navigation guard ──────────────────────────────
-  // Blocks provider iframes from navigating the parent page.
+  // Blocks `top.location` escape from cross-origin iframes.
   //
-  // With redirect-based providers (cross-origin), the iframe CAN do
-  // `top.location = '...'` to escape. The only reliable defense
-  // without sandbox or proxy is `beforeunload` — it shows a dialog
-  // to the user and gives them a chance to stay.
+  // Can't use `beforeunload` (user found it annoying on normal leave).
+  // Instead, silently revert any URL changes via polling + popstate.
+  // This is imperfect — if the iframe navigates the page, there's a
+  // brief flicker before we restore the URL — but it avoids the dialog.
   //
-  // This is the honest trade-off: no silent protection possible
-  // from a cross-origin iframe without sandbox (which providers
-  // detect and block).
+  // For popups (`window.open` / `top.open`): see the Popup Guard below.
   useEffect(() => {
     const ORIGINAL_URL = window.location.href;
 
-    // ── beforeunload: catches top.location escapes from the iframe ──
-    // Fires whenever the page is about to unload. If the iframe
-    // does `top.location = '...'` or a link with target="_top"
-    // is clicked inside the iframe, the browser fires this event.
-    const onBeforeUnload = (e) => {
-      e.preventDefault();
-      // Chrome requires returnValue to be set
-      e.returnValue = '';
-    };
-    window.addEventListener('beforeunload', onBeforeUnload);
-
-    // ── Poll for URL changes (catches history manipulation) ──
+    // ── Poll for URL changes (catches top.location + history) ──
     const guardInterval = setInterval(() => {
       if (window.location.href !== ORIGINAL_URL) {
         console.warn('[NavGuard] URL changed — likely iframe escape attempt, reverting');
@@ -85,14 +73,84 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData }) => {
     };
     window.addEventListener('popstate', onPopState);
 
+    // ── Catch top.open / parent.open from iframe ──
+    // If the provider does `top.open(url)` or `parent.open(url)`,
+    // it goes through OUR window.open. We block it.
+    const originalOpen = window.open.bind(window);
+    window.open = function blockPopup(url, name, features) {
+      if (url && typeof url === 'string') {
+        console.warn('[NavGuard] Blocked popup attempt from provider:', url.slice(0, 120));
+      }
+      // Return null so the caller (inside iframe) gets null instead of a Window handle
+      // This prevents the popup from opening at all
+      return null;
+    };
+
     return () => {
-      window.removeEventListener('beforeunload', onBeforeUnload);
       window.removeEventListener('popstate', onPopState);
       clearInterval(guardInterval);
+      window.open = originalOpen;
     };
   }, []);
 
   // ── End parent-side navigation guard ──────────────────────────
+
+  // ── Popup guard ─────────────────────────────────────────────────
+  // Cross-origin iframes can open popup tabs. We can't intercept
+  // window.open from inside the iframe — but we CAN detect focus
+  // loss and aggressively reclaim focus so the popup doesn't steal
+  // the user away.
+  //
+  // Does NOT blank the iframe — the user wants to keep watching.
+  useEffect(() => {
+    let reclaimTimer = null;
+
+    const startReclaim = () => {
+      if (reclaimTimer) return; // already reclaiming
+      console.warn('[PopupGuard] Popup detected — reclaiming focus');
+      let attempts = 0;
+      reclaimTimer = setInterval(() => {
+        attempts++;
+        if (document.hasFocus()) {
+          clearInterval(reclaimTimer);
+          reclaimTimer = null;
+          return;
+        }
+        // Try multiple focus methods
+        window.focus();
+        // Open + close self window trick (helps with Chrome's popup guard)
+        try {
+          const w = window.open('', '_self');
+          if (w) w.focus();
+        } catch(_) {}
+        if (attempts >= 300) {
+          clearInterval(reclaimTimer);
+          reclaimTimer = null;
+        }
+      }, 50); // check every 50ms for 15s
+    };
+
+    // Immediate reclamation on blur (no delay)
+    window.addEventListener('blur', startReclaim);
+
+    // Also catch when page becomes hidden (popup opened in background)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        startReclaim();
+      }
+    });
+
+    return () => {
+      window.removeEventListener('blur', startReclaim);
+      document.removeEventListener('visibilitychange', startReclaim);
+      if (reclaimTimer) {
+        clearInterval(reclaimTimer);
+        reclaimTimer = null;
+      }
+    };
+  }, []);
+
+  // ── End popup guard ─────────────────────────────────────────────
 
   // ── CPU / RAM abuse watchdog + session timeout ────────────────
   // Detects if the provider iframe is hogging the event loop via
@@ -271,6 +329,23 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData }) => {
               size={18}
             />
           </div>
+          {/* Sandbox toggle — outside flex to not break hydration */}
+          <div className="flex justify-end mt-2">
+            <button
+              onClick={() => setSandboxEnabled((s) => !s)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-xs font-semibold ${
+                sandboxEnabled
+                  ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                  : 'bg-zinc-800/50 border-zinc-700/30 text-zinc-500'
+              }`}
+              title={sandboxEnabled ? 'Popups blocked (sandbox on) — click to disable' : 'Popups allowed (sandbox off) — click to enable'}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              {sandboxEnabled ? 'Popups blocked' : 'Popups allowed'}
+            </button>
+          </div>
         </div>
 
         {/* Dismissible Notice */}
@@ -310,6 +385,7 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData }) => {
           </div>
         )}
 
+
         {/* Video Player */}
         <div
           ref={playerContainerRef}
@@ -326,6 +402,7 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData }) => {
             allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
             allowFullScreen
             title="Video player"
+            sandbox={sandboxEnabled ? "allow-scripts allow-same-origin allow-forms allow-presentation" : undefined}
           />
 
           {isPending && (

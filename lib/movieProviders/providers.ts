@@ -160,16 +160,16 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
   },
-   {
-     id: 'primesrc',
-     name: 'PrimeSrc',
-     displayName: 'Server 18',
-     baseUrl: 'https://primesrc.me',
-     embed: {
-       movie: (id) => `/embed/movie?tmdb=${id}`,
-       tv: (id, season, episode) => `/embed/tv?tmdb=${id}&season=${season}&episode=${episode}`,
-     },
-   },
+  //  {
+  //    id: 'primesrc',
+  //    name: 'PrimeSrc',
+  //    displayName: 'Server 18',
+  //    baseUrl: 'https://primesrc.me',
+  //    embed: {
+  //      movie: (id) => `/embed/movie?tmdb=${id}`,
+  //      tv: (id, season, episode) => `/embed/tv?tmdb=${id}&season=${season}&episode=${episode}`,
+  //    },
+  //  },
   {
     id: 'vidpro',
     name: 'VidPro',
