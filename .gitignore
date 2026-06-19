@@ -1,19 +1,18 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
-/.pnp
-.pnp.js
+node_modules/
 
 # testing
-/coverage
+coverage/
 
 # next.js
-/.next/
-/out/
+.next/
+out/
 
 # production
-/build
+build
+dist/
 
 # misc
 .DS_Store
@@ -40,7 +39,27 @@ scripts/
 # IDE / AI
 .bolt/
 .claude/
+.agents/
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# turbo
+.turbo/
+
+# expo
+.expo/
+
+# mobile builds
+apps/mobile/android/
+apps/mobile/ios/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# pnpm
+pnpm-lock.yaml
