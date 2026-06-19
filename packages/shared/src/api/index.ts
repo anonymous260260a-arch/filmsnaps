@@ -1,0 +1,1 @@
+export { createTmdbApi } from './tmdb';
