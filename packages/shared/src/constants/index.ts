@@ -1,0 +1,1 @@
+export { IMAGE_BASE_URL, TMDB_API_BASE, MOVIE_GENRES, TV_GENRES } from './tmdb';
