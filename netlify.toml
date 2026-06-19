@@ -1,6 +1,6 @@
 [build]
   base = "apps/web"
-  command = "pnpm build"
+  command = "pnpm --filter @filmsnaps/shared build && next build --webpack"
   publish = ".next"
 
 [build.environment]
