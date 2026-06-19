@@ -1,7 +1,21 @@
 [build]
-  command = "npm run build"
+  base = "apps/web"
+  command = "pnpm build"
   publish = ".next"
 
-# Netlify Next.js runtime handles server-side rendering and API routes automatically
+[build.environment]
+  NODE_VERSION = "20"
+
+# Netlify Next.js runtime handles server-side rendering and API routes
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# Security headers
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "origin-when-cross-origin"
+    X-DNS-Prefetch-Control = "on"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
