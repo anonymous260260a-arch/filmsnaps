@@ -4,7 +4,7 @@
   publish = ".next"
 
 [build.environment]
-  NODE_VERSION = "20"
+  NODE_VERSION = "22"
 
 # Netlify Next.js runtime handles server-side rendering and API routes
 [[plugins]]
