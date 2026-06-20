@@ -27,6 +27,12 @@
     "plugins": [
       "expo-router",
       "expo-sharing"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "708a926e-0243-4a25-ae80-1780906c8c04"
+      }
+    }
   }
 }
