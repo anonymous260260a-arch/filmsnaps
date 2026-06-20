@@ -7,6 +7,7 @@
     "build": "turbo build",
     "lint": "turbo lint",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "postinstall": "pnpm --filter @filmsnaps/shared build",
     "build:shared": "cd packages/shared && pnpm build",
     "dev:web": "cd apps/web && pnpm dev",
     "build:web": "cd apps/web && pnpm build",
@@ -18,7 +19,7 @@
     "turbo": "^2.0.0",
     "prettier": "^3.0.0"
   },
-  "packageManager": "pnpm@11.6.0",
+  "packageManager": "pnpm@10.10.0",
   "engines": {
     "node": ">=18"
   }
