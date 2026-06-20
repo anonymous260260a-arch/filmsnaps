@@ -1,5 +1,5 @@
 {
-  "latestVersion": "1.0.0",
-  "downloadUrl": "",
-  "releaseNotes": "Initial release"
+  "latestVersion": "1.0.1",
+  "downloadUrl": "https://filmsnap-pro.netlify.app/download",
+  "releaseNotes": "Blank Screen Error Fixed"
 }
