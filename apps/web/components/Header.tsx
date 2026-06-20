@@ -13,6 +13,7 @@ import {
   LogOut,
   Mail,
   ArrowLeft,
+  Download,
 } from 'lucide-react';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { GlassButton } from '@/components/ui/glass-button';
@@ -57,6 +58,7 @@ export function Header() {
       { href: '/movie', label: 'Movies' },
       { href: '/tv', label: 'TV Shows' },
       { href: '/saved', label: 'Saved', count: savedMovies?.length },
+      { href: '/download', label: 'Download' },
     ],
     [savedMovies?.length]
   );
