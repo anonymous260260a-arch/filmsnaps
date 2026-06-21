@@ -2,7 +2,7 @@
   "expo": {
     "name": "FilmSnaps",
     "slug": "filmsnaps",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "filmsnaps",
@@ -18,7 +18,11 @@
       "adaptiveIcon": {
         "backgroundColor": "#09090b"
       },
-      "package": "app.filmsnaps.mobile"
+      "package": "app.filmsnaps.mobile",
+      "navigationBar": {
+        "visible": "sticky-immersive",
+        "backgroundColor": "#18181b"
+      }
     },
     "web": {
       "bundler": "metro",
