@@ -1,8 +1,11 @@
 import Link from 'next/link';
-import { Download, Smartphone, Shield, ExternalLink } from 'lucide-react';
+import { Download, Smartphone, Shield, ExternalLink, Clock } from 'lucide-react';
+import versionsData from '../../public/versions.json';
 
-const APK_URL = process.env.NEXT_PUBLIC_APK_DOWNLOAD_URL || '#';
-const LATEST_VERSION = '1.0.0';
+const versions = versionsData.versions;
+const latest = versions[0];
+const APK_URL = process.env.NEXT_PUBLIC_APK_DOWNLOAD_URL || latest?.downloadUrl || '#';
+const LATEST_VERSION = latest?.version || '1.0.0';
 
 export default function DownloadPage() {
   return (
@@ -68,9 +71,18 @@ export default function DownloadPage() {
           <p className="text-zinc-600 text-xs text-center mt-3">
             {APK_URL === '#'
               ? 'APK is being built — check back soon'
-              : 'Direct APK download • ~30MB'}
+              : 'Direct APK download • ~90MB'}
           </p>
         </div>
+
+        {/* Version history link */}
+        <Link
+          href="/versions"
+          className="flex items-center justify-center gap-2 text-zinc-500 hover:text-amber-400 text-sm transition-colors mb-8"
+        >
+          <Clock className="w-4 h-4" />
+          View all versions & release notes
+        </Link>
 
         {/* Info cards */}
         <div className="grid gap-3">

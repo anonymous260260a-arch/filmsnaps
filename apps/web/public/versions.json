@@ -1,0 +1,25 @@
+{
+  "versions": [
+    {
+      "version": "1.0.2",
+      "date": "2026-06-21",
+      "releaseNotes": "Navigation bar overlap fixed — system nav bar no longer hides the bottom tab bar. Tab bar now uses safe area padding for proper positioning.",
+      "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.2/filmsnaps-v1.0.2.apk",
+      "size": "~90 MB"
+    },
+    {
+      "version": "1.0.1",
+      "date": "2026-06-21",
+      "releaseNotes": "Blank screen on launch fixed — API URL now correctly points to production. App properly connects to live backend.",
+      "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.1/filmsnaps-v1.0.1.apk",
+      "size": "~90 MB"
+    },
+    {
+      "version": "1.0.0",
+      "date": "2026-06-20",
+      "releaseNotes": "Initial release. Browse movies and TV shows, search, bookmark favorites, view trailers and streaming options.",
+      "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.0/filmsnaps-v1.0.0.apk",
+      "size": "~90 MB"
+    }
+  ]
+}
