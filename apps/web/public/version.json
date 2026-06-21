@@ -1,5 +1,6 @@
 {
-  "latestVersion": "1.0.1",
+  "latestVersion": "1.0.2",
   "downloadUrl": "https://filmsnap-pro.netlify.app/download",
-  "releaseNotes": "Blank Screen Error Fixed - v1.0.1"
+  "releaseNotes": "Navigation bar overlap fixed",
+  "versionsUrl": "https://filmsnap-pro.netlify.app/versions"
 }
