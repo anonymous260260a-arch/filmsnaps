@@ -122,8 +122,8 @@ function createMainWindow(): void {
     }
   });
 
-  // Set up the native app menu
-  setupAppMenu();
+  // Remove native menu bar — app uses its own header navigation
+  Menu.setApplicationMenu(null);
 
   // Load the Next.js app
   if (IS_DEV) {
@@ -180,106 +180,6 @@ function startNextServer(): void {
     console.log(`[NextServer] Exited with code ${code}`);
     nextServerProcess = null;
   });
-}
-
-// ── App Menu ──
-
-function setupAppMenu(): void {
-  const isMac = process.platform === 'darwin';
-
-  const template: Electron.MenuItemConstructorOptions[] = [
-    ...(isMac
-      ? [
-          {
-            label: 'FilmSnaps',
-            submenu: [
-              { role: 'about' as const },
-              { type: 'separator' as const },
-              { role: 'hide' as const },
-              { role: 'hideOthers' as const },
-              { role: 'unhide' as const },
-              { type: 'separator' as const },
-              { role: 'quit' as const },
-            ],
-          } as Electron.MenuItemConstructorOptions,
-        ]
-      : []),
-    {
-      label: 'File',
-      submenu: [
-        {
-          label: 'Open Video Window',
-          accelerator: 'CmdOrCtrl+W',
-          enabled: false, // Controlled by app state
-        },
-        { type: 'separator' },
-        isMac ? { role: 'close' } : { role: 'quit' },
-      ],
-    },
-    {
-      label: 'Edit',
-      submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' },
-      ],
-    },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
-      ],
-    },
-    {
-      label: 'Navigate',
-      submenu: [
-        {
-          label: 'Home',
-          accelerator: 'CmdOrCtrl+1',
-          click: () => mainWindow?.loadURL(IS_DEV ? DEV_SERVER_URL : 'http://localhost:3000'),
-        },
-      ],
-    },
-    {
-      label: 'Window',
-      submenu: [
-        { role: 'minimize' },
-        { role: 'zoom' },
-        ...(isMac
-          ? [
-              { type: 'separator' as const },
-              { role: 'front' as const },
-            ]
-          : [{ role: 'close' as const }]),
-      ],
-    },
-    {
-      label: 'Help',
-      submenu: [
-        {
-          label: 'About FilmSnaps Desktop',
-          click: () => {
-            // Native about dialog — in v1 this is informational only
-          },
-        },
-      ],
-    },
-  ];
-
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
 }
 
 // ── App Lifecycle ──

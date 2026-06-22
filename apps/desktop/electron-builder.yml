@@ -23,6 +23,8 @@ extraResources:
     to: web
   - from: ../web/public
     to: web/apps/web/public
+  - from: ../web/.next/static
+    to: web/apps/web/.next/static
 
 # GitHub Releases — used for distribution and auto-updates
 publish:
