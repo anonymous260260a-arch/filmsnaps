@@ -3,6 +3,7 @@
 appId: com.filmsnaps.desktop
 productName: FilmSnaps
 copyright: Copyright © 2026 FilmSnaps
+electronVersion: 42.4.1
 
 directories:
   output: release
@@ -11,6 +12,8 @@ directories:
 files:
   - dist/**/*
   - resources/**/*
+
+icon: resources/icon.ico
 
 # In production, bundle the web app's Next.js standalone output
 # so Electron can serve the app locally. The standalone output
@@ -40,7 +43,10 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  unicode: true
+  perMachine: false
   artifactName: "FilmSnaps-Setup-${version}.${ext}"
+  guid: "3A7B9D1F-5C8E-4F2A-B1D6-9E0F3A7C8B2D"
 
 mac:
   target:
