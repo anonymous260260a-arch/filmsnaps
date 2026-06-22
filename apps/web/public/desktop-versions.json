@@ -1,6 +1,29 @@
 {
   "versions": [
     {
+      "version": "1.0.1",
+      "date": "2026-06-22",
+      "releaseNotes": "Bug fixes: removed native menu bar, fixed missing CSS styling, custom app icon, and auto-update support.",
+      "platforms": {
+        "win": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.1-desktop/FilmSnaps-Setup-1.0.1.exe",
+          "size": "114 MB"
+        },
+        "mac": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.1-desktop/FilmSnaps-1.0.1-x64.dmg",
+          "size": "~110 MB"
+        },
+        "mac-arm": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.1-desktop/FilmSnaps-1.0.1-arm64.dmg",
+          "size": "~105 MB"
+        },
+        "linux": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.1-desktop/FilmSnaps-1.0.1.AppImage",
+          "size": "~95 MB"
+        }
+      }
+    },
+    {
       "version": "1.0.0",
       "date": "2026-06-22",
       "releaseNotes": "Initial desktop release. Browse movies and TV shows with the same great FilmSnaps experience — now native on desktop. Secure video player window with 6-layer security protection: ad blocking, popup blocking, navigation guards, session isolation, and resource monitoring.",
