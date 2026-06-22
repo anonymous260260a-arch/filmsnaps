@@ -30,6 +30,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# desktop app builds
+apps/desktop/dist/
+apps/desktop/release/
+
 # opennext / cloudflare build output
 .open-next/
 

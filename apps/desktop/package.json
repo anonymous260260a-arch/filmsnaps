@@ -1,0 +1,27 @@
+{
+  "name": "@filmsnaps/desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FilmSnaps Desktop App — secure streaming with Electron",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"cd ../web && pnpm dev\" \"wait-on http://localhost:3000 && tsc && pnpm exec electron . --dev\"",
+    "build": "tsc",
+    "dist": "pnpm build && electron-builder --publish=never",
+    "dist:publish": "pnpm build && electron-builder --publish=always",
+    "pack": "pnpm build && electron-builder --dir",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist release"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "concurrently": "^9.1.0",
+    "electron": "^42.4.1",
+    "electron-builder": "^25.1.0",
+    "typescript": "^5.7.0",
+    "wait-on": "^8.0.0"
+  }
+}

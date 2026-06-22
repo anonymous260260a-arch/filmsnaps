@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1025"/>
+      <stop offset="100%" style="stop-color:#0d0d1a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8b5cf6"/>
+      <stop offset="100%" style="stop-color:#f59e0b"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- Film frame icon -->
+  <rect x="96" y="96" width="320" height="320" rx="40" fill="none" stroke="url(#accent)" stroke-width="20"/>
+  <circle cx="160" cy="160" r="12" fill="#8b5cf6" opacity="0.6"/>
+  <circle cx="352" cy="160" r="12" fill="#8b5cf6" opacity="0.6"/>
+  <circle cx="160" cy="352" r="12" fill="#f59e0b" opacity="0.6"/>
+  <circle cx="352" cy="352" r="12" fill="#f59e0b" opacity="0.6"/>
+  <!-- Play triangle -->
+  <polygon points="208,200 208,312 304,256" fill="url(#accent)"/>
+  <!-- Shield highlight -->
+  <circle cx="380" cy="420" r="60" fill="#8b5cf6" opacity="0.08"/>
+</svg>

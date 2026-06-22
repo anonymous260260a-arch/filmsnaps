@@ -4,7 +4,7 @@ import { Providers } from '@/lib/providers';
 import { Toaster } from '@/components/ui/toaster';
 import { AuthProvider } from '@/components/AuthProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { PwaInstaller } from '@/components/PwaInstaller';
+import { UpdateNotifier } from '@/components/UpdateNotifier';
 import { Metadata } from 'next';
 
 const inter = Inter({
@@ -111,7 +111,7 @@ export default async function RootLayout({
             <AuthProvider>
               {children}
               <Toaster />
-              <PwaInstaller />
+              <UpdateNotifier />
             </AuthProvider>
           </Providers>
         </ErrorBoundary>

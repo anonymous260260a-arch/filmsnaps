@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from './AuthProvider';
 import { useToast } from '@/hooks/use-toast';
-import { tmdbApi, getImageUrl } from '@/lib/tmdb';
+import { tmdbApi, getImageUrl, rankSearchResults, smartSearch } from '@/lib/tmdb';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useQuery } from '@tanstack/react-query';
 
@@ -51,6 +51,14 @@ export function Header() {
   const searchDropdownRef = useRef<HTMLDivElement>(null);
   const searchBtnRef = useRef<HTMLButtonElement>(null);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
+
+  // Detect Electron desktop environment
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.electronAPI?.isDesktop) {
+      setIsDesktop(true);
+    }
+  }, []);
 
   const navLinks = useMemo(
     () => [
@@ -58,15 +66,15 @@ export function Header() {
       { href: '/movie', label: 'Movies' },
       { href: '/tv', label: 'TV Shows' },
       { href: '/saved', label: 'Saved', count: savedMovies?.length },
-      { href: '/download', label: 'Download' },
+      ...(!isDesktop ? [{ href: '/download', label: 'Download' }] : []),
     ],
-    [savedMovies?.length]
+    [savedMovies?.length, isDesktop]
   );
 
   // Search suggestions
   const { data: searchResults } = useQuery({
     queryKey: ['header-search', debouncedQuery],
-    queryFn: () => tmdbApi.searchMulti(debouncedQuery),
+    queryFn: () => smartSearch(debouncedQuery),
     enabled: debouncedQuery.length > 1,
     staleTime: 30 * 1000,
     gcTime: 60 * 1000,
@@ -74,10 +82,8 @@ export function Header() {
 
   const suggestions = useMemo(() => {
     if (!searchResults?.results) return [];
-    return searchResults.results
-      .filter((r: any) => r.media_type === 'movie' || r.media_type === 'tv')
-      .slice(0, 6);
-  }, [searchResults]);
+    return rankSearchResults(searchResults.results, debouncedQuery, 6);
+  }, [searchResults, debouncedQuery]);
 
   // Keyboard shortcut
   useEffect(() => {
@@ -206,7 +212,7 @@ export function Header() {
               >
                 {link.label}
                 {link.count !== undefined && link.count > 0 && (
-                  <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold rounded-full bg-primary/20 text-primary">
+                  <span suppressHydrationWarning className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold rounded-full bg-primary/20 text-primary">
                     {link.count > 99 ? '99+' : link.count}
                   </span>
                 )}
@@ -230,7 +236,7 @@ export function Header() {
               {searchOpen && (
                 <div
                   ref={searchDropdownRef}
-                  className="fixed md:absolute md:top-full md:right-0 md:mt-2 md:w-[420px] md:rounded-2xl glass-light border border-white/[0.06] shadow-2xl overflow-hidden z-[60] animate-fade-in"
+                  className="fixed md:absolute md:top-full md:right-0 md:mt-2 md:w-[420px] md:rounded-2xl bg-[#0a0a0f]/90 backdrop-blur-2xl border border-white/[0.06] shadow-2xl overflow-hidden z-[60] animate-fade-in"
                   style={{
                     // On mobile it's full screen, on desktop it's positioned below the button
                   }}
@@ -514,7 +520,7 @@ export function Header() {
             >
               {link.label}
               {link.count !== undefined && link.count > 0 && (
-                <span className="inline-flex items-center justify-center min-w-[20px] h-[20px] px-1.5 text-[10px] font-bold rounded-full bg-primary/20 text-primary">
+                <span suppressHydrationWarning className="inline-flex items-center justify-center min-w-[20px] h-[20px] px-1.5 text-[10px] font-bold rounded-full bg-primary/20 text-primary">
                   {link.count > 99 ? '99+' : link.count}
                 </span>
               )}

@@ -1,11 +1,195 @@
 import Link from 'next/link';
-import { Download, Smartphone, Shield, ExternalLink, Clock } from 'lucide-react';
-import versionsData from '../../public/versions.json';
+import {
+  Download,
+  Smartphone,
+  Monitor,
+  Apple,
+  LinuxIcon,
+  Shield,
+  ExternalLink,
+  Clock,
+  ChevronRight,
+  Github,
+} from 'lucide-react';
 
-const versions = versionsData.versions;
-const latest = versions[0];
-const APK_URL = process.env.NEXT_PUBLIC_APK_DOWNLOAD_URL || latest?.downloadUrl || '#';
-const LATEST_VERSION = latest?.version || '1.0.0';
+import mobileVersions from '../../public/versions.json';
+import desktopVersions from '../../public/desktop-versions.json';
+
+// ── Platform definitions ──
+
+type PlatformId = 'android' | 'windows' | 'mac' | 'linux';
+
+interface PlatformInfo {
+  id: PlatformId;
+  label: string;
+  icon: React.ReactNode;
+  description: string;
+  requirements: string;
+  downloadLabel: string;
+  artifactPattern: string;
+}
+
+const PLATFORMS: PlatformInfo[] = [
+  {
+    id: 'android',
+    label: 'Android',
+    icon: <Smartphone className="w-5 h-5" />,
+    description: 'The full FilmSnaps experience on your phone or tablet.',
+    requirements: 'Requires Android 8.0+ (API 26+)',
+    downloadLabel: 'Download APK',
+    artifactPattern: 'filmsnaps-v{version}.apk',
+  },
+  {
+    id: 'windows',
+    label: 'Windows',
+    icon: <Monitor className="w-5 h-5" />,
+    description: 'Native Windows app with secure video player.',
+    requirements: 'Windows 10 64-bit or later',
+    downloadLabel: 'Download Installer',
+    artifactPattern: 'FilmSnaps-Setup-{version}.exe',
+  },
+  {
+    id: 'mac',
+    label: 'macOS',
+    icon: <Apple className="w-5 h-5" />,
+    description: 'Native macOS app — Intel & Apple Silicon.',
+    requirements: 'macOS 11 Big Sur or later',
+    downloadLabel: 'Download DMG',
+    artifactPattern: 'FilmSnaps-{version}-{arch}.dmg',
+  },
+  {
+    id: 'linux',
+    label: 'Linux',
+    icon: <LinuxIcon className="w-5 h-5" />,
+    description: 'AppImage for all major Linux distributions.',
+    requirements: 'AppImage runtime required',
+    downloadLabel: 'Download AppImage',
+    artifactPattern: 'FilmSnaps-{version}.AppImage',
+  },
+];
+
+// ── Helpers ──
+
+const mobileLatest = mobileVersions.versions[0];
+const desktopLatest = desktopVersions.versions[0];
+
+function getDownloadUrl(platform: PlatformId): string | null {
+  if (platform === 'android') {
+    return mobileLatest?.downloadUrl ?? null;
+  }
+  // Desktop platforms
+  const map: Record<string, string | undefined> = {
+    windows: desktopLatest?.platforms?.win?.downloadUrl,
+    mac: desktopLatest?.platforms?.mac?.downloadUrl,
+    linux: desktopLatest?.platforms?.linux?.downloadUrl,
+  };
+  return map[platform] ?? null;
+}
+
+function getFileSize(platform: PlatformId): string | null {
+  if (platform === 'android') return mobileLatest?.size ?? null;
+  const map: Record<string, string | undefined> = {
+    windows: desktopLatest?.platforms?.win?.size,
+    mac: desktopLatest?.platforms?.mac?.size,
+    linux: desktopLatest?.platforms?.linux?.size,
+  };
+  return map[platform] ?? null;
+}
+
+function getVersion(platform: PlatformId): string {
+  return platform === 'android' ? mobileLatest?.version : desktopLatest?.version;
+}
+
+// ── Platform details (shown below download card) ──
+
+const PLATFORM_NOTES: Record<PlatformId, { icon: React.ReactNode; title: string; body: React.ReactNode }[]> = {
+  android: [
+    {
+      icon: <Smartphone className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />,
+      title: 'Android Only',
+      body: <>Requires Android 8.0+ (API 26+). iOS version coming soon.</>,
+    },
+    {
+      icon: <Shield className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />,
+      title: 'Sideload Only',
+      body: (
+        <>
+          Not available on Google Play. You may need to enable{' '}
+          <span className="text-zinc-300">Install from unknown sources</span> in
+          your device settings.
+        </>
+      ),
+    },
+  ],
+  windows: [
+    {
+      icon: <Shield className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
+      title: '6-Layer Security',
+      body: (
+        <>
+          Ad blocking, popup protection, navigation guards, and session isolation
+          built in at the OS level — provider scripts cannot bypass.
+        </>
+      ),
+    },
+    {
+      icon: <ExternalLink className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
+      title: 'Auto-Updates',
+      body: (
+        <>
+          The app checks for updates on launch and downloads new versions in the
+          background — no manual re-downloads needed.
+        </>
+      ),
+    },
+  ],
+  mac: [
+    {
+      icon: <Shield className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
+      title: '6-Layer Security',
+      body: (
+        <>
+          Ad blocking, popup protection, navigation guards, and session isolation
+          built in at the OS level — provider scripts cannot bypass.
+        </>
+      ),
+    },
+    {
+      icon: <ExternalLink className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
+      title: 'Auto-Updates',
+      body: (
+        <>
+          The app checks for updates on launch and downloads new versions in the
+          background — no manual re-downloads needed.
+        </>
+      ),
+    },
+  ],
+  linux: [
+    {
+      icon: <Shield className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
+      title: '6-Layer Security',
+      body: (
+        <>
+          Ad blocking, popup protection, navigation guards, and session isolation
+          built in at the OS level — provider scripts cannot bypass.
+        </>
+      ),
+    },
+    {
+      icon: <ExternalLink className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
+      title: 'Auto-Updates',
+      body: (
+        <>
+          The app checks for updates on launch and downloads new versions in the
+          background — no manual re-downloads needed.
+        </>
+      ),
+    },
+  ],
+};
+
+// ── Component ──
 
 export default function DownloadPage() {
   return (
@@ -25,129 +209,131 @@ export default function DownloadPage() {
         </div>
       </header>
 
-      <main className="max-w-2xl mx-auto px-4 pt-16 pb-24">
-        {/* Title */}
-        <div className="text-center mb-12">
-          <div className="w-16 h-16 rounded-2xl bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
-            <Download className="w-8 h-8 text-amber-500" />
-          </div>
-          <h1 className="text-3xl font-bold text-white mb-2">
-            Download FilmSnaps
-          </h1>
-          <p className="text-zinc-400 text-sm">
-            Get the official FilmSnaps Android app
-          </p>
-        </div>
+      <PlatformDownloadSection />
 
-        {/* Version card */}
-        <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <span className="text-zinc-400 text-xs uppercase tracking-wider">
-                Latest Version
-              </span>
-              <p className="text-white text-xl font-bold mt-0.5">
-                v{LATEST_VERSION}
-              </p>
-            </div>
-            <span className="bg-emerald-500/10 text-emerald-400 text-xs px-3 py-1 rounded-full font-medium">
-              Stable
-            </span>
-          </div>
-
-          <a
-            href={APK_URL}
-            download
-            className={`w-full py-3.5 rounded-xl flex items-center justify-center gap-2 text-base font-bold transition-all ${
-              APK_URL === '#'
-                ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-                : 'bg-amber-500 text-black hover:bg-amber-400 active:scale-[0.98]'
-            }`}
-          >
-            <Download className="w-5 h-5" />
-            {APK_URL === '#' ? 'Coming Soon' : 'Download APK'}
-          </a>
-
-          <p className="text-zinc-600 text-xs text-center mt-3">
-            {APK_URL === '#'
-              ? 'APK is being built — check back soon'
-              : 'Direct APK download • ~90MB'}
-          </p>
-        </div>
-
-        {/* Version history link */}
+      {/* Version history link */}
+      <div className="max-w-2xl mx-auto px-4 text-center pb-24">
         <Link
           href="/versions"
-          className="flex items-center justify-center gap-2 text-zinc-500 hover:text-amber-400 text-sm transition-colors mb-8"
+          className="inline-flex items-center gap-2 text-zinc-500 hover:text-amber-400 text-sm transition-colors"
         >
           <Clock className="w-4 h-4" />
           View all versions & release notes
+          <ChevronRight className="w-3.5 h-3.5" />
         </Link>
-
-        {/* Info cards */}
-        <div className="grid gap-3">
-          <div className="bg-zinc-900/50 rounded-xl border border-zinc-800/50 p-4 flex items-start gap-3">
-            <Smartphone className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-            <div>
-              <h3 className="text-white text-sm font-semibold mb-1">
-                Android Only
-              </h3>
-              <p className="text-zinc-500 text-xs leading-relaxed">
-                Requires Android 8.0+ (API 26+). iOS version coming soon.
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-zinc-900/50 rounded-xl border border-zinc-800/50 p-4 flex items-start gap-3">
-            <Shield className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-            <div>
-              <h3 className="text-white text-sm font-semibold mb-1">
-                Sideload Only
-              </h3>
-              <p className="text-zinc-500 text-xs leading-relaxed">
-                Not available on Google Play. You may need to enable{' '}
-                <span className="text-zinc-300">Install from unknown sources</span>{' '}
-                in your device settings.
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-zinc-900/50 rounded-xl border border-zinc-800/50 p-4 flex items-start gap-3">
-            <ExternalLink className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-            <div>
-              <h3 className="text-white text-sm font-semibold mb-1">
-                Updates
-              </h3>
-              <p className="text-zinc-500 text-xs leading-relaxed">
-                The app checks for updates automatically on launch. You can also
-                revisit this page for the latest version.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* How to install */}
-        <details className="mt-8 group">
-          <summary className="text-zinc-400 text-sm cursor-pointer hover:text-zinc-300 transition-colors select-none">
-            How to install on Android
-          </summary>
-          <ol className="mt-4 text-zinc-500 text-xs space-y-2 list-decimal list-inside">
-            <li>Download the APK file above</li>
-            <li>
-              Open the file from your notification bar or Downloads folder
-            </li>
-            <li>
-              If prompted, tap <span className="text-zinc-300">Settings</span>{' '}
-              and enable{' '}
-              <span className="text-zinc-300">
-                Allow from this source
-              </span>
-            </li>
-            <li>Tap <span className="text-zinc-300">Install</span></li>
-            <li>Open FilmSnaps and enjoy!</li>
-          </ol>
-        </details>
-      </main>
+      </div>
     </div>
+  );
+}
+
+function PlatformDownloadSection() {
+  return (
+    <main className="max-w-4xl mx-auto px-4 pt-12 pb-16">
+      {/* Title */}
+      <div className="text-center mb-10">
+        <div className="w-16 h-16 rounded-2xl bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
+          <Download className="w-8 h-8 text-amber-500" />
+        </div>
+        <h1 className="text-3xl font-bold text-white mb-2">
+          Download FilmSnaps
+        </h1>
+        <p className="text-zinc-400 text-sm">
+          Choose your platform — same great experience everywhere
+        </p>
+      </div>
+
+      {/* Download cards — one per platform */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+        {PLATFORMS.map((platform) => {
+          const downloadUrl = getDownloadUrl(platform.id);
+          const version = getVersion(platform.id);
+          const fileSize = getFileSize(platform.id);
+          const hasDownload = downloadUrl !== null && downloadUrl !== '#';
+
+          return (
+            <div
+              key={platform.id}
+              className="bg-zinc-900 rounded-2xl border border-zinc-800 p-5 hover:border-zinc-700 transition-all group"
+            >
+              {/* Header */}
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-zinc-400 group-hover:text-white transition-colors">
+                  {platform.icon}
+                </span>
+                <div>
+                  <h2 className="text-white font-bold">{platform.label}</h2>
+                  <p className="text-zinc-500 text-xs">{platform.requirements}</p>
+                </div>
+              </div>
+
+              <p className="text-zinc-400 text-xs mb-4 leading-relaxed">
+                {platform.description}
+              </p>
+
+              {/* Version badge */}
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-zinc-600 text-[11px] uppercase tracking-wider">
+                  Latest
+                </span>
+                <span className="text-white text-sm font-mono font-bold">
+                  v{version}
+                </span>
+                {fileSize && (
+                  <span className="text-zinc-600 text-xs ml-auto">
+                    {fileSize}
+                  </span>
+                )}
+              </div>
+
+              {/* Download button */}
+              <a
+                href={downloadUrl ?? '#'}
+                download={platform.id === 'android'}
+                className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all ${
+                  hasDownload
+                    ? 'bg-amber-500 text-black hover:bg-amber-400 active:scale-[0.98]'
+                    : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                }`}
+              >
+                <Download className="w-4 h-4" />
+                {hasDownload ? platform.downloadLabel : 'Coming Soon'}
+              </a>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Platform-specific info cards */}
+      {PLATFORMS.map((platform) => {
+        const notes = PLATFORM_NOTES[platform.id];
+        if (!notes) return null;
+        return (
+          <div
+            key={`notes-${platform.id}`}
+            className="bg-zinc-900/50 rounded-xl border border-zinc-800/50 p-4 mb-3 last:mb-0"
+          >
+            <h3 className="text-white text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-2">
+              {platform.icon}
+              <span>{platform.label}</span>
+            </h3>
+            <div className="grid gap-3">
+              {notes.map((note, i) => (
+                <div key={i} className="flex items-start gap-3">
+                  {note.icon}
+                  <div>
+                    <h4 className="text-white text-sm font-semibold mb-0.5">
+                      {note.title}
+                    </h4>
+                    <p className="text-zinc-500 text-xs leading-relaxed">
+                      {note.body}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </main>
   );
 }

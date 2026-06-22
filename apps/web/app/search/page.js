@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Search, Film, ArrowLeft } from 'lucide-react';
-import { tmdbApi, getImageUrl } from '@/lib/tmdb';
+import { tmdbApi, getImageUrl, rankSearchResults, smartSearch } from '@/lib/tmdb';
 import { useDebounce } from '@/hooks/useDebounce';
 import { Header } from '@/components/Header';
 import { MovieCard } from '@/components/MovieCard';
@@ -26,7 +26,7 @@ export default function SearchPage() {
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ['search', debouncedQuery],
-    queryFn: () => tmdbApi.searchMulti(debouncedQuery),
+    queryFn: () => smartSearch(debouncedQuery),
     enabled: debouncedQuery.length > 0,
     staleTime: 5 * 60 * 1000,
     gcTime: 15 * 60 * 1000,
@@ -41,9 +41,9 @@ export default function SearchPage() {
     }
   }, [debouncedQuery, initialQuery, router]);
 
-  const results = data?.results?.filter(
-    (item) => item.media_type === 'movie' || item.media_type === 'tv'
-  );
+  const results = data?.results
+    ? rankSearchResults(data.results, debouncedQuery)
+    : [];
 
   return (
     <div className="min-h-screen bg-background">
