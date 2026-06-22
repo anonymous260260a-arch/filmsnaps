@@ -30,8 +30,8 @@ export function UpdateNotifier() {
       }
     };
 
-    window.electronAPI.onUpdateStatus(listener);
-    return () => window.electronAPI.removeUpdateStatusListener?.();
+    window.electronAPI?.onUpdateStatus(listener);
+    return () => window.electronAPI?.removeUpdateStatusListener?.();
   }, []);
 
   const handleInstall = useCallback(() => {

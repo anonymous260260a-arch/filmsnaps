@@ -4,7 +4,7 @@ import {
   Smartphone,
   Monitor,
   Apple,
-  LinuxIcon,
+  Terminal,
   Shield,
   ExternalLink,
   Clock,
@@ -60,7 +60,7 @@ const PLATFORMS: PlatformInfo[] = [
   {
     id: 'linux',
     label: 'Linux',
-    icon: <LinuxIcon className="w-5 h-5" />,
+    icon: <Terminal className="w-5 h-5" />,
     description: 'AppImage for all major Linux distributions.',
     requirements: 'AppImage runtime required',
     downloadLabel: 'Download AppImage',

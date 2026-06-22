@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Standalone output bundles all deps for self-contained deployment
+  output: 'standalone',
   reactStrictMode: true,
 
   // Performance optimizations
