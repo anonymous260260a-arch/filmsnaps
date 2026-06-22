@@ -26,7 +26,7 @@ import { initUpdater, quitAndInstall, checkForUpdates } from './updater';
 const IS_DEV = process.argv.includes('--dev');
 const WEB_APP_DIR = IS_DEV
   ? join(__dirname, '../../apps/web')
-  : join(process.resourcesPath, 'web');
+  : join(process.resourcesPath, 'web', 'apps', 'web');
 const DEV_SERVER_URL = 'http://localhost:3000';
 
 /** Resolve path to an app resource (works in both dev and production) */
@@ -145,7 +145,11 @@ function createMainWindow(): void {
 function startNextServer(): void {
   console.log('[Main] Starting Next.js production server...');
 
-  nextServerProcess = spawn('npx', ['next', 'start'], {
+  // The standalone output bundles the server at `server.js` inside WEB_APP_DIR.
+  // We run it directly with Node, passing the port via env.
+  const serverScript = join(WEB_APP_DIR, 'server.js');
+
+  nextServerProcess = spawn('node', [serverScript], {
     cwd: WEB_APP_DIR,
     env: {
       ...process.env,
@@ -158,7 +162,7 @@ function startNextServer(): void {
   nextServerProcess.stdout?.on('data', (data: Buffer) => {
     const msg = data.toString();
     console.log(`[NextServer] ${msg}`);
-    if (msg.includes('started') || msg.includes('localhost:3000')) {
+    if (msg.includes('started') || msg.includes('localhost:')) {
       // Server is ready — load the app
       mainWindow?.loadURL(DEV_SERVER_URL);
     }

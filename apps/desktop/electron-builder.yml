@@ -12,16 +12,14 @@ files:
   - dist/**/*
   - resources/**/*
 
-# In production, bundle the web app's built output so Electron
-# can run `next start` locally without needing a separate deploy.
+# In production, bundle the web app's Next.js standalone output
+# so Electron can serve the app locally. The standalone output
+# includes the server + all necessary node_modules + static files.
 extraResources:
-  - from: ../web
+  - from: ../web/.next/standalone
     to: web
-    filter:
-      - .next/**/*
-      - public/**/*
-      - package.json
-      - node_modules/**/*
+  - from: ../web/public
+    to: web/apps/web/public
 
 # GitHub Releases — used for distribution and auto-updates
 publish:
@@ -35,7 +33,6 @@ win:
     - target: nsis
       arch:
         - x64
-  icon: resources/icon.png
   artifactName: "FilmSnaps-Setup-${version}.${ext}"
 
 nsis:
@@ -43,8 +40,6 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  installerIcon: resources/icon.png
-  uninstallerIcon: resources/icon.png
   artifactName: "FilmSnaps-Setup-${version}.${ext}"
 
 mac:
@@ -53,21 +48,18 @@ mac:
       arch:
         - x64
         - arm64
-  icon: resources/icon.png
   category: public.app-category.entertainment
   darkModeSupport: true
   artifactName: "FilmSnaps-${version}-${arch}.${ext}"
 
 dmg:
   title: FilmSnaps
-  icon: resources/icon.png
 
 linux:
   target:
     - target: AppImage
       arch:
         - x64
-  icon: resources/icon.png
   category: AudioVideo
   synopsis: Cross-platform streaming desktop app
   description: Browse, search, and watch movies and TV shows securely.
