@@ -13,7 +13,11 @@
     "build:web": "cd apps/web && pnpm build",
     "cf:build": "cd apps/web && pnpm cf:build",
     "cf:deploy": "cd apps/web && pnpm cf:deploy",
-    "dev:mobile": "cd apps/mobile && pnpm expo start"
+    "dev:mobile": "cd apps/mobile && pnpm expo start",
+    "dev:desktop": "cd apps/desktop && pnpm dev",
+    "build:desktop": "cd apps/desktop && pnpm build",
+    "dist:desktop": "cd apps/desktop && pnpm dist",
+    "typecheck:desktop": "cd apps/desktop && pnpm typecheck"
   },
   "devDependencies": {
     "turbo": "^2.0.0",

@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useTransition, useRef, useCallback, useEffect } from "react";
+import Link from 'next/link';
 import {
   ChevronDown,
   RefreshCw,
@@ -9,9 +10,12 @@ import {
   X,
   Maximize,
   Minimize,
+  ArrowLeft,
+  Film,
 } from "lucide-react";
 import { getSeasonAction } from "@/lib/actions";
 import { getEnabledProviders } from '@filmsnaps/shared';
+import { getImageUrl } from '@/lib/tmdb';
 
 /**
  * WatchClient — Cinematic Theater Mode
@@ -26,15 +30,21 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData, defaultP
   const [activeEpisode, setActiveEpisode] = useState(propEpisode ?? 1);
   const [showNotice, setShowNotice] = useState(true);
 
+  // ── Detect Electron desktop environment ──
+  const isDesktop = typeof window !== 'undefined' && window.electronAPI?.isDesktop === true;
+
   // ── Providers sourced from the shared registry ──
+  const providerConfigs = React.useMemo(() => getEnabledProviders(), []);
   const Providers = React.useMemo(
     () =>
-      getEnabledProviders().map((p) => ({
+      providerConfigs.map((p) => ({
         name: p.name,
         displayName: p.displayName || p.name,
         proxyKey: p.id,
+        baseUrl: p.baseUrl,
+        embed: p.embed,
       })),
-    [],
+    [providerConfigs],
   );
 
   // Use defaultProvider from URL if available, otherwise first provider
@@ -43,11 +53,81 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData, defaultP
     : Providers[0];
 
   const [selectedProvider, setSelectedProvider] = useState(initialProvider);
+  const [electronVideoOpen, setElectronVideoOpen] = useState(false);
   const playerContainerRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const iframeRef = useRef(null);
   const [cpuWarning, setCpuWarning] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0); // incremented to reload iframe
+  const activeProviderRef = useRef(null);
+
+  // ── Electron: Open / re-open secure video window ─────
+  // Opens when the provider changes (mount counts as first change).
+  // The backend (video-window.ts) closeVideoWindow() is called at the
+  // top of openVideoWindow(), so only one window is ever open.
+  // Season/episode changes do NOT trigger a re-open — the user must
+  // switch to a different server to replace the player.
+  useEffect(() => {
+    if (!isDesktop) return;
+
+    const provider = providerConfigs.find(p => p.id === selectedProvider?.proxyKey);
+    if (!provider || !provider.baseUrl || !provider.embed) return;
+
+    // Only open when the provider key actually changes (skip on other dep changes)
+    if (activeProviderRef.current === selectedProvider?.proxyKey) return;
+    activeProviderRef.current = selectedProvider?.proxyKey ?? null;
+
+    // Build the direct provider embed URL (not the proxied URL)
+    let embedPath;
+    try {
+      if (plat === 'tv') {
+        embedPath = provider.embed.tv(contentid, selectedSeason, activeEpisode);
+      } else {
+        embedPath = provider.embed.movie(contentid);
+      }
+    } catch (e) {
+      console.error('[Desktop] Failed to build embed URL:', e);
+      return;
+    }
+
+    const embedUrl = `${provider.baseUrl.replace(/\/+$/, '')}/${embedPath.replace(/^\/+/, '')}`;
+
+    console.log('[Desktop] Opening secure video window:', embedUrl.substring(0, 80));
+    window.electronAPI.openVideo({
+      type: plat,
+      id: contentid,
+      season: plat === 'tv' ? selectedSeason : undefined,
+      episode: plat === 'tv' ? activeEpisode : undefined,
+      provider: provider.id,
+      embedUrl,
+    }).then((result) => {
+      if (result.success) {
+        setElectronVideoOpen(true);
+      } else {
+        console.error('[Desktop] Failed to open video window:', result.error);
+      }
+    });
+  }, [isDesktop, selectedProvider]);
+
+  // Listen for video window closed by user
+  useEffect(() => {
+    if (!isDesktop || !window.electronAPI) return;
+
+    const handleClosed = () => setElectronVideoOpen(false);
+    window.electronAPI.onVideoClosed(handleClosed);
+    return () => window.electronAPI.removeVideoClosedListener();
+  }, [isDesktop]);
+
+  // Clean up video window on component unmount
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && window.electronAPI) {
+        window.electronAPI.closeVideo();
+        window.electronAPI.removeVideoClosedListener();
+      }
+    };
+  }, []);
+
   // ── Parent-side navigation guard ──────────────────────────────
   // Blocks `top.location` escape from cross-origin iframes.
   //
@@ -376,50 +456,99 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData, defaultP
         )}
 
 
-        {/* Video Player */}
-        <div
-          ref={playerContainerRef}
-          className="relative aspect-video w-full rounded-xl sm:rounded-2xl overflow-hidden bg-zinc-900 shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08] group/player"
-        >
-          {/* Ambient glow */}
-          <div className="absolute -inset-4 bg-gradient-radial from-primary/5 via-transparent to-transparent opacity-60 pointer-events-none z-0" />
-          <iframe
-            ref={iframeRef}
-            className="absolute inset-0 w-full h-full z-10"
-            src={getEmbedUrl()}
-            key={`provider-${refreshKey}`}
-            referrerPolicy="no-referrer"
-            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-            allowFullScreen
-            title="Video player"
+        {/* Video Player — Desktop (Electron) vs Web (iframe) */}
+        {isDesktop && electronVideoOpen ? (
+          <DesktopVideoPlayer
+            provider={selectedProvider}
+            meta={initialMeta}
+            plat={plat}
+            onReopen={() => {
+              // Trigger re-open by toggling electronVideoOpen
+              setElectronVideoOpen(false);
+              // Re-trigger via the useEffect
+              setTimeout(() => {
+                const provider = providerConfigs.find(p => p.id === selectedProvider?.proxyKey);
+                if (!provider) return;
+                let embedPath;
+                try {
+                  if (plat === 'tv') {
+                    embedPath = provider.embed.tv(contentid, selectedSeason, activeEpisode);
+                  } else {
+                    embedPath = provider.embed.movie(contentid);
+                  }
+                } catch(e) { return; }
+                const embedUrl = `${provider.baseUrl.replace(/\/+$/, '')}/${embedPath.replace(/^\/+/, '')}`;
+                window.electronAPI?.openVideo({ type: plat, id: contentid, provider: provider.id, embedUrl })
+                  .then(r => { if (r.success) setElectronVideoOpen(true); });
+              }, 100);
+            }}
           />
-
-          {isPending && (
-            <div className="absolute inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50">
-              <RefreshCw className="animate-spin text-white" size={32} />
-            </div>
-          )}
-
-          {/* Fullscreen button — appears on hover */}
-          <button
-            onClick={toggleFullscreen}
-            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-            className="absolute bottom-3 right-3 z-20 flex items-center gap-2 px-3 py-2 rounded-lg
-              bg-black/60 backdrop-blur-sm border border-white/10
-              text-white/80 hover:text-white hover:bg-black/80
-              opacity-0 group-hover/player:opacity-100
-              transition-all duration-200
-              text-xs font-semibold tracking-wide
-              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
+        ) : isDesktop && !electronVideoOpen ? (
+          <DesktopVideoIdle
+            provider={selectedProvider}
+            meta={initialMeta}
+            plat={plat}
+            onOpen={() => {
+              const provider = providerConfigs.find(p => p.id === selectedProvider?.proxyKey);
+              if (!provider) return;
+              let embedPath;
+              try {
+                if (plat === 'tv') {
+                  embedPath = provider.embed.tv(contentid, selectedSeason, activeEpisode);
+                } else {
+                  embedPath = provider.embed.movie(contentid);
+                }
+              } catch(e) { return; }
+              const embedUrl = `${provider.baseUrl.replace(/\/+$/, '')}/${embedPath.replace(/^\/+/, '')}`;
+              window.electronAPI?.openVideo({ type: plat, id: contentid, provider: provider.id, embedUrl })
+                .then(r => { if (r.success) setElectronVideoOpen(true); });
+            }}
+          />
+        ) : (
+          <div
+            ref={playerContainerRef}
+            className="relative aspect-video w-full rounded-xl sm:rounded-2xl overflow-hidden bg-zinc-900 shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08] group/player"
           >
-            {isFullscreen ? (
-              <Minimize size={16} />
-            ) : (
-              <Maximize size={16} />
+            {/* Ambient glow */}
+            <div className="absolute -inset-4 bg-gradient-radial from-primary/5 via-transparent to-transparent opacity-60 pointer-events-none z-0" />
+            <iframe
+              ref={iframeRef}
+              className="absolute inset-0 w-full h-full z-10"
+              src={getEmbedUrl()}
+              key={`provider-${refreshKey}`}
+              referrerPolicy="no-referrer"
+              allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+              allowFullScreen
+              title="Video player"
+            />
+
+            {isPending && (
+              <div className="absolute inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50">
+                <RefreshCw className="animate-spin text-white" size={32} />
+              </div>
             )}
-            <span className="hidden sm:inline">{isFullscreen ? "Exit" : ""}</span>
-          </button>
-        </div>
+
+            {/* Fullscreen button — appears on hover */}
+            <button
+              onClick={toggleFullscreen}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              className="absolute bottom-3 right-3 z-20 flex items-center gap-2 px-3 py-2 rounded-lg
+                bg-black/60 backdrop-blur-sm border border-white/10
+                text-white/80 hover:text-white hover:bg-black/80
+                opacity-0 group-hover/player:opacity-100
+                transition-all duration-200
+                text-xs font-semibold tracking-wide
+                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
+            >
+              {isFullscreen ? (
+                <Minimize size={16} />
+              ) : (
+                <Maximize size={16} />
+              )}
+              <span className="hidden sm:inline">{isFullscreen ? "Exit" : ""}</span>
+            </button>
+          </div>
+        )}
 
         {plat === "tv" && !minimal && (
           <>
@@ -550,5 +679,180 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData, defaultP
     </div>
   );
 };
+
+// ── Desktop: Shared player card with poster, title, and Back to Home ──
+function DesktopPlayerCard({ meta, plat, children, showBackButton = false }) {
+  const displayTitle = meta?.title || meta?.name || '';
+  const year = (meta?.release_date || meta?.first_air_date || '').slice(0, 4);
+  const posterUrl = meta?.poster_path ? getImageUrl(meta.poster_path, 'w185') : null;
+
+  return (
+    <div className="relative aspect-video w-full rounded-xl sm:rounded-2xl overflow-hidden bg-gradient-to-br from-[#0f0f1a] via-[#0a0a12] to-[#050510] shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08]">
+      {/* Cinematic gradient glow */}
+      <div className="absolute inset-0 bg-gradient-radial from-primary/[0.04] via-transparent to-transparent" />
+
+      {/* Back to Home button */}
+      {showBackButton && (
+        <div className="absolute top-3 left-3 z-20">
+          <Link
+            href="/"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black/40 backdrop-blur-sm border border-white/[0.06] text-white/70 hover:text-white text-xs font-semibold transition-all hover:bg-black/60 hover:border-white/20 active:scale-95"
+          >
+            <ArrowLeft size={14} />
+            Home
+          </Link>
+        </div>
+      )}
+
+      {/* Content row: poster + info/controls */}
+      <div className="absolute inset-0 flex items-center gap-6 p-6 sm:p-8">
+        {/* Poster thumbnail (hidden on small screens) */}
+        <div className="flex-shrink-0 hidden sm:block">
+          {posterUrl ? (
+            <img
+              src={posterUrl}
+              alt={displayTitle}
+              className="w-[100px] h-[150px] rounded-xl object-cover shadow-lg ring-1 ring-white/10"
+            />
+          ) : (
+            <div className="w-[100px] h-[150px] rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
+              <Film className="w-8 h-8 text-zinc-600" />
+            </div>
+          )}
+        </div>
+
+        {/* Info + status + controls */}
+        <div className="flex-1 min-w-0">
+          {/* Title & metadata */}
+          <div className="mb-3">
+            <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight truncate">
+              {displayTitle}
+            </h2>
+            <div className="flex items-center gap-2 mt-1">
+              {year && (
+                <span className="text-xs text-zinc-500 font-semibold">{year}</span>
+              )}
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 bg-white/[0.04] px-2 py-0.5 rounded">
+                {plat}
+              </span>
+            </div>
+          </div>
+          {children}
+        </div>
+      </div>
+
+      {/* Mobile: compact info overlay at bottom */}
+      <div className="sm:hidden absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent pointer-events-none">
+        <h3 className="text-sm font-bold text-white truncate">{displayTitle}</h3>
+        <div className="flex items-center gap-2 mt-0.5">
+          {year && <span className="text-xs text-zinc-400">{year}</span>}
+          <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">{plat}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Desktop: Video playing in Electron window ──
+function DesktopVideoPlayer({ provider, meta, plat, onReopen }) {
+  const [showLoader, setShowLoader] = useState(true);
+
+  useEffect(() => {
+    const t = setTimeout(() => setShowLoader(false), 2000);
+    return () => clearTimeout(t);
+  }, []);
+
+  return (
+    <DesktopPlayerCard meta={meta} plat={plat} showBackButton>
+      {showLoader ? (
+        <div className="flex items-center gap-3">
+          {/* Animated shield icon */}
+          <div className="relative">
+            <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+              <svg className="w-6 h-6 text-primary/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+              </svg>
+            </div>
+            {/* Spinning ring */}
+            <div className="absolute -inset-2 rounded-2xl border-2 border-transparent border-t-primary/30 animate-spin" style={{ animationDuration: '2s' }} />
+          </div>
+          <div>
+            <p className="text-white/90 text-sm font-semibold tracking-wide">
+              Opening secure player...
+            </p>
+            <p className="text-zinc-500 text-xs mt-0.5">
+              {provider?.displayName || provider?.proxyKey}
+            </p>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Active playback status */}
+          <div className="flex items-center gap-2 mb-2">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+            </span>
+            <p className="text-green-400 text-sm font-semibold">
+              Playing in secure player window
+            </p>
+          </div>
+
+          {/* Provider & security info */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500 mb-3">
+            <span className="flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+              </svg>
+              {provider?.displayName || provider?.proxyKey}
+            </span>
+            <span className="text-zinc-600 hidden sm:inline">·</span>
+            <span className="text-zinc-500">All 6 security layers active</span>
+          </div>
+
+          <button
+            onClick={onReopen}
+            className="mt-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white text-xs font-semibold transition-all active:scale-95"
+          >
+            Reopen player window
+          </button>
+        </>
+      )}
+    </DesktopPlayerCard>
+  );
+}
+
+// ── Desktop: Idle state (video not yet opened) ──
+function DesktopVideoIdle({ provider, meta, plat, onOpen }) {
+  return (
+    <DesktopPlayerCard meta={meta} plat={plat} showBackButton>
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-10 h-10 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
+          <svg className="w-5 h-5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-white/80 text-sm font-semibold tracking-wide">
+            Ready to start watching
+          </p>
+          <p className="text-zinc-500 text-xs mt-0.5">
+            {provider?.displayName || provider?.proxyKey}
+          </p>
+        </div>
+      </div>
+
+      <button
+        onClick={onOpen}
+        className="px-5 py-2.5 rounded-xl bg-primary/80 hover:bg-primary text-white text-sm font-semibold transition-all active:scale-95 shadow-lg shadow-primary/10 inline-flex items-center gap-2"
+      >
+        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M8 5v14l11-7z" />
+        </svg>
+        Open Player
+      </button>
+    </DesktopPlayerCard>
+  );
+}
 
 export default WatchClient;
