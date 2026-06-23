@@ -2,7 +2,48 @@ import React from 'react';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Platform } from 'react-native';
+import { Platform, View, StyleSheet } from 'react-native';
+import { BlurView } from 'expo-blur';
+
+/**
+ * Tab bar styled per the cinematic design system:
+ * - #0f0f0f background, subtle top border
+ * - Gold dot indicator below the active icon (no label)
+ * - iOS: BlurView visual effect behind the bar
+ * - Icons: filled variant for active, outline for inactive
+ */
+
+function TabIcon({
+  focused,
+  activeIcon,
+  inactiveIcon,
+}: {
+  focused: boolean;
+  activeIcon: keyof typeof Ionicons.glyphMap;
+  inactiveIcon: keyof typeof Ionicons.glyphMap;
+}) {
+  return (
+    <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+      <Ionicons
+        name={focused ? activeIcon : inactiveIcon}
+        size={24}
+        color={focused ? '#e8a020' : '#52525b'}
+      />
+      {/* Gold dot indicator */}
+      {focused && (
+        <View
+          style={{
+            width: 4,
+            height: 4,
+            borderRadius: 2,
+            backgroundColor: '#e8a020',
+            marginTop: 2,
+          }}
+        />
+      )}
+    </View>
+  );
+}
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
@@ -12,25 +53,33 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        tabBarShowLabel: false,
         tabBarStyle: {
-          backgroundColor: '#18181b',
-          borderTopColor: '#27272a',
-          borderTopWidth: 1,
-          paddingBottom: bottomInset + 2,
-          paddingTop: 8,
-          height: 64 + bottomInset,
+          backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#0f0f0f',
+          borderTopColor: '#252525',
+          borderTopWidth: 0.5,
+          paddingBottom: bottomInset + 4,
+          paddingTop: 10,
+          height: 80 + bottomInset,
         },
-        tabBarActiveTintColor: '#f59e0b',
+        tabBarActiveTintColor: '#e8a020',
         tabBarInactiveTintColor: '#52525b',
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+        tabBarBackground: () =>
+          Platform.OS === 'ios' ? (
+            <BlurView tint="dark" intensity={90} style={StyleSheet.absoluteFill} />
+          ) : undefined,
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ focused, color }) => (
-            <Ionicons name={focused ? 'home' : 'home-outline'} size={22} color={color} />
+          tabBarIcon: ({ focused }) => (
+            <TabIcon
+              focused={focused}
+              activeIcon="home"
+              inactiveIcon="home-outline"
+            />
           ),
         }}
       />
@@ -38,8 +87,12 @@ export default function TabLayout() {
         name="search"
         options={{
           title: 'Search',
-          tabBarIcon: ({ focused, color }) => (
-            <Ionicons name={focused ? 'search' : 'search-outline'} size={22} color={color} />
+          tabBarIcon: ({ focused }) => (
+            <TabIcon
+              focused={focused}
+              activeIcon="search"
+              inactiveIcon="search-outline"
+            />
           ),
         }}
       />
@@ -47,8 +100,12 @@ export default function TabLayout() {
         name="saved"
         options={{
           title: 'Saved',
-          tabBarIcon: ({ focused, color }) => (
-            <Ionicons name={focused ? 'bookmark' : 'bookmark-outline'} size={22} color={color} />
+          tabBarIcon: ({ focused }) => (
+            <TabIcon
+              focused={focused}
+              activeIcon="bookmark"
+              inactiveIcon="bookmark-outline"
+            />
           ),
         }}
       />

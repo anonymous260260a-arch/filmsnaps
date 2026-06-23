@@ -1,10 +1,10 @@
 import React from 'react';
-import { View, Text, FlatList, Dimensions, TouchableOpacity } from 'react-native';
+import { View, Text, FlatList, useWindowDimensions, TouchableOpacity } from 'react-native';
+import { typography } from '../lib/typography';
 import type { Movie } from '@filmsnaps/shared';
 import { MediaCard } from './MediaCard';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const ITEM_WIDTH = (SCREEN_WIDTH - 48) / 3;
+const ITEM_WIDTH = (width: number) => (width - 48) / 3;
 
 interface MediaCarouselProps {
   title: string;
@@ -13,17 +13,31 @@ interface MediaCarouselProps {
   onSeeAll?: () => void;
 }
 
+/**
+ * Horizontal carousel with Playfair Display section heading
+ * and gold "See All" link.
+ */
 export function MediaCarousel({ title, data, onItemPress, onSeeAll }: MediaCarouselProps) {
+  const { width: SCREEN_WIDTH } = useWindowDimensions();
+
   if (!data?.length) return null;
 
   return (
-    <View className="mb-6">
-      {/* Section header */}
+    <View className="mb-7">
+      {/* Section header — Playfair heading + gold "See All" */}
       <View className="flex-row items-center justify-between px-4 mb-3">
-        <Text className="text-white text-lg font-bold tracking-tight">{title}</Text>
+        <Text style={typography.heading}>{title}</Text>
         {onSeeAll && (
           <TouchableOpacity onPress={onSeeAll} activeOpacity={0.7}>
-            <Text className="text-amber-500 text-sm font-semibold">See All</Text>
+            <Text
+              style={{
+                fontFamily: 'Inter_500Medium',
+                fontSize: 12,
+                color: '#e8a020',
+              }}
+            >
+              See All →
+            </Text>
           </TouchableOpacity>
         )}
       </View>
@@ -35,7 +49,7 @@ export function MediaCarousel({ title, data, onItemPress, onSeeAll }: MediaCarou
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
         renderItem={({ item }) => (
-          <View style={{ width: ITEM_WIDTH }}>
+          <View style={{ width: ITEM_WIDTH(SCREEN_WIDTH) }}>
             <MediaCard item={item} onPress={onItemPress} />
           </View>
         )}

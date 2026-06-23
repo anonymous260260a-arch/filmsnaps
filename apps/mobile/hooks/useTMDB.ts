@@ -8,6 +8,7 @@ export function useTrendingMovies() {
     queryKey: ['movies', 'trending'],
     queryFn: () => tmdbApi.getTrendingMovies(),
     staleTime: 1000 * 60 * 10, // 10 min
+    gcTime: 1000 * 60 * 30,    // 30 min
   });
 }
 
@@ -16,6 +17,7 @@ export function usePopularMovies(page = 1) {
     queryKey: ['movies', 'popular', page],
     queryFn: () => tmdbApi.getPopularMovies(page),
     staleTime: 1000 * 60 * 10,
+    gcTime: 1000 * 60 * 30,
   });
 }
 
@@ -24,6 +26,7 @@ export function useUpcomingMovies() {
     queryKey: ['movies', 'upcoming'],
     queryFn: () => tmdbApi.getUpcomingMovies(),
     staleTime: 1000 * 60 * 10,
+    gcTime: 1000 * 60 * 30,
   });
 }
 
@@ -32,6 +35,7 @@ export function useMovieDetails(id: number | string) {
     queryKey: ['movie', id],
     queryFn: () => tmdbApi.getMovieDetails(id),
     staleTime: 1000 * 60 * 60, // 1 hour
+    gcTime: 1000 * 60 * 60,    // 1 hour
   });
 }
 
@@ -42,6 +46,7 @@ export function useTrendingTV() {
     queryKey: ['tv', 'trending'],
     queryFn: () => tmdbApi.getTrendingTV(),
     staleTime: 1000 * 60 * 10,
+    gcTime: 1000 * 60 * 30,
   });
 }
 
@@ -50,6 +55,7 @@ export function useTVDetails(id: number | string) {
     queryKey: ['tv', id],
     queryFn: () => tmdbApi.getTVDetails(id),
     staleTime: 1000 * 60 * 60,
+    gcTime: 1000 * 60 * 60,
   });
 }
 
@@ -58,6 +64,7 @@ export function useSeasonEpisodes(tvId: number | string, seasonNumber: number) {
     queryKey: ['tv', tvId, 'season', seasonNumber],
     queryFn: () => tmdbApi.getSeasonEpisodes(tvId, seasonNumber),
     staleTime: 1000 * 60 * 60,
+    gcTime: 1000 * 60 * 60,
     enabled: !!tvId && !!seasonNumber,
   });
 }
@@ -70,5 +77,6 @@ export function useSearch(query: string) {
     queryFn: () => tmdbApi.searchMulti(query),
     enabled: query.length >= 2,
     staleTime: 1000 * 60 * 5,
+    gcTime: 1000 * 60 * 15,
   });
 }

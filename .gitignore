@@ -67,3 +67,9 @@ apps/mobile/ios/
 
 # pnpm — lockfile must be committed for reproducible builds
 # pnpm-lock.yaml
+
+# planning / design docs (not part of the app source)
+VIDEO_PLAYER_SPEC.md
+VIDEO_PLAYER_HANDOFF.md
+NewprovidersList.md
+filmsnaps_design_system.html

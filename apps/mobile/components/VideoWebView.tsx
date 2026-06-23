@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getEnabledProviders, getImageUrl } from '@filmsnaps/shared';
 import type { ProviderDefinition } from '@filmsnaps/shared';
 import { useSeasonEpisodes, useTVDetails } from '../hooks/useTMDB';
+import { StreamGuidePlayer } from './StreamGuidePlayer';
 
 const POPUP_BLOCKER_SCRIPT = `
 (function() {
@@ -470,21 +471,12 @@ const POPUP_BLOCKER_SCRIPT = `
     document.head.appendChild(cspMeta);
   } catch(e) {}
 
-  // ── Cookie clearing on page load ──
-  // Clears all cookies set by the provider domain to prevent
-  // cross-provider tracking and long-term fingerprinting.
-  try {
-    var cookies = document.cookie.split(';');
-    for (var ci = 0; ci < cookies.length; ci++) {
-      var c = cookies[ci];
-      if (c.indexOf('__') === 0) continue; // keep browser-internal cookies
-      var eq = c.indexOf('=');
-      if (eq > 0) {
-        var name = c.substring(0, eq).trim();
-        document.cookie = name + '=;expires=Thu, 01 Jan 2000 00:00:00 GMT;path=/';
-      }
-    }
-  } catch(e) {}
+  // ── Cookie clearing on page load (disabled — breaks Anubis-protected ──
+  // providers like toustream that require cookies for anti-bot verification).
+  // Cookie isolation between providers is already handled by domain scoping
+  // (each provider uses a different base URL) and the key-based WebView remount
+  // on provider switch.
+  //try { ... } catch(e) {}
 })();
 true;
 `;
@@ -622,6 +614,8 @@ export function VideoWebView({
     return p.displayName || p.name || p.id;
   };
 
+  const isStreamGuide = providerId === 'streamguide';
+
   const retry = () => {
     if (error) {
       setError(null);
@@ -641,7 +635,7 @@ export function VideoWebView({
         <View className="flex-row gap-3">
           <TouchableOpacity
             onPress={retry}
-            className="bg-amber-500 rounded-xl py-3 px-6 flex-row items-center"
+            className="bg-gold rounded-xl py-3 px-6 flex-row items-center"
             activeOpacity={0.8}
           >
             <Ionicons name="refresh" size={16} color="#000" />
@@ -721,7 +715,7 @@ export function VideoWebView({
               className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
               activeOpacity={0.7}
             >
-              <Ionicons name="server" size={16} color="#f59e0b" />
+              <Ionicons name="server" size={16} color="#e8a020" />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setIsFullscreen(!isFullscreen)}
@@ -750,7 +744,7 @@ export function VideoWebView({
           className="self-center bg-black/60 backdrop-blur-md rounded-full px-4 py-2.5 flex-row items-center border border-zinc-700/40"
           style={{ pointerEvents: 'auto' }}
         >
-          <Ionicons name="server" size={13} color="#f59e0b" />
+          <Ionicons name="server" size={13} color="#e8a020" />
           <Text className="text-white text-xs font-semibold ml-2 mr-1" numberOfLines={1}>
             {currentProvider ? getProviderDisplayName(currentProvider) : 'Server'}
           </Text>
@@ -787,7 +781,7 @@ export function VideoWebView({
       {loading && (
         <View className="absolute inset-0 z-20 items-center justify-center bg-black/80">
           <View className="items-center">
-            <ActivityIndicator size="large" color="#f59e0b" />
+            <ActivityIndicator size="large" color="#e8a020" />
             <Text className="text-zinc-500 text-sm mt-4">Loading player...</Text>
           </View>
         </View>
@@ -832,71 +826,77 @@ export function VideoWebView({
               : { flex: 1 }
           }
         >
-          <WebView
-            key={webViewKey}
-            ref={webViewRef}
-            source={{ uri: watchUrl }}
-            style={{ flex: 1, backgroundColor: '#000' }}
-            allowsFullscreenVideo={true}
-            allowsInlineMediaPlayback={true}
-            mediaPlaybackRequiresUserAction={false}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            sharedCookiesEnabled={true}
-            thirdPartyCookiesEnabled={true}
-            startInLoadingState={true}
-            injectedJavaScriptBeforeContentLoaded={POPUP_BLOCKER_SCRIPT}
-            allowsBackForwardNavigationGestures={false}
-            setSupportMultipleWindows={false}
-            // ── Security hardening ──
-            allowFileAccess={false}
-            allowContentAccess={false}
-            allowFileAccessFromFileURLs={false}
-            allowUniversalAccessFromFileURLs={false}
-            geolocationEnabled={false}
-            mixedContentMode="never"
-            cacheEnabled={false}
-            renderLoading={() => null}
-            onShouldStartLoadWithRequest={(request) => {
-              // Chain tracking: record all domains during page load (first 5s),
-              // then block any navigation to unvisited domains (likely ads).
-              if (request.url) {
-                try {
-                  const reqUrl = new URL(request.url);
-                  const host = reqUrl.hostname.toLowerCase();
+          {isStreamGuide ? (
+            <StreamGuidePlayer
+              apiUrl={watchUrl}
+              onClose={onClose}
+              onLoadStart={() => setLoading(true)}
+              onLoadEnd={() => setLoading(false)}
+              onError={(msg) => setError(msg)}
+            />
+          ) : (
+            <WebView
+              key={webViewKey}
+              ref={webViewRef}
+              source={{ uri: watchUrl }}
+              style={{ flex: 1, backgroundColor: '#000' }}
+              allowsFullscreenVideo={true}
+              allowsInlineMediaPlayback={true}
+              mediaPlaybackRequiresUserAction={false}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              sharedCookiesEnabled={true}
+              thirdPartyCookiesEnabled={true}
+              startInLoadingState={true}
+              injectedJavaScriptBeforeContentLoaded={POPUP_BLOCKER_SCRIPT}
+              allowsBackForwardNavigationGestures={false}
+              setSupportMultipleWindows={false}
+              // ── Security hardening ──
+              geolocationEnabled={false}
+              mixedContentMode="never"
+              cacheEnabled={false}
+              renderLoading={() => <View />}
+              onShouldStartLoadWithRequest={(request) => {
+                // Chain tracking: record all domains during page load (first 5s),
+                // then block any navigation to unvisited domains (likely ads).
+                if (request.url) {
+                  try {
+                    const reqUrl = new URL(request.url);
+                    const host = reqUrl.hostname.toLowerCase();
 
-                  // During bootstrapping phase (first 5s after load), record
-                  // all domains in the redirect chain so we can allow them.
-                  if (!pageLoadedRef.current) {
-                    navigationChainRef.current.add(host);
-                    return true;
-                  }
+                    // During bootstrapping phase (first 5s after load), record
+                    // all domains in the redirect chain so we can allow them.
+                    if (!pageLoadedRef.current) {
+                      navigationChainRef.current.add(host);
+                      return true;
+                    }
 
-                  // After bootstrapping, only allow same-host or chain domains
-                  if (host === providerHostRef.current ||
-                      navigationChainRef.current.has(host)) {
-                    return true;
-                  }
+                    // After bootstrapping, only allow same-host or chain domains
+                    if (host === providerHostRef.current ||
+                        navigationChainRef.current.has(host)) {
+                      return true;
+                    }
 
-                  // Unknown domain navigated to after page load → likely ad
-                  console.warn('[AB] Blocked navigation to:', host);
-                  return false;
-                } catch (e) {}
-              }
-              return true;
-            }}
-            onLoadEnd={() => {
-              setLoading(false);
-              // After page fully loads, allow 5s for provider redirect chain,
-              // then lock it — any new domain after this is likely an ad.
-              setTimeout(() => { pageLoadedRef.current = true; }, 5000);
-            }}
-            onError={(syntheticEvent) => {
-              const desc = syntheticEvent.nativeEvent.description;
-              console.warn('[WebView] Non-fatal error (video may still play):', desc);
-            }}
-            onOpenWindow={handleOpenWindow}
-          />
+                    // Unknown domain navigated to after page load → likely ad
+                    console.warn('[AB] Blocked navigation to:', host);
+                    return false;
+                  } catch (e) {}
+                }
+                return true;
+              }}
+              onLoadEnd={() => {
+                setLoading(false);
+                // After page fully loads, allow 5s for provider redirect chain,
+                // then lock it — any new domain after this is likely an ad.
+                setTimeout(() => { pageLoadedRef.current = true; }, 5000);
+              }}
+              onError={(syntheticEvent) => {
+                const desc = syntheticEvent.nativeEvent.description;
+                console.warn('[WebView] Non-fatal error (video may still play):', desc);
+              }}
+              onOpenWindow={handleOpenWindow}
+            />
+          )}
         </View>
       </View>
     </View>
@@ -974,7 +974,7 @@ function EpisodePickerModal({
                     activeOpacity={0.7}
                     className={`px-3.5 py-1.5 rounded-full ${
                       s === pickerSeason
-                        ? 'bg-amber-500'
+                        ? 'bg-gold'
                         : 'bg-zinc-800 border border-zinc-700/40'
                     }`}
                   >
@@ -994,7 +994,7 @@ function EpisodePickerModal({
           {/* Episode list */}
           {isLoading ? (
             <View className="items-center justify-center py-6">
-              <ActivityIndicator size="small" color="#f59e0b" />
+              <ActivityIndicator size="small" color="#e8a020" />
               <Text className="text-zinc-500 text-xs mt-2">Loading episodes...</Text>
             </View>
           ) : isError ? (
@@ -1026,7 +1026,7 @@ function EpisodePickerModal({
                     activeOpacity={0.7}
                     className={`flex-row rounded-lg overflow-hidden mb-1.5 ${
                       isActive
-                        ? 'bg-amber-500/10 border border-amber-500/20'
+                        ? 'bg-gold/10 border border-amber-500/20'
                         : 'bg-zinc-800/40'
                     }`}
                   >
@@ -1046,7 +1046,7 @@ function EpisodePickerModal({
                         )}
                         {isActive && (
                           <View className="absolute inset-0 items-center justify-center">
-                            <View className="w-5 h-5 rounded-full bg-amber-500 items-center justify-center">
+                            <View className="w-5 h-5 rounded-full bg-gold items-center justify-center">
                               <Ionicons name="play" size={8} color="#000" />
                             </View>
                           </View>
@@ -1150,13 +1150,13 @@ function ServerPicker({
                 onPress={() => onSelect(p.id)}
                 activeOpacity={0.7}
                 className={`flex-row items-center px-4 py-4 rounded-xl mb-1 ${
-                  isActive ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-zinc-800/40'
+                  isActive ? 'bg-gold/10 border border-amber-500/20' : 'bg-zinc-800/40'
                 }`}
               >
                 {/* Icon */}
                 <View
                   className={`w-10 h-10 rounded-full items-center justify-center mr-4 ${
-                    isActive ? 'bg-amber-500' : 'bg-zinc-700'
+                    isActive ? 'bg-gold' : 'bg-zinc-700'
                   }`}
                 >
                   {isActive ? (
@@ -1182,7 +1182,7 @@ function ServerPicker({
 
                 {/* Active indicator */}
                 {isActive && (
-                  <View className="w-2 h-2 rounded-full bg-amber-500" />
+                  <View className="w-2 h-2 rounded-full bg-gold" />
                 )}
               </TouchableOpacity>
             );
