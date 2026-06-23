@@ -1,114 +1,104 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Linking, Alert, Platform } from 'react-native';
-import Constants from 'expo-constants';
-
-/** The shape of the remote version.json */
-type VersionInfo = {
-  latestVersion: string;
-  downloadUrl: string;
-  releaseNotes?: string;
-};
-
-/**
- * Default URL — uses the web backend base so it works in dev and prod.
- * Override with EXPO_PUBLIC_VERSION_URL if you want a separate host.
- */
- const VERSION_CHECK_URL =
-   process.env.EXPO_PUBLIC_VERSION_URL ||
-   `${process.env.EXPO_PUBLIC_WEB_URL || 'https://filmsnaps.app'}/version.json`;
-
-/**
- * Returns the local app version from app.json (e.g. "1.0.0")
- */
-function getLocalVersion(): string {
-  return Constants.expoConfig?.version ?? '0.0.0';
-}
-
-/**
- * Simple semver comparison (only major.minor.patch, no prerelease).
- * Returns  1 if a > b,  -1 if a < b,  0 if equal.
- */
-function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    const na = pa[i] || 0;
-    const nb = pb[i] || 0;
-    if (na > nb) return 1;
-    if (na < nb) return -1;
-  }
-  return 0;
-}
+import { useEffect, useCallback } from 'react';
+import * as Updates from 'expo-updates';
 
 /**
  * useUpdateCheck — call once at app root.
  *
- * Fetches a remote version.json, compares it to the local version,
- * and if a newer version exists, prompts the user to download it.
+ * Uses expo-updates to check for and apply JS bundle updates.
+ * No APK downloads, no install permissions required.
  *
- * Hosting the version.json:
- *   Option A — Deploy the web app (served at https://filmsnaps.app/version.json)
- *   Option B — Upload to a GitHub Gist / raw URL
- *   Option C — Any free static host (Netlify, Vercel, Surge.sh)
- *   Set EXPO_PUBLIC_VERSION_URL to point at it.
+ * Flow:
+ *   1. expo-updates checks for updates on app launch (automatic)
+ *   2. If found, we auto-download silently
+ *   3. When downloaded, show "Restart to update" prompt
+ *   4. User taps "Restart Now" → app reloads with new code
  */
 export function useUpdateCheck() {
-  const [available, setAvailable] = useState<VersionInfo | null>(null);
+  const {
+    isUpdateAvailable,
+    isUpdatePending,
+    isChecking,
+    isDownloading,
+    downloadProgress,
+    currentlyRunning,
+    checkError,
+    downloadError,
+  } = Updates.useUpdates();
 
-  const localVersion = getLocalVersion();
+  // ── Auto-download when update becomes available ──
 
   useEffect(() => {
-    let cancelled = false;
+    if (isUpdateAvailable && !isUpdatePending && !isDownloading) {
+      console.log('[UpdateCheck] Update available, starting download...');
+      Updates.fetchUpdateAsync().catch((err) => {
+        console.error('[UpdateCheck] Download failed:', err.message);
+      });
+    }
+  }, [isUpdateAvailable, isUpdatePending, isDownloading]);
 
-    (async () => {
-      try {
-        const res = await fetch(VERSION_CHECK_URL, { cache: 'no-cache' });
-        if (!res.ok) return;
-        const remote: VersionInfo = await res.json();
-        if (!remote.latestVersion) return;
+  // ── Apply update (restart app) ──
 
-        console.log(
-          `[UpdateCheck] local=${localVersion} remote=${remote.latestVersion}`,
-        );
+  const applyUpdate = useCallback(async () => {
+    try {
+      console.log('[UpdateCheck] Reloading to apply update...');
+      await Updates.reloadAsync();
+    } catch (err: any) {
+      console.error('[UpdateCheck] Reload failed:', err.message);
+    }
+  }, []);
 
-        if (compareVersions(remote.latestVersion, localVersion) > 0) {
-          if (!cancelled) setAvailable(remote);
-        }
-      } catch {
-        // Silent — network failure means no check available
-        console.log('[UpdateCheck] Failed to fetch version.json');
-      }
-    })();
+  // ── Manual check ──
 
-    return () => { cancelled = true; };
-  }, [localVersion]);
+  const checkNow = useCallback(async () => {
+    try {
+      console.log('[UpdateCheck] Manual check triggered...');
+      await Updates.checkForUpdateAsync();
+    } catch (err: any) {
+      console.error('[UpdateCheck] Manual check failed:', err.message);
+    }
+  }, []);
 
-  const showUpdatePrompt = useCallback(() => {
-    if (!available) return;
+  // ── Determine state for UI ──
 
-    Alert.alert(
-      '📥 Update Available',
-      `Version ${available.latestVersion} is now available.\n\n` +
-        (available.releaseNotes
-          ? `What's new:\n${available.releaseNotes}\n\n`
-          : '') +
-        'Would you like to download the latest version?',
-      [
-        { text: 'Later', style: 'cancel' },
-        {
-          text: 'Download',
-          onPress: () => {
-            const url = available.downloadUrl;
-            if (url) {
-              Linking.openURL(url).catch(() =>
-                Alert.alert('Download', `Open this link in your browser:\n${url}`),
-              );
-            }
-          },
-        },
-      ],
-    );
-  }, [available]);
+  const phase = isDownloading
+    ? ('downloading' as const)
+    : isUpdatePending
+      ? ('pending' as const)
+      : isChecking
+        ? ('checking' as const)
+        : checkError || downloadError
+          ? ('error' as const)
+          : ('idle' as const);
 
-  return { updateAvailable: available !== null, showUpdatePrompt };
+  const errorMessage =
+    checkError?.message ?? downloadError?.message ?? null;
+
+  const progress = downloadProgress != null
+    ? Math.round(downloadProgress * 100)
+    : 0;
+
+  return {
+    /** Simple phase enum for UI to render */
+    phase,
+    /** Download progress 0–100 */
+    progress,
+    /** Whether we should show the "Restart to update" prompt */
+    showRestartPrompt: isUpdatePending,
+    /** Whether an update is actively being downloaded */
+    isDownloading,
+    /** Whether we're still checking for release info */
+    isChecking,
+    /** Latest error message, if any */
+    errorMessage,
+    /** Current version info */
+    currentVersion: currentlyRunning?.updateId
+      ? 'update'
+      : 'embedded',
+    /** Is this the embedded (original) bundle? */
+    isOriginalBuild: currentlyRunning?.isEmbeddedLaunch ?? true,
+    /** Trigger a restart to apply downloaded update */
+    applyUpdate,
+    /** Manually trigger an update check */
+    checkNow,
+  };
 }

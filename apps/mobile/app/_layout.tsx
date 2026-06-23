@@ -1,9 +1,19 @@
-import React, { useEffect } from 'react';
+import React from 'react';
+import { View, ActivityIndicator } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useUpdateCheck } from '../hooks/useUpdateCheck';
+import {
+  useFonts,
+  PlayfairDisplay_700Bold,
+} from '@expo-google-fonts/playfair-display';
+import {
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+} from '@expo-google-fonts/inter';
+import { UpdateOverlay } from '../components/UpdateOverlay';
 import './globals.css';
 
 const queryClient = new QueryClient({
@@ -11,29 +21,38 @@ const queryClient = new QueryClient({
     queries: {
       retry: 2,
       staleTime: 1000 * 60 * 5,
+      gcTime: 1000 * 60 * 30,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: true,
     },
   },
 });
 
 export default function RootLayout() {
-  const { updateAvailable, showUpdatePrompt } = useUpdateCheck();
+  const [fontsLoaded] = useFonts({
+    PlayfairDisplay_700Bold,
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+  });
 
-  // Show update prompt once on launch if a newer version is available
-  useEffect(() => {
-    if (updateAvailable) {
-      // Small delay so the app can finish rendering first
-      const timer = setTimeout(() => showUpdatePrompt(), 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [updateAvailable, showUpdatePrompt]);
+  if (!fontsLoaded) {
+    return (
+      <View className="flex-1 items-center justify-center" style={{ backgroundColor: '#080808' }}>
+        <ActivityIndicator size="large" color="#e8a020" />
+      </View>
+    );
+  }
+
   return (
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
         <StatusBar style="light" />
+        <UpdateOverlay />
         <Stack
           screenOptions={{
             headerShown: false,
-            contentStyle: { backgroundColor: '#09090b' },
+            contentStyle: { backgroundColor: '#080808' },
           }}
         >
           <Stack.Screen name="(tabs)" />

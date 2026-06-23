@@ -1,7 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Standalone output bundles all deps for self-contained deployment
-  output: 'standalone',
+  // Standalone output when building for the desktop app
+  // (bundles server + deps into .next/standalone/ for Electron)
+  output: process.env.BUILD_FOR_DESKTOP === 'true' ? 'standalone' : undefined,
   reactStrictMode: true,
 
   // Performance optimizations

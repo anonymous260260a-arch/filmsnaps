@@ -6,30 +6,34 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Dimensions,
+  useWindowDimensions,
   Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { getImageUrl, getTrailerKey } from '@filmsnaps/shared';
+import { typography } from '../../lib/typography';
+import { FilmGrain } from '../../components/FilmGrain';
 import { useMovieDetails } from '../../hooks/useTMDB';
 import { MediaCarousel } from '../../components/MediaCarousel';
 import type { Movie } from '@filmsnaps/shared';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const BACKDROP_HEIGHT = SCREEN_WIDTH * 0.56;
 
 export default function MovieDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = useWindowDimensions();
   const { data, isLoading } = useMovieDetails(id!);
+
+  const BACKDROP_HEIGHT = SCREEN_HEIGHT * 0.45;
+  const POSTER_WIDTH = 100;
+  const POSTER_OVERLAP = 40;
 
   if (isLoading) {
     return (
-      <View className="flex-1 items-center justify-center bg-zinc-950">
-        <ActivityIndicator size="large" color="#f59e0b" />
+      <View className="flex-1 items-center justify-center bg-void">
+        <ActivityIndicator size="large" color="#e8a020" />
       </View>
     );
   }
@@ -37,9 +41,9 @@ export default function MovieDetailScreen() {
   const movie = data;
   if (!movie) {
     return (
-      <View className="flex-1 items-center justify-center bg-zinc-950">
-        <Ionicons name="film-outline" size={48} color="#52525b" />
-        <Text className="text-zinc-400 mt-3">Movie not found</Text>
+      <View className="flex-1 items-center justify-center bg-void">
+        <Ionicons name="film-outline" size={48} color="#534f4c" />
+        <Text className="text-t2 mt-3">Movie not found</Text>
       </View>
     );
   }
@@ -51,94 +55,168 @@ export default function MovieDetailScreen() {
   const cast = movie.credits?.cast?.slice(0, 10) ?? [];
 
   return (
-    <View className="flex-1 bg-zinc-950">
+    <View className="flex-1 bg-void">
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
-        {/* Backdrop */}
+        {/* Backdrop with film grain */}
         <View style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT }}>
           {movie.backdrop_path ? (
             <Image
-              source={{ uri: getImageUrl(movie.backdrop_path, 'w1280') }}
+              source={{ uri: getImageUrl(movie.backdrop_path, 'w780') }}
               style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT }}
               resizeMode="cover"
             />
           ) : (
-            <View className="w-full h-full bg-zinc-900" />
+            <View className="w-full h-full" style={{ backgroundColor: '#191919' }} />
           )}
 
-          {/* Gradient from backdrop to content */}
+          {/* Film grain overlay */}
+          <FilmGrain opacity={0.04} />
+
+          {/* Stronger gradient — covers bottom 60% for poster overlap */}
           <View
-            className="absolute bottom-0 left-0 right-0"
-            style={{ height: 80, backgroundColor: 'rgba(9,9,11,0.85)' }}
-          />
+            style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: BACKDROP_HEIGHT * 0.6,
+              backgroundColor: 'transparent',
+            }}
+          >
+            {[0.2, 0.45, 0.7, 0.88, 1].map((opacity, i) => (
+              <View key={i} style={{ flex: 1, backgroundColor: `rgba(8,8,8,${opacity})` }} />
+            ))}
+          </View>
         </View>
 
-        {/* Back button */}
-        <View className="absolute top-0 left-0 right-0" style={{ paddingTop: insets.top }}>
+        {/* Pill-shaped back button */}
+        <View
+          style={{
+            position: 'absolute',
+            top: insets.top + 12,
+            left: 16,
+            zIndex: 10,
+          }}
+        >
           <TouchableOpacity
             onPress={() => router.back()}
-            className="ml-3 w-10 h-10 rounded-full bg-black/50 items-center justify-center"
             activeOpacity={0.7}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: 'rgba(8,8,8,0.7)',
+              borderRadius: 20,
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+            }}
           >
-            <Ionicons name="chevron-back" size={22} color="#fff" />
+            <Ionicons name="chevron-back" size={18} color="#f2ede6" />
+            <Text style={{ color: '#f2ede6', fontSize: 12, marginLeft: 2, fontFamily: 'Inter_500Medium' }}>
+              Back
+            </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Content */}
-        <View className="px-4 -mt-20">
+        {/* Content — starts below backdrop */}
+        <View className="px-4" style={{ marginTop: -POSTER_OVERLAP }}>
           {/* Poster + Info row */}
           <View className="flex-row">
+            {/* Poster — overlapping the backdrop by 40px */}
             {movie.poster_path ? (
               <Image
                 source={{ uri: getImageUrl(movie.poster_path, 'w342') }}
-                className="w-28 h-40 rounded-xl"
-                resizeMode="cover"
                 style={{
+                  width: POSTER_WIDTH,
+                  height: POSTER_WIDTH * 1.5,
+                  borderRadius: 8,
                   ...Platform.select({
                     ios: {
                       shadowColor: '#000',
                       shadowOffset: { width: 0, height: 8 },
-                      shadowOpacity: 0.4,
+                      shadowOpacity: 0.5,
                       shadowRadius: 12,
                     },
                     android: { elevation: 10 },
                   }),
                 }}
+                resizeMode="cover"
               />
             ) : (
-              <View className="w-28 h-40 rounded-xl bg-zinc-800 items-center justify-center">
-                <Ionicons name="film-outline" size={32} color="#52525b" />
+              <View
+                className="rounded-xl items-center justify-center"
+                style={{
+                  width: POSTER_WIDTH,
+                  height: POSTER_WIDTH * 1.5,
+                  backgroundColor: '#191919',
+                }}
+              >
+                <Ionicons name="film-outline" size={28} color="#534f4c" />
               </View>
             )}
 
+            {/* Info to the right of poster */}
             <View className="flex-1 ml-3 justify-end pb-1">
-              <Text className="text-white text-xl font-bold leading-6">{title}</Text>
+              <Text
+                style={[typography.title, { fontSize: 18, lineHeight: 22 }]}
+                numberOfLines={2}
+              >
+                {title}
+              </Text>
               {year ? (
-                <Text className="text-zinc-400 text-sm mt-0.5">{year}</Text>
+                <Text style={[typography.caption, { marginTop: 2, color: '#9b9590' }]}>
+                  {year}
+                </Text>
               ) : null}
 
-              {/* Genre badges */}
+              {/* Genre badges — elevated bg */}
               {genres.length > 0 && (
                 <View className="flex-row flex-wrap mt-2" style={{ gap: 4 }}>
                   {genres.slice(0, 3).map((g: { id: number; name: string }) => (
-                    <View key={g.id} className="bg-zinc-800 rounded-full px-2 py-0.5">
-                      <Text className="text-zinc-400 text-[10px]">{g.name}</Text>
+                    <View
+                      key={g.id}
+                      style={{
+                        backgroundColor: '#191919',
+                        borderRadius: 4,
+                        paddingHorizontal: 8,
+                        paddingVertical: 3,
+                      }}
+                    >
+                      <Text
+                        style={{ color: '#9b9590', fontSize: 10, fontFamily: 'Inter_500Medium' }}
+                      >
+                        {g.name}
+                      </Text>
                     </View>
                   ))}
                 </View>
               )}
 
+              {/* Jade rating pill — use jade for information, not gold */}
               {movie.vote_average != null && (
                 <View className="flex-row items-center mt-2">
-                  <View className="bg-amber-500/20 rounded-full px-2 py-0.5 flex-row items-center">
-                    <Text className="text-amber-400 text-sm">★</Text>
-                    <Text className="text-amber-400 text-sm font-bold ml-1">
+                  <View
+                    style={{
+                      backgroundColor: 'rgba(76,175,130,0.15)',
+                      borderRadius: 4,
+                      paddingHorizontal: 8,
+                      paddingVertical: 2,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      borderWidth: 0.5,
+                      borderColor: 'rgba(76,175,130,0.3)',
+                    }}
+                  >
+                    <Text style={{ color: '#4caf82', fontSize: 11, fontWeight: '700', marginRight: 4 }}>
+                      ★
+                    </Text>
+                    <Text style={{ color: '#4caf82', fontSize: 11, fontWeight: '700' }}>
                       {movie.vote_average.toFixed(1)}
                     </Text>
                   </View>
                   {movie.runtime && (
                     <View className="flex-row items-center ml-3">
-                      <Ionicons name="time-outline" size={14} color="#71717a" />
-                      <Text className="text-zinc-500 text-sm ml-1">{movie.runtime} min</Text>
+                      <Ionicons name="time-outline" size={14} color="#534f4c" />
+                      <Text className="text-t3 text-sm ml-1">{movie.runtime} min</Text>
                     </View>
                   )}
                 </View>
@@ -148,22 +226,31 @@ export default function MovieDetailScreen() {
 
           {/* Overview */}
           {movie.overview ? (
-            <View className="mt-5">
-              <Text className="text-white text-base font-bold mb-2">Overview</Text>
-              <Text className="text-zinc-400 text-sm leading-6">{movie.overview}</Text>
+            <View className="mt-6">
+              <Text style={[typography.title, { marginBottom: 8, color: '#f2ede6' }]}>
+                Overview
+              </Text>
+              <Text style={typography.body}>{movie.overview}</Text>
             </View>
           ) : null}
 
           {/* Action buttons */}
           <View className="flex-row mt-6" style={{ gap: 10 }}>
+            {/* Watch Now — primary gold CTA */}
             <TouchableOpacity
               onPress={() => router.push(`/watch/movie/${id}`)}
-              className="flex-1 bg-amber-500 rounded-xl py-3.5 flex-row items-center justify-center"
               activeOpacity={0.9}
               style={{
+                flex: 1,
+                backgroundColor: '#e8a020',
+                borderRadius: 10,
+                paddingVertical: 14,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
                 ...Platform.select({
                   ios: {
-                    shadowColor: '#f59e0b',
+                    shadowColor: '#e8a020',
                     shadowOffset: { width: 0, height: 4 },
                     shadowOpacity: 0.3,
                     shadowRadius: 8,
@@ -172,45 +259,55 @@ export default function MovieDetailScreen() {
                 }),
               }}
             >
-              <Ionicons name="play" size={18} color="#000" />
-              <Text className="text-black font-bold text-base ml-2">Watch Now</Text>
+              <Ionicons name="play" size={18} color="#080808" style={{ marginRight: 8 }} />
+              <Text
+                style={{
+                  fontFamily: 'Inter_600SemiBold',
+                  fontSize: 14,
+                  color: '#080808',
+                }}
+              >
+                Watch Now
+              </Text>
             </TouchableOpacity>
 
-            {/* Download 1 (VidVault) — visible in dev only */}
-            {__DEV__ && (
-              <TouchableOpacity
-                onPress={() => router.push(`/download/movie/${id}`)}
-                className="bg-zinc-800 rounded-xl py-3.5 px-4 flex-row items-center justify-center"
-                activeOpacity={0.8}
-              >
-                <Ionicons name="download-outline" size={18} color="#f59e0b" />
-                <Text className="text-amber-400 font-bold text-sm ml-1.5">Download</Text>
-              </TouchableOpacity>
-            )}
-
+            {/* Download 2 — secondary with subtle border */}
             <TouchableOpacity
               onPress={() => router.push(`/download2/movie/${id}`)}
-              className="bg-zinc-800 rounded-xl py-3.5 px-4 flex-row items-center justify-center"
               activeOpacity={0.8}
+              style={{
+                backgroundColor: 'transparent',
+                borderWidth: 0.5,
+                borderColor: '#252525',
+                borderRadius: 10,
+                paddingVertical: 14,
+                paddingHorizontal: 18,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
             >
-              <Ionicons name="cloud-download-outline" size={18} color="#60a5fa" />
-              <Text className="text-blue-400 font-bold text-sm ml-1.5">Download 2</Text>
+              <Ionicons name="cloud-download-outline" size={18} color="#5b9cf6" style={{ marginRight: 6 }} />
+              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: '#5b9cf6' }}>
+                Download
+              </Text>
             </TouchableOpacity>
           </View>
 
           {/* Cast */}
           {cast.length > 0 && (
             <View className="mt-8">
-              <Text className="text-white text-lg font-bold mb-4">Cast</Text>
+              <Text style={[typography.heading, { marginBottom: 16 }]}>Cast</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 {cast.map((person: any) => (
-                  <View key={person.id} className="items-center mr-5 w-20">
+                  <View key={person.id} className="items-center mr-3.5" style={{ width: 56 }}>
                     {person.profile_path ? (
                       <Image
                         source={{ uri: getImageUrl(person.profile_path, 'w185') }}
-                        className="w-16 h-16 rounded-full"
-                        resizeMode="cover"
                         style={{
+                          width: 56,
+                          height: 56,
+                          borderRadius: 28,
                           ...Platform.select({
                             ios: {
                               shadowColor: '#000',
@@ -221,17 +318,45 @@ export default function MovieDetailScreen() {
                             android: { elevation: 4 },
                           }),
                         }}
+                        resizeMode="cover"
                       />
                     ) : (
-                      <View className="w-16 h-16 rounded-full bg-zinc-800 items-center justify-center">
-                        <Ionicons name="person-outline" size={20} color="#52525b" />
+                      <View
+                        style={{
+                          width: 56,
+                          height: 56,
+                          borderRadius: 28,
+                          backgroundColor: '#191919',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Ionicons name="person-outline" size={22} color="#534f4c" />
                       </View>
                     )}
-                    <Text className="text-zinc-400 text-xs mt-1.5 text-center font-medium" numberOfLines={2}>
+                    <Text
+                      style={{
+                        color: '#f2ede6',
+                        fontSize: 11,
+                        fontFamily: 'Inter_500Medium',
+                        textAlign: 'center',
+                        marginTop: 6,
+                      }}
+                      numberOfLines={1}
+                    >
                       {person.name}
                     </Text>
                     {person.character && (
-                      <Text className="text-zinc-600 text-[10px] text-center mt-0.5" numberOfLines={1}>
+                      <Text
+                        style={{
+                          color: '#9b9590',
+                          fontSize: 10,
+                          fontFamily: 'Inter_400Regular',
+                          textAlign: 'center',
+                          marginTop: 2,
+                        }}
+                        numberOfLines={1}
+                      >
                         {person.character}
                       </Text>
                     )}

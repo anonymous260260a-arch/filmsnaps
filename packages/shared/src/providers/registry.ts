@@ -204,6 +204,26 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
   },
+  {
+    id: 'chillflix',
+    name: 'ChillFlix',
+    displayName: 'Server 18',
+    baseUrl: 'https://chillflix.pw/embed',
+    embed: {
+      movie: (id) => `/movie/${id}?autoplay=true`,
+      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}?autoplay=true`,
+    },
+  },
+  {
+    id: 'streamguide',
+    name: 'StreamGuide',
+    displayName: 'StreamGuide',
+    baseUrl: 'https://streamguide.cfd/Theia',
+    embed: {
+      movie: (id) => `/movie/${id}`,
+      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
+    },
+  },
 ];
 
 /**

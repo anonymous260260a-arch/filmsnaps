@@ -14,7 +14,7 @@ import { IMAGE_BASE_URL } from '../constants/tmdb';
 export function createTmdbApi(apiBase: string) {
   const fetchTmdb = async (path: string) => {
     const res = await fetch(`${apiBase}/api/tmdb${path}`, {
-      cache: 'no-store',
+      cache: 'force-cache',
     });
     if (!res.ok) {
       throw new Error(`TMDB API error: ${res.status} ${res.statusText}`);
