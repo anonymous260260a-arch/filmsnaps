@@ -70,7 +70,11 @@ function parseVTT(content) {
 
 async function fetchSubtitles(url) {
   try {
-    const res = await fetch(url, { cache: 'force-cache' });
+    // Proxy through our server if the URL is from streamguide.cfd (CORS issue)
+    const fetchUrl = url.includes('streamguide.cfd')
+      ? `/api/streamguide?url=${encodeURIComponent(url)}`
+      : url;
+    const res = await fetch(fetchUrl, { cache: 'force-cache' });
     const text = await res.text();
     if (text.trim().startsWith('WEBVTT')) return parseVTT(text);
     return parseSRT(text);
@@ -484,7 +488,10 @@ export function WebStreamGuidePlayer({ apiUrl, onLoadStart, onLoadEnd, onError }
   useEffect(() => {
     if (!currentSource?.url || !videoRef.current) return;
     const video = videoRef.current;
-    const url = currentSource.url;
+    // Proxy HLS URLs from streamguide.cfd through our server to avoid CORS issues
+    const url = currentSource.url.includes('streamguide.cfd')
+      ? `/api/streamguide?url=${encodeURIComponent(currentSource.url)}`
+      : currentSource.url;
     let destroyed = false;
     hlsRetryRef.current = 0;
 
