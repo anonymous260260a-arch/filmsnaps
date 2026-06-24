@@ -356,7 +356,9 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData, defaultP
 
   // ── StreamGuide detection ──
 
-  // Build the streamguide JSON API URL
+  // Build the streamguide JSON API URL.
+  // Uses our own /api/streamguide proxy route to avoid CORS issues
+  // (streamguide.cfd doesn't set Access-Control-Allow-Origin headers).
   const getStreamGuideApiUrl = () => {
     const config = getEnabledProviders().find(
       (p) => p.id === 'streamguide',
@@ -366,7 +368,8 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData, defaultP
       plat === "tv"
         ? config.embed.tv(contentid, selectedSeason, activeEpisode)
         : config.embed.movie(contentid);
-    return `${config.baseUrl}${embedPath}`;
+    const directUrl = `${config.baseUrl}${embedPath}`;
+    return `/api/streamguide?url=${encodeURIComponent(directUrl)}`;
   };
 
   // Build the embed URL using the provider's embed config
