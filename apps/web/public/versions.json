@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "1.0.3",
+      "date": "2026-06-24",
+      "releaseNotes": "StreamGuide custom video player with seek optimization — smoother controls, performance improvements, enhanced playback experience.",
+      "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.3/filmsnaps-v1.0.3.apk",
+      "size": "~90 MB"
+    },
+    {
       "version": "1.0.2",
       "date": "2026-06-21",
       "releaseNotes": "Navigation bar overlap fixed — system nav bar no longer hides the bottom tab bar. Tab bar now uses safe area padding for proper positioning.",
