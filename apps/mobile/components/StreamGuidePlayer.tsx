@@ -345,6 +345,17 @@ const CenterPlayButton: React.FC<{ visible: boolean; isPlaying: boolean; onPress
 }) => {
   const scale = useRef(new Animated.Value(visible ? 1 : 0)).current;
   const opacity = useRef(new Animated.Value(visible ? 1 : 0)).current;
+  const [mounted, setMounted] = useState(visible);
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+    } else {
+      // Delay unmount until animation completes
+      const t = setTimeout(() => setMounted(false), 260);
+      return () => clearTimeout(t);
+    }
+  }, [visible]);
 
   useEffect(() => {
     Animated.parallel([
@@ -363,7 +374,7 @@ const CenterPlayButton: React.FC<{ visible: boolean; isPlaying: boolean; onPress
     ]).start();
   }, [visible, scale, opacity]);
 
-  if (!visible && opacity._value === 0 && !opacity._animation) return null;
+  if (!mounted) return null;
 
   return (
     <Animated.View
@@ -652,7 +663,10 @@ export function StreamGuidePlayer({
               player.replace(videoSource);
               if (preserveTime > 1 && durationRef.current > 0) {
                 setTimeout(() => {
-                  try { player.seekTo(preserveTime); } catch (e) {}
+                  try {
+                    const d = preserveTime - (player.currentTime || 0);
+                    if (Math.abs(d) > 0.5) player.seekBy(d);
+                  } catch (e) {}
                   try { player.play(); } catch (e) {}
                 }, 100);
               } else {
@@ -740,7 +754,10 @@ export function StreamGuidePlayer({
       if (preserveTime > 1 && durationRef.current > 0) {
         // Wait one tick for replace to take effect, then seek
         setTimeout(() => {
-          try { player.seekTo(preserveTime); } catch (e) { /* ignore */ }
+          try {
+            const d = preserveTime - (player.currentTime || 0);
+            if (Math.abs(d) > 0.5) player.seekBy(d);
+          } catch (e) { /* ignore */ }
         }, 100);
       }
       player.play();
@@ -903,7 +920,10 @@ export function StreamGuidePlayer({
   const handleSeekEnd = useCallback((pct: number) => {
     if (player && durationRef.current > 0) {
       const target = pct * durationRef.current;
-      try { player.seekTo(target); } catch (e) { /* ignore */ }
+      try {
+        const d = target - (player.currentTime || 0);
+        if (Math.abs(d) > 0.5) player.seekBy(d);
+      } catch (e) { /* ignore */ }
       // Optimistic update
       currentTimeRef.current = target;
       setCurrentTime(target);
@@ -1220,8 +1240,6 @@ export function StreamGuidePlayer({
             style={{ flex: 1, backgroundColor: '#000' }}
             nativeControls={false}
             contentFit="contain"
-            allowsFullscreen={false}
-            allowsPictureInPicture={false}
           />
         )}
 
