@@ -1,6 +1,6 @@
 {
-  "latestVersion": "1.0.2",
-  "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.2/filmsnaps-v1.0.2.apk",
-  "releaseNotes": "Navigation bar overlap fixed",
-  "versionsUrl": "https://filmsnaps.app/versions"
+  "latestVersion": "1.0.3",
+  "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.3/filmsnaps-v1.0.3.apk",
+  "releaseNotes": "StreamGuide custom video player with seek optimization, performance improvements",
+  "versionsUrl": "https://filmsnap-pro.netlify.app/versions"
 }

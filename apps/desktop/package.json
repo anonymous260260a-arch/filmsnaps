@@ -1,6 +1,6 @@
 {
   "name": "@filmsnaps/desktop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": "FilmSnaps",
   "private": true,
   "description": "FilmSnaps Desktop App — secure streaming with Electron",
