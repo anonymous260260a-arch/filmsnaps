@@ -7,10 +7,14 @@
  * are blocked. This route fetches server-side (no CORS) and returns the
  * response with permissive CORS headers.
  *
+ * Handles both text (JSON, subtitles, M3U8 playlists) and binary (TS segments)
+ * content types correctly via arrayBuffer.
+ *
  * Usage examples:
  *   GET /api/streamguide?url=https://streamguide.cfd/Theia/movie/1339713
  *   GET /api/streamguide?url=https://streamguide.cfd/Theia/subtitles/abc123
  *   GET /api/streamguide?url=https://streamguide.cfd/path/to/file.m3u8
+ *   GET /api/streamguide?url=https://streamguide.cfd/path/to/segment.ts
  *
  * Security: only requests to streamguide.cfd are allowed.
  */
@@ -55,11 +59,12 @@ export async function GET(request) {
       },
     });
 
-    // Read the body as text (supports both JSON and subtitle text formats)
-    const body = await response.text();
-
     // Determine content type from the proxied response
     const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
+
+    // Read as ArrayBuffer to preserve binary content (TS segments, etc.)
+    // Using .text() would corrupt binary MPEG-TS data
+    const body = await response.arrayBuffer();
 
     // Build CORS-permissive response
     return new Response(body, {

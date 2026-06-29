@@ -16,7 +16,6 @@ import {
 import { getSeasonAction } from "@/lib/actions";
 import { getEnabledProviders } from '@filmsnaps/shared';
 import { getImageUrl } from '@/lib/tmdb';
-import { WebStreamGuidePlayer } from '@/components/WebStreamGuidePlayer';
 
 /**
  * WatchClient — Cinematic Theater Mode
@@ -187,13 +186,7 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData, defaultP
   //
   // Does NOT blank the iframe — the user wants to keep watching.
   //
-  // NOTE: Skipped for StreamGuide (native in-page player) since its
-  // video controls and HLS segment fetches can trigger blur events
-  // that would falsely trigger the focus reclamation loop.
-  const isStreamGuide = selectedProvider?.proxyKey === 'streamguide';
-
   useEffect(() => {
-    if (isStreamGuide) return;
 
     let reclaimTimer = null;
 
@@ -240,7 +233,7 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData, defaultP
         reclaimTimer = null;
       }
     };
-  }, [isStreamGuide]);
+  }, []);
 
   // ── End popup guard ─────────────────────────────────────────────
 
@@ -352,24 +345,6 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData, defaultP
       const data = await getSeasonAction(contentid, sNum);
       setSeasonData(data);
     });
-  };
-
-  // ── StreamGuide detection ──
-
-  // Build the streamguide JSON API URL.
-  // Uses our own /api/streamguide proxy route to avoid CORS issues
-  // (streamguide.cfd doesn't set Access-Control-Allow-Origin headers).
-  const getStreamGuideApiUrl = () => {
-    const config = getEnabledProviders().find(
-      (p) => p.id === 'streamguide',
-    );
-    if (!config) return "";
-    const embedPath =
-      plat === "tv"
-        ? config.embed.tv(contentid, selectedSeason, activeEpisode)
-        : config.embed.movie(contentid);
-    const directUrl = `${config.baseUrl}${embedPath}`;
-    return `/api/streamguide?url=${encodeURIComponent(directUrl)}`;
   };
 
   // Build the embed URL using the provider's embed config
@@ -530,13 +505,6 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData, defaultP
               window.electronAPI?.openVideo({ type: plat, id: contentid, provider: provider.id, embedUrl })
                 .then(r => { if (r.success) setElectronVideoOpen(true); });
             }}
-          />
-        ) : isStreamGuide ? (
-          <WebStreamGuidePlayer
-            apiUrl={getStreamGuideApiUrl()}
-            onLoadStart={() => {}}
-            onLoadEnd={() => {}}
-            onError={(msg) => console.error('[WatchClient] StreamGuide error:', msg)}
           />
         ) : (
           <div

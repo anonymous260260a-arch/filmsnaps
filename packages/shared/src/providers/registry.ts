@@ -218,10 +218,10 @@ export const PROVIDERS: ProviderDefinition[] = [
     id: 'streamguide',
     name: 'StreamGuide',
     displayName: 'StreamGuide',
-    baseUrl: 'https://streamguide.cfd/Theia',
+    baseUrl: 'https://streamguide.cfd',
     embed: {
-      movie: (id) => `/movie/${id}`,
-      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
+      movie: (id) => `/embed/?type=m&id=m-api-${id}&ep=m-api-${id}`,
+      tv: (id, season, episode) => `/embed/?type=t&id=t-api-${id}&ep=t-api-${id}-s${season}e${episode}`,
     },
   },
 ];
