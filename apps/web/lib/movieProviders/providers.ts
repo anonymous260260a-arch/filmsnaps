@@ -212,6 +212,17 @@ export const PROVIDERS: ProviderDefinition[] = [
     },
   },
 
+  {
+    id: 'nxsha',
+    name: 'Nxsha',
+    displayName: 'Server 19',
+    baseUrl: 'https://web.nxsha.app',
+    embed: {
+      movie: (id) => `/embed/movie/${id}`,
+      tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}`,
+    },
+  },
+
   // ── TouStream ────────────────────────────────────────────
 
 
