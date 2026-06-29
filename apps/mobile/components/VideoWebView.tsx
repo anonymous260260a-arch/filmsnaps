@@ -16,7 +16,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getEnabledProviders, getImageUrl } from '@filmsnaps/shared';
 import type { ProviderDefinition } from '@filmsnaps/shared';
 import { useSeasonEpisodes, useTVDetails } from '../hooks/useTMDB';
-import { StreamGuidePlayer } from './StreamGuidePlayer';
 
 const POPUP_BLOCKER_SCRIPT = `
 (function() {
@@ -614,7 +613,6 @@ export function VideoWebView({
     return p.displayName || p.name || p.id;
   };
 
-  const isStreamGuide = providerId === 'streamguide';
 
   const retry = () => {
     if (error) {
@@ -826,15 +824,6 @@ export function VideoWebView({
               : { flex: 1 }
           }
         >
-          {isStreamGuide ? (
-            <StreamGuidePlayer
-              apiUrl={watchUrl}
-              onClose={onClose}
-              onLoadStart={() => setLoading(true)}
-              onLoadEnd={() => setLoading(false)}
-              onError={(msg) => setError(msg)}
-            />
-          ) : (
             <WebView
               key={webViewKey}
               ref={webViewRef}
@@ -896,12 +885,11 @@ export function VideoWebView({
               }}
               onOpenWindow={handleOpenWindow}
             />
-          )}
+          </View>
         </View>
       </View>
-    </View>
-  );
-}
+    );
+  }
 
 // ── Season/Episode Picker Modal ────────────────────────────────
 
