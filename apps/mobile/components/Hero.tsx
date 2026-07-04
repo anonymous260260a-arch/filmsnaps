@@ -5,6 +5,7 @@ import { getImageUrl } from '@filmsnaps/shared';
 import { typography } from '../lib/typography';
 import { FilmGrain } from './FilmGrain';
 import type { Movie } from '@filmsnaps/shared';
+import { LinearGradient } from 'react-native-svg';
 
 interface HeroProps {
   item: Movie;
@@ -79,28 +80,20 @@ export function Hero({ item, onWatchPress }: HeroProps) {
         }}
       />
 
-      {/* Warm gradient overlay — transparent at 30% top → void at bottom */}
-      <View
+      {/* Smooth gradient overlay — transparent at 30% top → void at bottom */}
+      <LinearGradient
         style={{
           position: 'absolute',
           bottom: 0,
           left: 0,
           right: 0,
           height: HERO_HEIGHT * 0.7,
-          backgroundColor: 'transparent',
         }}
-      >
-        {/* Stepped gradient layers for smooth transition */}
-        {[0.15, 0.35, 0.55, 0.75, 0.92].map((opacity, i) => (
-          <View
-            key={i}
-            style={{
-              flex: 1,
-              backgroundColor: `rgba(8,8,8,${opacity})`,
-            }}
-          />
-        ))}
-      </View>
+        colors={['rgba(8,8,8,0)', 'rgba(8,8,8,0.08)', 'rgba(8,8,8,0.35)', 'rgba(8,8,8,0.65)', '#080808']}
+        locations={[0, 0.2, 0.5, 0.8, 1]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+      />
 
       {/* Content block — anchored to bottom */}
       <View

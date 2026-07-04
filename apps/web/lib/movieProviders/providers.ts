@@ -10,41 +10,44 @@ import type { ProviderDefinition } from './types';
  * To remove: set `enabled: false` or delete the entry.
  * To reorder: adjust `order` (lower = higher in list, defaults to 999).
  * To hide the real provider name: set `displayName` (shown in UI instead of `name`).
+ *
+ * Enabled servers in order: 1, 2, 3, 6, 14, 16, 18, 19, StreamGuide
  */
 export const PROVIDERS: ProviderDefinition[] = [
-{
+  // ── Server 1 ────────────────────────────────────────────────
+  {
+    id: 'nxsha',
+    name: 'Nxsha',
+    displayName: 'Server 1 [Multi lang, Fast]',
+    baseUrl: 'https://web.nxsha.app',
+    embed: {
+      movie: (id) => `/embed/movie/${id}?lang=hi`,
+      tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?lang=hi`,
+    },
+  },
+  // ── Server 2 ────────────────────────────────────────────────
+  {
     id: 'peachify',
     name: 'peachify',
-    displayName: 'Server 1 [Multi audio]',
+    displayName: 'Server 2 [Multi audio]',
     baseUrl: 'https://peachify.top/embed',
     embed: {
       movie: (id) => `/movie/${id}`,
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
   },
-  // best quality
+  // ── Server 3 ────────────────────────────────────────────────
   {
-    id: 'toustream',
-    name: 'TouStream',
-    displayName: 'Server 2',
-    baseUrl: 'https://toustream.xyz',
-    embed: {
-      movie: (id) => `/tou/movies/${id}`,
-      tv: (id, season, episode) => `/tou/tv/${id}/${season}/${episode}`,
-    },
-  },
-  {
-    id: 'videasy',
-    name: 'videasy',
+    id: 'screenscape',
+    name: 'ScreenScape',
     displayName: 'Server 3',
-    baseUrl: 'https://player.videasy.net',
+    baseUrl: 'https://screenscape.me/embed',
     embed: {
-      movie: (id) => `/movies/${id}`,
-      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
+      movie: (id) => `?tmdb=${id}&type=movie`,
+      tv: (id, season, episode) => `?tmdb=${id}&type=tv&s=${season}&e=${episode}`,
     },
   },
-
-
+  // ── Server 4 ────────────────────────────────────────────────
   {
     id: 'multiembed',
     name: 'MultiEmbed',
@@ -55,6 +58,7 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/?video_id=${id}&tmdb=1&s=${season}&e=${episode}`,
     },
   },
+  // ── Server 5 ────────────────────────────────────────────────
   {
     id: 'vidbinge',
     name: 'VidBinge',
@@ -65,6 +69,7 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
   },
+  // ── Server 6 ────────────────────────────────────────────────
   {
     id: 'vidking',
     name: 'VidKing',
@@ -75,6 +80,7 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?color=ff0000`,
     },
   },
+  // ── Server 7 ────────────────────────────────────────────────
   {
     id: 'vidfast',
     name: 'VidFast',
@@ -85,7 +91,6 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
   },
-
   // ── VidSrc family ──────────────────────────────────────────
   {
     id: 'vidsrc',
@@ -147,9 +152,7 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}`,
     },
   },
-
-  // ── Primary providers ─────────────────────────────────────
-
+  // ── Server 14 ───────────────────────────────────────────────
   {
     id: 'vidnest',
     name: 'Vidnest',
@@ -160,16 +163,7 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
   },
-  //  {
-  //    id: 'primesrc',
-  //    name: 'PrimeSrc',
-  //    displayName: 'Server 18',
-  //    baseUrl: 'https://primesrc.me',
-  //    embed: {
-  //      movie: (id) => `/embed/movie?tmdb=${id}`,
-  //      tv: (id, season, episode) => `/embed/tv?tmdb=${id}&season=${season}&episode=${episode}`,
-  //    },
-  //  },
+  // ── Server 15 ───────────────────────────────────────────────
   {
     id: 'vidpro',
     name: 'VidPro',
@@ -180,6 +174,7 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
   },
+  // ── Server 16 ───────────────────────────────────────────────
   {
     id: 'vixsrc',
     name: 'Vixsrc',
@@ -190,17 +185,7 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
   },
-
-  // {
-  //   id: 'moviesapi',
-  //   name: 'MoviesAPI',
-  //   displayName: 'Server 13',
-  //   baseUrl: 'https://moviesapi.to',
-  //   embed: {
-  //     movie: (id) => `/movie/${id}`,
-  //     tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
-  //   },
-  // },
+  // ── Server 17 ───────────────────────────────────────────────
   {
     id: 'vidup',
     name: 'VidUp',
@@ -211,21 +196,51 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}?autoPlay=true`,
     },
   },
-
+  // ── Server 20 (disabled) ────────────────────────────────────
   {
-    id: 'nxsha',
-    name: 'Nxsha',
-    displayName: 'Server 19',
-    baseUrl: 'https://web.nxsha.app',
+    id: 'videasy',
+    name: 'videasy',
+    displayName: 'Server 20',
+    enabled: false,
+    baseUrl: 'https://player.videasy.net',
     embed: {
-      movie: (id) => `/embed/movie/${id}`,
-      tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}`,
+      movie: (id) => `/movies/${id}`,
+      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
   },
-
-  // ── TouStream ────────────────────────────────────────────
-
-
+  // ── Server 18 ───────────────────────────────────────────────
+  {
+    id: 'chillflix',
+    name: 'ChillFlix',
+    displayName: 'Server 18 [Slow]',
+    baseUrl: 'https://chillflix.pw/embed',
+    embed: {
+      movie: (id) => `/movie/${id}?autoplay=true`,
+      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}?autoplay=true`,
+    },
+  },
+  // ── Server 19 ───────────────────────────────────────────────
+  {
+    id: 'toustream',
+    name: 'TouStream',
+    displayName: 'Server 19',
+    baseUrl: 'https://toustream.xyz',
+    embed: {
+      movie: (id) => `/tou/movies/${id}`,
+      tv: (id, season, episode) => `/tou/tv/${id}/${season}/${episode}`,
+    },
+  },
+  // ── StreamGuide ─────────────────────────────────────────────
+  {
+    id: 'streamguide',
+    name: 'StreamGuide',
+    displayName: 'StreamGuide',
+    baseUrl: 'https://streamguide.cfd',
+    embed: {
+      movie: (id) => `/embed/?type=m&id=m-api-${id}&ep=m-api-${id}`,
+      tv: (id, season, episode) => `/embed/?type=t&id=t-api-${id}&ep=t-api-${id}-s${season}e${episode}`,
+    },
+  },
 ];
 
 /**
