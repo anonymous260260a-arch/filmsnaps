@@ -37,6 +37,9 @@ export function createTmdbApi(apiBase: string) {
     getTVDetails: (id: number | string) =>
       fetchTmdb(`/tv/${id}?append_to_response=videos,credits,similar`),
 
+    getTVSeasonsOnly: (id: number | string) =>
+      fetchTmdb(`/tv/${id}`),
+
     getSeasonEpisodes: (tvId: number | string, seasonNumber: number) =>
       fetchTmdb(`/tv/${tvId}/season/${seasonNumber}`),
 

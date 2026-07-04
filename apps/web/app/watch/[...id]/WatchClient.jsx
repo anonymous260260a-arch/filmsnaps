@@ -354,6 +354,14 @@ const WatchClient = ({ contentid, plat, initialMeta, initialSeasonData, defaultP
     );
     if (!config) return "";
 
+    // Nxsha/chillflix: load directly in iframe (Cloudflare providers work best this way)
+    if (config.id === 'nxsha' || config.id === 'chillflix') {
+      const embedPath = plat === "tv"
+        ? config.embed.tv(contentid, selectedSeason, activeEpisode)
+        : config.embed.movie(contentid);
+      return `${config.baseUrl}${embedPath}`;
+    }
+
     if (plat === "tv") {
       return `/api/player/${config.id}?tvId=${contentid}&season=${selectedSeason}&episode=${activeEpisode}`;
     }

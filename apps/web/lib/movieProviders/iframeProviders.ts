@@ -30,7 +30,7 @@ export const iframeProviders: Record<string, string> = {
   moviesapi: 'https://moviesapi.club',
   vidup: 'https://vidup.to',
   indraembed: 'https://indraembed.netlify.app',
-  
+  nxsha: 'https://web.nxsha.app',
 };
 
 /**
@@ -143,6 +143,13 @@ export const providerConfigs: Record<string, ProviderConfig> = {
     embedPath: {
       movie: (id: string) => `/movie/${id}?autoPlay=true`,
       tv: (id: string, season: number, episode: number) => `/tv/${id}/${season}/${episode}?autoPlay=true`,
+    },
+  },
+  nxsha: {
+    baseUrl: 'https://web.nxsha.app',
+    embedPath: {
+      movie: (id: string) => `/embed/movie/${id}?lang=hi`,
+      tv: (id: string, season: number, episode: number) => `/embed/tv/${id}/${season}/${episode}?lang=hi`,
     },
   },
 };

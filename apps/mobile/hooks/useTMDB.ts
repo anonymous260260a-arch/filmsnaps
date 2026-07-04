@@ -9,6 +9,7 @@ export function useTrendingMovies() {
     queryFn: () => tmdbApi.getTrendingMovies(),
     staleTime: 1000 * 60 * 10, // 10 min
     gcTime: 1000 * 60 * 30,    // 30 min
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -18,6 +19,7 @@ export function usePopularMovies(page = 1) {
     queryFn: () => tmdbApi.getPopularMovies(page),
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 30,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -27,6 +29,7 @@ export function useUpcomingMovies() {
     queryFn: () => tmdbApi.getUpcomingMovies(),
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 30,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -36,6 +39,7 @@ export function useMovieDetails(id: number | string) {
     queryFn: () => tmdbApi.getMovieDetails(id),
     staleTime: 1000 * 60 * 60, // 1 hour
     gcTime: 1000 * 60 * 60,    // 1 hour
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -47,6 +51,7 @@ export function useTrendingTV() {
     queryFn: () => tmdbApi.getTrendingTV(),
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 30,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -56,6 +61,17 @@ export function useTVDetails(id: number | string) {
     queryFn: () => tmdbApi.getTVDetails(id),
     staleTime: 1000 * 60 * 60,
     gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useTVSeasonsOnly(id: number | string) {
+  return useQuery({
+    queryKey: ['tv', id, 'seasons'],
+    queryFn: () => tmdbApi.getTVSeasonsOnly(id),
+    staleTime: 1000 * 60 * 60,
+    gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -66,6 +82,7 @@ export function useSeasonEpisodes(tvId: number | string, seasonNumber: number) {
     staleTime: 1000 * 60 * 60,
     gcTime: 1000 * 60 * 60,
     enabled: !!tvId && !!seasonNumber,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -78,5 +95,6 @@ export function useSearch(query: string) {
     enabled: query.length >= 2,
     staleTime: 1000 * 60 * 5,
     gcTime: 1000 * 60 * 15,
+    refetchOnWindowFocus: false,
   });
 }

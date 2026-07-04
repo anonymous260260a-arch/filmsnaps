@@ -42,6 +42,7 @@ const PROVIDERS: Record<string, string> = {
   vidup: 'https://vidup.to',
   indraembed: 'https://indraembed.netlify.app',
   vidvault: 'https://vidvault.ru',
+  nxsha: 'https://web.nxsha.app',
 };
 
 /**

@@ -18,6 +18,7 @@ import { FilmGrain } from '../../components/FilmGrain';
 import { useMovieDetails } from '../../hooks/useTMDB';
 import { MediaCarousel } from '../../components/MediaCarousel';
 import type { Movie } from '@filmsnaps/shared';
+import { LinearGradient } from 'react-native-svg';
 
 export default function MovieDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -72,21 +73,20 @@ export default function MovieDetailScreen() {
           {/* Film grain overlay */}
           <FilmGrain opacity={0.04} />
 
-          {/* Stronger gradient — covers bottom 60% for poster overlap */}
-          <View
+          {/* Smooth gradient — covers bottom 60% for poster overlap */}
+          <LinearGradient
             style={{
               position: 'absolute',
               bottom: 0,
               left: 0,
               right: 0,
               height: BACKDROP_HEIGHT * 0.6,
-              backgroundColor: 'transparent',
             }}
-          >
-            {[0.2, 0.45, 0.7, 0.88, 1].map((opacity, i) => (
-              <View key={i} style={{ flex: 1, backgroundColor: `rgba(8,8,8,${opacity})` }} />
-            ))}
-          </View>
+            colors={['rgba(8,8,8,0)', 'rgba(8,8,8,0.12)', 'rgba(8,8,8,0.35)', 'rgba(8,8,8,0.65)', '#080808']}
+            locations={[0, 0.2, 0.5, 0.8, 1]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+          />
         </View>
 
         {/* Pill-shaped back button */}

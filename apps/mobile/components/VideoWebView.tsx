@@ -15,7 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getEnabledProviders, getImageUrl } from '@filmsnaps/shared';
 import type { ProviderDefinition } from '@filmsnaps/shared';
-import { useSeasonEpisodes, useTVDetails } from '../hooks/useTMDB';
+import { useSeasonEpisodes, useTVSeasonsOnly } from '../hooks/useTMDB';
+import * as ScreenOrientation from 'expo-screen-orientation';
 
 const POPUP_BLOCKER_SCRIPT = `
 (function() {
@@ -405,7 +406,7 @@ const POPUP_BLOCKER_SCRIPT = `
         navigator.serviceWorker.getRegistrations().then(function(regs) {
           for (var i = 0; i < regs.length; i++) { regs[i].unregister(); }
         });
-      }, 5000);
+      }, 15000);
     }
   } catch(e) {}
 
@@ -476,9 +477,171 @@ const POPUP_BLOCKER_SCRIPT = `
   // (each provider uses a different base URL) and the key-based WebView remount
   // on provider switch.
   //try { ... } catch(e) {}
+
+  // ── ScreenScape: hide download app banner & ads timer (MutationObserver) ──
+  try {
+    function _hideSSBanner(root) {
+      var _link = root.querySelector && root.querySelector('a[href="https://screenscape.fun"]');
+      if (!_link) return;
+      // Hide the link, the <p> after it, and the parent div
+      _link.style.display = 'none';
+      var _p = _link.nextElementSibling;
+      while (_p) { _p.style.display = 'none'; _p = _p.nextElementSibling; }
+      if (_link.parentElement) _link.parentElement.style.display = 'none';
+    }
+    function _hideSSAds(root) {
+      var _adsBtn = root.querySelector && root.querySelector('button[aria-label^="Ads window ends"]');
+      if (_adsBtn) _adsBtn.style.display = 'none';
+    }
+    var _ssObs = new MutationObserver(function(muts) {
+      for (var i = 0; i < muts.length; i++) {
+        var nodes = muts[i].addedNodes;
+        for (var j = 0; j < nodes.length; j++) {
+          var n = nodes[j];
+          if (n.nodeType !== 1) continue;
+          if (n.tagName === 'A' && n.getAttribute('href') === 'https://screenscape.fun') {
+            if (n.parentElement) n.parentElement.style.display = 'none';
+          } else if (n.tagName === 'BUTTON' && n.getAttribute('aria-label')?.indexOf('Ads window ends') === 0) {
+            n.style.display = 'none';
+          } else if (n.querySelector) {
+            _hideSSBanner(n);
+            _hideSSAds(n);
+          }
+        }
+      }
+    });
+    _ssObs.observe(document.documentElement, { childList: true, subtree: true });
+  } catch(e) {}
 })();
 true;
 `;
+
+// Minimal script for Cloudflare-protected providers (e.g. Nxsha, ChillFlix).
+// Only overrides bot-detection properties — no ad blocking or navigation hooks.
+// Accepts provider host dynamically for iframe ad blocking.
+function makeCFBypassScript(providerHost: string) {
+  return `
+(function() {
+  // ── Cloudflare bypass ──
+  Object.defineProperty(navigator, 'webdriver', { get: () => false });
+  if (!window.chrome) {
+    window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){} };
+  }
+  Object.defineProperty(navigator, 'plugins', {
+    get: () => [1, 2, 3, 4, 5],
+    configurable: true,
+  });
+  Object.defineProperty(navigator, 'languages', {
+    get: () => ['en-US', 'en'],
+    configurable: true,
+  });
+  const originalQuery = window.navigator.permissions.query;
+  window.navigator.permissions.query = (params) =>
+    params.name === 'notifications'
+      ? Promise.resolve({ state: Notification.permission })
+      : originalQuery(params);
+  const getParameter = WebGLRenderingContext.prototype.getParameter;
+  WebGLRenderingContext.prototype.getParameter = function(param) {
+    if (param === 37445) return 'Intel Inc.';
+    if (param === 37446) return 'Intel Iris OpenGL Engine';
+    return getParameter.call(this, param);
+  };
+
+  // ── Intercept fullscreen API → notify React Native for landscape lock ──
+  try {
+    var _fs = Element.prototype.requestFullscreen;
+    Element.prototype.requestFullscreen = function() {
+      window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({type:'cf:fullscreen', entering:true}));
+      return _fs ? _fs.apply(this, arguments) : Promise.resolve();
+    };
+    var _efs = Element.prototype.exitFullscreen;
+    Element.prototype.exitFullscreen = function() {
+      window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({type:'cf:fullscreen', entering:false}));
+      return _efs ? _efs.apply(this, arguments) : Promise.resolve();
+    };
+    document.addEventListener('fullscreenchange', function() {
+      var isFS = !!document.fullscreenElement;
+      window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({type:'cf:fullscreen', entering:isFS}));
+    });
+  } catch(e) {}
+
+  // ── Minimal ad blocking (no location/pushState interference) ──
+  var PROVIDER_HOST = '${providerHost}';
+  function isOwnUrl(u) {
+    if (!u || typeof u !== 'string') return false;
+    try { return new URL(u, location.href).hostname === PROVIDER_HOST; }
+    catch(e) { return u.indexOf(PROVIDER_HOST) !== -1; }
+  }
+  window.open = function() { return null; };
+  try {
+    var observer = new MutationObserver(function(mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var nodes = mutations[i].addedNodes;
+        for (var j = 0; j < nodes.length; j++) {
+          var n = nodes[j];
+          if (n.tagName === 'IFRAME') {
+            var src = n.getAttribute('src') || '';
+            if (!isOwnUrl(src)) { n.remove(); }
+          }
+        }
+      }
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  } catch(e) {}
+  setTimeout(function() {
+    try {
+      var iframes = document.querySelectorAll('iframe');
+      for (var i = iframes.length - 1; i >= 0; i--) {
+        var src = iframes[i].getAttribute('src') || iframes[i].src || '';
+        if (!isOwnUrl(src)) { iframes[i].remove(); }
+      }
+    } catch(e) {}
+  }, 500);
+
+  // ── Provider-specific UI cleanup ──
+  // ChillFlix: hide watch party, login, sign in, create account buttons
+  if (PROVIDER_HOST.indexOf('chillflix') !== -1) {
+    var HIDE_KEYWORDS = ['watch party', 'login', 'log in', 'sign in', 'create account', 'sign up', 'free account'];
+    var HIDE_ICONCLS = ['party', 'watchparty', 'watch-party'];
+    function hideMatchingElements(root) {
+      var els = root.querySelectorAll('button, a');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (el.style.display === 'none') continue;
+        var txt = (el.textContent || '').toLowerCase().trim();
+        var cls = (el.className || '').toString().toLowerCase();
+        var aria = (el.getAttribute('aria-label') || '').toLowerCase();
+        var title = (el.getAttribute('title') || '').toLowerCase();
+        for (var j = 0; j < HIDE_KEYWORDS.length; j++) {
+          if (txt.indexOf(HIDE_KEYWORDS[j]) !== -1 || aria.indexOf(HIDE_KEYWORDS[j]) !== -1 || title.indexOf(HIDE_KEYWORDS[j]) !== -1) {
+            el.style.display = 'none';
+            break;
+          }
+        }
+        if (el.style.display !== 'none') {
+          for (var k = 0; k < HIDE_ICONCLS.length; k++) {
+            if (cls.indexOf(HIDE_ICONCLS[k]) !== -1) {
+              el.style.display = 'none';
+              break;
+            }
+          }
+        }
+      }
+    }
+    hideMatchingElements(document);
+    setTimeout(function() { hideMatchingElements(document); }, 2000);
+  }
+
+  // ── Nxsha: hide install banner via CSS (zero flicker, no interval) ──
+  if (PROVIDER_HOST.indexOf('nxsha') !== -1) {
+    var s = document.createElement('style');
+    s.textContent = 'a[href="https://nxsha.app"]{display:none!important}.modal-ui .sticky{display:none!important}';
+    document.documentElement.appendChild(s);
+  }
+})();
+true;
+`;
+}
 
 interface VideoWebViewProps {
   type: 'movie' | 'tv';
@@ -715,17 +878,19 @@ export function VideoWebView({
             >
               <Ionicons name="server" size={16} color="#e8a020" />
             </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setIsFullscreen(!isFullscreen)}
-              className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name={isFullscreen ? 'contract' : 'expand'}
-                size={20}
-                color="#fff"
-              />
-            </TouchableOpacity>
+            {providerId !== 'nxsha' && providerId !== 'chillflix' && (
+              <TouchableOpacity
+                onPress={() => setIsFullscreen(!isFullscreen)}
+                className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={isFullscreen ? 'contract' : 'expand'}
+                  size={20}
+                  color="#fff"
+                />
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Animated.View>
@@ -806,7 +971,7 @@ export function VideoWebView({
         style={
           !isFullscreen
             ? {
-                height: SCREEN_HEIGHT * 0.68,
+                height: providerId === 'nxsha'  ? SCREEN_HEIGHT * 0.40 : SCREEN_HEIGHT * 0.68,
                 justifyContent: 'center',
                 marginTop: insets.top + 24,
               }
@@ -837,7 +1002,11 @@ export function VideoWebView({
               sharedCookiesEnabled={true}
               thirdPartyCookiesEnabled={true}
               startInLoadingState={true}
-              injectedJavaScriptBeforeContentLoaded={POPUP_BLOCKER_SCRIPT}
+              injectedJavaScriptBeforeContentLoaded={
+                (providerId === 'nxsha' || providerId === 'chillflix')
+                  ? makeCFBypassScript(currentProvider?.baseUrl ? new URL(currentProvider.baseUrl).hostname : '')
+                  : POPUP_BLOCKER_SCRIPT
+              }
               allowsBackForwardNavigationGestures={false}
               setSupportMultipleWindows={false}
               // ── Security hardening ──
@@ -846,6 +1015,15 @@ export function VideoWebView({
               cacheEnabled={false}
               renderLoading={() => <View />}
               onShouldStartLoadWithRequest={(request) => {
+                // Block intent:// URLs universally (ad popups trying to open Chrome)
+                if (!request.url || request.url.startsWith('intent://')) return false;
+                // CF-protected providers: allow only same-origin + player modal domains
+                if (providerId === 'nxsha' || providerId === 'chillflix') {
+                  const host = (() => { try { return new URL(request.url).hostname; } catch { return ''; }})();
+                  const providerHost = currentProvider?.baseUrl ? new URL(currentProvider.baseUrl).hostname : '';
+                  if (host === providerHost) return true;
+                  return false;
+                }
                 // Chain tracking: record all domains during page load (first 5s),
                 // then block any navigation to unvisited domains (likely ads).
                 if (request.url) {
@@ -873,15 +1051,33 @@ export function VideoWebView({
                 }
                 return true;
               }}
-              onLoadEnd={() => {
+              onLoadStart={(event) => {}}
+              onLoadEnd={(event) => {
                 setLoading(false);
                 // After page fully loads, allow 5s for provider redirect chain,
                 // then lock it — any new domain after this is likely an ad.
                 setTimeout(() => { pageLoadedRef.current = true; }, 5000);
               }}
-              onError={(syntheticEvent) => {
-                const desc = syntheticEvent.nativeEvent.description;
-                console.warn('[WebView] Non-fatal error (video may still play):', desc);
+              onError={(syntheticEvent) => {}}
+              onMessage={(event) => {
+                try {
+                  const data = JSON.parse(event.nativeEvent.data);
+                  if (data.type === 'cf:fullscreen' && (providerId === 'nxsha' || providerId === 'chillflix')) {
+                    if (data.entering) {
+                      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+                      setOverlayVisible(false);
+                      overlayOpacity.setValue(0);
+                    } else {
+                      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.ALL).catch(() => {});
+                      setOverlayVisible(true);
+                      Animated.timing(overlayOpacity, {
+                        toValue: 1,
+                        duration: 200,
+                        useNativeDriver: true,
+                      }).start();
+                    }
+                  }
+                } catch(e) {}
               }}
               onOpenWindow={handleOpenWindow}
             />
@@ -916,7 +1112,7 @@ function EpisodePickerModal({
     isLoading,
     isError,
   } = useSeasonEpisodes(tvId!, pickerSeason);
-  const { data: tvData } = useTVDetails(tvId!);
+  const { data: tvData } = useTVSeasonsOnly(tvId!);
 
   const episodes = (seasonData?.episodes as any[]) ?? [];
   const seasons =
