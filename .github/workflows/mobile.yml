@@ -1,0 +1,70 @@
+name: Build Mobile with EAS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Platform to build for'
+        required: true
+        type: choice
+        options:
+          - all
+          - android
+          - ios
+      profile:
+        description: 'Build profile'
+        required: true
+        type: choice
+        options:
+          - development
+          - preview
+          - production
+        default: 'preview'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [android, ios]
+        include:
+          - platform: android
+            profile: ${{ github.event.inputs.profile || 'preview' }}
+          - platform: ios
+            profile: ${{ github.event.inputs.profile || 'preview' }}
+    if: github.event.inputs.platform == 'all' || github.event.inputs.platform == matrix.platform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build shared package
+        run: cd packages/shared && pnpm build
+
+      - name: Setup Expo
+        uses: expo/expo-github-action@v8
+        with:
+          expo-version: 55.x
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build Android
+        if: matrix.platform == 'android'
+        run: cd apps/mobile && eas build --platform android --profile ${{ matrix.profile }} --non-interactive
+
+      - name: Build iOS
+        if: matrix.platform == 'ios'
+        run: cd apps/mobile && eas build --platform ios --profile ${{ matrix.profile }} --non-interactive
