@@ -39,9 +39,7 @@ export async function tmdb(path: string) {
   const separator = path.includes('?') ? '&' : '?';
 
   try {
-    const res = await fetch(`${BASE}${path}${separator}api_key=${apiKey}`, {
-      next: { revalidate: 3600 },
-    });
+    const res = await fetch(`${BASE}${path}${separator}api_key=${apiKey}`);
 
     if (!res.ok) {
       console.error('TMDB ERROR:', res.status, await res.text());
