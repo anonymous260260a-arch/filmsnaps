@@ -313,6 +313,7 @@ export default function Download2Screen() {
           thirdPartyCookiesEnabled={true}
           startInLoadingState={true}
           injectedJavaScriptBeforeContentLoaded={INJECTED_SCRIPT}
+          injectedJavaScript={`(function(){var w=null;(async function(){try{if('wakeLock'in navigator){w=await navigator.wakeLock.request('screen');}}catch(e){}window.addEventListener('beforeunload',function(){if(w){try{w.release()}catch(e){}}});window.addEventListener('pagehide',function(){if(w){try{w.release()}catch(e){}}})})()})()`}
           allowsBackForwardNavigationGestures={false}
           setSupportMultipleWindows={false}
           onShouldStartLoadWithRequest={handleNavigation}

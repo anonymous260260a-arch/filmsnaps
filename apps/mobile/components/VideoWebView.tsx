@@ -478,7 +478,7 @@ const POPUP_BLOCKER_SCRIPT = `
   // on provider switch.
   //try { ... } catch(e) {}
 
-  // ── ScreenScape: hide download app banner & ads timer (MutationObserver) ──
+  // ── ScreenScape: hide download app banner & ads timer (MutationObserver + periodic) ──
   try {
     function _hideSSBanner(root) {
       var _link = root.querySelector && root.querySelector('a[href="https://screenscape.fun"]');
@@ -493,6 +493,7 @@ const POPUP_BLOCKER_SCRIPT = `
       var _adsBtn = root.querySelector && root.querySelector('button[aria-label^="Ads window ends"]');
       if (_adsBtn) _adsBtn.style.display = 'none';
     }
+    // Observer catches dynamically-added elements
     var _ssObs = new MutationObserver(function(muts) {
       for (var i = 0; i < muts.length; i++) {
         var nodes = muts[i].addedNodes;
@@ -511,6 +512,11 @@ const POPUP_BLOCKER_SCRIPT = `
       }
     });
     _ssObs.observe(document.documentElement, { childList: true, subtree: true });
+    // Periodic fallback — catches elements the observer misses (SPA re-renders, etc.)
+    setInterval(function() {
+      _hideSSBanner(document);
+      _hideSSAds(document);
+    }, 3000);
   } catch(e) {}
 })();
 true;
@@ -629,14 +635,23 @@ function makeCFBypassScript(providerHost: string) {
       }
     }
     hideMatchingElements(document);
-    setTimeout(function() { hideMatchingElements(document); }, 2000);
+    setInterval(function() { hideMatchingElements(document); }, 3000);
   }
 
-  // ── Nxsha: hide install banner via CSS (zero flicker, no interval) ──
+  // ── Nxsha: hide install banner & UI clutter (CSS + periodic cleanup) ──
   if (PROVIDER_HOST.indexOf('nxsha') !== -1) {
     var s = document.createElement('style');
-    s.textContent = 'a[href="https://nxsha.app"]{display:none!important}.modal-ui .sticky{display:none!important}';
+    s.textContent = 'a[href="https://nxsha.app"]{display:none!important}.modal-ui .sticky{display:none!important}[class*="download"]{display:none!important}[class*="banner"] {display:none!important}';
     document.documentElement.appendChild(s);
+    // Periodic sweep for elements that sneak past CSS (SPA re-renders, etc.)
+    setInterval(function() {
+      document.querySelectorAll('a[href*="nxsha.app"],a[href*="download"],a[href*="install"]').forEach(function(el) {
+        el.style.display = 'none';
+      });
+      document.querySelectorAll('[class*="download"],[class*="banner"],[class*="install"]').forEach(function(el) {
+        el.style.display = 'none';
+      });
+    }, 3000);
   }
 })();
 true;
@@ -1007,6 +1022,7 @@ export function VideoWebView({
                   ? makeCFBypassScript(currentProvider?.baseUrl ? new URL(currentProvider.baseUrl).hostname : '')
                   : POPUP_BLOCKER_SCRIPT
               }
+              injectedJavaScript={`(function(){var w=null;(async function(){try{if('wakeLock'in navigator){w=await navigator.wakeLock.request('screen');}}catch(e){}window.addEventListener('beforeunload',function(){if(w){try{w.release()}catch(e){}}});window.addEventListener('pagehide',function(){if(w){try{w.release()}catch(e){}}})})()})()`}
               allowsBackForwardNavigationGestures={false}
               setSupportMultipleWindows={false}
               // ── Security hardening ──
