@@ -12,7 +12,7 @@
     "dev:web": "cd apps/web && pnpm dev",
     "build:web": "cd apps/web && pnpm build",
     "cf:build": "cd apps/web && pnpm cf:build",
-    "cf:deploy": "npx wrangler deploy",
+    "cf:deploy": "cd apps/web && npx wrangler deploy",
     "dev:mobile": "cd apps/mobile && pnpm expo start",
     "dev:desktop": "cd apps/desktop && pnpm dev",
     "build:desktop": "cd apps/desktop && pnpm build",
