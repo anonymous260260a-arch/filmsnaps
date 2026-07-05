@@ -8,8 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "cf:build": "npx @opennextjs/cloudflare build",
-    "cf:deploy": "cd apps/web && npx wrangler deploy",
-    "cf:deploy:prod": "cd apps/web && npx wrangler deploy --env production",
+    "cf:deploy": "npx wrangler deploy",
+    "cf:deploy:prod": "npx wrangler deploy --env production",
     "cf:preview": "cd apps/web && npx wrangler dev --remote",
     "typecheck": "tsc --noEmit"
   },
