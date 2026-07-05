@@ -110,15 +110,12 @@ jobs:
           NEXT_PUBLIC_TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
 
       - name: Build for Cloudflare Worker
-        run: cd apps/web && pnpm cf:build
+        run: pnpm cf:build
 
       - name: Deploy Cloudflare Worker
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --env production
-          workingDirectory: apps/web
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      command: deploy --env production
+      workingDirectory: apps/web
