@@ -1022,7 +1022,6 @@ export function VideoWebView({
                   ? makeCFBypassScript(currentProvider?.baseUrl ? new URL(currentProvider.baseUrl).hostname : '')
                   : POPUP_BLOCKER_SCRIPT
               }
-              injectedJavaScript={`(function(){var w=null;(async function(){try{if('wakeLock'in navigator){w=await navigator.wakeLock.request('screen');}}catch(e){}window.addEventListener('beforeunload',function(){if(w){try{w.release()}catch(e){}}});window.addEventListener('pagehide',function(){if(w){try{w.release()}catch(e){}}})})()})()`}
               allowsBackForwardNavigationGestures={false}
               setSupportMultipleWindows={false}
               // ── Security hardening ──
@@ -1073,6 +1072,12 @@ export function VideoWebView({
                 // After page fully loads, allow 5s for provider redirect chain,
                 // then lock it — any new domain after this is likely an ad.
                 setTimeout(() => { pageLoadedRef.current = true; }, 5000);
+                // Keep screen awake while video is playing via WebView JS injection
+                try {
+                  webViewRef.current?.injectJavaScript(
+                    'try{if(navigator.wakeLock)navigator.wakeLock.request("screen").then(function(l){window.__wl=l}).catch(function(){})}catch(e){};true;'
+                  );
+                } catch(e) {}
               }}
               onError={(syntheticEvent) => {}}
               onMessage={(event) => {
