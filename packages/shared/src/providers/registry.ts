@@ -36,7 +36,7 @@ export const PROVIDERS: ProviderDefinition[] = [
   {
     id: 'screenscape',
     name: 'ScreenScape',
-    displayName: 'Server 3',
+    displayName: 'Server 3 [Multi lang, Fast]',
     baseUrl: 'https://screenscape.me/embed',
     embed: {
       movie: (id) => `?tmdb=${id}&type=movie`,

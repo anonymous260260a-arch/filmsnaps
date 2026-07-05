@@ -26,7 +26,7 @@ export function getApiBaseUrl(): string {
     return 'http://localhost:3000';
   }
 
-  return 'https://filmsnap-pro.netlify.app';
+  return 'https://filmsnaps1.anonymous260260a.workers.dev';
 }
 
 /**

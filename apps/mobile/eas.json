@@ -14,11 +14,14 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_WEB_URL": "https://filmsnap-pro.netlify.app"
+        "EXPO_PUBLIC_WEB_URL": "https://filmsnaps1.anonymous260260a.workers.dev"
       }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_WEB_URL": "https://filmsnaps1.anonymous260260a.workers.dev"
+      }
     }
   },
   "submit": {
