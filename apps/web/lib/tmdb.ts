@@ -27,9 +27,7 @@ const getBaseUrl = () => {
 const apiFetch = async (path: string) => {
   const baseUrl = getBaseUrl();
 
-  const res = await fetch(`${baseUrl}/api/tmdb${path}`, {
-    next: { revalidate: 3600 },
-  });
+  const res = await fetch(`${baseUrl}/api/tmdb${path}`);
 
   if (!res.ok) {
     throw new Error('Failed to fetch TMDB data');

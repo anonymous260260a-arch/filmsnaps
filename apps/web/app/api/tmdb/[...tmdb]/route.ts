@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const API_KEY = process.env.TMDB_API_KEY!;
 const BASE_URL = 'https://api.themoviedb.org/3';
 
 const corsHeaders = {
@@ -27,6 +26,14 @@ export async function GET(
   const { tmdb } = await params;
   const query = req.nextUrl.searchParams.toString();
 
+  const API_KEY = process.env.TMDB_API_KEY;
+  if (!API_KEY) {
+    return corsResponse(
+      { error: 'TMDB_API_KEY not configured on this server' },
+      { status: 500 }
+    );
+  }
+
   const endpoint = `/${tmdb.join('/')}${query ? '?' + query : ''}`;
 
   const res = await fetch(
@@ -39,8 +46,9 @@ export async function GET(
   );
 
   if (!res.ok) {
+    const body = await res.text().catch(() => '');
     return corsResponse(
-      { error: 'TMDB request failed' },
+      { error: `TMDB request failed (${res.status}): ${body.slice(0, 200)}` },
       { status: res.status }
     );
   }
