@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const BASE_URL = 'https://api.themoviedb.org/3';
 
+const cacheHeaders = {
+  'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=86400',
+};
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -15,7 +19,7 @@ export async function OPTIONS() {
 function corsResponse(data: any, init?: ResponseInit) {
   return NextResponse.json(data, {
     ...init,
-    headers: { ...init?.headers, ...corsHeaders },
+    headers: { ...cacheHeaders, ...init?.headers, ...corsHeaders },
   });
 }
 
