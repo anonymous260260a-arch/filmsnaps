@@ -17,6 +17,7 @@ import { getEnabledProviders, getImageUrl } from '@filmsnaps/shared';
 import type { ProviderDefinition } from '@filmsnaps/shared';
 import { useSeasonEpisodes, useTVSeasonsOnly } from '../hooks/useTMDB';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import { useKeepAwake } from 'expo-keep-awake';
 
 const POPUP_BLOCKER_SCRIPT = `
 (function() {
@@ -675,6 +676,7 @@ export function VideoWebView({
   onClose,
   initialProvider,
 }: VideoWebViewProps) {
+  useKeepAwake();
   const insets = useSafeAreaInsets();
   const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
   const webViewRef = useRef<WebView>(null);
@@ -1072,12 +1074,6 @@ export function VideoWebView({
                 // After page fully loads, allow 5s for provider redirect chain,
                 // then lock it — any new domain after this is likely an ad.
                 setTimeout(() => { pageLoadedRef.current = true; }, 5000);
-                // Keep screen awake while video is playing via WebView JS injection
-                try {
-                  webViewRef.current?.injectJavaScript(
-                    'try{if(navigator.wakeLock)navigator.wakeLock.request("screen").then(function(l){window.__wl=l}).catch(function(){})}catch(e){};true;'
-                  );
-                } catch(e) {}
               }}
               onError={(syntheticEvent) => {}}
               onMessage={(event) => {
