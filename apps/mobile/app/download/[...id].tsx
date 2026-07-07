@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { getProvider } from '@filmsnaps/shared';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import { useKeepAwake } from 'expo-keep-awake';
 
 // ── Enhanced injected script ──
 // Three layers:
@@ -435,6 +436,7 @@ true;
 const API_BASE = process.env.EXPO_PUBLIC_WEB_URL || 'http://localhost:3000';
 
 export default function DownloadScreen() {
+  useKeepAwake();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const rawParams = useLocalSearchParams<{ id: string[] }>();
@@ -1126,7 +1128,6 @@ export default function DownloadScreen() {
             webViewRef.current?.injectJavaScript(`
               try { if (window.caches) { caches.keys().then(function(ns) { ns.forEach(function(n) { caches.delete(n); }); }); } } catch(e){}
               try { localStorage.removeItem('authToken'); } catch(e){}
-              try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then(function(l) { window.__wl = l; }); } catch(e){}
               true;
             `);
           }}
