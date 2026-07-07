@@ -723,11 +723,14 @@ export function VideoWebView({
   );
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // When entering fullscreen → start auto-hide. When exiting → keep visible.
+  // When entering fullscreen → lock to landscape, start auto-hide.
+  // When exiting → lock to portrait (prevents accidental landscape), keep visible.
   useEffect(() => {
     if (isFullscreen) {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
       scheduleHide();
     } else {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
       setOverlayVisible(true);
       Animated.timing(overlayOpacity, {
@@ -740,6 +743,11 @@ export function VideoWebView({
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
   }, [isFullscreen, scheduleHide, overlayOpacity]);
+
+  // Reset to portrait when component unmounts
+  useEffect(() => {
+    return () => { ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {}); };
+  }, []);
   const [showEpPicker, setShowEpPicker] = useState(false);
   const [currentSeason, setCurrentSeason] = useState<number>(season ?? 1);
   const [currentEpisode, setCurrentEpisode] = useState<number>(episode ?? 1);
@@ -1085,7 +1093,7 @@ export function VideoWebView({
                       setOverlayVisible(false);
                       overlayOpacity.setValue(0);
                     } else {
-                      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.ALL).catch(() => {});
+                      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
                       setOverlayVisible(true);
                       Animated.timing(overlayOpacity, {
                         toValue: 1,
