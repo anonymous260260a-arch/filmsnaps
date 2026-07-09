@@ -1,6 +1,7 @@
-import React, { useRef, useCallback } from 'react';
-import { View, Text, Image, TouchableOpacity, useWindowDimensions, Animated } from 'react-native';
+import React, { useRef, useCallback, useMemo } from 'react';
+import { View, Text, TouchableOpacity, useWindowDimensions, Animated } from 'react-native';
 import { getImageUrl } from '@filmsnaps/shared';
+import { ProgressiveImage } from './ProgressiveImage';
 import type { Movie } from '@filmsnaps/shared';
 
 const GAP = 10;
@@ -68,9 +69,9 @@ export function MediaCard({ item, onPress, variant = 'default' }: MediaCardProps
           style={{ width: cardWidth, height: cardHeight }}
         >
           {item.poster_path ? (
-            <Image
-              source={{ uri: posterUrl }}
-              className="w-full h-full"
+            <ProgressiveImage
+              uri={posterUrl}
+              style={{ width: cardWidth, height: cardHeight }}
               resizeMode="cover"
             />
           ) : (

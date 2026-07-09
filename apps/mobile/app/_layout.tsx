@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -14,6 +14,7 @@ import {
   Inter_600SemiBold,
 } from '@expo-google-fonts/inter';
 import { UpdateOverlay } from '../components/UpdateOverlay';
+import { hydrateQueryClient, startPersistLoop } from '../lib/queryCache';
 import './globals.css';
 
 const queryClient = new QueryClient({
@@ -36,6 +37,19 @@ export default function RootLayout() {
     Inter_600SemiBold,
   });
 
+  const persistedRef = useRef(false);
+
+  useEffect(() => {
+    if (persistedRef.current) return;
+    persistedRef.current = true;
+
+    // Hydrate from disk cache on cold launch
+    hydrateQueryClient(queryClient).finally(() => {
+      // Start periodic persistence
+      startPersistLoop(queryClient);
+    });
+  }, []);
+
   if (!fontsLoaded) {
     return (
       <View className="flex-1 items-center justify-center" style={{ backgroundColor: '#080808' }}>
@@ -45,6 +59,7 @@ export default function RootLayout() {
   }
 
   return (
+    <View style={{ flex: 1, backgroundColor: '#080808' }}>
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
         <StatusBar style="light" />
@@ -55,14 +70,14 @@ export default function RootLayout() {
             contentStyle: { backgroundColor: '#080808' },
           }}
         >
-          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="(tabs)" options={{ contentStyle: { backgroundColor: '#080808' } }} />
           <Stack.Screen
             name="movie/[id]"
-            options={{ headerShown: false, animation: 'slide_from_right' }}
+            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#080808' } }}
           />
           <Stack.Screen
             name="tv/[id]"
-            options={{ headerShown: false, animation: 'slide_from_right' }}
+            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#080808' } }}
           />
           <Stack.Screen
             name="watch/[...id]"
@@ -70,9 +85,10 @@ export default function RootLayout() {
               headerShown: false,
               animation: 'slide_from_bottom',
               presentation: 'fullScreenModal',
+              contentStyle: { backgroundColor: '#000' },
             }}
           />
-          {/* download/[...id] (VidVault) — kept in codebase, only registered in dev builds */}
+          {/* download/[...id] — kept in codebase, only registered in dev builds */}
           {__DEV__ && (
             <Stack.Screen
               name="download/[...id]"
@@ -80,6 +96,7 @@ export default function RootLayout() {
                 headerShown: false,
                 animation: 'slide_from_bottom',
                 presentation: 'fullScreenModal',
+                contentStyle: { backgroundColor: '#000' },
               }}
             />
           )}
@@ -89,10 +106,24 @@ export default function RootLayout() {
               headerShown: false,
               animation: 'slide_from_bottom',
               presentation: 'fullScreenModal',
+              contentStyle: { backgroundColor: '#000' },
             }}
+          />
+          <Stack.Screen
+            name="person/[id]"
+            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#080808' } }}
+          />
+          <Stack.Screen
+            name="list/[category]"
+            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#080808' } }}
+          />
+          <Stack.Screen
+            name="browse"
+            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#080808' } }}
           />
         </Stack>
       </QueryClientProvider>
     </SafeAreaProvider>
+    </View>
   );
 }

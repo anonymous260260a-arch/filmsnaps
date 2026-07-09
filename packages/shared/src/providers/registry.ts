@@ -17,8 +17,8 @@ export const PROVIDERS: ProviderDefinition[] = [
     displayName: 'Server 1 [Multi lang, Fast]',
     baseUrl: 'https://web.nxsha.app',
     embed: {
-      movie: (id) => `/embed/movie/${id}`,
-      tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}`,
+      movie: (id) => `/embed/movie/${id}?lang=hi`,
+      tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?lang=hi`,
     },
   },
   // ── Server 2 ────────────────────────────────────────────────
@@ -164,8 +164,8 @@ export const PROVIDERS: ProviderDefinition[] = [
     displayName: 'Server 14',
     baseUrl: 'https://vidnest.fun',
     embed: {
-      movie: (id) => `/movie/${id}`,
-      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
+      movie: (id, startAt) => `/movie/${id}?server=delta${startAt ? `&startAt=${Math.floor(startAt)}` : ''}`,
+      tv: (id, season, episode, startAt) => `/tv/${id}/${season}/${episode}?server=delta${startAt ? `&startAt=${Math.floor(startAt)}` : ''}`,
     },
   },
   // ── Server 15 (disabled) ────────────────────────────────────
@@ -187,8 +187,8 @@ export const PROVIDERS: ProviderDefinition[] = [
     displayName: 'Server 16',
     baseUrl: 'https://vixsrc.to',
     embed: {
-      movie: (id) => `/movie/${id}`,
-      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
+      movie: (id, startAt) => `/movie/${id}${startAt ? `?startAt=${Math.floor(startAt)}` : ''}`,
+      tv: (id, season, episode, startAt) => `/tv/${id}/${season}/${episode}${startAt ? `?startAt=${Math.floor(startAt)}` : ''}`,
     },
   },
   // ── Server 17 (disabled) ────────────────────────────────────
@@ -231,10 +231,10 @@ export const PROVIDERS: ProviderDefinition[] = [
     id: 'chillflix',
     name: 'ChillFlix',
     displayName: 'Server 18 [Slow]',
-    baseUrl: 'https://chillflix.pw/embed',
+    baseUrl: 'https://www.chillflix.lol/embed',
     embed: {
-      movie: (id) => `/movie/${id}?autoplay=true`,
-      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}?autoplay=true`,
+      movie: (id) => `/movie/${id}?autoplay=true&watchparty=false&title=false&parent_origin=${encodeURIComponent('https://www.chillflix.lol')}`,
+      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}?autoplay=true&watchparty=false&title=false&parent_origin=${encodeURIComponent('https://www.chillflix.lol')}`,
     },
   },
   // ── Server 19 ───────────────────────────────────────────────

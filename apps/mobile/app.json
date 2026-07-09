@@ -2,7 +2,7 @@
   "expo": {
     "name": "FilmSnaps",
     "slug": "filmsnaps",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "filmsnaps",
@@ -15,18 +15,20 @@
       "bundleIdentifier": "app.filmsnaps.mobile"
     },
     "android": {
+      "backgroundColor": "#080808",
       "adaptiveIcon": {
-        "backgroundColor": "#09090b"
+        "backgroundColor": "#09090b",
+        "foregroundImage": "./assets/icon.png"
       },
       "package": "app.filmsnaps.mobile",
-      "navigationBar": {
-        "visible": "sticky-immersive",
-        "backgroundColor": "#18181b"
+      "navigationBar":{
+        "visible":"sticky-immersive",
+        "backgroundColor":"#18181b"
       }
     },
     "web": {
       "bundler": "metro",
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/icon.png"
     },
     "updates": {
       "url": "https://u.expo.dev/708a926e-0243-4a25-ae80-1780906c8c04",
@@ -46,6 +48,6 @@
         "projectId": "708a926e-0243-4a25-ae80-1780906c8c04"
       }
     },
-    "runtimeVersion": "55.0.0"
+    "runtimeVersion": "56.0.0"
   }
 }

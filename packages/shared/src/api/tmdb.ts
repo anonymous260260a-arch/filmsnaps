@@ -71,6 +71,12 @@ export function createTmdbApi(apiBase: string) {
       return fetchTmdb(`/discover/movie?${q}`);
     },
 
+    getPersonDetails: (id: number) =>
+      fetchTmdb(`/person/${id}`),
+
+    getPersonCredits: (id: number) =>
+      fetchTmdb(`/person/${id}/combined_credits`),
+
     getTVShows: (params: {
       genreIds?: number[];
       sortBy?: string;

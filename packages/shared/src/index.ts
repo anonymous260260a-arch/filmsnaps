@@ -1,5 +1,5 @@
 // ── Types ──
-export type { Movie } from './types/movie';
+export type { Movie, Person, CastMember, CrewMember, PersonCredit } from './types/movie';
 export type { ProviderDefinition, ProviderProtection } from './types/provider';
 
 // ── Providers ──

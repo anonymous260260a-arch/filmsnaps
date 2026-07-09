@@ -98,3 +98,57 @@ export function useSearch(query: string) {
     refetchOnWindowFocus: false,
   });
 }
+
+// ── Person / Cast ──
+
+export function usePersonDetails(id: number) {
+  return useQuery({
+    queryKey: ['person', id],
+    queryFn: () => tmdbApi.getPersonDetails(id),
+    staleTime: 1000 * 60 * 60,
+    gcTime: 1000 * 60 * 60,
+    enabled: !!id,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function usePersonCredits(id: number) {
+  return useQuery({
+    queryKey: ['person', id, 'credits'],
+    queryFn: () => tmdbApi.getPersonCredits(id),
+    staleTime: 1000 * 60 * 60,
+    gcTime: 1000 * 60 * 60,
+    enabled: !!id,
+    refetchOnWindowFocus: false,
+  });
+}
+
+// ── Filtered Discover (for search/browse) ──
+
+export function useFilteredMovies(params: {
+  genreIds?: number[];
+  sortBy?: string;
+  page?: number;
+}) {
+  return useQuery({
+    queryKey: ['movies', 'filtered', params],
+    queryFn: () => tmdbApi.getMovies(params),
+    staleTime: 1000 * 60 * 10,
+    gcTime: 1000 * 60 * 30,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useFilteredTVShows(params: {
+  genreIds?: number[];
+  sortBy?: string;
+  page?: number;
+}) {
+  return useQuery({
+    queryKey: ['tv', 'filtered', params],
+    queryFn: () => tmdbApi.getTVShows(params),
+    staleTime: 1000 * 60 * 10,
+    gcTime: 1000 * 60 * 30,
+    refetchOnWindowFocus: false,
+  });
+}

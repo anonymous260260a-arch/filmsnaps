@@ -1,8 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
-  Image,
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
@@ -13,10 +12,12 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { getImageUrl, getTrailerKey } from '@filmsnaps/shared';
+import { ProgressiveImage, pickOptimalSize } from '../../components/ProgressiveImage';
 import { typography } from '../../lib/typography';
 import { FilmGrain } from '../../components/FilmGrain';
 import { useMovieDetails } from '../../hooks/useTMDB';
 import { MediaCarousel } from '../../components/MediaCarousel';
+import { isBookmarked, saveBookmark, removeBookmark } from '../../lib/bookmarks';
 import type { Movie } from '@filmsnaps/shared';
 import { LinearGradient } from 'react-native-svg';
 
@@ -31,18 +32,44 @@ export default function MovieDetailScreen() {
   const POSTER_WIDTH = 100;
   const POSTER_OVERLAP = 40;
 
+  const movie = data;
+
+  const [bookmarked, setBookmarked] = useState(false);
+
+  useEffect(() => {
+    if (id) {
+      isBookmarked(id!).then(setBookmarked);
+    }
+  }, [id]);
+
+  const toggleBookmark = useCallback(async () => {
+    if (bookmarked) {
+      await removeBookmark(id!);
+      setBookmarked(false);
+    } else {
+      await saveBookmark({
+        tmdbId: id!,
+        mediaType: 'movie',
+        title: movie.title || movie.name || '',
+        posterPath: movie.poster_path ?? null,
+        year: movie.release_date?.split('-')[0] ?? '',
+        addedAt: Date.now(),
+      });
+      setBookmarked(true);
+    }
+  }, [id, bookmarked, movie]);
+
   if (isLoading) {
     return (
-      <View className="flex-1 items-center justify-center bg-void">
+      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#080808' }}>
         <ActivityIndicator size="large" color="#e8a020" />
       </View>
     );
   }
 
-  const movie = data;
   if (!movie) {
     return (
-      <View className="flex-1 items-center justify-center bg-void">
+      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#080808' }}>
         <Ionicons name="film-outline" size={48} color="#534f4c" />
         <Text className="text-t2 mt-3">Movie not found</Text>
       </View>
@@ -56,18 +83,18 @@ export default function MovieDetailScreen() {
   const cast = movie.credits?.cast?.slice(0, 10) ?? [];
 
   return (
-    <View className="flex-1 bg-void">
+    <View className="flex-1 bg-void" style={{ backgroundColor: '#080808' }}>
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         {/* Backdrop with film grain */}
-        <View style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT }}>
+        <View style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT, position: 'relative' }}>
           {movie.backdrop_path ? (
-            <Image
-              source={{ uri: getImageUrl(movie.backdrop_path, 'w780') }}
-              style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT }}
+            <ProgressiveImage
+              uri={getImageUrl(movie.backdrop_path, 'w780')}
+              style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT, position: 'absolute' }}
               resizeMode="cover"
             />
           ) : (
-            <View className="w-full h-full" style={{ backgroundColor: '#191919' }} />
+            <View className="w-full h-full" style={{ backgroundColor: '#191919', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
           )}
 
           {/* Film grain overlay */}
@@ -123,8 +150,8 @@ export default function MovieDetailScreen() {
           <View className="flex-row">
             {/* Poster — overlapping the backdrop by 40px */}
             {movie.poster_path ? (
-              <Image
-                source={{ uri: getImageUrl(movie.poster_path, 'w342') }}
+              <ProgressiveImage
+                uri={getImageUrl(movie.poster_path, 'w342')}
                 style={{
                   width: POSTER_WIDTH,
                   height: POSTER_WIDTH * 1.5,
@@ -271,6 +298,27 @@ export default function MovieDetailScreen() {
               </Text>
             </TouchableOpacity>
 
+            {/* Bookmark toggle */}
+            <TouchableOpacity
+              onPress={toggleBookmark}
+              activeOpacity={0.8}
+              style={{
+                width: 48,
+                backgroundColor: bookmarked ? 'rgba(232,160,32,0.15)' : 'transparent',
+                borderWidth: 0.5,
+                borderColor: bookmarked ? '#e8a020' : '#252525',
+                borderRadius: 10,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ionicons
+                name={bookmarked ? 'bookmark' : 'bookmark-outline'}
+                size={20}
+                color={bookmarked ? '#e8a020' : '#9b9590'}
+              />
+            </TouchableOpacity>
+
             {/* Download 2 — secondary with subtle border */}
             <TouchableOpacity
               onPress={() => router.push(`/download2/movie/${id}`)}
@@ -300,10 +348,16 @@ export default function MovieDetailScreen() {
               <Text style={[typography.heading, { marginBottom: 16 }]}>Cast</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 {cast.map((person: any) => (
-                  <View key={person.id} className="items-center mr-3.5" style={{ width: 56 }}>
+                  <TouchableOpacity
+                    key={person.id}
+                    onPress={() => router.push(`/person/${person.id}`)}
+                    activeOpacity={0.7}
+                    className="items-center mr-3.5"
+                    style={{ width: 56 }}
+                  >
                     {person.profile_path ? (
-                      <Image
-                        source={{ uri: getImageUrl(person.profile_path, 'w185') }}
+                      <ProgressiveImage
+                        uri={getImageUrl(person.profile_path, 'w185')}
                         style={{
                           width: 56,
                           height: 56,
@@ -360,7 +414,7 @@ export default function MovieDetailScreen() {
                         {person.character}
                       </Text>
                     )}
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </ScrollView>
             </View>

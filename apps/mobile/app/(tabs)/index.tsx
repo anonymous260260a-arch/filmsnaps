@@ -1,14 +1,18 @@
-import React, { useCallback, useRef } from 'react';
-import { View, ScrollView, RefreshControl, Text, ActivityIndicator, useWindowDimensions } from 'react-native';
+import React, { useCallback, useRef, useState, useEffect } from 'react';
+import { View, ScrollView, RefreshControl, Text, ActivityIndicator, useWindowDimensions, FlatList, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { Hero } from '../../components/Hero';
 import { MediaCarousel } from '../../components/MediaCarousel';
+import { ProgressiveImage } from '../../components/ProgressiveImage';
 import { useTrendingMovies, useTrendingTV, usePopularMovies } from '../../hooks/useTMDB';
 import { tmdbApi } from '../../lib/api';
+import { getAggregatedHistory } from '../../lib/watchHistory';
+import { getImageUrl } from '@filmsnaps/shared';
 import type { Movie } from '@filmsnaps/shared';
+import type { WatchProgress } from '../../lib/watchHistory';
 
 const SKELETON_ITEMS = 3;
 
@@ -47,6 +51,43 @@ export default function HomeScreen() {
   // ── Pull-to-refresh ──
   const [isRefreshing, setIsRefreshing] = React.useState(false);
 
+  // ── History entries ──
+  const [historyEntries, setHistoryEntries] = useState<Array<{
+    latest: WatchProgress;
+    fullyWatched: boolean;
+  }>>([]);
+  const [historyMeta, setHistoryMeta] = useState<Record<string, Movie | null>>({});
+  const historyLoadedRef = useRef(false);
+
+  const loadHistory = useCallback(async () => {
+    if (historyLoadedRef.current) return;
+    try {
+      const agg = await getAggregatedHistory();
+      // Take last 6 for the home page
+      const sliced = agg.slice(0, 6);
+      setHistoryEntries(sliced);
+      // Fetch TMDB metadata
+      const metaMap: Record<string, Movie | null> = {};
+      await Promise.all(
+        sliced.map(async (entry) => {
+          const id = entry.latest.tmdbId;
+          if (metaMap[id]) return;
+          try {
+            if (entry.latest.mediaType === 'tv') {
+              metaMap[id] = await tmdbApi.getTVDetails(Number(id)) as unknown as Movie;
+            } else {
+              metaMap[id] = await tmdbApi.getMovieDetails(Number(id)) as Movie;
+            }
+          } catch { metaMap[id] = null; }
+        })
+      );
+      setHistoryMeta(prev => ({ ...prev, ...metaMap }));
+      historyLoadedRef.current = true;
+    } catch {}
+  }, []);
+
+  useEffect(() => { loadHistory(); }, [loadHistory]);
+
   const onRefresh = useCallback(async () => {
     if (refreshing.current) return;
     refreshing.current = true;
@@ -55,14 +96,30 @@ export default function HomeScreen() {
     refetchMovies();
     refetchTV();
     refetchPopular();
+    // Reload history
+    historyLoadedRef.current = false;
+    setHistoryEntries([]);
+    loadHistory();
     // Wait a bit then hide the indicator (content updates progressively)
     setTimeout(() => {
       setIsRefreshing(false);
       refreshing.current = false;
     }, 1500);
-  }, [refetchMovies, refetchTV, refetchPopular]);
+  }, [refetchMovies, refetchTV, refetchPopular, loadHistory]);
 
   // ── Navigation ──
+
+  const handleSeeAllTrendingMovies = useCallback(() => {
+    router.push('/list/trending-movies');
+  }, [router]);
+
+  const handleSeeAllTrendingTV = useCallback(() => {
+    router.push('/list/trending-tv');
+  }, [router]);
+
+  const handleSeeAllPopularMovies = useCallback(() => {
+    router.push('/list/popular-movies');
+  }, [router]);
 
   const handleMoviePress = useCallback(
     (item: Movie) => {
@@ -99,7 +156,7 @@ export default function HomeScreen() {
 
   if (loadingMovies && loadingTV && loadingPopular) {
     return (
-      <View className="flex-1 bg-void" style={{ paddingTop: insets.top }}>
+      <View className="flex-1 bg-void" style={{ paddingTop: insets.top, backgroundColor: '#080808' }}>
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator size="large" color="#e8a020" />
         </View>
@@ -108,7 +165,7 @@ export default function HomeScreen() {
   }
 
   return (
-    <View className="flex-1 bg-void" style={{ paddingTop: insets.top }}>
+    <View className="flex-1 bg-void" style={{ paddingTop: insets.top, backgroundColor: '#080808' }}>
       <ScrollView
         refreshControl={
           <RefreshControl
@@ -147,6 +204,7 @@ export default function HomeScreen() {
             title="Trending Movies"
             data={trendingMovies.results ?? []}
             onItemPress={handleMoviePress}
+            onSeeAll={handleSeeAllTrendingMovies}
           />
         ) : (
           <View className="mb-6 px-4">
@@ -169,6 +227,7 @@ export default function HomeScreen() {
             title="Trending TV"
             data={trendingTV.results ?? []}
             onItemPress={handleMoviePress}
+            onSeeAll={handleSeeAllTrendingTV}
           />
         ) : (
           <View className="mb-6 px-4">
@@ -185,12 +244,120 @@ export default function HomeScreen() {
           </View>
         )}
 
+        {/* Continue Watching / History */}
+        {historyEntries.length > 0 && (
+          <View className="mb-6">
+            <View className="flex-row items-center justify-between px-4 mb-3">
+              <Text className="text-t1 text-lg font-bold" style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#f2ede6' }}>
+                Continue Watching
+              </Text>
+              <TouchableOpacity onPress={() => router.push('/history')} activeOpacity={0.7}>
+                <Text className="text-gold text-xs font-semibold">See All</Text>
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
+              data={historyEntries}
+              keyExtractor={(item) => `${item.latest.mediaType}:${item.latest.tmdbId}`}
+              renderItem={({ item }) => {
+                const p = item.latest;
+                const meta = historyMeta[p.tmdbId];
+                const title = (p.mediaType === 'tv' ? meta?.name : meta?.title) ?? '';
+                const poster = meta?.poster_path;
+                const cardWidth = (SCREEN_WIDTH - 48) / 3;
+                const cardHeight = cardWidth * 1.5;
+
+                return (
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (p.mediaType === 'tv') {
+                        router.push(`/watch/tv/${p.tmdbId}/${p.season ?? 1}/${p.episode ?? 1}`);
+                      } else {
+                        router.push(`/watch/movie/${p.tmdbId}`);
+                      }
+                    }}
+                    activeOpacity={0.7}
+                    style={{ width: cardWidth }}
+                  >
+                    <View style={{ width: cardWidth, height: cardHeight }} className="bg-elevated rounded-xl overflow-hidden">
+                      {poster ? (
+                        <ProgressiveImage
+                          uri={getImageUrl(poster, 'w185')}
+                          style={{ width: cardWidth, height: cardHeight }}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View className="flex-1 items-center justify-center" style={{ backgroundColor: '#1f1f1f' }}>
+                          <Ionicons name={p.mediaType === 'tv' ? 'tv' : 'film'} size={24} color="#3f3f3f" />
+                        </View>
+                      )}
+                      {/* Progress bar at bottom */}
+                      <View style={{
+                        position: 'absolute',
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        height: 3,
+                        backgroundColor: 'rgba(255,255,255,0.1)',
+                      }}>
+                        <View style={{
+                          width: `${Math.round((p.completed ? 1 : p.percent) * 100)}%`,
+                          height: '100%',
+                          backgroundColor: item.fullyWatched ? '#22c55e' : '#e8a020',
+                        }} />
+                      </View>
+                      {/* Episode badge for TV */}
+                      {p.mediaType === 'tv' && p.season != null && p.episode != null && (
+                        <View style={{
+                          position: 'absolute',
+                          top: 4,
+                          left: 4,
+                          backgroundColor: 'rgba(0,0,0,0.75)',
+                          borderRadius: 3,
+                          paddingHorizontal: 4,
+                          paddingVertical: 1,
+                        }}>
+                          <Text className="text-white text-[9px] font-bold">
+                            S{p.season}:E{p.episode}
+                          </Text>
+                        </View>
+                      )}
+                      {/* Completed badge */}
+                      {item.fullyWatched && (
+                        <View style={{
+                          position: 'absolute',
+                          top: 4,
+                          right: 4,
+                          backgroundColor: 'rgba(34,197,94,0.85)',
+                          borderRadius: 10,
+                          width: 18,
+                          height: 18,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                          <Ionicons name="checkmark" size={12} color="#fff" />
+                        </View>
+                      )}
+                    </View>
+                    <Text className="text-t2 text-[11px] mt-1.5" numberOfLines={1}>
+                      {title || `ID: ${p.tmdbId}`}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
+        )}
+
         {/* Popular Movies */}
         {popularMovies ? (
           <MediaCarousel
             title="Popular Movies"
             data={popularMovies.results ?? []}
             onItemPress={handleMoviePress}
+            onSeeAll={handleSeeAllPopularMovies}
           />
         ) : (
           <View className="mb-6 px-4">

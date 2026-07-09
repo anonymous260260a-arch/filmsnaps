@@ -1,6 +1,6 @@
 {
-  "latestVersion": "1.0.3",
-  "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.3/filmsnaps-v1.0.3.apk",
-  "releaseNotes": "StreamGuide custom video player with seek optimization, performance improvements",
+  "latestVersion": "1.0.4",
+  "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.4/filmsnaps-v1.0.4.apk",
+  "releaseNotes": "Next Episode now works across seasons (S1E10 → S2E1) · Fullscreen Next Episode button stays visible · Screen stays awake during playback · Orientation locks to landscape in fullscreen, returns to portrait on exit · OTA updates enabled via EAS (channel: preview, runtime: 55.0.0) · New providers: ScreenScape, Nxsha · StreamGuide refactored to stable iframe · Cloudflare Workers backend with edge caching · Fixed React Hooks crash on detail screens · App icon updated",
   "versionsUrl": "https://filmsnap-pro.netlify.app/versions"
 }
