@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, Image, TouchableOpacity, useWindowDimensions, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, useWindowDimensions, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getImageUrl } from '@filmsnaps/shared';
+import { ProgressiveImage } from './ProgressiveImage';
 import { typography } from '../lib/typography';
 import { FilmGrain } from './FilmGrain';
 import type { Movie } from '@filmsnaps/shared';
@@ -24,7 +25,7 @@ interface HeroProps {
  */
 export function Hero({ item, onWatchPress }: HeroProps) {
   const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = useWindowDimensions();
-  const HERO_HEIGHT = SCREEN_HEIGHT * 0.58;
+  const HERO_HEIGHT = SCREEN_HEIGHT * 0.50;
 
   const backdropUrl = getImageUrl(item.backdrop_path, 'w780');
   const title = item.title || item.name || '';
@@ -37,8 +38,8 @@ export function Hero({ item, onWatchPress }: HeroProps) {
     <View style={{ height: HERO_HEIGHT, position: 'relative', overflow: 'hidden' }}>
       {/* Backdrop image — full bleed */}
       {item.backdrop_path ? (
-        <Image
-          source={{ uri: backdropUrl }}
+        <ProgressiveImage
+          uri={backdropUrl}
           style={{ width: SCREEN_WIDTH, height: HERO_HEIGHT, position: 'absolute' }}
           resizeMode="cover"
         />

@@ -7,7 +7,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
-import { useKeepAwake } from 'expo-keep-awake';
 
 // ── Safe video extensions ──
 const VIDEO_EXTS = ['.mp4', '.mkv', '.webm', '.avi', '.mov', '.m3u8', '.ts', '.flv', '.wmv', '.m4v', '.3gp'];
@@ -147,7 +146,6 @@ true;
 `;
 
 export default function Download2Screen() {
-  useKeepAwake();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const rawParams = useLocalSearchParams<{ id: string[] }>();
@@ -317,6 +315,10 @@ export default function Download2Screen() {
           injectedJavaScriptBeforeContentLoaded={INJECTED_SCRIPT}
           allowsBackForwardNavigationGestures={false}
           setSupportMultipleWindows={false}
+          allowFileAccess={false}
+          allowUniversalAccessFromFileURLs={false}
+          javaScriptCanOpenWindowsAutomatically={false}
+          incognito={true}
           onShouldStartLoadWithRequest={handleNavigation}
           onLoadEnd={() => setLoading(false)}
           onError={() => setLoading(false)}

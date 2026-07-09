@@ -1,8 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
-  Image,
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
@@ -13,10 +12,12 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { getImageUrl, getTrailerKey } from '@filmsnaps/shared';
+import { ProgressiveImage } from '../../components/ProgressiveImage';
 import { typography } from '../../lib/typography';
 import { FilmGrain } from '../../components/FilmGrain';
 import { useTVDetails } from '../../hooks/useTMDB';
 import { MediaCarousel } from '../../components/MediaCarousel';
+import { isBookmarked, saveBookmark, removeBookmark } from '../../lib/bookmarks';
 import type { Movie } from '@filmsnaps/shared';
 import { LinearGradient } from 'react-native-svg';
 
@@ -31,25 +32,51 @@ export default function TVDetailScreen() {
   const POSTER_WIDTH = 100;
   const POSTER_OVERLAP = 40;
 
+  const show = data;
+
+  const [bookmarked, setBookmarked] = useState(false);
+
+  useEffect(() => {
+    if (id) {
+      isBookmarked(id!).then(setBookmarked);
+    }
+  }, [id]);
+
+  const toggleBookmark = useCallback(async () => {
+    if (bookmarked) {
+      await removeBookmark(id!);
+      setBookmarked(false);
+    } else {
+      await saveBookmark({
+        tmdbId: id!,
+        mediaType: 'tv',
+        title: show.name || show.title || '',
+        posterPath: show.poster_path ?? null,
+        year: show.first_air_date?.split('-')[0] ?? '',
+        addedAt: Date.now(),
+      });
+      setBookmarked(true);
+    }
+  }, [id, bookmarked, show]);
+
   if (isLoading) {
     return (
-      <View className="flex-1 items-center justify-center bg-void">
+      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#080808' }}>
         <ActivityIndicator size="large" color="#e8a020" />
       </View>
     );
   }
 
-  const show = data;
   if (!show) {
     return (
-      <View className="flex-1 items-center justify-center bg-void">
+      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#080808' }}>
         <Ionicons name="tv-outline" size={48} color="#534f4c" />
         <Text className="text-t2 mt-3">Show not found</Text>
       </View>
     );
   }
 
-  const title = show.name || '';
+  const title = show.name || show.title || '';
   const year = show.first_air_date?.split('-')[0] ?? '';
   const genres = show.genres ?? [];
   const trailerKey = getTrailerKey(show.videos);
@@ -57,18 +84,18 @@ export default function TVDetailScreen() {
   const seasonCount = show.seasons?.filter((s: any) => s.season_number > 0).length ?? 0;
 
   return (
-    <View className="flex-1 bg-void">
+    <View className="flex-1 bg-void" style={{ backgroundColor: '#080808' }}>
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         {/* Backdrop with film grain */}
-        <View style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT }}>
+        <View style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT, position: 'relative' }}>
           {show.backdrop_path ? (
-            <Image
-              source={{ uri: getImageUrl(show.backdrop_path, 'w780') }}
-              style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT }}
+            <ProgressiveImage
+              uri={getImageUrl(show.backdrop_path, 'w780')}
+              style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT, position: 'absolute' }}
               resizeMode="cover"
             />
           ) : (
-            <View className="w-full h-full" style={{ backgroundColor: '#191919' }} />
+            <View className="w-full h-full" style={{ backgroundColor: '#191919', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
           )}
 
           {/* Film grain overlay */}
@@ -123,8 +150,8 @@ export default function TVDetailScreen() {
           {/* Poster + Info row */}
           <View className="flex-row">
             {show.poster_path ? (
-              <Image
-                source={{ uri: getImageUrl(show.poster_path, 'w342') }}
+              <ProgressiveImage
+                uri={getImageUrl(show.poster_path, 'w342')}
                 style={{
                   width: POSTER_WIDTH,
                   height: POSTER_WIDTH * 1.5,
@@ -269,6 +296,27 @@ export default function TVDetailScreen() {
               </Text>
             </TouchableOpacity>
 
+            {/* Bookmark toggle */}
+            <TouchableOpacity
+              onPress={toggleBookmark}
+              activeOpacity={0.8}
+              style={{
+                width: 48,
+                backgroundColor: bookmarked ? 'rgba(232,160,32,0.15)' : 'transparent',
+                borderWidth: 0.5,
+                borderColor: bookmarked ? '#e8a020' : '#252525',
+                borderRadius: 10,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ionicons
+                name={bookmarked ? 'bookmark' : 'bookmark-outline'}
+                size={20}
+                color={bookmarked ? '#e8a020' : '#9b9590'}
+              />
+            </TouchableOpacity>
+
             <TouchableOpacity
               onPress={() => router.push(`/download2/tv/${id}/1/1`)}
               activeOpacity={0.8}
@@ -297,10 +345,16 @@ export default function TVDetailScreen() {
               <Text style={[typography.heading, { marginBottom: 16 }]}>Cast</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 {cast.map((person: any) => (
-                  <View key={person.id} className="items-center mr-3.5" style={{ width: 56 }}>
+                  <TouchableOpacity
+                    key={person.id}
+                    onPress={() => router.push(`/person/${person.id}`)}
+                    activeOpacity={0.7}
+                    className="items-center mr-3.5"
+                    style={{ width: 56 }}
+                  >
                     {person.profile_path ? (
-                      <Image
-                        source={{ uri: getImageUrl(person.profile_path, 'w185') }}
+                      <ProgressiveImage
+                        uri={getImageUrl(person.profile_path, 'w185')}
                         style={{
                           width: 56,
                           height: 56,
@@ -357,7 +411,7 @@ export default function TVDetailScreen() {
                         {person.character}
                       </Text>
                     )}
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </ScrollView>
             </View>

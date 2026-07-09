@@ -21,7 +21,7 @@ export default function WatchScreen() {
 
   if (!id || !type) {
     return (
-      <View className="flex-1 items-center justify-center bg-void px-6">
+      <View className="flex-1 items-center justify-center bg-void px-6" style={{ backgroundColor: '#080808' }}>
         <StatusBar barStyle="light-content" />
         <View className="w-16 h-16 rounded-full bg-elevated items-center justify-center mb-5">
           <Ionicons name="alert-circle-outline" size={36} color="#534f4c" />
@@ -43,8 +43,10 @@ export default function WatchScreen() {
     );
   }
 
+  console.warn(`[WatchScreen] rendering type=${type} id=${id} season=${season} ep=${episode} provider=${provider}`);
+
   return (
-    <View className="flex-1 bg-black">
+    <View className="flex-1 bg-black" style={{ backgroundColor: '#000' }}>
       <StatusBar barStyle="light-content" hidden />
       <VideoWebView
         type={type}

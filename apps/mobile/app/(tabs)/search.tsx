@@ -6,14 +6,16 @@ import {
   FlatList,
   ActivityIndicator,
   TouchableOpacity,
+  ScrollView,
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
+import { MOVIE_GENRES, TV_GENRES } from '@filmsnaps/shared';
 import { useDebounce } from '../../hooks/useDebounce';
-import { useSearch } from '../../hooks/useTMDB';
+import { useSearch, useFilteredMovies, useFilteredTVShows } from '../../hooks/useTMDB';
 import { tmdbApi } from '../../lib/api';
 import { MediaCard } from '../../components/MediaCard';
 import type { Movie } from '@filmsnaps/shared';
@@ -21,6 +23,15 @@ import type { Movie } from '@filmsnaps/shared';
 const NUM_COLUMNS = 3;
 const GAP = 8;
 const PADDING = 16;
+
+type MediaTypeFilter = 'all' | 'movie' | 'tv';
+type SortOption = 'popularity.desc' | 'vote_average.desc' | 'primary_release_date.desc';
+
+const SORT_OPTIONS: { value: SortOption; label: string }[] = [
+  { value: 'popularity.desc', label: 'Popular' },
+  { value: 'vote_average.desc', label: 'Top Rated' },
+  { value: 'primary_release_date.desc', label: 'Latest' },
+];
 
 export default function SearchScreen() {
   const router = useRouter();
@@ -30,21 +41,84 @@ export default function SearchScreen() {
 
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebounce(query, 300);
-  const { data, isLoading } = useSearch(debouncedQuery);
 
-  const results = useMemo(
-    () =>
-      data?.results?.filter(
-        (r: Movie) => r.media_type === 'movie' || r.media_type === 'tv',
-      ) ?? [],
-    [data],
+  // Filters
+  const [mediaTypeFilter, setMediaTypeFilter] = useState<MediaTypeFilter>('all');
+  const [selectedGenreIds, setSelectedGenreIds] = useState<number[]>([]);
+  const [sortBy, setSortBy] = useState<SortOption>('popularity.desc');
+  const [showSortPicker, setShowSortPicker] = useState(false);
+  const [page, setPage] = useState(1);
+
+  // Text search
+  const searchResult = useSearch(debouncedQuery);
+
+  // Filtered discover (used when no text query)
+  const hasFilters = selectedGenreIds.length > 0 || mediaTypeFilter !== 'all' || query.length < 2;
+  const showMovies = mediaTypeFilter === 'all' || mediaTypeFilter === 'movie';
+  const showTV = mediaTypeFilter === 'all' || mediaTypeFilter === 'tv';
+
+  const movieFilterResult = useFilteredMovies({
+    genreIds: selectedGenreIds.length ? selectedGenreIds : undefined,
+    sortBy,
+    page,
+  });
+
+  const tvFilterResult = useFilteredTVShows({
+    genreIds: selectedGenreIds.length ? selectedGenreIds : undefined,
+    sortBy,
+    page,
+  });
+
+  // Derive results
+  const textResults = useMemo(
+    () => {
+      if (!searchResult.data?.results) return [];
+      let r = searchResult.data.results.filter(
+        (item: any) => item.media_type === 'movie' || item.media_type === 'tv',
+      );
+      // Client-side filter by media type
+      if (mediaTypeFilter !== 'all') {
+        r = r.filter((item: any) => item.media_type === mediaTypeFilter);
+      }
+      // Client-side filter by genre
+      if (selectedGenreIds.length > 0) {
+        r = r.filter((item: any) =>
+          item.genre_ids?.some((gid: number) => selectedGenreIds.includes(gid)),
+        );
+      }
+      return r;
+    },
+    [searchResult.data, mediaTypeFilter, selectedGenreIds],
   );
 
-  const itemWidth = useMemo(
-    () => (SCREEN_WIDTH - PADDING * 2 - GAP * (NUM_COLUMNS - 1)) / NUM_COLUMNS,
-    [SCREEN_WIDTH],
-  );
-  const itemHeight = useMemo(() => itemWidth * 1.5 + 40, [itemWidth]);
+  const filteredResults = useMemo(() => {
+    if (debouncedQuery.length >= 2) return textResults;
+    // No text query — use discover API results
+    const movieResults = movieFilterResult.data?.results ?? [];
+    const tvResults = tvFilterResult.data?.results ?? [];
+    if (mediaTypeFilter === 'movie') return movieResults;
+    if (mediaTypeFilter === 'tv') return tvResults;
+    // Interleave movie + tv
+    const max = Math.max(movieResults.length, tvResults.length);
+    const merged: any[] = [];
+    for (let i = 0; i < max; i++) {
+      if (i < movieResults.length) merged.push(movieResults[i]);
+      if (i < tvResults.length) merged.push(tvResults[i]);
+    }
+    return merged;
+  }, [debouncedQuery, textResults, movieFilterResult.data, tvFilterResult.data, mediaTypeFilter]);
+
+  const isLoading =
+    debouncedQuery.length >= 2
+      ? searchResult.isLoading
+      : movieFilterResult.isLoading || tvFilterResult.isLoading;
+
+  const toggleGenre = useCallback((genreId: number) => {
+    setSelectedGenreIds((prev) =>
+      prev.includes(genreId) ? prev.filter((g) => g !== genreId) : [...prev, genreId],
+    );
+    setPage(1);
+  }, []);
 
   const handleItemPress = useCallback(
     (item: Movie) => {
@@ -72,8 +146,16 @@ export default function SearchScreen() {
     [router, queryClient],
   );
 
+  const itemWidth = useMemo(
+    () => (SCREEN_WIDTH - PADDING * 2 - GAP * (NUM_COLUMNS - 1)) / NUM_COLUMNS,
+    [SCREEN_WIDTH],
+  );
+  const itemHeight = useMemo(() => itemWidth * 1.5 + 40, [itemWidth]);
+
+  const hasActiveFilters = selectedGenreIds.length > 0 || mediaTypeFilter !== 'all';
+
   return (
-    <View className="flex-1 bg-void" style={{ paddingTop: insets.top }}>
+    <View className="flex-1 bg-void" style={{ paddingTop: insets.top, backgroundColor: '#080808' }}>
       {/* Search header */}
       <View className="px-4 pt-4 pb-2">
         <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: '#f2ede6', marginBottom: 16 }}>
@@ -99,6 +181,88 @@ export default function SearchScreen() {
             </TouchableOpacity>
           )}
         </View>
+
+        {/* Media type toggle */}
+        <View className="flex-row mt-3 bg-zinc-900 rounded-lg p-0.5">
+          {(['all', 'movie', 'tv'] as const).map((type) => (
+            <TouchableOpacity
+              key={type}
+              onPress={() => { setMediaTypeFilter(type); setPage(1); }}
+              className={`flex-1 py-2 rounded-md items-center ${mediaTypeFilter === type ? 'bg-gold' : ''}`}
+              activeOpacity={0.7}
+            >
+              <Text className={`text-xs font-bold ${mediaTypeFilter === type ? 'text-void' : 'text-zinc-400'}`}>
+                {type === 'all' ? 'All' : type === 'movie' ? 'Movies' : 'TV'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Genre pills + sort row */}
+        <View className="flex-row items-center mt-3">
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            className="flex-1"
+            contentContainerStyle={{ gap: 6 }}
+          >
+            {Object.entries(MOVIE_GENRES).slice(0, 10).map(([id, name]) => (
+              <TouchableOpacity
+                key={id}
+                onPress={() => toggleGenre(Number(id))}
+                activeOpacity={0.7}
+                className={`px-3 py-1.5 rounded-full border ${
+                  selectedGenreIds.includes(Number(id))
+                    ? 'border-gold bg-gold/10'
+                    : 'border-zinc-700 bg-zinc-800/50'
+                }`}
+              >
+                <Text className={`text-[10px] font-semibold ${
+                  selectedGenreIds.includes(Number(id)) ? 'text-gold' : 'text-zinc-300'
+                }`}>
+                  {name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          {/* Sort button */}
+          <TouchableOpacity
+            onPress={() => setShowSortPicker(!showSortPicker)}
+            className="ml-2 w-9 h-9 rounded-full bg-zinc-800 items-center justify-center"
+            activeOpacity={0.7}
+          >
+            <Ionicons name="funnel-outline" size={16} color="#9b9590" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Sort picker dropdown */}
+        {showSortPicker && (
+          <View className="mt-2 bg-zinc-900 rounded-xl p-1 border border-zinc-700">
+            {SORT_OPTIONS.map((opt) => (
+              <TouchableOpacity
+                key={opt.value}
+                onPress={() => { setSortBy(opt.value); setShowSortPicker(false); setPage(1); }}
+                className={`px-4 py-2.5 rounded-lg ${sortBy === opt.value ? 'bg-gold/20' : ''}`}
+                activeOpacity={0.7}
+              >
+                <Text className={`text-sm ${sortBy === opt.value ? 'text-gold font-bold' : 'text-zinc-300'}`}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        {/* Clear filters */}
+        {hasActiveFilters && (
+          <TouchableOpacity
+            onPress={() => { setSelectedGenreIds([]); setMediaTypeFilter('all'); setSortBy('popularity.desc'); setPage(1); }}
+            className="self-start mt-2"
+            activeOpacity={0.7}
+          >
+            <Text className="text-gold text-xs font-semibold">Clear filters</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Content */}
@@ -106,43 +270,39 @@ export default function SearchScreen() {
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator size="large" color="#e8a020" />
         </View>
+      ) : (query.length >= 2 || hasActiveFilters) && filteredResults.length > 0 ? (
+        <FlatList
+          data={filteredResults}
+          keyExtractor={(item: Movie) => String(item.id)}
+          numColumns={NUM_COLUMNS}
+          keyboardShouldPersistTaps="always"
+          getItemLayout={(_, index) => ({
+            length: itemHeight,
+            offset: itemHeight * Math.floor(index / NUM_COLUMNS),
+            index,
+          })}
+          contentContainerStyle={{ padding: PADDING, gap: GAP }}
+          columnWrapperStyle={{ gap: GAP }}
+          renderItem={({ item }) => (
+            <View style={{ width: itemWidth }}>
+              <MediaCard item={item} onPress={handleItemPress} />
+            </View>
+          )}
+        />
       ) : query.length >= 2 ? (
-        results.length > 0 ? (
-          <FlatList
-            data={results}
-            keyExtractor={(item: Movie) => String(item.id)}
-            numColumns={NUM_COLUMNS}
-            getItemLayout={(_, index) => ({
-              length: itemHeight,
-              offset: itemHeight * Math.floor(index / NUM_COLUMNS),
-              index,
-            })}
-            contentContainerStyle={{
-              padding: PADDING,
-              gap: GAP,
-            }}
-            columnWrapperStyle={{ gap: GAP }}
-            renderItem={({ item }) => (
-              <View style={{ width: itemWidth }}>
-                <MediaCard item={item} onPress={handleItemPress} />
-              </View>
-            )}
-          />
-        ) : (
-          <View className="flex-1 items-center justify-center px-8">
-            <Ionicons name="search-outline" size={48} color="#252525" />
-            <Text className="text-t2 text-base mt-3">No results found</Text>
-            <Text className="text-t3 text-sm mt-1 text-center">
-              Try a different search term
-            </Text>
-          </View>
-        )
+        <View className="flex-1 items-center justify-center px-8">
+          <Ionicons name="search-outline" size={48} color="#252525" />
+          <Text className="text-t2 text-base mt-3">No results found</Text>
+          <Text className="text-t3 text-sm mt-1 text-center">
+            Try a different search term or adjust filters
+          </Text>
+        </View>
       ) : (
         <View className="flex-1 items-center justify-center px-8">
           <Ionicons name="search" size={48} color="#252525" />
           <Text className="text-t2 text-base mt-3">Search movies & TV shows</Text>
           <Text className="text-t3 text-sm mt-1 text-center">
-            Type at least 2 characters to search
+            Type at least 2 characters, or use filters above to discover
           </Text>
         </View>
       )}

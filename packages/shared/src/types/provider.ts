@@ -28,8 +28,8 @@ export interface ProviderDefinition {
   enabled?: boolean;
   /** Embed URL builders */
   embed: {
-    movie: (id: string) => string;
-    tv: (id: string, season: number, episode: number) => string;
+    movie: (id: string, startAt?: number) => string;
+    tv: (id: string, season: number, episode: number, startAt?: number) => string;
   };
   /** Security protection config (per-provider toggle) */
   protection?: ProviderProtection;

@@ -8,16 +8,21 @@ import {
   ScrollView,
   Dimensions,
   Animated,
-  Image,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getEnabledProviders, getImageUrl } from '@filmsnaps/shared';
+import { ProgressiveImage } from './ProgressiveImage';
 import type { ProviderDefinition } from '@filmsnaps/shared';
 import { useSeasonEpisodes, useTVSeasonsOnly } from '../hooks/useTMDB';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useKeepAwake } from 'expo-keep-awake';
+import { useQueryClient } from '@tanstack/react-query';
+import { tmdbApi } from '../lib/api';
+import { saveProgress, getResumePoint, getProgress, markCompleted } from '../lib/watchHistory';
+import { getNextEpisode } from '../lib/tvUtils';
+import type { WatchProgress } from '../lib/watchHistory';
 
 const POPUP_BLOCKER_SCRIPT = `
 (function() {
@@ -111,35 +116,121 @@ const POPUP_BLOCKER_SCRIPT = `
     };
   } catch(e) {}
 
-  // MutationObserver: remove injected ad iframes
-  try {
-    var obs = new MutationObserver(function(muts) {
-      for (var i = 0; i < muts.length; i++) {
-        for (var j = 0; j < muts[i].addedNodes.length; j++) {
-          var n = muts[i].addedNodes[j];
-          if (n.nodeType !== 1) continue;
-          // Only remove iframes from ad domains — don't touch overlays since peachify
-          // uses fixed-position modals for settings/language/captions.
-          if (n.tagName === 'IFRAME') {
-            var src = n.getAttribute('src') || n.src || '';
-            if (isAdUrl(src)) { n.remove(); console.log('[AB] removed ad iframe'); }
+  // ── DOM manipulation (deferred until DOMContentLoaded — avoids blocking page parse) ──
+  function _domInit() {
+    // MutationObserver: remove injected ad iframes (disconnect-reconnect pattern prevents jank)
+    try {
+      var _adTimer = null;
+      var obs = new MutationObserver(function(muts) {
+        obs.disconnect();
+        clearTimeout(_adTimer);
+        _adTimer = setTimeout(function() {
+          try { obs.observe(document.documentElement, { childList: true, subtree: true }); } catch(e) {}
+        }, 3000);
+        for (var i = 0; i < muts.length; i++) {
+          for (var j = 0; j < muts[i].addedNodes.length; j++) {
+            var n = muts[i].addedNodes[j];
+            if (n.nodeType !== 1) continue;
+            if (n.tagName === 'IFRAME') {
+              var src = n.getAttribute('src') || n.src || '';
+              if (isAdUrl(src)) { n.remove(); console.log('[AB] removed ad iframe'); }
+            }
           }
         }
-      }
-    });
-    obs.observe(document.documentElement, { childList: true, subtree: true });
-  } catch(e) {}
-
-  // Periodic cleanup every 2s for ad iframes that slip through
-  setInterval(function() {
-    try {
-      var iframes = document.querySelectorAll('iframe');
-      for (var i = 0; i < iframes.length; i++) {
-        var src = iframes[i].getAttribute('src') || iframes[i].src || '';
-        if (isAdUrl(src)) { iframes[i].remove(); console.log('[AB] periodic: removed ad iframe'); }
-      }
+      });
+      obs.observe(document.documentElement, { childList: true, subtree: true });
     } catch(e) {}
-  }, 2000);
+    // ── Phase B continues below with sweeper + ScreenScape ──
+    _sweepAds();
+    // ── ScreenScape: hide download app banner & ads timer (MutationObserver + periodic) ──
+    try {
+      function _hideSSBanner(root) {
+        var _link = root.querySelector && root.querySelector('a[href="https://screenscape.fun"]');
+        if (!_link) return;
+        _link.style.display = 'none';
+        var _p = _link.nextElementSibling;
+        while (_p) { _p.style.display = 'none'; _p = _p.nextElementSibling; }
+        if (_link.parentElement) _link.parentElement.style.display = 'none';
+      }
+      function _hideSSAds(root) {
+        var _adsBtn = root.querySelector && root.querySelector('button[aria-label^="Ads window ends"]');
+        if (_adsBtn) _adsBtn.style.display = 'none';
+      }
+      var _ssObs = new MutationObserver(function(muts) {
+        for (var i = 0; i < muts.length; i++) {
+          var nodes = muts[i].addedNodes;
+          for (var j = 0; j < nodes.length; j++) {
+            var n = nodes[j];
+            if (n.nodeType !== 1) continue;
+            if (n.tagName === 'A' && n.getAttribute('href') === 'https://screenscape.fun') {
+              if (n.parentElement) n.parentElement.style.display = 'none';
+            } else if (n.tagName === 'BUTTON' && n.getAttribute('aria-label')?.indexOf('Ads window ends') === 0) {
+              n.style.display = 'none';
+            } else if (n.querySelector) {
+              _hideSSBanner(n);
+              _hideSSAds(n);
+            }
+          }
+        }
+      });
+      _ssObs.observe(document.documentElement, { childList: true, subtree: true });
+      setInterval(function() {
+        _hideSSBanner(document);
+        _hideSSAds(document);
+      }, 8000);
+    } catch(e) {}
+
+    // ── Video progress tracking (for predictive preloading) ──
+    try {
+      var _lastProgress = 0;
+      window.addEventListener('message', function _progHandler(e) {
+        // Server 2 (peachify) PLAYER_EVENT format
+        if (e.data && e.data.type === 'PLAYER_EVENT') {
+          var pd = e.data.data;
+          if (pd && typeof pd.currentTime === 'number' && typeof pd.duration === 'number') {
+            var pct = pd.duration > 0 ? pd.currentTime / pd.duration : 0;
+            // Throttle: report at most every 5% progress
+            if (pct - _lastProgress >= 0.05 || pct >= 0.95) {
+              _lastProgress = pct;
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'player:progress',
+                data: { currentTime: pd.currentTime, duration: pd.duration, percent: pct,
+                        tmdbId: pd.tmdbId, mediaType: pd.mediaType,
+                        season: pd.season, episode: pd.episode }
+              }));
+            }
+          }
+        }
+        // Server 3 (screenscape) progress response
+        if (e.data && e.data.type === 'SCREENSCAPE_WATCH_HISTORY_WITH_PROGRESS_RESPONSE') {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'screenscape:progress',
+            data: e.data.watchHistory
+          }));
+        }
+      });
+      // Request progress from Screenscape player if present
+      setTimeout(function() {
+        try {
+          var _ssIframe = document.getElementById('screenscape-player');
+          if (_ssIframe && _ssIframe.contentWindow) {
+            _ssIframe.contentWindow.postMessage({
+              type: 'SCREENSCAPE_GET_WATCH_HISTORY_WITH_PROGRESS',
+              requestId: 'filmsnaps-1'
+            }, 'https://screenscape.me');
+          }
+        } catch(e) {}
+      }, 5000);
+    } catch(e) {}
+  }
+  // ── End of _domInit ──
+
+  // Run Phase B after DOMContentLoaded (doesn't block page parse)
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _domInit);
+  } else {
+    _domInit();
+  }
 
   // ── Click interception: block navigation to external domains (Layer 5) ──
   // Some providers use <a> links that navigate the page to ad URLs.
@@ -212,6 +303,12 @@ const POPUP_BLOCKER_SCRIPT = `
   // Some providers use these to redirect to ad pages even though the
   // location setter is frozen. This intercepts the methods directly.
   try {
+    var _pushState = history.pushState;
+    history.pushState = function() { console.log('[AB] Blocked pushState'); return _pushState.call(this, null, ''); };
+    var _replaceState = history.replaceState;
+    history.replaceState = function() { console.log('[AB] Blocked replaceState'); return _replaceState.call(this, null, ''); };
+  } catch(e) {}
+  try {
     var _locReplace = window.location.constructor.prototype.replace;
     window.location.constructor.prototype.replace = function(url) {
       try {
@@ -238,16 +335,12 @@ const POPUP_BLOCKER_SCRIPT = `
     };
   } catch(e) {}
 
-  // ── Block window.location.href / document.location.href (Layer 7b) ──
-  // Combined with Layer 10 download blocking below.
-  // ── Overlay ad removal + auto-skip (Layer 8, enhanced) ──
-  // Many providers inject ad overlays (iframes / divs) over the video.
-  // This aggressively removes them and auto-clicks "Skip" buttons.
-  setInterval(function() {
+  // ── Overlay ad removal + auto-skip (Layer 8, observer-driven, no fixed interval) ──
+  // Instead of scanning the full DOM every 1.2s, only sweep when DOM changes occur,
+  // with disconnect-reconnect pattern to prevent jank on SPA pages.
+  function _sweepAds() {
     try {
       // 1. Auto-click skip buttons in ad overlays.
-      // Only target obvious ad-skip text — generic words like "close", "×",
-      // or "dismiss" are too broad and kill provider settings dialogs.
       var skipTexts = ['skip', 'skip ad', 'close ad', 'continue',
                        'continue to video'];
       var clickables = document.querySelectorAll('button, a, span, div[role="button"]');
@@ -257,7 +350,6 @@ const POPUP_BLOCKER_SCRIPT = `
           for (var si = 0; si < skipTexts.length; si++) {
             if (txt === skipTexts[si] || txt.indexOf(skipTexts[si]) !== -1) {
               var cs = window.getComputedStyle(clickables[bi]);
-              // Only click if it's in a floating/ad element, not the main page
               if (cs.position === 'fixed' || cs.position === 'sticky' ||
                   parseInt(cs.zIndex) > 50 || clickables[bi].closest('[style*="fixed"],[style*="z-index"]')) {
                 clickables[bi].click();
@@ -268,8 +360,7 @@ const POPUP_BLOCKER_SCRIPT = `
         }
       }
 
-      // 2. Remove ad iframes — any large iframe on an external domain
-      // that doesn't contain known video player patterns.
+      // 2. Remove ad iframes.
       var iframes = document.querySelectorAll('iframe');
       for (var fi = 0; fi < iframes.length; fi++) {
         var src = (iframes[fi].src || '').toLowerCase();
@@ -279,7 +370,6 @@ const POPUP_BLOCKER_SCRIPT = `
           try {
             var iu = new URL(src);
             if (iu.hostname !== location.hostname) {
-              // Allow known video/embed domains through
               var videoDomain = false;
               if (iu.hostname.indexOf('vidsrc') !== -1 ||
                   iu.hostname.indexOf('embed') !== -1 ||
@@ -298,36 +388,143 @@ const POPUP_BLOCKER_SCRIPT = `
         }
       }
 
-      // 3. Remove fixed/sticky overlays — any large element floating over
-      // the content with high z-index that doesn't contain the actual video.
-      // To avoid killing provider settings dialogs, we only remove overlays
-      // that ALSO look like ads (no interactive controls, no settings-related text).
-      var all = document.querySelectorAll('div, section, aside');
-      for (var ei = 0; ei < all.length; ei++) {
-        var el = all[ei];
-        if (el.offsetWidth < 50 || el.offsetHeight < 50) continue;
-        var cs = window.getComputedStyle(el);
-        if ((cs.position === 'fixed' || cs.position === 'sticky') &&
-            (parseInt(cs.zIndex) > 50 || cs.zIndex === '9999' || cs.zIndex === '99999')) {
-          // Never remove if it wraps a video player
-          if (el.querySelector('video, iframe[src*="vidsrc"], iframe[src*="embed"], .jwplayer, .video-js')) continue;
-          // Don't remove settings-like dialogs (multiple buttons = settings, not ad)
-          var btns = el.querySelectorAll('button, select, input, [role="button"]');
-          if (btns.length >= 3) continue; // settings dialogs have many options
-          // Don't remove if it has settings-related text
-          var elTxt = (el.textContent || '').toLowerCase();
-          if (elTxt.indexOf('settings') !== -1 || elTxt.indexOf('quality') !== -1 ||
-              elTxt.indexOf('playback') !== -1 || elTxt.indexOf('audio') !== -1 ||
-              elTxt.indexOf('captions') !== -1 || elTxt.indexOf('speed') !== -1 ||
-              elTxt.indexOf('language') !== -1) continue;
-          el.style.display = 'none';
-          el.style.visibility = 'hidden';
-          el.style.pointerEvents = 'none';
-          console.log('[AB] Removed overlay');
+      // 3. Remove overlay ad containers (fixed position, high z-index, large)
+      try {
+        var overlays = document.querySelectorAll('div[style*="fixed"], div[style*="z-index"]');
+        for (var oi = 0; oi < overlays.length; oi++) {
+          var el = overlays[oi];
+          var cs = window.getComputedStyle(el);
+          var z = parseInt(cs.zIndex) || 0;
+          if ((cs.position === 'fixed' || cs.position === 'sticky') && z > 100 && el.offsetWidth > 200 && el.offsetHeight > 200) {
+            // Check if it contains video-like content (avoid removing the actual player)
+            var hasVideo = el.querySelector('video');
+            var hasPlayerClass = /player|video|embed/.test(el.className || '');
+            if (!hasVideo && !hasPlayerClass) {
+              el.style.setProperty('display', 'none', 'important');
+              console.log('[AB] Hidden overlay ad container');
+            }
+          }
+        }
+      } catch(e) {}
+
+      // 4. Hide provider next-episode buttons (show our own instead, avoid duplicates)
+      try {
+        var nextEpPatterns = ['next episode', 'next ep', 'up next', 'next→'];
+        var nextEpEls = document.querySelectorAll('button, a, [role="button"], div[class*="next"], div[class*="upnext"]');
+        for (var ni = 0; ni < nextEpEls.length; ni++) {
+          if (nextEpEls[ni].offsetWidth < 10) continue;
+          var txt = (nextEpEls[ni].textContent || '').toLowerCase().trim();
+          var aria = (nextEpEls[ni].getAttribute('aria-label') || '').toLowerCase();
+          var cls = (nextEpEls[ni].className || '').toString().toLowerCase();
+          for (var pi = 0; pi < nextEpPatterns.length; pi++) {
+            if (txt.indexOf(nextEpPatterns[pi]) !== -1 || aria.indexOf(nextEpPatterns[pi]) !== -1 || cls.indexOf(nextEpPatterns[pi]) !== -1) {
+              nextEpEls[ni].style.setProperty('display', 'none', 'important');
+              nextEpEls[ni].style.setProperty('visibility', 'hidden', 'important');
+              console.log('[AB] Hidden next-ep button');
+              break;
+            }
+          }
+        }
+      } catch(e) {}
+
+      // 5. Periodically run _hideNextEpButtons via setInterval (catches dynamically added ones)
+    } catch(e) {}
+  }
+
+  // Observer-driven sweeper: runs only when DOM changes, with 5s debounce
+  try {
+    var _sweepTimer = null;
+    var _sweepObs = new MutationObserver(function() {
+      _sweepObs.disconnect();
+      clearTimeout(_sweepTimer);
+      _sweepTimer = setTimeout(function() {
+        _sweepAds();
+        try { _sweepObs.observe(document.documentElement, { childList: true, subtree: true }); } catch(e) {}
+      }, 5000);
+    });
+    _sweepObs.observe(document.documentElement, { childList: true, subtree: true });
+    // Fallback: run at least once every 15s even without DOM changes
+    setInterval(_sweepAds, 15000);
+  } catch(e) {
+    // If observer fails, fall back to a simple interval
+    setInterval(_sweepAds, 8000);
+  }
+  // Run once immediately
+  _sweepAds();
+
+  // ── Universal video progress polling (fallback for providers without postMessage) ──
+  // Polls video elements every 10s. Searches the main document AND any same-origin
+  // iframes — many provider embed pages load the player inside an iframe.
+  function _findVideoElements() {
+    var videos = [];
+    try {
+      var mainVids = document.querySelectorAll('video');
+      for (var i = 0; i < mainVids.length; i++) videos.push(mainVids[i]);
+    } catch(e) {}
+    try {
+      var iframes = document.querySelectorAll('iframe');
+      for (var i = 0; i < iframes.length; i++) {
+        try {
+          var iDoc = iframes[i].contentDocument || (iframes[i].contentWindow && iframes[i].contentWindow.document);
+          if (iDoc) {
+            var iVids = iDoc.querySelectorAll('video');
+            for (var j = 0; j < iVids.length; j++) videos.push(iVids[j]);
+          }
+        } catch(e) {}
+      }
+    } catch(e) {}
+    return videos;
+  }
+
+  setInterval(function() {
+    try {
+      var videos = _findVideoElements();
+      for (var vi = 0; vi < videos.length; vi++) {
+        var video = videos[vi];
+        if (video && video.duration > 0 && video.currentTime > 5) {
+          var pct = video.currentTime / video.duration;
+          if (pct < 0.98) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'player:progress',
+              data: {
+                currentTime: video.currentTime,
+                duration: video.duration,
+                percent: pct
+              }
+            }));
+          }
         }
       }
     } catch(e) {}
-  }, 1200);
+  }, 10000);
+
+  // ── Intercept postMessage calls from iframe players ──
+  // Overrides window.postMessage so that when a child iframe sends progress data
+  // to its parent (this page), we detect it regardless of message format.
+  try {
+    var _origPM = window.postMessage;
+    window.postMessage = function(msg, targetOrigin, transfer) {
+      if (msg && typeof msg === 'object') {
+        var pd = msg.data || msg;
+        if (pd && typeof pd.currentTime === 'number' && typeof pd.duration === 'number') {
+          var pct = pd.duration > 0 ? pd.currentTime / pd.duration : 0;
+          if (pct > 0.01 && pct < 0.98) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'player:progress',
+              data: {
+                currentTime: pd.currentTime,
+                duration: pd.duration,
+                percent: pct,
+                season: pd.season,
+                episode: pd.episode
+              }
+            }));
+          }
+        }
+      }
+      return _origPM.call(window, msg, targetOrigin, transfer);
+    };
+  } catch(e) {}
 
   // ── History manipulation blocking (Layer 9) ──
   try {
@@ -479,46 +676,6 @@ const POPUP_BLOCKER_SCRIPT = `
   // on provider switch.
   //try { ... } catch(e) {}
 
-  // ── ScreenScape: hide download app banner & ads timer (MutationObserver + periodic) ──
-  try {
-    function _hideSSBanner(root) {
-      var _link = root.querySelector && root.querySelector('a[href="https://screenscape.fun"]');
-      if (!_link) return;
-      // Hide the link, the <p> after it, and the parent div
-      _link.style.display = 'none';
-      var _p = _link.nextElementSibling;
-      while (_p) { _p.style.display = 'none'; _p = _p.nextElementSibling; }
-      if (_link.parentElement) _link.parentElement.style.display = 'none';
-    }
-    function _hideSSAds(root) {
-      var _adsBtn = root.querySelector && root.querySelector('button[aria-label^="Ads window ends"]');
-      if (_adsBtn) _adsBtn.style.display = 'none';
-    }
-    // Observer catches dynamically-added elements
-    var _ssObs = new MutationObserver(function(muts) {
-      for (var i = 0; i < muts.length; i++) {
-        var nodes = muts[i].addedNodes;
-        for (var j = 0; j < nodes.length; j++) {
-          var n = nodes[j];
-          if (n.nodeType !== 1) continue;
-          if (n.tagName === 'A' && n.getAttribute('href') === 'https://screenscape.fun') {
-            if (n.parentElement) n.parentElement.style.display = 'none';
-          } else if (n.tagName === 'BUTTON' && n.getAttribute('aria-label')?.indexOf('Ads window ends') === 0) {
-            n.style.display = 'none';
-          } else if (n.querySelector) {
-            _hideSSBanner(n);
-            _hideSSAds(n);
-          }
-        }
-      }
-    });
-    _ssObs.observe(document.documentElement, { childList: true, subtree: true });
-    // Periodic fallback — catches elements the observer misses (SPA re-renders, etc.)
-    setInterval(function() {
-      _hideSSBanner(document);
-      _hideSSAds(document);
-    }, 3000);
-  } catch(e) {}
 })();
 true;
 `;
@@ -580,79 +737,233 @@ function makeCFBypassScript(providerHost: string) {
     catch(e) { return u.indexOf(PROVIDER_HOST) !== -1; }
   }
   window.open = function() { return null; };
-  try {
-    var observer = new MutationObserver(function(mutations) {
-      for (var i = 0; i < mutations.length; i++) {
-        var nodes = mutations[i].addedNodes;
-        for (var j = 0; j < nodes.length; j++) {
-          var n = nodes[j];
-          if (n.tagName === 'IFRAME') {
-            var src = n.getAttribute('src') || '';
-            if (!isOwnUrl(src)) { n.remove(); }
-          }
-        }
-      }
-    });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-  } catch(e) {}
-  setTimeout(function() {
+  // ── Phase B deferred (DOM work after DOMContentLoaded) ──
+  function _cfDomInit() {
+    // Observer-driven iframe removal (disconnect-reconnect prevents jank)
     try {
-      var iframes = document.querySelectorAll('iframe');
-      for (var i = iframes.length - 1; i >= 0; i--) {
-        var src = iframes[i].getAttribute('src') || iframes[i].src || '';
-        if (!isOwnUrl(src)) { iframes[i].remove(); }
-      }
-    } catch(e) {}
-  }, 500);
-
-  // ── Provider-specific UI cleanup ──
-  // ChillFlix: hide watch party, login, sign in, create account buttons
-  if (PROVIDER_HOST.indexOf('chillflix') !== -1) {
-    var HIDE_KEYWORDS = ['watch party', 'login', 'log in', 'sign in', 'create account', 'sign up', 'free account'];
-    var HIDE_ICONCLS = ['party', 'watchparty', 'watch-party'];
-    function hideMatchingElements(root) {
-      var els = root.querySelectorAll('button, a');
-      for (var i = 0; i < els.length; i++) {
-        var el = els[i];
-        if (el.style.display === 'none') continue;
-        var txt = (el.textContent || '').toLowerCase().trim();
-        var cls = (el.className || '').toString().toLowerCase();
-        var aria = (el.getAttribute('aria-label') || '').toLowerCase();
-        var title = (el.getAttribute('title') || '').toLowerCase();
-        for (var j = 0; j < HIDE_KEYWORDS.length; j++) {
-          if (txt.indexOf(HIDE_KEYWORDS[j]) !== -1 || aria.indexOf(HIDE_KEYWORDS[j]) !== -1 || title.indexOf(HIDE_KEYWORDS[j]) !== -1) {
-            el.style.display = 'none';
-            break;
+      var _cfTimer = null;
+      var observer = new MutationObserver(function(mutations) {
+        observer.disconnect();
+        clearTimeout(_cfTimer);
+        _cfTimer = setTimeout(function() {
+          try { observer.observe(document.documentElement, { childList: true, subtree: true }); } catch(e) {}
+        }, 3000);
+        for (var i = 0; i < mutations.length; i++) {
+          var nodes = mutations[i].addedNodes;
+          for (var j = 0; j < nodes.length; j++) {
+            var n = nodes[j];
+            if (n.tagName === 'IFRAME') {
+              var src = n.getAttribute('src') || '';
+              if (!isOwnUrl(src)) { n.remove(); }
+            }
           }
         }
-        if (el.style.display !== 'none') {
-          for (var k = 0; k < HIDE_ICONCLS.length; k++) {
-            if (cls.indexOf(HIDE_ICONCLS[k]) !== -1) {
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    } catch(e) {}
+    // One-time iframe sweep after page settles (not a repeating interval)
+    setTimeout(function() {
+      try {
+        var iframes = document.querySelectorAll('iframe');
+        for (var i = iframes.length - 1; i >= 0; i--) {
+          var src = iframes[i].getAttribute('src') || iframes[i].src || '';
+          if (!isOwnUrl(src)) { iframes[i].remove(); }
+        }
+      } catch(e) {}
+    }, 3000);
+
+    // ── Provider-specific UI cleanup ──
+    // ChillFlix: hide watch party, login, sign in, create account buttons
+    if (PROVIDER_HOST.indexOf('chillflix') !== -1) {
+      var HIDE_KEYWORDS = ['watch party', 'login', 'log in', 'sign in', 'create account', 'sign up', 'free account'];
+      var HIDE_ICONCLS = ['party', 'watchparty', 'watch-party'];
+      function hideMatchingElements(root) {
+        var els = root.querySelectorAll('button, a');
+        for (var i = 0; i < els.length; i++) {
+          var el = els[i];
+          if (el.style.display === 'none') continue;
+          var txt = (el.textContent || '').toLowerCase().trim();
+          var cls = (el.className || '').toString().toLowerCase();
+          var aria = (el.getAttribute('aria-label') || '').toLowerCase();
+          var title = (el.getAttribute('title') || '').toLowerCase();
+          for (var j = 0; j < HIDE_KEYWORDS.length; j++) {
+            if (txt.indexOf(HIDE_KEYWORDS[j]) !== -1 || aria.indexOf(HIDE_KEYWORDS[j]) !== -1 || title.indexOf(HIDE_KEYWORDS[j]) !== -1) {
               el.style.display = 'none';
               break;
             }
           }
+          if (el.style.display !== 'none') {
+            for (var k = 0; k < HIDE_ICONCLS.length; k++) {
+              if (cls.indexOf(HIDE_ICONCLS[k]) !== -1) {
+                el.style.display = 'none';
+                break;
+              }
+            }
+          }
         }
       }
+      hideMatchingElements(document);
+      try {
+        var _cfUIobs = new MutationObserver(function() {
+          _cfUIobs.disconnect();
+          setTimeout(function() {
+            hideMatchingElements(document);
+            try { _cfUIobs.observe(document.documentElement, { childList: true, subtree: true }); } catch(e) {}
+          }, 8000);
+        });
+        _cfUIobs.observe(document.documentElement, { childList: true, subtree: true });
+      } catch(e) {
+        setInterval(function() { hideMatchingElements(document); }, 15000);
+      }
     }
-    hideMatchingElements(document);
-    setInterval(function() { hideMatchingElements(document); }, 3000);
+
+    // ── Nxsha: hide app install button (no parent climbing) ──
+    if (PROVIDER_HOST.indexOf('nxsha') !== -1) {
+      try {
+        var _nxSheet = new CSSStyleSheet();
+        _nxSheet.replaceSync(
+          'a[href="https://nxsha.app"]{display:none!important}'
+        );
+        document.adoptedStyleSheets.push(_nxSheet);
+      } catch(e) {
+        try {
+          var _nxSt = document.createElement('style');
+          _nxSt.textContent = 'a[href="https://nxsha.app"]{display:none!important}';
+          (document.head || document.documentElement).appendChild(_nxSt);
+        } catch(e) {}
+      }
+      try {
+        var _a = document.querySelector('a[href="https://nxsha.app"]');
+        if (_a) { _a.style.setProperty('display', 'none', 'important'); _a.remove(); }
+      } catch(e) {}
+      setTimeout(function() {
+        try {
+          var _a = document.querySelector('a[href="https://nxsha.app"]');
+          if (_a) { _a.style.setProperty('display', 'none', 'important'); _a.remove(); }
+        } catch(e) {}
+      }, 3000);
+    }
+
+    // ── Hide provider next-episode buttons (avoid duplicates with our UI) ──
+    try {
+      var _nextEpPatterns = ['next episode', 'next ep', 'up next', 'next→'];
+      function _cfHideNextEp() {
+        try {
+          var _els = document.querySelectorAll('button, a, [role="button"], div[class*="next"], div[class*="upnext"]');
+          for (var _i = 0; _i < _els.length; _i++) {
+            if (_els[_i].offsetWidth < 10) continue;
+            var _txt = (_els[_i].textContent || '').toLowerCase().trim();
+            var _aria = (_els[_i].getAttribute('aria-label') || '').toLowerCase();
+            var _cls = (_els[_i].className || '').toString().toLowerCase();
+            for (var _p = 0; _p < _nextEpPatterns.length; _p++) {
+              if (_txt.indexOf(_nextEpPatterns[_p]) !== -1 || _aria.indexOf(_nextEpPatterns[_p]) !== -1 || _cls.indexOf(_nextEpPatterns[_p]) !== -1) {
+                _els[_i].style.setProperty('display', 'none', 'important');
+                break;
+              }
+            }
+          }
+        } catch(e) {}
+      }
+      // Run immediately and periodically
+      _cfHideNextEp();
+      setInterval(_cfHideNextEp, 10000);
+      // Also observe DOM changes
+      try {
+        var _nextEpObs = new MutationObserver(function() {
+          _nextEpObs.disconnect();
+          setTimeout(function() {
+            _cfHideNextEp();
+            try { _nextEpObs.observe(document.documentElement, { childList: true, subtree: true }); } catch(e) {}
+          }, 3000);
+        });
+        _nextEpObs.observe(document.documentElement, { childList: true, subtree: true });
+      } catch(e) {}
+    } catch(e) {}
+
+    // ── Video progress tracking (for predictive preloading) ──
+    try {
+      var _lastProgress = 0;
+      window.addEventListener('message', function _progHandler(e) {
+        if (e.data && e.data.type === 'PLAYER_EVENT') {
+          var pd = e.data.data;
+          if (pd && typeof pd.currentTime === 'number' && typeof pd.duration === 'number') {
+            var pct = pd.duration > 0 ? pd.currentTime / pd.duration : 0;
+            if (pct - _lastProgress >= 0.05 || pct >= 0.95) {
+              _lastProgress = pct;
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'player:progress',
+                data: { currentTime: pd.currentTime, duration: pd.duration, percent: pct,
+                        tmdbId: pd.tmdbId, mediaType: pd.mediaType,
+                        season: pd.season, episode: pd.episode }
+              }));
+            }
+          }
+        }
+        if (e.data && e.data.type === 'SCREENSCAPE_WATCH_HISTORY_WITH_PROGRESS_RESPONSE') {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'screenscape:progress',
+            data: e.data.watchHistory
+          }));
+        }
+      });
+      setTimeout(function() {
+        try {
+          var _ssIframe = document.getElementById('screenscape-player');
+          if (_ssIframe && _ssIframe.contentWindow) {
+            _ssIframe.contentWindow.postMessage({
+              type: 'SCREENSCAPE_GET_WATCH_HISTORY_WITH_PROGRESS',
+              requestId: 'filmsnaps-1'
+            }, 'https://screenscape.me');
+          }
+        } catch(e) {}
+      }, 5000);
+    } catch(e) {}
+
+    // ── Video progress polling for CF providers (nxsha trick) ──
+    // Cloudflare-protected providers don't emit postMessage events, so we
+    // poll video elements every 5s. Searches main document AND iframes.
+    function _cfFindVideos() {
+      var videos = [];
+      try { var m = document.querySelectorAll('video'); for (var i=0;i<m.length;i++) videos.push(m[i]); } catch(e) {}
+      try {
+        var ifs = document.querySelectorAll('iframe');
+        for (var i=0;i<ifs.length;i++) {
+          try {
+            var d = ifs[i].contentDocument || (ifs[i].contentWindow && ifs[i].contentWindow.document);
+            if (d) { var v = d.querySelectorAll('video'); for (var j=0;j<v.length;j++) videos.push(v[j]); }
+          } catch(e) {}
+        }
+      } catch(e) {}
+      return videos;
+    }
+    setInterval(function() {
+      try {
+        var videos = _cfFindVideos();
+        for (var vi = 0; vi < videos.length; vi++) {
+          var video = videos[vi];
+          if (video && video.duration > 0 && video.currentTime > 5) {
+            var pct = video.currentTime / video.duration;
+            if (pct < 0.98) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'player:progress',
+                data: {
+                  currentTime: video.currentTime,
+                  duration: video.duration,
+                  percent: pct
+                }
+              }));
+            }
+          }
+        }
+      } catch(e) {}
+    }, 5000);
   }
 
-  // ── Nxsha: hide install banner & UI clutter (CSS + periodic cleanup) ──
-  if (PROVIDER_HOST.indexOf('nxsha') !== -1) {
-    var s = document.createElement('style');
-    s.textContent = 'a[href="https://nxsha.app"]{display:none!important}.modal-ui .sticky{display:none!important}[class*="download"]{display:none!important}[class*="banner"] {display:none!important}';
-    document.documentElement.appendChild(s);
-    // Periodic sweep for elements that sneak past CSS (SPA re-renders, etc.)
-    setInterval(function() {
-      document.querySelectorAll('a[href*="nxsha.app"],a[href*="download"],a[href*="install"]').forEach(function(el) {
-        el.style.display = 'none';
-      });
-      document.querySelectorAll('[class*="download"],[class*="banner"],[class*="install"]').forEach(function(el) {
-        el.style.display = 'none';
-      });
-    }, 3000);
+  // Defer Phase B until DOMContentLoaded
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _cfDomInit);
+  } else {
+    _cfDomInit();
   }
 })();
 true;
@@ -683,10 +994,16 @@ export function VideoWebView({
   const providerHostRef = useRef<string>('');
   const navigationChainRef = useRef<Set<string>>(new Set());
   const pageLoadedRef = useRef(false);
+  const progressRef = useRef<{ percent: number; tmdbId?: number; season?: number; episode?: number }>({ percent: 0 });
+  const startAtRef = useRef<number>(0);
+  const lastSavePctRef = useRef<number>(0);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queryClient = useQueryClient();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
-
+  const [showNextEpBtn, setShowNextEpBtn] = useState(false);
+  const nextEpInfoRef = useRef({ season: 1, episode: 2 });
 
   // ── Overlay auto-hide (only in fullscreen) ──
   const overlayOpacity = useRef(new Animated.Value(1)).current;
@@ -744,15 +1061,57 @@ export function VideoWebView({
     };
   }, [isFullscreen, scheduleHide, overlayOpacity]);
 
-  // Reset to portrait when component unmounts
+  // Track orientation restore to avoid double-calling during dismiss
+  const orientationRestoredRef = useRef(false);
+  const restorePortrait = useCallback(() => {
+    if (orientationRestoredRef.current) return;
+    orientationRestoredRef.current = true;
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+  }, []);
+  // Restore portrait on unmount (catches hardware-back, gesture, etc.)
   useEffect(() => {
-    return () => { ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {}); };
+    return () => { if (!orientationRestoredRef.current) {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+    }};
   }, []);
   const [showEpPicker, setShowEpPicker] = useState(false);
   const [currentSeason, setCurrentSeason] = useState<number>(season ?? 1);
   const [currentEpisode, setCurrentEpisode] = useState<number>(episode ?? 1);
   const [tempSeason, setTempSeason] = useState<number>(currentSeason);
   const [tempEpisode, setTempEpisode] = useState<number>(currentEpisode);
+
+  // ── Load watch history on mount to determine resume point ──
+  const historyLoadedRef = useRef(false);
+  useEffect(() => {
+    if (historyLoadedRef.current) return;
+    historyLoadedRef.current = true;
+
+    (async () => {
+      try {
+        if (type === 'tv') {
+          const resume = await getResumePoint(id, 'tv', currentSeason, currentEpisode);
+          if (resume) {
+            if (resume.season != null && resume.episode != null) {
+              setCurrentSeason(resume.season);
+              setCurrentEpisode(resume.episode);
+              setTempSeason(resume.season);
+              setTempEpisode(resume.episode);
+            }
+            if (resume.currentTime > 5 && !resume.completed) {
+              startAtRef.current = resume.currentTime;
+            }
+          }
+        } else {
+          const progress = await getProgress(id, 'movie');
+          if (progress && !progress.completed && progress.currentTime > 5) {
+            startAtRef.current = progress.currentTime;
+          }
+        }
+      } catch {
+        // Silently fail — app works fine without history
+      }
+    })();
+  }, [type, id, currentSeason, currentEpisode]);
 
   const currentProvider = providers.find((p) => p.id === providerId);
   const isTV = type === 'tv';
@@ -768,33 +1127,124 @@ export function VideoWebView({
     }
   }, [currentProvider]);
 
+  // Safety timer: clear loading after 15s in case onLoadEnd never fires
+  useEffect(() => {
+    const timer = setTimeout(() => setLoading(false), 15000);
+    return () => clearTimeout(timer);
+  }, [providerId, currentSeason, currentEpisode]);
+
+  // ── Log provider state for debugging ──
+  console.warn(
+    `[WebView] providers=${providers.length} providerId=${providerId} currentProvider=${currentProvider?.id ?? 'NULL'} type=${type} id=${id}`,
+  );
+
   const watchUrl = useMemo(() => {
-    if (!currentProvider) return '';
+    if (!currentProvider) {
+      console.warn('[WebView] No currentProvider — URL is empty');
+      return '';
+    }
+    const startAt = startAtRef.current > 0 ? startAtRef.current : undefined;
     const embedPath =
       type === 'tv' && currentSeason && currentEpisode
-        ? currentProvider.embed.tv(id, currentSeason, currentEpisode)
-        : currentProvider.embed.movie(id);
-    return `${currentProvider.baseUrl}${embedPath}`;
+        ? currentProvider.embed.tv(id, currentSeason, currentEpisode, startAt)
+        : currentProvider.embed.movie(id, startAt);
+    const url = `${currentProvider.baseUrl}${embedPath}`;
+    console.warn(`[WebView] built URL: ${url} (startAt=${startAt})`);
+    return url;
   }, [currentProvider, type, id, currentSeason, currentEpisode]);
 
   const handleOpenWindow = useCallback((syntheticEvent: any) => {
     console.warn('[PopupBlocker] Blocked popup window:', syntheticEvent.nativeEvent.targetUrl);
   }, []);
 
+  // Restore portrait THEN navigate back — prevents the dismiss animation from
+  // glitching when the orientation changes during the transition.
+  const handleClose = useCallback(() => {
+    restorePortrait();
+    // Save final progress before closing
+    const prog = progressRef.current;
+    if (prog.percent > 0.05 && prog.percent < 0.95) {
+      saveProgress({
+        tmdbId: id,
+        mediaType: type,
+        providerId: providerId,
+        currentTime: 0,
+        duration: 0,
+        percent: prog.percent,
+        season: isTV ? currentSeason : undefined,
+        episode: isTV ? currentEpisode : undefined,
+        updatedAt: Date.now(),
+        completed: false,
+      }).catch(() => {});
+    }
+    // Small delay to let orientation settle before dismiss animation starts
+    setTimeout(() => onClose?.(), 200);
+  }, [restorePortrait, onClose, id, type, providerId, isTV, currentSeason, currentEpisode]);
+
+  // ── Save progress on unmount (catches hardware-back, gesture, etc.) ──
+  const unmountSavedRef = useRef(false);
+  useEffect(() => {
+    return () => {
+      if (unmountSavedRef.current) return;
+      unmountSavedRef.current = true;
+      const prog = progressRef.current;
+      if (prog.percent > 0.05) {
+        saveProgress({
+          tmdbId: id,
+          mediaType: type,
+          providerId: providerId,
+          currentTime: 0,
+          duration: 0,
+          percent: prog.percent,
+          season: isTV ? currentSeason : undefined,
+          episode: isTV ? currentEpisode : undefined,
+          updatedAt: Date.now(),
+          completed: prog.percent >= 0.95,
+        }).catch(() => {});
+      }
+    };
+  }, [id, type, providerId, isTV, currentSeason, currentEpisode]);
+
   const switchProvider = (newId: string) => {
+    // Clean up injected next-episode button
+    webViewRef.current?.injectJavaScript(`
+      var btn = document.getElementById('filmsnaps-next-ep-btn');
+      if (btn) btn.remove();
+    `);
     setProviderId(newId);
-    setLoading(true);
+    // Only show loading if provider actually changed (prevents infinite spinner
+    // when user taps the same provider they're already using)
+    if (newId !== providerId) {
+      setLoading(true);
+    }
     setError(null);
     setShowPicker(false);
+    setShowNextEpBtn(false);
     // Reset navigation chain for the new provider
     navigationChainRef.current = new Set();
     pageLoadedRef.current = false;
   };
 
-  // Bump this to force WebView reload when season/episode changes
+  // ── Predictive preloading: when 80% watched, prefetch next episode metadata ──
+  const preloadNextEpisode = useCallback(() => {
+    if (type !== 'tv' || !id) return;
+    const prog = progressRef.current;
+    const nextEp = (prog.episode ?? currentEpisode) + 1;
+    const nextSeason = prog.season ?? currentSeason;
+
+    // Prefetch next episode of current season
+    queryClient.prefetchQuery({
+      queryKey: ['tv', id, 'season', nextSeason],
+      queryFn: () => tmdbApi.getSeasonEpisodes(id, nextSeason),
+      staleTime: 1000 * 60 * 60,
+    });
+    console.log(`[Preload] Prefetched S${String(nextSeason).padStart(2,'0')}E${String(nextEp).padStart(2,'0')} metadata`);
+  }, [type, id, currentEpisode, currentSeason, queryClient]);
+
+  // Force WebView remount only on provider switch (not episode change)
   const webViewKey = useMemo(
-    () => `${providerId}-${isTV ? `${currentSeason}-${currentEpisode}` : 'movie'}`,
-    [providerId, isTV, currentSeason, currentEpisode],
+    () => `${providerId}-${type}`,
+    [providerId, type],
   );
 
   const getProviderDisplayName = (p: ProviderDefinition): string => {
@@ -851,6 +1301,38 @@ export function VideoWebView({
     );
   }
 
+  // ── Empty URL guard ──
+  if (!watchUrl) {
+    return (
+      <View className="flex-1 items-center justify-center bg-black px-8">
+        <View className="w-16 h-16 rounded-full bg-zinc-800 items-center justify-center mb-5">
+          <Ionicons name="server" size={28} color="#534f4c" />
+        </View>
+        <Text className="text-zinc-300 text-lg font-semibold mb-2">No player available</Text>
+        <Text className="text-zinc-500 text-sm mb-8 text-center leading-5">
+          No streaming servers are available. Try selecting a different server.
+        </Text>
+        <TouchableOpacity
+          onPress={() => setShowPicker(true)}
+          className="bg-gold rounded-xl py-3 px-6 flex-row items-center"
+          activeOpacity={0.8}
+        >
+          <Ionicons name="server" size={16} color="#000" />
+          <Text className="text-black font-bold text-sm ml-2">Choose Server</Text>
+        </TouchableOpacity>
+        <Modal visible={showPicker} transparent animationType="slide">
+          <ServerPicker
+            providers={providers}
+            currentId={providerId}
+            onSelect={switchProvider}
+            onClose={() => setShowPicker(false)}
+            getDisplayName={getProviderDisplayName}
+          />
+        </Modal>
+      </View>
+    );
+  }
+
   return (
     <View className="flex-1 bg-black">
       {/* ── Animated overlay bar (fades in/out) ── */}
@@ -862,7 +1344,7 @@ export function VideoWebView({
         <View className="flex-row items-center justify-between px-4">
           {/* Close / Shrink button (top left) */}
           <TouchableOpacity
-            onPress={isFullscreen ? () => setIsFullscreen(false) : onClose}
+            onPress={isFullscreen ? () => setIsFullscreen(false) : handleClose}
             className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
             activeOpacity={0.7}
             style={{ pointerEvents: 'auto' }}
@@ -957,10 +1439,20 @@ export function VideoWebView({
         currentSeason={currentSeason}
         currentEpisode={currentEpisode}
         onSelect={(season, episode) => {
+          // Clean up injected next-episode button when manually changing episode
+          webViewRef.current?.injectJavaScript(`
+            var btn = document.getElementById('filmsnaps-next-ep-btn');
+            if (btn) btn.remove();
+          `);
           setCurrentSeason(season);
           setCurrentEpisode(episode);
           setShowEpPicker(false);
-          setLoading(true);
+          setShowNextEpBtn(false);
+          // Only show loading if episode actually changed (prevents infinite spinner
+          // when user taps the same episode they're already watching)
+          if (season !== currentSeason || episode !== currentEpisode) {
+            setLoading(true);
+          }
         }}
         onClose={() => setShowEpPicker(false)}
       />
@@ -1018,7 +1510,10 @@ export function VideoWebView({
               key={webViewKey}
               ref={webViewRef}
               source={{ uri: watchUrl }}
-              style={{ flex: 1, backgroundColor: '#000' }}
+              style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
+              onLoad={(event) => {
+                console.warn(`[WebView] onLoad: ${event.nativeEvent.url.substring(0, 100)}`);
+              }}
               allowsFullscreenVideo={true}
               allowsInlineMediaPlayback={true}
               mediaPlaybackRequiresUserAction={false}
@@ -1026,40 +1521,57 @@ export function VideoWebView({
               domStorageEnabled={true}
               sharedCookiesEnabled={true}
               thirdPartyCookiesEnabled={true}
-              startInLoadingState={true}
               injectedJavaScriptBeforeContentLoaded={
                 (providerId === 'nxsha' || providerId === 'chillflix')
                   ? makeCFBypassScript(currentProvider?.baseUrl ? new URL(currentProvider.baseUrl).hostname : '')
                   : POPUP_BLOCKER_SCRIPT
               }
+              // Runs on EVERY page navigation (episode changes, redirects)
+              // POPUP_BLOCKER handles ad-overlay removal and window.open interception
+              // at document_end — fine for non-CF providers on re-navigation.
+              injectedJavaScript={POPUP_BLOCKER_SCRIPT}
               allowsBackForwardNavigationGestures={false}
               setSupportMultipleWindows={false}
               // ── Security hardening ──
+              allowFileAccess={false}
+              allowUniversalAccessFromFileURLs={false}
+              javaScriptCanOpenWindowsAutomatically={false}
               geolocationEnabled={false}
               mixedContentMode="never"
               cacheEnabled={false}
-              renderLoading={() => <View />}
+              incognito={true}
               onShouldStartLoadWithRequest={(request) => {
+                const reqUrl = request.url || '';
+                const isMainFrame = request.isTopFrame ?? true;
+                // Log every request for debugging
+                console.warn(
+                  `[WebView] nav: ${reqUrl.substring(0, 120)} mainFrame=${isMainFrame}`
+                );
                 // Block intent:// URLs universally (ad popups trying to open Chrome)
-                if (!request.url || request.url.startsWith('intent://')) return false;
+                if (!reqUrl || reqUrl.startsWith('intent://')) {
+                  console.warn('[WebView] blocked: intent URL');
+                  return false;
+                }
                 // CF-protected providers: allow only same-origin + player modal domains
                 if (providerId === 'nxsha' || providerId === 'chillflix') {
-                  const host = (() => { try { return new URL(request.url).hostname; } catch { return ''; }})();
+                  const host = (() => { try { return new URL(reqUrl).hostname; } catch { return ''; }})();
                   const providerHost = currentProvider?.baseUrl ? new URL(currentProvider.baseUrl).hostname : '';
-                  if (host === providerHost) return true;
-                  return false;
+                  const allowed = host === providerHost;
+                  if (!allowed) console.warn(`[WebView] blocked: CF mismatch host=${host} providerHost=${providerHost}`);
+                  return allowed;
                 }
                 // Chain tracking: record all domains during page load (first 5s),
                 // then block any navigation to unvisited domains (likely ads).
-                if (request.url) {
+                if (reqUrl) {
                   try {
-                    const reqUrl = new URL(request.url);
-                    const host = reqUrl.hostname.toLowerCase();
+                    const parsed = new URL(reqUrl);
+                    const host = parsed.hostname.toLowerCase();
 
                     // During bootstrapping phase (first 5s after load), record
                     // all domains in the redirect chain so we can allow them.
                     if (!pageLoadedRef.current) {
                       navigationChainRef.current.add(host);
+                      console.warn(`[WebView] bootstrap allow: ${host}`);
                       return true;
                     }
 
@@ -1072,18 +1584,60 @@ export function VideoWebView({
                     // Unknown domain navigated to after page load → likely ad
                     console.warn('[AB] Blocked navigation to:', host);
                     return false;
-                  } catch (e) {}
+                  } catch (e) {
+                    console.warn('[WebView] nav parse error:', reqUrl.substring(0, 80));
+                  }
                 }
                 return true;
               }}
-              onLoadStart={(event) => {}}
+              onLoadStart={(event) => {
+                console.warn(`[WebView] onLoadStart: ${event.nativeEvent.url.substring(0, 100)}`);
+                // Clean up injected button on navigation
+                webViewRef.current?.injectJavaScript(`
+                  var btn = document.getElementById('filmsnaps-next-ep-btn');
+                  if (btn) btn.remove();
+                `);
+              }}
               onLoadEnd={(event) => {
+                console.warn(`[WebView] onLoadEnd: ${event.nativeEvent.url.substring(0, 100)}`);
                 setLoading(false);
                 // After page fully loads, allow 5s for provider redirect chain,
                 // then lock it — any new domain after this is likely an ad.
                 setTimeout(() => { pageLoadedRef.current = true; }, 5000);
+
+                // ── Seek video to resume point (universal, works on any provider) ──
+                // Providers that already support ?startAt= in URL (vidnest, vixsrc)
+                // would also get this, but double-seeking to the same position is harmless.
+                const seekTime = startAtRef.current;
+                if (seekTime > 5) {
+                  webViewRef.current?.injectJavaScript(`
+                    (function(){
+                      var _st = ${Math.floor(seekTime)};
+                      var _pi = setInterval(function(){
+                        var _v = document.querySelector('video');
+                        if(_v && _v.readyState >= 1){
+                          _v.currentTime = _st;
+                          _v.play();
+                          clearInterval(_pi);
+                        }
+                      }, 400);
+                      setTimeout(function(){ clearInterval(_pi); }, 35000);
+                    })();
+                  `);
+                  // Reset so it doesn't re-fire on subsequent navigations
+                  startAtRef.current = 0;
+                }
               }}
-              onError={(syntheticEvent) => {}}
+              onError={(syntheticEvent) => {
+                const err = syntheticEvent.nativeEvent;
+                console.warn(`[WebView] onError: ${err.code} ${err.description?.substring(0, 100) ?? ''}`);
+                // Clear loading on error so user sees error state, not infinite spinner
+                setLoading(false);
+              }}
+              onHttpError={(syntheticEvent) => {
+                const err = syntheticEvent.nativeEvent;
+                console.warn(`[WebView] HTTP ${err.statusCode}: ${err.description?.substring(0, 100) ?? ''}`);
+              }}
               onMessage={(event) => {
                 try {
                   const data = JSON.parse(event.nativeEvent.data);
@@ -1100,6 +1654,109 @@ export function VideoWebView({
                         duration: 200,
                         useNativeDriver: true,
                       }).start();
+                    }
+                  }
+                  if (data.type === 'filmsnaps:nextEpisode') {
+                      // User clicked the injected "Next Episode" button
+                      // Fetch correct next episode (handles season transitions)
+                      (async () => {
+                        try {
+                          const { nextSeason, nextEpisode } = await getNextEpisode(id, currentSeason, currentEpisode);
+                          nextEpInfoRef.current = { season: nextSeason, episode: nextEpisode };
+                        } catch {
+                          nextEpInfoRef.current = { season: currentSeason, episode: currentEpisode + 1 };
+                        }
+                        setShowNextEpBtn(false);
+                        setError(null);
+                        setLoading(true);
+                        setCurrentEpisode(nextEpInfoRef.current.episode);
+                        setCurrentSeason(nextEpInfoRef.current.season);
+                      })();
+                    }
+                    // ── Progress tracking (triggers next-episode preloading) ──
+                  if (data.type === 'player:progress' || data.type === 'screenscape:progress') {
+                    const prevPct = progressRef.current.percent;
+                    const newPct = data.data?.percent ?? prevPct;
+                    progressRef.current = { ...progressRef.current, ...data.data, percent: newPct };
+                    // Trigger preload at 80%
+                    if (prevPct < 0.8 && newPct >= 0.8) {
+                      preloadNextEpisode();
+                    }
+
+                    // ── Persist progress to AsyncStorage (throttled) ──
+                    const currentTime = data.data?.currentTime ?? 0;
+                    const duration = data.data?.duration ?? 0;
+                    if (currentTime > 5 && duration > 0) {
+                      // Save if 10% more progress since last save, or every 10s
+                      const pctDiff = newPct - lastSavePctRef.current;
+                      if (pctDiff >= 0.1 || newPct >= 0.95 || Date.now() % 10000 < 200) {
+                        lastSavePctRef.current = newPct;
+                        saveProgress({
+                          tmdbId: id,
+                          mediaType: type,
+                          providerId: providerId,
+                          currentTime,
+                          duration,
+                          percent: newPct,
+                          season: isTV ? currentSeason : undefined,
+                          episode: isTV ? currentEpisode : undefined,
+                          updatedAt: Date.now(),
+                          completed: newPct >= 0.95,
+                        }).catch(() => {});
+                      }
+                    }
+
+                    // ── TV episode: show "Next Episode" button at 95%+ ──
+                    if (isTV && prevPct < 0.95 && newPct >= 0.95) {
+                      // Mark current episode completed
+                      markCompleted(id, 'tv', currentSeason, currentEpisode).catch(() => {});
+
+                      // Calculate correct next episode (handles season rollover)
+                      (async () => {
+                        try {
+                          const nextEp = await getNextEpisode(id, currentSeason, currentEpisode);
+                          nextEpInfoRef.current = { season: nextEp.nextSeason, episode: nextEp.nextEpisode };
+                          setShowNextEpBtn(true);
+
+                          // Inject button into WebView DOM for fullscreen visibility
+                          webViewRef.current?.injectJavaScript(`
+                            (function() {
+                              // Remove any existing injected button
+                              var existing = document.getElementById("filmsnaps-next-ep-btn");
+                              if (existing) existing.remove();
+
+                              var seasonStr = "${String(nextEp.nextSeason).padStart(2, "0")}";
+                              var episodeStr = "${String(nextEp.nextEpisode).padStart(2, "0")}";
+
+                              // Create button
+                              var btn = document.createElement("button");
+                              btn.id = "filmsnaps-next-ep-btn";
+                              btn.innerHTML = "<span style=\"display:flex;align-items:center;gap:8px;\"><span style=\"background:rgba(232,160,32,0.2);border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#e8a020\" stroke-width=\"2.5\"><polygon points=\"5 4 19 12 5 20\"/></svg></span><span style=\"display:flex;flex-direction:column;\"><span style=\"font-size:10px;color:#a1a1aa;font-weight:600;letter-spacing:0.5px;\">UP NEXT</span><span style=\"font-size:13px;color:#fff;font-weight:700;\">S" + seasonStr + " E" + episodeStr + "</span></span></span>";
+                              btn.style.cssText = "position:fixed;bottom:calc(env(safe-area-inset-bottom, 0px) + 80px);right:16px;z-index:2147483647;background:rgba(0,0,0,0.9);border:1px solid rgba(232,160,32,0.4);border-radius:12px;padding:10px 14px;color:#fff;font-family:system-ui;font-size:13px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 32px rgba(0,0,0,0.5);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);cursor:pointer;animation:slideUp 0.3s ease-out;";
+                              btn.onclick = function() {
+                                window.ReactNativeWebView.postMessage(JSON.stringify({type:"filmsnaps:nextEpisode"}));
+                              };
+
+                              // Add animation keyframes
+                              var style = document.createElement("style");
+                              style.textContent = "@keyframes slideUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }";
+                              document.head.appendChild(style);
+
+                              document.body.appendChild(btn);
+
+                              // Auto-hide after 15s if not clicked
+                              setTimeout(function() {
+                                var b = document.getElementById("filmsnaps-next-ep-btn");
+                                if (b) { b.style.animation = "slideUp 0.3s ease-in reverse"; setTimeout(function(){ b.remove(); }, 300); }
+                              }, 15000);
+                            })();
+                          `);
+                        } catch (e) {
+                          // Fallback on error
+                          nextEpInfoRef.current = { season: currentSeason, episode: currentEpisode + 1 };
+                          setShowNextEpBtn(true);
+                        }
+                      })();
                     }
                   }
                 } catch(e) {}
@@ -1151,6 +1808,33 @@ function EpisodePickerModal({
       setPickerSeason(currentSeason);
     }
   }, [visible, currentSeason]);
+
+  // ── Load watch history for resume indicators ──
+  const [episodeProgress, setEpisodeProgress] = useState<Record<string, WatchProgress>>({});
+  useEffect(() => {
+    if (!tvId || !visible) return;
+    getProgress(tvId, 'tv', pickerSeason, 0).then(() => {
+      // Load all episodes for this season from watch history
+      (async () => {
+        const map: Record<string, WatchProgress> = {};
+        const eps = episodes;
+        const results = await Promise.all(
+          eps.map((ep: any) => {
+            const epNum = ep.episode_number;
+            if (!epNum) return Promise.resolve(null);
+            return getProgress(tvId, 'tv', pickerSeason, epNum)
+              .then(p => ({ epNum, p }));
+          })
+        );
+        for (const r of results) {
+          if (r && r.p) {
+            map[`${pickerSeason}:${r.epNum}`] = r.p;
+          }
+        }
+        setEpisodeProgress(map);
+      })();
+    }).catch(() => {});
+  }, [tvId, pickerSeason, visible]);
 
   const SHEET_HEIGHT = SCREEN_HEIGHT * 0.4;
 
@@ -1227,6 +1911,10 @@ function EpisodePickerModal({
               {episodes.map((ep: any, index: number) => {
                 const epNum = ep.episode_number;
                 const isActive = pickerSeason === currentSeason && epNum === currentEpisode;
+                const progKey = `${pickerSeason}:${epNum}`;
+                const epProg = episodeProgress[progKey];
+                const hasProgress = epProg && !epProg.completed && epProg.percent > 0.05;
+                const isCompleted = epProg?.completed;
 
                 return (
                   <TouchableOpacity
@@ -1243,9 +1931,9 @@ function EpisodePickerModal({
                     <View className="w-[88px] bg-zinc-800">
                       <View className="aspect-[16/9]">
                         {ep.still_path ? (
-                          <Image
-                            source={{ uri: getImageUrl(ep.still_path, 'w300') }}
-                            className="w-full h-full"
+                          <ProgressiveImage
+                            uri={getImageUrl(ep.still_path, 'w300')}
+                            style={{ width: '100%', height: '100%' }}
                             resizeMode="cover"
                           />
                         ) : (
@@ -1253,11 +1941,34 @@ function EpisodePickerModal({
                             <Ionicons name="tv-outline" size={16} color="#52525b" />
                           </View>
                         )}
+                        {/* Play icon on current episode */}
                         {isActive && (
                           <View className="absolute inset-0 items-center justify-center">
                             <View className="w-5 h-5 rounded-full bg-gold items-center justify-center">
                               <Ionicons name="play" size={8} color="#000" />
                             </View>
+                          </View>
+                        )}
+                        {/* Resume badge on partially-watched episodes */}
+                        {hasProgress && !isActive && (
+                          <View className="absolute bottom-0 left-0 right-0">
+                            <View className="h-0.5 bg-zinc-700/80">
+                              <View
+                                className="h-full bg-gold"
+                                style={{ width: `${Math.round(epProg.percent * 100)}%` }}
+                              />
+                            </View>
+                            <View className="bg-black/70 px-1 py-0.5">
+                              <Text className="text-gold text-[8px] font-bold">
+                                {Math.round(epProg.percent * 100)}%
+                              </Text>
+                            </View>
+                          </View>
+                        )}
+                        {/* Checkmark on completed episodes */}
+                        {isCompleted && !isActive && (
+                          <View className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-green-600 items-center justify-center">
+                            <Ionicons name="checkmark" size={10} color="#fff" />
                           </View>
                         )}
                       </View>
