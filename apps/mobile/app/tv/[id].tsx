@@ -263,7 +263,7 @@ export default function TVDetailScreen() {
           {/* Action buttons */}
           <View className="flex-row mt-6" style={{ gap: 10 }}>
             <TouchableOpacity
-              onPress={() => router.push(`/watch/tv/${id}/1/1`)}
+              onPress={() => router.push(`/watch/tv/${id}/1/1?backdrop=${show.backdrop_path || ''}`)}
               activeOpacity={0.9}
               style={{
                 flex: 1,

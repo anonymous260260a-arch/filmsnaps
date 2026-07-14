@@ -7,7 +7,7 @@ import type { ProviderDefinition } from '../types/provider';
  * To reorder: adjust `order` (lower = higher in list, defaults to 999).
  * To hide the real provider name: set `displayName` (shown in UI instead of `name').
  *
- * Enabled servers in order: 1, 2, 3, 6, 14, 16, 18, 19, StreamGuide
+ * Enabled servers in order: 1, 2, 3, 4, 6, 14, 18, 19, StreamGuide
  */
 export const PROVIDERS: ProviderDefinition[] = [
   // ── Server 1 ────────────────────────────────────────────────
@@ -17,8 +17,8 @@ export const PROVIDERS: ProviderDefinition[] = [
     displayName: 'Server 1 [Multi lang, Fast]',
     baseUrl: 'https://web.nxsha.app',
     embed: {
-      movie: (id) => `/embed/movie/${id}?lang=hi`,
-      tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?lang=hi`,
+      movie: (id) => `/embed/movie/${id}?disable_dl_button=true&disable_app_ad=true&lang=hi`,
+      tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?disable_dl_button=true&disable_app_ad=true&lang=hi`,
     },
   },
   // ── Server 2 ────────────────────────────────────────────────
@@ -43,11 +43,22 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `?tmdb=${id}&type=tv&s=${season}&e=${episode}`,
     },
   },
-  // ── Server 4 (disabled) ─────────────────────────────────────
+  // ── Server 4 ──────────────────────────────────────────────────
+  {
+    id: 'nhdapi',
+    name: 'NHD Api',
+    displayName: 'Server 4 [Multi lang, Fast]',
+    baseUrl: 'https://nhdapi.com',
+    embed: {
+      movie: (id) => `/embed/movie/${id}?lang=Hindi&autoplay=true&autonext=true&title=false&download=false&episodelist=false&hideautonext=true&hidetitle=true&hidechromecast=true&hidepip=true&hideepisodelist=true&hideupscaler=true&hidesecondarycolor=true&hideiconcolor=true&hideprimarycolor=true&appearance=off&primarycolor=6C63FF&secondarycolor=9F9BFF&iconcolor=FFFFFF`,
+      tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?lang=Hindi&autoplay=true&autonext=true&title=false&download=false&episodelist=false&hideautonext=true&hidetitle=true&hidechromecast=true&hidepip=true&hideepisodelist=true&hideupscaler=true&hidesecondarycolor=true&hideiconcolor=true&hideprimarycolor=true&appearance=off&primarycolor=6C63FF&secondarycolor=9F9BFF&iconcolor=FFFFFF`,
+    },
+  },
+  // ── Server 5 (disabled — was Server 4) ────────────────────────
   {
     id: 'multiembed',
     name: 'MultiEmbed',
-    displayName: 'Server 4',
+    displayName: 'Server 5',
     enabled: false,
     baseUrl: 'https://multiembed.mov',
     embed: {
@@ -55,11 +66,11 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/?video_id=${id}&tmdb=1&s=${season}&e=${episode}`,
     },
   },
-  // ── Server 5 (disabled) ─────────────────────────────────────
+  // ── Server 21 (disabled — was Server 5) ────────────────────────
   {
     id: 'vidbinge',
     name: 'VidBinge',
-    displayName: 'Server 5',
+    displayName: 'Server 21',
     enabled: false,
     baseUrl: 'https://vidbinge.to',
     embed: {
@@ -164,8 +175,8 @@ export const PROVIDERS: ProviderDefinition[] = [
     displayName: 'Server 14',
     baseUrl: 'https://vidnest.fun',
     embed: {
-      movie: (id, startAt) => `/movie/${id}?server=delta${startAt ? `&startAt=${Math.floor(startAt)}` : ''}`,
-      tv: (id, season, episode, startAt) => `/tv/${id}/${season}/${episode}?server=delta${startAt ? `&startAt=${Math.floor(startAt)}` : ''}`,
+      movie: (id, startAt) => `/movie/${id}${startAt ? `?startAt=${Math.floor(startAt)}` : ''}`,
+      tv: (id, season, episode, startAt) => `/tv/${id}/${season}/${episode}${startAt ? `?startAt=${Math.floor(startAt)}` : ''}`,
     },
   },
   // ── Server 15 (disabled) ────────────────────────────────────
@@ -180,11 +191,12 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
   },
-  // ── Server 16 ───────────────────────────────────────────────
+  // ── Server 16 (disabled — always returns HTTP 403) ─────────
   {
     id: 'vixsrc',
     name: 'Vixsrc',
     displayName: 'Server 16',
+    enabled: false,
     baseUrl: 'https://vixsrc.to',
     embed: {
       movie: (id, startAt) => `/movie/${id}${startAt ? `?startAt=${Math.floor(startAt)}` : ''}`,

@@ -45,6 +45,7 @@ scripts/
 .bolt/
 .claude/
 .agents/
+.qwen/
 
 # typescript
 *.tsbuildinfo
@@ -66,11 +67,13 @@ apps/mobile/ios/
 *.mobileprovision
 *.orig.*
 
+# mobile build artifacts
+*.log
+build_commands.txt
+
 # pnpm — lockfile must be committed for reproducible builds
 # pnpm-lock.yaml
 
 # planning / design docs (not part of the app source)
-VIDEO_PLAYER_SPEC.md
-VIDEO_PLAYER_HANDOFF.md
-NewprovidersList.md
+docs/
 filmsnaps_design_system.html

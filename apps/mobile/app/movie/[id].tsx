@@ -265,7 +265,7 @@ export default function MovieDetailScreen() {
           <View className="flex-row mt-6" style={{ gap: 10 }}>
             {/* Watch Now — primary gold CTA */}
             <TouchableOpacity
-              onPress={() => router.push(`/watch/movie/${id}`)}
+              onPress={() => router.push(`/watch/movie/${id}?backdrop=${movie.backdrop_path || ''}`)}
               activeOpacity={0.9}
               style={{
                 flex: 1,

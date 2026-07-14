@@ -1,0 +1,12 @@
+{
+  "name": "player-webview",
+  "version": "0.1.0",
+  "description": "Custom native WebView module for video player reliability",
+  "main": "index.ts",
+  "keywords": ["expo", "webview", "player"],
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}
