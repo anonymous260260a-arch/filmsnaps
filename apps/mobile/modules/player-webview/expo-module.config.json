@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "android": {
+    "modules": ["expo.modules.playerwebview.PlayerWebviewModule"]
+  },
+  "apple": {
+    "modules": ["PlayerwebviewModule"]
+  }
+}

@@ -1,0 +1,37 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'expo.modules.playerwebview'
+version = '0.1.0'
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}
+
+android {
+  namespace "expo.modules.playerwebview"
+  compileSdk safeExtGet('compileSdkVersion', 34)
+
+  defaultConfig {
+    minSdk safeExtGet('minSdkVersion', 23)
+    targetSdk safeExtGet('targetSdkVersion', 34)
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = '17'
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation "org.jetbrains.kotlin:kotlin-stdlib:${safeExtGet('kotlinVersion', '1.9.0')}"
+  // Required for UIManagerHelper.getEventDispatcherForReactTag() (Fabric event dispatch)
+  implementation 'com.facebook.react:react-android'
+  // Required for WebViewCompat.addDocumentStartJavaScript() (Cloudflare-safe script injection)
+  implementation 'androidx.webkit:webkit:1.9.0'
+}

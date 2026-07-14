@@ -8,7 +8,7 @@ import { VideoWebView } from '../../components/VideoWebView';
 export default function WatchScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ id: string[] }>();
+  const params = useLocalSearchParams<{ id: string[]; backdrop?: string }>();
 
   const segments = params.id ?? [];
   const type = segments[0] as 'movie' | 'tv';
@@ -18,6 +18,7 @@ export default function WatchScreen() {
 
   const provider =
     typeof params.provider === 'string' ? params.provider : undefined;
+  const backdropUrl = params.backdrop || undefined;
 
   if (!id || !type) {
     return (
@@ -54,6 +55,7 @@ export default function WatchScreen() {
         season={season}
         episode={episode}
         initialProvider={provider}
+        backdropUrl={backdropUrl}
         onClose={() => router.back()}
       />
     </View>
