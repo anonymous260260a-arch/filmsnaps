@@ -7,7 +7,7 @@ import type { ProviderDefinition } from '../types/provider';
  * To reorder: adjust `order` (lower = higher in list, defaults to 999).
  * To hide the real provider name: set `displayName` (shown in UI instead of `name').
  *
- * Enabled servers in order: 1, 2, 3, 4, 6, 14, 18, 19, StreamGuide
+ * Enabled servers in order: 1, 2, 3, 4, 5, 6, 14, 18, 19, 20, StreamGuide
  */
 export const PROVIDERS: ProviderDefinition[] = [
   // ── Server 1 ────────────────────────────────────────────────
@@ -54,11 +54,33 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?lang=Hindi&autoplay=true&autonext=true&title=false&download=false&episodelist=false&hideautonext=true&hidetitle=true&hidechromecast=true&hidepip=true&hideepisodelist=true&hideupscaler=true&hidesecondarycolor=true&hideiconcolor=true&hideprimarycolor=true&appearance=off&primarycolor=6C63FF&secondarycolor=9F9BFF&iconcolor=FFFFFF`,
     },
   },
-  // ── Server 5 (disabled — was Server 4) ────────────────────────
+  // ── Server 5 ──────────────────────────────────────────────────
+  {
+    id: 'zxcstream',
+    name: 'ZxcStream',
+    displayName: 'Server 5 [Hindi]',
+    baseUrl: 'https://zxcstream.xyz',
+    embed: {
+      movie: (id) => `/player/movie/${id}?dubLang=hi&autoplay=true`,
+      tv: (id, season, episode) => `/player/tv/${id}/${season}/${episode}?dubLang=hi&autoplay=true`,
+    },
+  },
+  // ── Server 6 ──────────────────────────────────────────────────
+  {
+    id: 'cinemaos',
+    name: 'CinemaOS',
+    displayName: 'Server 6',
+    baseUrl: 'https://cinemaos.live',
+    embed: {
+      movie: (id) => `/movie/watch/${id}`,
+      tv: (id, season, episode) => `/tv/watch/${id}?season=${season}&episode=${episode}`,
+    },
+  },
+  // ── Server 22 (disabled — was Server 5) ──────────────────────
   {
     id: 'multiembed',
     name: 'MultiEmbed',
-    displayName: 'Server 5',
+    displayName: 'Server 22',
     enabled: false,
     baseUrl: 'https://multiembed.mov',
     embed: {
@@ -78,11 +100,11 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
   },
-  // ── Server 6 ────────────────────────────────────────────────
+  // ── Server 20 (was Server 6) ─────────────────────────────────
   {
     id: 'vidking',
     name: 'VidKing',
-    displayName: 'Server 6',
+    displayName: 'Server 20',
     baseUrl: 'https://www.vidking.net',
     embed: {
       movie: (id) => `/embed/movie/${id}?color=ff0000`,
