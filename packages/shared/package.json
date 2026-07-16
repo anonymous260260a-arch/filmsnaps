@@ -30,6 +30,18 @@
     "./constants": {
       "types": "./dist/constants/index.d.ts",
       "import": "./dist/constants/index.js"
+    },
+    "./theme": {
+      "types": "./dist/theme/tokens.d.ts",
+      "import": "./dist/theme/tokens.js"
+    },
+    "./state": {
+      "types": "./dist/state/types.d.ts",
+      "import": "./dist/state/index.js"
+    },
+    "./security": {
+      "types": "./dist/security/playerGuard.d.ts",
+      "import": "./dist/security/playerGuard.js"
     }
   },
   "scripts": {
@@ -39,9 +51,11 @@
   },
   "dependencies": {
     "clsx": "^2.1.1",
+    "react": "^18.3.1",
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
+    "@types/react": "^18.3.12",
     "typescript": "^5"
   }
 }

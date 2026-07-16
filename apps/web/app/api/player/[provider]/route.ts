@@ -9,7 +9,7 @@
  *   4. Add navigation guard to revert top.location changes
  */
 import { NextResponse } from 'next/server';
-import { getProvider } from '@filmsnaps/shared';
+import { getProvider } from '@filmsnaps/shared/providers';
 
 export async function GET(
   req: Request,

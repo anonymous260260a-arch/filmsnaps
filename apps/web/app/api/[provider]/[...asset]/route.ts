@@ -7,7 +7,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { getProvider } from '@filmsnaps/shared';
+import { getProvider } from '@filmsnaps/shared/providers';
 import {
   shouldBlockUrl,
   getContentTypeFromUrl,

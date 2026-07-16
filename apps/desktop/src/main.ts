@@ -50,7 +50,7 @@ function createMainWindow(): void {
     minWidth: 960,
     minHeight: 600,
     title: 'FilmSnaps',
-    backgroundColor: '#0f0f16',
+    backgroundColor: '#070708',
     show: false,
     icon: resourcePath('resources', 'icon.png'),
     webPreferences: {

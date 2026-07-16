@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { View, ActivityIndicator } from 'react-native';
+﻿import React, { useEffect, useRef } from 'react';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -14,6 +14,7 @@ import {
   Inter_600SemiBold,
 } from '@expo-google-fonts/inter';
 import { UpdateOverlay } from '../components/UpdateOverlay';
+import { FilmGrain } from '../components/FilmGrain';
 import { hydrateQueryClient, startPersistLoop } from '../lib/queryCache';
 import './globals.css';
 
@@ -52,14 +53,14 @@ export default function RootLayout() {
 
   if (!fontsLoaded) {
     return (
-      <View className="flex-1 items-center justify-center" style={{ backgroundColor: '#080808' }}>
-        <ActivityIndicator size="large" color="#e8a020" />
+      <View className="flex-1 items-center justify-center" style={{ backgroundColor: '#070708' }}>
+        <ActivityIndicator size="large" color="#D4A237" />
       </View>
     );
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#080808' }}>
+    <View style={{ flex: 1, backgroundColor: '#070708' }}>
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
         <StatusBar style="light" />
@@ -67,17 +68,17 @@ export default function RootLayout() {
         <Stack
           screenOptions={{
             headerShown: false,
-            contentStyle: { backgroundColor: '#080808' },
+            contentStyle: { backgroundColor: '#070708' },
           }}
         >
-          <Stack.Screen name="(tabs)" options={{ contentStyle: { backgroundColor: '#080808' } }} />
+          <Stack.Screen name="(tabs)" options={{ contentStyle: { backgroundColor: '#070708' } }} />
           <Stack.Screen
             name="movie/[id]"
-            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#080808' } }}
+            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#070708' } }}
           />
           <Stack.Screen
             name="tv/[id]"
-            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#080808' } }}
+            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#070708' } }}
           />
           <Stack.Screen
             name="watch/[...id]"
@@ -88,7 +89,7 @@ export default function RootLayout() {
               contentStyle: { backgroundColor: '#000' },
             }}
           />
-          {/* download/[...id] — kept in codebase, only registered in dev builds */}
+          {/* download/[...id] â€” kept in codebase, only registered in dev builds */}
           {__DEV__ && (
             <Stack.Screen
               name="download/[...id]"
@@ -111,19 +112,20 @@ export default function RootLayout() {
           />
           <Stack.Screen
             name="person/[id]"
-            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#080808' } }}
+            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#070708' } }}
           />
           <Stack.Screen
             name="list/[category]"
-            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#080808' } }}
+            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#070708' } }}
           />
           <Stack.Screen
             name="browse"
-            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#080808' } }}
+            options={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: '#070708' } }}
           />
         </Stack>
       </QueryClientProvider>
     </SafeAreaProvider>
+    <FilmGrain pointerEvents="none" />
     </View>
   );
 }

@@ -17,6 +17,8 @@ import { typography } from '../../lib/typography';
 import { FilmGrain } from '../../components/FilmGrain';
 import { useMovieDetails } from '../../hooks/useTMDB';
 import { MediaCarousel } from '../../components/MediaCarousel';
+import { CastCarousel } from '../../components/CastCarousel';
+import { TrailerModal } from '../../components/TrailerModal';
 import { isBookmarked, saveBookmark, removeBookmark } from '../../lib/bookmarks';
 import type { Movie } from '@filmsnaps/shared';
 import { LinearGradient } from 'react-native-svg';
@@ -35,6 +37,7 @@ export default function MovieDetailScreen() {
   const movie = data;
 
   const [bookmarked, setBookmarked] = useState(false);
+  const [trailerOpen, setTrailerOpen] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -61,17 +64,17 @@ export default function MovieDetailScreen() {
 
   if (isLoading) {
     return (
-      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#080808' }}>
-        <ActivityIndicator size="large" color="#e8a020" />
+      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#070708' }}>
+        <ActivityIndicator size="large" color="#D4A237" />
       </View>
     );
   }
 
   if (!movie) {
     return (
-      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#080808' }}>
-        <Ionicons name="film-outline" size={48} color="#534f4c" />
-        <Text className="text-t2 mt-3">Movie not found</Text>
+      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#070708' }}>
+        <Ionicons name="film-outline" size={48} color="#52525B" />
+        <Text className="text-text-secondary mt-3">Movie not found</Text>
       </View>
     );
   }
@@ -83,7 +86,7 @@ export default function MovieDetailScreen() {
   const cast = movie.credits?.cast?.slice(0, 10) ?? [];
 
   return (
-    <View className="flex-1 bg-void" style={{ backgroundColor: '#080808' }}>
+    <View className="flex-1 bg-void" style={{ backgroundColor: '#070708' }}>
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         {/* Backdrop with film grain */}
         <View style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT, position: 'relative' }}>
@@ -94,7 +97,7 @@ export default function MovieDetailScreen() {
               resizeMode="cover"
             />
           ) : (
-            <View className="w-full h-full" style={{ backgroundColor: '#191919', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+            <View className="w-full h-full" style={{ backgroundColor: '#16161A', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
           )}
 
           {/* Film grain overlay */}
@@ -109,7 +112,7 @@ export default function MovieDetailScreen() {
               right: 0,
               height: BACKDROP_HEIGHT * 0.6,
             }}
-            colors={['rgba(8,8,8,0)', 'rgba(8,8,8,0.12)', 'rgba(8,8,8,0.35)', 'rgba(8,8,8,0.65)', '#080808']}
+            colors={['rgba(8,8,8,0)', 'rgba(8,8,8,0.12)', 'rgba(8,8,8,0.35)', 'rgba(8,8,8,0.65)', '#070708']}
             locations={[0, 0.2, 0.5, 0.8, 1]}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}
@@ -137,8 +140,8 @@ export default function MovieDetailScreen() {
               paddingVertical: 6,
             }}
           >
-            <Ionicons name="chevron-back" size={18} color="#f2ede6" />
-            <Text style={{ color: '#f2ede6', fontSize: 12, marginLeft: 2, fontFamily: 'Inter_500Medium' }}>
+            <Ionicons name="chevron-back" size={18} color="#F4F4F5" />
+            <Text style={{ color: '#F4F4F5', fontSize: 12, marginLeft: 2, fontFamily: 'Inter_500Medium' }}>
               Back
             </Text>
           </TouchableOpacity>
@@ -174,10 +177,10 @@ export default function MovieDetailScreen() {
                 style={{
                   width: POSTER_WIDTH,
                   height: POSTER_WIDTH * 1.5,
-                  backgroundColor: '#191919',
+                  backgroundColor: '#16161A',
                 }}
               >
-                <Ionicons name="film-outline" size={28} color="#534f4c" />
+                <Ionicons name="film-outline" size={28} color="#52525B" />
               </View>
             )}
 
@@ -190,7 +193,7 @@ export default function MovieDetailScreen() {
                 {title}
               </Text>
               {year ? (
-                <Text style={[typography.caption, { marginTop: 2, color: '#9b9590' }]}>
+                <Text style={[typography.caption, { marginTop: 2, color: '#A1A1AA' }]}>
                   {year}
                 </Text>
               ) : null}
@@ -202,14 +205,14 @@ export default function MovieDetailScreen() {
                     <View
                       key={g.id}
                       style={{
-                        backgroundColor: '#191919',
+                        backgroundColor: '#16161A',
                         borderRadius: 4,
                         paddingHorizontal: 8,
                         paddingVertical: 3,
                       }}
                     >
                       <Text
-                        style={{ color: '#9b9590', fontSize: 10, fontFamily: 'Inter_500Medium' }}
+                        style={{ color: '#A1A1AA', fontSize: 10, fontFamily: 'Inter_500Medium' }}
                       >
                         {g.name}
                       </Text>
@@ -242,8 +245,8 @@ export default function MovieDetailScreen() {
                   </View>
                   {movie.runtime && (
                     <View className="flex-row items-center ml-3">
-                      <Ionicons name="time-outline" size={14} color="#534f4c" />
-                      <Text className="text-t3 text-sm ml-1">{movie.runtime} min</Text>
+                      <Ionicons name="time-outline" size={14} color="#52525B" />
+                      <Text className="text-text-tertiary text-sm ml-1">{movie.runtime} min</Text>
                     </View>
                   )}
                 </View>
@@ -254,7 +257,7 @@ export default function MovieDetailScreen() {
           {/* Overview */}
           {movie.overview ? (
             <View className="mt-6">
-              <Text style={[typography.title, { marginBottom: 8, color: '#f2ede6' }]}>
+              <Text style={[typography.title, { marginBottom: 8, color: '#F4F4F5' }]}>
                 Overview
               </Text>
               <Text style={typography.body}>{movie.overview}</Text>
@@ -269,7 +272,7 @@ export default function MovieDetailScreen() {
               activeOpacity={0.9}
               style={{
                 flex: 1,
-                backgroundColor: '#e8a020',
+                backgroundColor: '#D4A237',
                 borderRadius: 10,
                 paddingVertical: 14,
                 flexDirection: 'row',
@@ -277,7 +280,7 @@ export default function MovieDetailScreen() {
                 justifyContent: 'center',
                 ...Platform.select({
                   ios: {
-                    shadowColor: '#e8a020',
+                    shadowColor: '#D4A237',
                     shadowOffset: { width: 0, height: 4 },
                     shadowOpacity: 0.3,
                     shadowRadius: 8,
@@ -286,12 +289,12 @@ export default function MovieDetailScreen() {
                 }),
               }}
             >
-              <Ionicons name="play" size={18} color="#080808" style={{ marginRight: 8 }} />
+              <Ionicons name="play" size={18} color="#070708" style={{ marginRight: 8 }} />
               <Text
                 style={{
                   fontFamily: 'Inter_600SemiBold',
                   fontSize: 14,
-                  color: '#080808',
+                  color: '#070708',
                 }}
               >
                 Watch Now
@@ -302,11 +305,12 @@ export default function MovieDetailScreen() {
             <TouchableOpacity
               onPress={toggleBookmark}
               activeOpacity={0.8}
+              accessibilityLabel={bookmarked ? 'Remove from bookmarks' : 'Add to bookmarks'}
               style={{
                 width: 48,
                 backgroundColor: bookmarked ? 'rgba(232,160,32,0.15)' : 'transparent',
                 borderWidth: 0.5,
-                borderColor: bookmarked ? '#e8a020' : '#252525',
+                borderColor: bookmarked ? '#D4A237' : '#222226',
                 borderRadius: 10,
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -315,7 +319,7 @@ export default function MovieDetailScreen() {
               <Ionicons
                 name={bookmarked ? 'bookmark' : 'bookmark-outline'}
                 size={20}
-                color={bookmarked ? '#e8a020' : '#9b9590'}
+                color={bookmarked ? '#D4A237' : '#A1A1AA'}
               />
             </TouchableOpacity>
 
@@ -326,7 +330,7 @@ export default function MovieDetailScreen() {
               style={{
                 backgroundColor: 'transparent',
                 borderWidth: 0.5,
-                borderColor: '#252525',
+                borderColor: '#222226',
                 borderRadius: 10,
                 paddingVertical: 14,
                 paddingHorizontal: 18,
@@ -344,79 +348,20 @@ export default function MovieDetailScreen() {
 
           {/* Cast */}
           {cast.length > 0 && (
-            <View className="mt-8">
-              <Text style={[typography.heading, { marginBottom: 16 }]}>Cast</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {cast.map((person: any) => (
-                  <TouchableOpacity
-                    key={person.id}
-                    onPress={() => router.push(`/person/${person.id}`)}
-                    activeOpacity={0.7}
-                    className="items-center mr-3.5"
-                    style={{ width: 56 }}
-                  >
-                    {person.profile_path ? (
-                      <ProgressiveImage
-                        uri={getImageUrl(person.profile_path, 'w185')}
-                        style={{
-                          width: 56,
-                          height: 56,
-                          borderRadius: 28,
-                          ...Platform.select({
-                            ios: {
-                              shadowColor: '#000',
-                              shadowOffset: { width: 0, height: 2 },
-                              shadowOpacity: 0.3,
-                              shadowRadius: 4,
-                            },
-                            android: { elevation: 4 },
-                          }),
-                        }}
-                        resizeMode="cover"
-                      />
-                    ) : (
-                      <View
-                        style={{
-                          width: 56,
-                          height: 56,
-                          borderRadius: 28,
-                          backgroundColor: '#191919',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        <Ionicons name="person-outline" size={22} color="#534f4c" />
-                      </View>
-                    )}
-                    <Text
-                      style={{
-                        color: '#f2ede6',
-                        fontSize: 11,
-                        fontFamily: 'Inter_500Medium',
-                        textAlign: 'center',
-                        marginTop: 6,
-                      }}
-                      numberOfLines={1}
-                    >
-                      {person.name}
-                    </Text>
-                    {person.character && (
-                      <Text
-                        style={{
-                          color: '#9b9590',
-                          fontSize: 10,
-                          fontFamily: 'Inter_400Regular',
-                          textAlign: 'center',
-                          marginTop: 2,
-                        }}
-                        numberOfLines={1}
-                      >
-                        {person.character}
-                      </Text>
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+            <CastCarousel cast={movie.credits.cast} />
+          )}
+
+          {/* Trailer */}
+          {trailerKey && (
+            <View className="px-4 mt-4">
+              <TouchableOpacity
+                onPress={() => setTrailerOpen(true)}
+                activeOpacity={0.8}
+                className="flex-row items-center gap-2 self-start px-4 py-2 rounded-lg bg-primary/10"
+              >
+                <Ionicons name="logo-youtube" size={16} color="#D4A237" />
+                <Text className="text-primary text-xs font-semibold">Watch Trailer</Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -434,6 +379,13 @@ export default function MovieDetailScreen() {
           <View style={{ height: 60 }} />
         </View>
       </ScrollView>
+
+      {/* Trailer Modal */}
+      <TrailerModal
+        videoKey={trailerKey}
+        open={trailerOpen}
+        onClose={() => setTrailerOpen(false)}
+      />
     </View>
   );
 }

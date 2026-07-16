@@ -169,6 +169,19 @@ Multi-layered approach:
 
 ---
 
+## Current Work — Cinematic Void Redesign
+
+Phase 1 (shared package foundation) is complete. The shared package now has:
+- **Design tokens** at `packages/shared/src/theme/tokens.ts` — colors, typography, glassmorphism, spacing
+- **Storage layer** at `packages/shared/src/state/` — StorageAdapter interface + localStorage/AsyncStorage adapters + unified hooks for watchlist and watch history
+- **Security script** at `packages/shared/src/security/playerGuard.ts` — pure function returning 15-layer popup/ad-blocking JS
+- **Health checks** at `packages/shared/src/providers/health.ts` — provider health checking and ranking
+- **Verified:** `pnpm --filter @filmsnaps/shared build` compiles cleanly
+
+Next: Phase 2 — Web redesign (CSS variable migration, Playfair Display font, WatchClient decomposition, feature parity)
+
+---
+
 ## Build & Run Commands
 
 ```bash
