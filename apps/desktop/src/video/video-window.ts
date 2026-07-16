@@ -102,7 +102,7 @@ async function openVideoWindow(params: VideoOpenParams): Promise<{ success: bool
       minHeight: 400,
       title: `FilmSnaps — ${provider}`,
       icon: join(__dirname, '../../resources/icon.png'),
-      backgroundColor: '#0f0f16',
+      backgroundColor: '#070708',
       show: false, // Show after ready to avoid white flash
       autoHideMenuBar: true,
       webPreferences: {

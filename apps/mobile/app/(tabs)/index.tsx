@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState, useEffect } from 'react';
+﻿import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { View, ScrollView, RefreshControl, Text, ActivityIndicator, useWindowDimensions, FlatList, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -44,14 +44,14 @@ export default function HomeScreen() {
 
   const heroItem = trendingMovies?.results?.[0];
 
-  // ── Skeleton card dimensions (matches MediaCarousel) ──
+  // â”€â”€ Skeleton card dimensions (matches MediaCarousel) â”€â”€
   const itemWidth = (SCREEN_WIDTH - 48) / 3;
   const itemHeight = itemWidth * 1.5;
 
-  // ── Pull-to-refresh ──
+  // â”€â”€ Pull-to-refresh â”€â”€
   const [isRefreshing, setIsRefreshing] = React.useState(false);
 
-  // ── History entries ──
+  // â”€â”€ History entries â”€â”€
   const [historyEntries, setHistoryEntries] = useState<Array<{
     latest: WatchProgress;
     fullyWatched: boolean;
@@ -92,7 +92,7 @@ export default function HomeScreen() {
     if (refreshing.current) return;
     refreshing.current = true;
     setIsRefreshing(true);
-    // Fire all refetches independently — sections pop in as they arrive
+    // Fire all refetches independently â€” sections pop in as they arrive
     refetchMovies();
     refetchTV();
     refetchPopular();
@@ -107,7 +107,7 @@ export default function HomeScreen() {
     }, 1500);
   }, [refetchMovies, refetchTV, refetchPopular, loadHistory]);
 
-  // ── Navigation ──
+  // â”€â”€ Navigation â”€â”€
 
   const handleSeeAllTrendingMovies = useCallback(() => {
     router.push('/list/trending-movies');
@@ -156,23 +156,23 @@ export default function HomeScreen() {
 
   if (loadingMovies && loadingTV && loadingPopular) {
     return (
-      <View className="flex-1 bg-void" style={{ paddingTop: insets.top, backgroundColor: '#080808' }}>
+      <View className="flex-1 bg-void" style={{ paddingTop: insets.top, backgroundColor: '#070708' }}>
         <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color="#e8a020" />
+          <ActivityIndicator size="large" color="#D4A237" />
         </View>
       </View>
     );
   }
 
   return (
-    <View className="flex-1 bg-void" style={{ paddingTop: insets.top, backgroundColor: '#080808' }}>
+    <View className="flex-1 bg-void" style={{ paddingTop: insets.top, backgroundColor: '#070708' }}>
       <ScrollView
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={onRefresh}
-            tintColor="#e8a020"
-            colors={['#e8a020']}
+            tintColor="#D4A237"
+            colors={['#D4A237']}
           />
         }
         className="flex-1"
@@ -181,24 +181,24 @@ export default function HomeScreen() {
         {/* Header */}
         <View className="px-5 py-4 flex-row items-center justify-between">
           <View className="flex-row items-center">
-            <View className="w-9 h-9 rounded-full bg-gold items-center justify-center mr-3">
+            <View className="w-9 h-9 rounded-full bg-primary items-center justify-center mr-3">
               <Ionicons name="film" size={18} color="#000" />
             </View>
             <View>
-              <Text className="text-t1 text-xl font-bold tracking-tight">FilmSnaps</Text>
-              <Text className="text-t2 text-xs">Discover & Watch</Text>
+              <Text className="text-text-primary text-xl font-bold tracking-tight">FilmSnaps</Text>
+              <Text className="text-text-secondary text-xs">Discover & Watch</Text>
             </View>
           </View>
         </View>
 
-        {/* Hero section — appears as soon as trendingMovies arrives */}
+        {/* Hero section â€” appears as soon as trendingMovies arrives */}
         {heroItem ? (
           <Hero item={heroItem} onWatchPress={handleWatchPress} />
         ) : !loadingMovies ? (
           <View className="w-full bg-elevated" style={{ height: SCREEN_WIDTH * 0.62 }} />
         ) : null}
 
-        {/* Trending Movies — skeleton until data loads */}
+        {/* Trending Movies â€” skeleton until data loads */}
         {trendingMovies ? (
           <MediaCarousel
             title="Trending Movies"
@@ -248,11 +248,11 @@ export default function HomeScreen() {
         {historyEntries.length > 0 && (
           <View className="mb-6">
             <View className="flex-row items-center justify-between px-4 mb-3">
-              <Text className="text-t1 text-lg font-bold" style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#f2ede6' }}>
+              <Text className="text-text-primary text-lg font-bold" style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#F4F4F5' }}>
                 Continue Watching
               </Text>
               <TouchableOpacity onPress={() => router.push('/history')} activeOpacity={0.7}>
-                <Text className="text-gold text-xs font-semibold">See All</Text>
+                <Text className="text-primary text-xs font-semibold">See All</Text>
               </TouchableOpacity>
             </View>
             <FlatList
@@ -305,7 +305,7 @@ export default function HomeScreen() {
                         <View style={{
                           width: `${Math.round((p.completed ? 1 : p.percent) * 100)}%`,
                           height: '100%',
-                          backgroundColor: item.fullyWatched ? '#22c55e' : '#e8a020',
+                          backgroundColor: item.fullyWatched ? '#22c55e' : '#D4A237',
                         }} />
                       </View>
                       {/* Episode badge for TV */}
@@ -341,7 +341,7 @@ export default function HomeScreen() {
                         </View>
                       )}
                     </View>
-                    <Text className="text-t2 text-[11px] mt-1.5" numberOfLines={1}>
+                    <Text className="text-text-secondary text-[11px] mt-1.5" numberOfLines={1}>
                       {title || `ID: ${p.tmdbId}`}
                     </Text>
                   </TouchableOpacity>

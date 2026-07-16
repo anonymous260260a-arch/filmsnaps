@@ -1,0 +1,39 @@
+{
+  "name": "@filmsnaps/filter-compiler",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./compile": {
+      "types": "./dist/compile.d.ts",
+      "import": "./dist/compile.js",
+      "default": "./dist/compile.js"
+    },
+    "./minimal-guard": {
+      "types": "./dist/minimal-guard.d.ts",
+      "import": "./dist/minimal-guard.js",
+      "default": "./dist/minimal-guard.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "compile": "node dist/compile.js",
+    "compile:dev": "tsx src/compile.ts"
+  },
+  "dependencies": {
+    "@cliqz/adblocker": "^1.34.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4.0.0",
+    "typescript": "^5"
+  }
+}

@@ -916,6 +916,8 @@ export default function DownloadScreen() {
               onPress={() => router.back()}
               className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
               activeOpacity={0.7}
+              accessibilityLabel="Close download"
+              accessibilityRole="button"
             >
               <Ionicons name="close" size={20} color="#fff" />
             </TouchableOpacity>

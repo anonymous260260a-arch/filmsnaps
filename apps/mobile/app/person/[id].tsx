@@ -36,20 +36,20 @@ export default function PersonDetailScreen() {
 
   if (loadingPerson) {
     return (
-      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#080808', paddingTop: insets.top }}>
-        <ActivityIndicator size="large" color="#e8a020" />
+      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
+        <ActivityIndicator size="large" color="#D4A237" />
       </View>
     );
   }
 
   if (!person) {
     return (
-      <View className="flex-1 items-center justify-center bg-void px-6" style={{ backgroundColor: '#080808', paddingTop: insets.top }}>
+      <View className="flex-1 items-center justify-center bg-void px-6" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
         <View className="w-16 h-16 rounded-full bg-elevated items-center justify-center mb-5">
-          <Ionicons name="person-outline" size={32} color="#534f4c" />
+          <Ionicons name="person-outline" size={32} color="#52525B" />
         </View>
-        <Text className="text-t1 text-lg font-semibold mb-2">Person not found</Text>
-        <TouchableOpacity onPress={() => router.back()} className="bg-gold rounded-xl py-3 px-8 mt-4" activeOpacity={0.8}>
+        <Text className="text-text-primary text-lg font-semibold mb-2">Person not found</Text>
+        <TouchableOpacity onPress={() => router.back()} className="bg-primary rounded-xl py-3 px-8 mt-4" activeOpacity={0.8}>
           <Text className="text-void font-bold text-base">Go Back</Text>
         </TouchableOpacity>
       </View>
@@ -57,12 +57,12 @@ export default function PersonDetailScreen() {
   }
 
   return (
-    <View className="flex-1 bg-void" style={{ backgroundColor: '#080808', paddingTop: insets.top }}>
+    <View className="flex-1 bg-void" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         {/* Back button */}
         <View className="px-4 pt-2 pb-3">
-          <TouchableOpacity onPress={() => router.back()} className="w-9 h-9 rounded-full bg-black/40 items-center justify-center" activeOpacity={0.7}>
-            <Ionicons name="chevron-back" size={22} color="#f2ede6" />
+          <TouchableOpacity onPress={() => router.back()} className="w-9 h-9 rounded-full bg-black/40 items-center justify-center" activeOpacity={0.7} accessibilityLabel="Go back" accessibilityRole="button">
+            <Ionicons name="chevron-back" size={22} color="#F4F4F5" />
           </TouchableOpacity>
         </View>
 
@@ -84,20 +84,20 @@ export default function PersonDetailScreen() {
               resizeMode="cover"
             />
           ) : (
-            <View style={{ width: 120, height: 120, borderRadius: 60, backgroundColor: '#191919', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-              <Ionicons name="person-outline" size={48} color="#534f4c" />
+            <View style={{ width: 120, height: 120, borderRadius: 60, backgroundColor: '#16161A', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <Ionicons name="person-outline" size={48} color="#52525B" />
             </View>
           )}
-          <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 24, color: '#f2ede6', textAlign: 'center' }}>
+          <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 24, color: '#F4F4F5', textAlign: 'center' }}>
             {person.name}
           </Text>
           {person.known_for_department && (
-            <Text className="text-t3 text-sm mt-1">{person.known_for_department}</Text>
+            <Text className="text-text-tertiary text-sm mt-1">{person.known_for_department}</Text>
           )}
           {person.birthday && (
             <View className="flex-row items-center mt-2">
-              <Ionicons name="calendar-outline" size={13} color="#9b9590" />
-              <Text className="text-t3 text-xs ml-1.5">
+              <Ionicons name="calendar-outline" size={13} color="#A1A1AA" />
+              <Text className="text-text-tertiary text-xs ml-1.5">
                 {person.birthday}
                 {person.deathday ? ` — ${person.deathday}` : ''}
               </Text>
@@ -105,8 +105,8 @@ export default function PersonDetailScreen() {
           )}
           {person.place_of_birth && (
             <View className="flex-row items-center mt-1">
-              <Ionicons name="location-outline" size={13} color="#9b9590" />
-              <Text className="text-t3 text-xs ml-1.5">{person.place_of_birth}</Text>
+              <Ionicons name="location-outline" size={13} color="#A1A1AA" />
+              <Text className="text-text-tertiary text-xs ml-1.5">{person.place_of_birth}</Text>
             </View>
           )}
         </View>
@@ -114,10 +114,10 @@ export default function PersonDetailScreen() {
         {/* Biography */}
         {person.biography ? (
           <View className="px-6 mb-8">
-            <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 18, color: '#f2ede6', marginBottom: 10 }}>
+            <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 18, color: '#F4F4F5', marginBottom: 10 }}>
               Biography
             </Text>
-            <Text className="text-t2 text-sm leading-5" style={{ lineHeight: 20 }}>
+            <Text className="text-text-secondary text-sm leading-5" style={{ lineHeight: 20 }}>
               {person.biography}
             </Text>
           </View>
@@ -126,7 +126,7 @@ export default function PersonDetailScreen() {
         {/* Filmography — Movies */}
         {movieCredits.length > 0 && (
           <View className="mb-8">
-            <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 18, color: '#f2ede6', paddingHorizontal: 24, marginBottom: 12 }}>
+            <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 18, color: '#F4F4F5', paddingHorizontal: 24, marginBottom: 12 }}>
               Movies
             </Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}>
@@ -151,7 +151,7 @@ export default function PersonDetailScreen() {
         {/* Filmography — TV */}
         {tvCredits.length > 0 && (
           <View className="mb-8">
-            <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 18, color: '#f2ede6', paddingHorizontal: 24, marginBottom: 12 }}>
+            <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 18, color: '#F4F4F5', paddingHorizontal: 24, marginBottom: 12 }}>
               TV Shows
             </Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}>

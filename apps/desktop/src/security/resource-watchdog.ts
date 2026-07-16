@@ -126,7 +126,7 @@ export function startWatchdog(
 
           // Show error message in the window
           videoWindow.webContents.executeJavaScript(`
-            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0f0f16;color:#e0dce4;font-family:sans-serif;flex-direction:column;gap:16px;"><h2 style="color:#a58ce6;">Playback Error</h2><p style="color:#8a8498;">This provider is using too many resources.</p><p style="font-size:14px;color:#6b6580;">Please try a different server.</p></div>';
+            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#070708;color:#F4F4F5;font-family:sans-serif;flex-direction:column;gap:16px;"><h2 style="color:#D4A237;">Playback Error</h2><p style="color:#A1A1AA;">This provider is using too many resources.</p><p style="font-size:14px;color:#52525B;">Please try a different server.</p></div>';
           `);
         }
       }

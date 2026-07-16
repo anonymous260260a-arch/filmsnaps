@@ -1,5 +1,5 @@
 import './globals.css';
-import { Inter } from 'next/font/google';
+import { Inter, Playfair_Display } from 'next/font/google';
 import { Providers } from '@/lib/providers';
 import { Toaster } from '@/components/ui/toaster';
 import { AuthProvider } from '@/components/AuthProvider';
@@ -11,7 +11,14 @@ const inter = Inter({
   subsets: ['latin'],
   display: 'swap',
   preload: true,
-  variable: '--font-inter',
+  variable: '--font-body',
+});
+
+const playfair = Playfair_Display({
+  subsets: ['latin'],
+  display: 'swap',
+  preload: true,
+  variable: '--font-display',
 });
 
 export const metadata: Metadata = {
@@ -87,11 +94,11 @@ export const metadata: Metadata = {
     apple: '/icon.svg',
   },
   other: {
-    'theme-color': '#0f0f16',
+    'theme-color': '#070708',
     'apple-mobile-web-app-capable': 'yes',
     'apple-mobile-web-app-status-bar-style': 'black-translucent',
     'apple-mobile-web-app-title': 'FilmSnaps',
-    'msapplication-TileColor': '#0f0f16',
+    'msapplication-TileColor': '#070708',
   },
 };
 
@@ -103,7 +110,7 @@ export default async function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${inter.className} ${inter.variable}`}
+        className={`${inter.className} ${playfair.className} ${inter.variable} ${playfair.variable}`}
         suppressHydrationWarning
       >
         <ErrorBoundary>

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+﻿import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -81,17 +81,17 @@ export default function SavedScreen() {
 
   if (loading) {
     return (
-      <View className="flex-1 bg-void items-center justify-center" style={{ backgroundColor: '#080808', paddingTop: insets.top }}>
-        <ActivityIndicator size="large" color="#e8a020" />
+      <View className="flex-1 bg-void items-center justify-center" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
+        <ActivityIndicator size="large" color="#D4A237" />
       </View>
     );
   }
 
   return (
-    <View className="flex-1 bg-void" style={{ backgroundColor: '#080808', paddingTop: insets.top }}>
+    <View className="flex-1 bg-void" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
       {/* Header */}
       <View className="px-5 pt-4 pb-2 flex-row items-center justify-between">
-        <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: '#f2ede6' }}>
+        <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: '#F4F4F5' }}>
           Saved
         </Text>
         {bookmarks.length > 0 && (
@@ -104,18 +104,18 @@ export default function SavedScreen() {
 
       {bookmarks.length === 0 ? (
         <View className="flex-1 items-center justify-center px-8">
-          <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#191919', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
-            <Ionicons name="bookmark-outline" size={28} color="#534f4c" />
+          <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#16161A', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
+            <Ionicons name="bookmark-outline" size={28} color="#52525B" />
           </View>
-          <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#f2ede6', marginBottom: 8 }}>
+          <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#F4F4F5', marginBottom: 8 }}>
             Nothing saved yet
           </Text>
-          <Text className="text-t3 text-sm text-center leading-5">
+          <Text className="text-text-tertiary text-sm text-center leading-5">
             Films you save will show up here for quick access.
           </Text>
           <TouchableOpacity
             onPress={() => router.push('/')}
-            className="bg-gold rounded-xl py-3 px-8 mt-6"
+            className="bg-primary rounded-xl py-3 px-8 mt-6"
             activeOpacity={0.8}
           >
             <Text className="text-void font-bold text-sm">Discover Films</Text>

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+﻿import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -72,13 +72,13 @@ export default function BrowseScreen() {
   const itemWidth = (SCREEN_WIDTH - PADDING * 2 - GAP * (NUM_COLUMNS - 1)) / NUM_COLUMNS;
 
   return (
-    <View className="flex-1 bg-void" style={{ backgroundColor: '#080808', paddingTop: insets.top }}>
+    <View className="flex-1 bg-void" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
       {/* Header */}
       <View className="flex-row items-center px-4 pt-2 pb-3">
-        <TouchableOpacity onPress={() => router.back()} className="w-9 h-9 rounded-full bg-black/40 items-center justify-center mr-3" activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={22} color="#f2ede6" />
+        <TouchableOpacity onPress={() => router.back()} className="w-9 h-9 rounded-full bg-black/40 items-center justify-center mr-3" activeOpacity={0.7} accessibilityLabel="Go back" accessibilityRole="button">
+          <Ionicons name="chevron-back" size={22} color="#F4F4F5" />
         </TouchableOpacity>
-        <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#f2ede6' }}>
+        <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#F4F4F5' }}>
           Browse Genres
         </Text>
       </View>
@@ -87,7 +87,7 @@ export default function BrowseScreen() {
       <View className="flex-row mx-4 mb-4 bg-zinc-900 rounded-xl p-1">
         <TouchableOpacity
           onPress={() => { setMediaType('movie'); setSelectedGenreId(null); setPage(1); }}
-          className={`flex-1 py-2.5 rounded-lg items-center ${mediaType === 'movie' ? 'bg-gold' : ''}`}
+          className={`flex-1 py-2.5 rounded-lg items-center ${mediaType === 'movie' ? 'bg-primary' : ''}`}
           activeOpacity={0.7}
         >
           <Text className={`text-sm font-bold ${mediaType === 'movie' ? 'text-void' : 'text-zinc-400'}`}>
@@ -96,7 +96,7 @@ export default function BrowseScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => { setMediaType('tv'); setSelectedGenreId(null); setPage(1); }}
-          className={`flex-1 py-2.5 rounded-lg items-center ${mediaType === 'tv' ? 'bg-gold' : ''}`}
+          className={`flex-1 py-2.5 rounded-lg items-center ${mediaType === 'tv' ? 'bg-primary' : ''}`}
           activeOpacity={0.7}
         >
           <Text className={`text-sm font-bold ${mediaType === 'tv' ? 'text-void' : 'text-zinc-400'}`}>
@@ -105,7 +105,7 @@ export default function BrowseScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Genre pills — horizontal scroll */}
+      {/* Genre pills â€” horizontal scroll */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -118,13 +118,13 @@ export default function BrowseScreen() {
             activeOpacity={0.7}
             className={`px-4 py-2 rounded-full border ${
               selectedGenreId === Number(id)
-                ? 'border-gold bg-gold/10'
+                ? 'border-primary bg-primary/10'
                 : 'border-zinc-700 bg-zinc-800/50'
             }`}
           >
             <Text
               className={`text-xs font-semibold ${
-                selectedGenreId === Number(id) ? 'text-gold' : 'text-zinc-300'
+                selectedGenreId === Number(id) ? 'text-primary' : 'text-zinc-300'
               }`}
             >
               {name}
@@ -136,23 +136,23 @@ export default function BrowseScreen() {
       {/* Results grid */}
       {selectedGenreId == null ? (
         <View className="flex-1 items-center justify-center px-8">
-          <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#191919', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
-            <Ionicons name="film-outline" size={28} color="#534f4c" />
+          <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#16161A', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
+            <Ionicons name="film-outline" size={28} color="#52525B" />
           </View>
-          <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#f2ede6', marginBottom: 8 }}>
+          <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#F4F4F5', marginBottom: 8 }}>
             Select a Genre
           </Text>
-          <Text className="text-t3 text-sm text-center leading-5">
+          <Text className="text-text-tertiary text-sm text-center leading-5">
             Pick a genre above to discover {mediaType === 'movie' ? 'movies' : 'TV shows'}.
           </Text>
         </View>
       ) : isLoading && page === 1 ? (
         <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color="#e8a020" />
+          <ActivityIndicator size="large" color="#D4A237" />
         </View>
       ) : results.length === 0 ? (
         <View className="flex-1 items-center justify-center">
-          <Text className="text-t3 text-sm">No results found</Text>
+          <Text className="text-text-tertiary text-sm">No results found</Text>
         </View>
       ) : (
         <FlatList

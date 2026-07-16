@@ -9,7 +9,7 @@ export function ProgressiveImage({
   uri,
   style,
   resizeMode = 'cover',
-  placeholderColor = '#080808',
+  placeholderColor = '#070708',
 }: {
   uri: string;
   style?: any;

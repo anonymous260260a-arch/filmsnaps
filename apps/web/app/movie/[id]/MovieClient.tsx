@@ -1,8 +1,9 @@
 'use client';
 
+import React, { useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { Star, Clock, ArrowLeft, Play } from 'lucide-react';
+import { Star, Clock, ArrowLeft, Play, Youtube } from 'lucide-react';
 import { getImageUrl, getTrailerKey } from '@/lib/tmdb';
 import dynamic from 'next/dynamic';
 import { MediaCarousel } from '@/components/MediaCarousel';
@@ -23,8 +24,12 @@ const VideoPlayer = dynamic(
   },
 );
 
+import { CastCarousel } from '@/components/CastCarousel';
+import { TrailerModal } from '@/components/TrailerModal';
+
 export default function MovieClient({ movie }: { movie: any }) {
   const router = useRouter();
+  const [trailerOpen, setTrailerOpen] = useState(false);
   const trailerKey = getTrailerKey(movie.videos);
   const runtime = movie.runtime
     ? `${Math.floor(movie.runtime / 60)}h ${movie.runtime % 60}m`
@@ -164,12 +169,29 @@ export default function MovieClient({ movie }: { movie: any }) {
                   </div>
                 )}
 
+                {/* Cast Carousel */}
+                {movie.credits?.cast?.length > 0 && (
+                  <div className="pt-4">
+                    <CastCarousel cast={movie.credits.cast} />
+                  </div>
+                )}
+
                 {/* Trailer */}
                 {trailerKey && (
                   <div className="pt-4">
-                    <h2 className="text-sm font-semibold uppercase tracking-[0.15em] text-muted-foreground/60 mb-4">
-                      Trailer
-                    </h2>
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-sm font-semibold uppercase tracking-[0.15em] text-muted-foreground/60">
+                        Trailer
+                      </h2>
+                      <button
+                        onClick={() => setTrailerOpen(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A237]/10 text-[#D4A237] hover:bg-[#D4A237]/20 text-xs font-semibold transition-all"
+                        aria-label="Open trailer in modal"
+                      >
+                        <Youtube size={14} />
+                        Fullscreen
+                      </button>
+                    </div>
                     <Suspense fallback={<VideoSkeleton />}>
                       <div className="rounded-2xl overflow-hidden ring-1 ring-white/[0.06] shadow-xl">
                         <VideoPlayer videoKey={trailerKey} title={movie.title} />
@@ -194,6 +216,13 @@ export default function MovieClient({ movie }: { movie: any }) {
             />
           </div>
         )}
+
+        {/* ── Trailer Modal ── */}
+        <TrailerModal
+          videoKey={trailerKey}
+          open={trailerOpen}
+          onClose={() => setTrailerOpen(false)}
+        />
       </main>
     </div>
   );

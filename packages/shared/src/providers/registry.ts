@@ -20,6 +20,12 @@ export const PROVIDERS: ProviderDefinition[] = [
       movie: (id) => `/embed/movie/${id}?disable_dl_button=true&disable_app_ad=true&lang=hi`,
       tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?disable_dl_button=true&disable_app_ad=true&lang=hi`,
     },
+    sandbox: 'allow-scripts allow-same-origin ',
+    platforms: ['web'],
+    allowedOrigins: [
+      'https://web.nxsha.app',
+    ],
+
   },
   // ── Server 2 ────────────────────────────────────────────────
   {
@@ -31,6 +37,12 @@ export const PROVIDERS: ProviderDefinition[] = [
       movie: (id) => `/movie/${id}`,
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
+    sandbox: 'allow-scripts allow-same-origin ',
+    allowedOrigins: [
+      'https://peachify.top',
+      'https://stats.peachify.top',
+      'https://fonts.googleapis.com',
+    ],
   },
   // ── Server 3 ────────────────────────────────────────────────
   {
@@ -42,6 +54,13 @@ export const PROVIDERS: ProviderDefinition[] = [
       movie: (id) => `?tmdb=${id}&type=movie`,
       tv: (id, season, episode) => `?tmdb=${id}&type=tv&s=${season}&e=${episode}`,
     },
+    allowedOrigins: [
+      'https://screenscape.me',
+      'https://www.googletagmanager.com',
+    ],
+    sandbox: 'allow-scripts allow-same-origin ',
+
+    platforms: ['web'],
   },
   // ── Server 4 ──────────────────────────────────────────────────
   {
@@ -53,6 +72,10 @@ export const PROVIDERS: ProviderDefinition[] = [
       movie: (id) => `/embed/movie/${id}?lang=Hindi&autoplay=true&autonext=true&title=false&download=false&episodelist=false&hideautonext=true&hidetitle=true&hidechromecast=true&hidepip=true&hideepisodelist=true&hideupscaler=true&hidesecondarycolor=true&hideiconcolor=true&hideprimarycolor=true&appearance=off&primarycolor=6C63FF&secondarycolor=9F9BFF&iconcolor=FFFFFF`,
       tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?lang=Hindi&autoplay=true&autonext=true&title=false&download=false&episodelist=false&hideautonext=true&hidetitle=true&hidechromecast=true&hidepip=true&hideepisodelist=true&hideupscaler=true&hidesecondarycolor=true&hideiconcolor=true&hideprimarycolor=true&appearance=off&primarycolor=6C63FF&secondarycolor=9F9BFF&iconcolor=FFFFFF`,
     },
+    allowedOrigins: ['https://nhdapi.com'],
+    sandbox: 'allow-scripts allow-same-origin ',
+
+    platforms: ['web'],
   },
   // ── Server 5 ──────────────────────────────────────────────────
   {
@@ -64,6 +87,10 @@ export const PROVIDERS: ProviderDefinition[] = [
       movie: (id) => `/player/movie/${id}?dubLang=hi&autoplay=true`,
       tv: (id, season, episode) => `/player/tv/${id}/${season}/${episode}?dubLang=hi&autoplay=true`,
     },
+    allowedOrigins: ['https://zxcstream.xyz'],
+    sandbox: 'allow-scripts allow-same-origin ',
+
+    platforms: ['web'],
   },
   // ── Server 6 ──────────────────────────────────────────────────
   {
@@ -75,6 +102,12 @@ export const PROVIDERS: ProviderDefinition[] = [
       movie: (id) => `/movie/watch/${id}`,
       tv: (id, season, episode) => `/tv/watch/${id}?season=${season}&episode=${episode}`,
     },
+    allowedOrigins: ['https://cinemaos.live'],
+    sandbox: 'allow-scripts allow-same-origin ',
+    coverOverlays: [
+      { top: '8px', left: '23%', width: '127px', height: '67px' },
+    ],
+    platforms: ['web'],
   },
   // ── Server 22 (disabled — was Server 5) ──────────────────────
   {
@@ -110,6 +143,7 @@ export const PROVIDERS: ProviderDefinition[] = [
       movie: (id) => `/embed/movie/${id}?color=ff0000`,
       tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?color=ff0000`,
     },
+    allowedOrigins: ['https://www.vidking.net'],
   },
   // ── Server 7 (disabled) ─────────────────────────────────────
   {
@@ -200,6 +234,7 @@ export const PROVIDERS: ProviderDefinition[] = [
       movie: (id, startAt) => `/movie/${id}${startAt ? `?startAt=${Math.floor(startAt)}` : ''}`,
       tv: (id, season, episode, startAt) => `/tv/${id}/${season}/${episode}${startAt ? `?startAt=${Math.floor(startAt)}` : ''}`,
     },
+    allowedOrigins: ['https://vidnest.fun'],
   },
   // ── Server 15 (disabled) ────────────────────────────────────
   {
@@ -270,6 +305,10 @@ export const PROVIDERS: ProviderDefinition[] = [
       movie: (id) => `/movie/${id}?autoplay=true&watchparty=false&title=false&parent_origin=${encodeURIComponent('https://www.chillflix.lol')}`,
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}?autoplay=true&watchparty=false&title=false&parent_origin=${encodeURIComponent('https://www.chillflix.lol')}`,
     },
+    // Loaded directly (cross-origin, Cloudflare) — sandbox is the primary defense
+    sandbox: 'allow-scripts allow-same-origin ',
+    allowedOrigins: ['https://www.chillflix.lol'],
+    platforms: ['web'],
   },
   // ── Server 19 ───────────────────────────────────────────────
   {
@@ -281,6 +320,7 @@ export const PROVIDERS: ProviderDefinition[] = [
       movie: (id) => `/tou/movies/${id}`,
       tv: (id, season, episode) => `/tou/tv/${id}/${season}/${episode}`,
     },
+    allowedOrigins: ['https://toustream.xyz'],
   },
   // ── StreamGuide ─────────────────────────────────────────────
   {
@@ -292,6 +332,7 @@ export const PROVIDERS: ProviderDefinition[] = [
       movie: (id) => `/embed/?type=m&id=m-api-${id}&ep=m-api-${id}`,
       tv: (id, season, episode) => `/embed/?type=t&id=t-api-${id}&ep=t-api-${id}-s${season}e${episode}`,
     },
+    allowedOrigins: ['https://streamguide.cfd'],
   },
 ];
 

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+﻿import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -147,17 +147,17 @@ export default function HistoryScreen() {
 
   if (loading) {
     return (
-      <View className="flex-1 bg-void items-center justify-center" style={{ backgroundColor: '#080808', paddingTop: insets.top }}>
-        <ActivityIndicator size="large" color="#e8a020" />
+      <View className="flex-1 bg-void items-center justify-center" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
+        <ActivityIndicator size="large" color="#D4A237" />
       </View>
     );
   }
 
   return (
-    <View className="flex-1 bg-void" style={{ backgroundColor: '#080808', paddingTop: insets.top }}>
+    <View className="flex-1 bg-void" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
       {/* Header */}
       <View className="px-5 pt-4 pb-2 flex-row items-center justify-between">
-        <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: '#f2ede6' }}>
+        <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: '#F4F4F5' }}>
           History
         </Text>
         {entries.length > 0 && (
@@ -181,18 +181,18 @@ export default function HistoryScreen() {
               width: 64,
               height: 64,
               borderRadius: 32,
-              backgroundColor: '#191919',
+              backgroundColor: '#16161A',
               alignItems: 'center',
               justifyContent: 'center',
               marginBottom: 20,
             }}
           >
-            <Ionicons name="time-outline" size={28} color="#534f4c" />
+            <Ionicons name="time-outline" size={28} color="#52525B" />
           </View>
-          <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#f2ede6', marginBottom: 8 }}>
+          <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#F4F4F5', marginBottom: 8 }}>
             No history yet
           </Text>
-          <Text className="text-t3 text-sm text-center leading-5">
+          <Text className="text-text-tertiary text-sm text-center leading-5">
             Movies and TV shows you watch will appear here.
           </Text>
         </View>
@@ -206,8 +206,8 @@ export default function HistoryScreen() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={() => { loadHistory(true); }}
-              tintColor="#e8a020"
-              colors={['#e8a020']}
+              tintColor="#D4A237"
+              colors={['#D4A237']}
             />
           }
           ListFooterComponent={
@@ -221,7 +221,7 @@ export default function HistoryScreen() {
               </TouchableOpacity>
             ) : entries.length > 0 ? (
               <View className="self-center mt-4 mb-8">
-                <Text className="text-t3 text-xs">All caught up — {entries.length} items</Text>
+                <Text className="text-text-tertiary text-xs">All caught up â€” {entries.length} items</Text>
               </View>
             ) : null
           }
@@ -259,19 +259,19 @@ export default function HistoryScreen() {
 
                 {/* Info */}
                 <View className="flex-1 px-3 py-2.5 justify-center">
-                  <Text className="text-t1 text-sm font-bold leading-tight" numberOfLines={1}>
+                  <Text className="text-text-primary text-sm font-bold leading-tight" numberOfLines={1}>
                     {title}
                   </Text>
 
                   {/* TV episode subtitle */}
                   {p.mediaType === 'tv' && p.season != null && p.episode != null && (
-                    <Text className="text-t3 text-xs mt-0.5">
+                    <Text className="text-text-tertiary text-xs mt-0.5">
                       S{p.season}:E{p.episode}
                       {item.episodeCount > 1 && ` +${item.episodeCount - 1} more`}
                     </Text>
                   )}
 
-                  {/* Provider badge intentionally omitted — don't reveal server names */}
+                  {/* Provider badge intentionally omitted â€” don't reveal server names */}
                   {isFullyWatched ? (
                     <View className="bg-green-900/40 rounded-sm px-1.5 py-0.5 self-start">
                       <Text className="text-green-400 text-[9px] font-bold">COMPLETED</Text>
@@ -279,12 +279,12 @@ export default function HistoryScreen() {
                   ) : null}
 
                   {/* Progress bar */}
-                  <View className="h-1 rounded-full mt-2 overflow-hidden" style={{ backgroundColor: '#252525' }}>
+                  <View className="h-1 rounded-full mt-2 overflow-hidden" style={{ backgroundColor: '#222226' }}>
                     <View
                       className="h-full rounded-full"
                       style={{
                         width: `${Math.round(pct * 100)}%`,
-                        backgroundColor: isFullyWatched ? '#22c55e' : '#e8a020',
+                        backgroundColor: isFullyWatched ? '#22c55e' : '#D4A237',
                       }}
                     />
                   </View>
@@ -295,15 +295,15 @@ export default function HistoryScreen() {
                       {isFullyWatched ? (
                         <Ionicons name="checkmark-circle" size={12} color="#22c55e" />
                       ) : p.completed ? (
-                        <Ionicons name="checkmark-circle" size={12} color="#e8a020" />
+                        <Ionicons name="checkmark-circle" size={12} color="#D4A237" />
                       ) : (
-                        <Ionicons name="play" size={10} color="#e8a020" />
+                        <Ionicons name="play" size={10} color="#D4A237" />
                       )}
-                      <Text className={`text-xs font-semibold ${isFullyWatched ? 'text-green-500' : 'text-gold'}`}>
+                      <Text className={`text-xs font-semibold ${isFullyWatched ? 'text-green-500' : 'text-primary'}`}>
                         {isFullyWatched ? 'Complete' : label}
                       </Text>
                     </View>
-                    <Text className="text-t3 text-[10px]">{formatDate(p.updatedAt)}</Text>
+                    <Text className="text-text-tertiary text-[10px]">{formatDate(p.updatedAt)}</Text>
                   </View>
                 </View>
 

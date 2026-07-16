@@ -22,20 +22,20 @@ export default function WatchScreen() {
 
   if (!id || !type) {
     return (
-      <View className="flex-1 items-center justify-center bg-void px-6" style={{ backgroundColor: '#080808' }}>
+      <View className="flex-1 items-center justify-center bg-void px-6" style={{ backgroundColor: '#070708' }}>
         <StatusBar barStyle="light-content" />
         <View className="w-16 h-16 rounded-full bg-elevated items-center justify-center mb-5">
-          <Ionicons name="alert-circle-outline" size={36} color="#534f4c" />
+          <Ionicons name="alert-circle-outline" size={36} color="#52525B" />
         </View>
-        <Text className="text-t1 text-lg font-semibold mb-2">
+        <Text className="text-text-primary text-lg font-semibold mb-2">
           Invalid video URL
         </Text>
-        <Text className="text-t3 text-sm text-center mb-6 leading-5">
+        <Text className="text-text-tertiary text-sm text-center mb-6 leading-5">
           This link doesn't point to a valid movie or TV show.
         </Text>
         <TouchableOpacity
           onPress={() => router.back()}
-          className="bg-gold rounded-xl py-3 px-8"
+          className="bg-primary rounded-xl py-3 px-8"
           activeOpacity={0.8}
         >
           <Text className="text-void font-bold text-base">Go Back</Text>

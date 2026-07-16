@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useMemo } from 'react';
+﻿import React, { useRef, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, useWindowDimensions, Animated } from 'react-native';
 import { getImageUrl } from '@filmsnaps/shared';
 import { ProgressiveImage } from './ProgressiveImage';
@@ -17,8 +17,8 @@ interface MediaCardProps {
  * Movie/show poster card with 2:3 aspect ratio.
  *
  * - Gold rating badge (top-right, semi-transparent dark bg)
- * - Press animation: spring scale 1.0 → 0.96
- * - Title in t2 (#9b9590), 11px, single line truncated
+ * - Press animation: spring scale 1.0 â†’ 0.96
+ * - Title in t2 (#A1A1AA), 11px, single line truncated
  */
 export function MediaCard({ item, onPress, variant = 'default' }: MediaCardProps) {
   const { width: SCREEN_WIDTH } = useWindowDimensions();
@@ -76,14 +76,14 @@ export function MediaCard({ item, onPress, variant = 'default' }: MediaCardProps
             />
           ) : (
             <View className="flex-1 items-center justify-center bg-elevated px-2">
-              <Text className="text-t3 text-3xl mb-1">🎬</Text>
-              <Text className="text-t3 text-xs text-center" numberOfLines={3}>
+              <Text className="text-text-tertiary text-3xl mb-1">ðŸŽ¬</Text>
+              <Text className="text-text-tertiary text-xs text-center" numberOfLines={3}>
                 {item.title || item.name}
               </Text>
             </View>
           )}
 
-          {/* Rating badge — dark semi-transparent bg, gold star + text */}
+          {/* Rating badge â€” dark semi-transparent bg, gold star + text */}
           {item.vote_average != null && item.vote_average > 0 && (
             <View
               style={{
@@ -98,8 +98,8 @@ export function MediaCard({ item, onPress, variant = 'default' }: MediaCardProps
                 alignItems: 'center',
               }}
             >
-              <Text style={{ color: '#e8a020', fontSize: 10, fontWeight: '700', marginRight: 2 }}>
-                ★
+              <Text style={{ color: '#D4A237', fontSize: 10, fontWeight: '700', marginRight: 2 }}>
+                â˜…
               </Text>
               <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>
                 {item.vote_average.toFixed(1)}
@@ -108,10 +108,10 @@ export function MediaCard({ item, onPress, variant = 'default' }: MediaCardProps
           )}
         </View>
 
-        {/* Title — t2, 11px, 1 line truncated */}
+        {/* Title â€” t2, 11px, 1 line truncated */}
         <Text
           style={{
-            color: '#9b9590',
+            color: '#A1A1AA',
             fontSize: 11,
             fontFamily: 'Inter_500Medium',
             marginTop: 6,

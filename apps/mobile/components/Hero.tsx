@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { View, Text, TouchableOpacity, useWindowDimensions, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getImageUrl } from '@filmsnaps/shared';
@@ -19,7 +19,7 @@ interface HeroProps {
  * - 58% screen height
  * - Film grain SVG overlay at 4% opacity (signature visual fingerprint)
  * - Letterbox bars (4px void-black borders left/right)
- * - Warm gradient overlay: transparent top 30% → void bottom
+ * - Warm gradient overlay: transparent top 30% â†’ void bottom
  * - Playfair Display title, gold rating badge, metadata row
  * - Gold "Watch Now" CTA
  */
@@ -36,7 +36,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
 
   return (
     <View style={{ height: HERO_HEIGHT, position: 'relative', overflow: 'hidden' }}>
-      {/* Backdrop image — full bleed */}
+      {/* Backdrop image â€” full bleed */}
       {item.backdrop_path ? (
         <ProgressiveImage
           uri={backdropUrl}
@@ -49,7 +49,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
             width: SCREEN_WIDTH,
             height: HERO_HEIGHT,
             position: 'absolute',
-            backgroundColor: '#191919',
+            backgroundColor: '#16161A',
           }}
         />
       )}
@@ -57,7 +57,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
       {/* Film grain texture overlay */}
       <FilmGrain opacity={0.04} />
 
-      {/* Letterbox bars — 4px void-black on left/right */}
+      {/* Letterbox bars â€” 4px void-black on left/right */}
       <View
         style={{
           position: 'absolute',
@@ -65,7 +65,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
           left: 0,
           bottom: 0,
           width: 4,
-          backgroundColor: '#080808',
+          backgroundColor: '#070708',
           zIndex: 1,
         }}
       />
@@ -76,12 +76,12 @@ export function Hero({ item, onWatchPress }: HeroProps) {
           right: 0,
           bottom: 0,
           width: 4,
-          backgroundColor: '#080808',
+          backgroundColor: '#070708',
           zIndex: 1,
         }}
       />
 
-      {/* Smooth gradient overlay — transparent at 30% top → void at bottom */}
+      {/* Smooth gradient overlay â€” transparent at 30% top â†’ void at bottom */}
       <LinearGradient
         style={{
           position: 'absolute',
@@ -90,13 +90,13 @@ export function Hero({ item, onWatchPress }: HeroProps) {
           right: 0,
           height: HERO_HEIGHT * 0.7,
         }}
-        colors={['rgba(8,8,8,0)', 'rgba(8,8,8,0.08)', 'rgba(8,8,8,0.35)', 'rgba(8,8,8,0.65)', '#080808']}
+        colors={['rgba(8,8,8,0)', 'rgba(8,8,8,0.08)', 'rgba(8,8,8,0.35)', 'rgba(8,8,8,0.65)', '#070708']}
         locations={[0, 0.2, 0.5, 0.8, 1]}
         start={{ x: 0, y: 0 }}
         end={{ x: 0, y: 1 }}
       />
 
-      {/* Content block — anchored to bottom */}
+      {/* Content block â€” anchored to bottom */}
       <View
         style={{
           position: 'absolute',
@@ -109,7 +109,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
           zIndex: 2,
         }}
       >
-        {/* Rating badge — gold with subtle bg */}
+        {/* Rating badge â€” gold with subtle bg */}
         {rating > 0 && (
           <View
             style={{
@@ -125,16 +125,16 @@ export function Hero({ item, onWatchPress }: HeroProps) {
               marginBottom: 10,
             }}
           >
-            <Text style={{ color: '#e8a020', fontSize: 11, fontWeight: '700', marginRight: 4 }}>
-              ★
+            <Text style={{ color: '#D4A237', fontSize: 11, fontWeight: '700', marginRight: 4 }}>
+              â˜…
             </Text>
-            <Text style={{ color: '#e8a020', fontSize: 11, fontWeight: '700' }}>
+            <Text style={{ color: '#D4A237', fontSize: 11, fontWeight: '700' }}>
               {rating.toFixed(1)}
             </Text>
           </View>
         )}
 
-        {/* Title — Playfair Display */}
+        {/* Title â€” Playfair Display */}
         <Text
           style={[typography.display, { marginBottom: 6 }]}
           numberOfLines={2}
@@ -145,34 +145,34 @@ export function Hero({ item, onWatchPress }: HeroProps) {
         {/* Metadata row */}
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
           {year ? (
-            <Text style={[typography.caption, { color: '#9b9590' }]}>{year}</Text>
+            <Text style={[typography.caption, { color: '#A1A1AA' }]}>{year}</Text>
           ) : null}
-          {year && <View style={{ width: 2, height: 2, borderRadius: 1, backgroundColor: '#534f4c', marginHorizontal: 8 }} />}
-          <Text style={[typography.caption, { color: '#9b9590' }]} numberOfLines={1}>
+          {year && <View style={{ width: 2, height: 2, borderRadius: 1, backgroundColor: '#52525B', marginHorizontal: 8 }} />}
+          <Text style={[typography.caption, { color: '#A1A1AA' }]} numberOfLines={1}>
             {rating.toFixed(1)}
           </Text>
-          <View style={{ width: 2, height: 2, borderRadius: 1, backgroundColor: '#534f4c', marginHorizontal: 8 }} />
-          <Text style={[typography.caption, { color: '#9b9590' }]} numberOfLines={1}>
+          <View style={{ width: 2, height: 2, borderRadius: 1, backgroundColor: '#52525B', marginHorizontal: 8 }} />
+          <Text style={[typography.caption, { color: '#A1A1AA' }]} numberOfLines={1}>
             Movie
           </Text>
         </View>
 
-        {/* Overview — 2 lines */}
+        {/* Overview â€” 2 lines */}
         {overview ? (
           <Text
-            style={[typography.body, { color: '#9b9590', marginBottom: 20 }]}
+            style={[typography.body, { color: '#A1A1AA', marginBottom: 20 }]}
             numberOfLines={2}
           >
             {overview}
           </Text>
         ) : null}
 
-        {/* Watch Now — gold CTA */}
+        {/* Watch Now â€” gold CTA */}
         <TouchableOpacity
           onPress={() => onWatchPress(item)}
           activeOpacity={0.9}
           style={{
-            backgroundColor: '#e8a020',
+            backgroundColor: '#D4A237',
             borderRadius: 10,
             paddingVertical: 14,
             flexDirection: 'row',
@@ -180,7 +180,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
             justifyContent: 'center',
             ...Platform.select({
               ios: {
-                shadowColor: '#e8a020',
+                shadowColor: '#D4A237',
                 shadowOffset: { width: 0, height: 6 },
                 shadowOpacity: 0.35,
                 shadowRadius: 12,
@@ -189,12 +189,12 @@ export function Hero({ item, onWatchPress }: HeroProps) {
             }),
           }}
         >
-          <Ionicons name="play" size={16} color="#080808" style={{ marginRight: 8 }} />
+          <Ionicons name="play" size={16} color="#070708" style={{ marginRight: 8 }} />
           <Text
             style={{
               fontFamily: 'Inter_600SemiBold',
               fontSize: 14,
-              color: '#080808',
+              color: '#070708',
             }}
           >
             Watch Now
