@@ -30,6 +30,8 @@ export interface PlayerProviderState {
   isFullscreen: boolean;
   /** Whether CPU abuse was detected */
   cpuWarning: boolean;
+  /** Whether the iframe failed to load (timeout / error) */
+  iframeLoadError: boolean;
   /** Incremented to force iframe refresh */
   refreshKey: number;
   /** Media type: 'movie' or 'tv' */
@@ -46,6 +48,7 @@ export interface PlayerProviderActions {
   setActiveEpisode: (episode: number) => void;
   setIsFullscreen: (fs: boolean) => void;
   setCpuWarning: (warn: boolean) => void;
+  setIframeLoadError: (err: boolean) => void;
   refreshIframe: () => void;
   toggleFullscreen: () => void;
   goToNextEpisode: () => void;
@@ -85,6 +88,7 @@ export function PlayerProvider({
   const [activeEpisode, setActiveEpisode] = useState(initialEpisode);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [cpuWarning, setCpuWarning] = useState(false);
+  const [iframeLoadError, setIframeLoadError] = useState(false);
   const refreshKeyRef = useRef(0);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -122,6 +126,7 @@ export function PlayerProvider({
     activeEpisode,
     isFullscreen,
     cpuWarning,
+    iframeLoadError,
     refreshKey,
     mediaType,
     contentId,
@@ -131,6 +136,7 @@ export function PlayerProvider({
     setActiveEpisode,
     setIsFullscreen,
     setCpuWarning,
+    setIframeLoadError,
     refreshIframe,
     toggleFullscreen,
     goToNextEpisode,

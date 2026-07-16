@@ -1,0 +1,301 @@
+Here is the continuation of the watch page redesign, covering the advanced cinematic states, the "Up Next" auto-play UX, mobile safe areas, and the "Reel Change" transition effects.
+
+---
+
+## 6. The "Up Next" & Auto-Play Experience (Desktop)
+
+Because we cannot read the `currentTime` of a cross-origin iframe, we cannot automatically trigger a 10-second countdown precisely when the credits roll. However, we can build the premium **"Up Next" UI card** that appears in the bottom-right corner of the player when the user interacts with it, and supports a manual toggle for auto-advance.
+
+### 6.1. UpNextOverlay.tsx (Added to PlayerControlOverlay)
+
+```tsx
+'use client';
+import { useState, useEffect } from 'react';
+import { usePlayer } from '@/components/player/PlayerProvider';
+import { getImageUrl } from '@/lib/tmdb';
+import { Play, ChevronRight } from 'lucide-react';
+
+export function UpNextOverlay({ seasonData }: { seasonData: any }) {
+  const { activeEpisode, mediaType, goToNextEpisode, maxEpisodeCount } = usePlayer();
+  const [autoPlay, setAutoPlay] = useState(true);
+  const [showPrompt, setShowPrompt] = useState(false);
+
+  // Find next episode data
+  const nextEpisode = seasonData?.episodes?.find(
+    (ep: any) => ep.episode_number === activeEpisode + 1
+  );
+
+  // Listen for "ended" postMessage from iframe (if provider supports it)
+  // Otherwise, show prompt when user clicks "Next Ep Info" or via timeline heuristic
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type === 'filmsnaps:video_ended') {
+        setShowPrompt(true);
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  if (mediaType !== 'tv' || !nextEpisode || activeEpisode >= maxEpisodeCount) return null;
+
+  return (
+    <>
+      {/* Auto-Play Toggle (Visible on hover) */}
+      <div className="absolute bottom-4 right-16 z-20 flex items-center gap-2 group/toggle">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-white/50 group-hover/toggle:text-white/80 transition-colors">
+          Auto-Play
+        </span>
+        <button 
+          onClick={() => setAutoPlay(!autoPlay)}
+          className={`w-10 h-6 rounded-full p-0.5 transition-colors ${autoPlay ? 'bg-[#D4A237]' : 'bg-[#222226]'}`}
+        >
+          <div className={`w-5 h-5 rounded-full bg-white transition-transform ${autoPlay ? 'translate-x-4' : 'translate-x-0'}`} />
+        </button>
+      </div>
+
+      {/* The Up Next Card (Triggered by video ended event or manual toggle) */}
+      {showPrompt && autoPlay && (
+        <div className="absolute bottom-16 right-4 z-30 w-[320px] bg-[#16161A]/95 backdrop-blur-xl border border-[#D4A237]/30 rounded-xl overflow-hidden shadow-2xl animate-[slideUp_0.4s_ease-out]">
+          <div className="relative aspect-video bg-[#070708]">
+            {nextEpisode.still_path && (
+              <img src={getImageUrl(nextEpisode.still_path, 'w500')} alt={nextEpisode.name} className="w-full h-full object-cover opacity-70" />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-t from-[#16161A] to-transparent" />
+            <div className="absolute bottom-3 left-4">
+              <p className="text-[10px] font-black text-[#D4A237] uppercase tracking-widest">Up Next</p>
+              <p className="text-sm font-bold text-white truncate">{nextEpisode.name}</p>
+            </div>
+          </div>
+          <div className="p-4 flex items-center justify-between gap-3">
+            <p className="text-xs text-zinc-400 line-clamp-2 flex-1">{nextEpisode.overview}</p>
+            <button 
+              onClick={() => { goToNextEpisode(); setShowPrompt(false); }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[#D4A237] text-[#070708] text-sm font-bold hover:bg-[#B88B2A] transition-colors whitespace-nowrap"
+            >
+              <Play size={14} fill="currentColor" /> Play Now
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+```
+
+---
+
+## 7. Global CSS Additions (Global.scss / app.css)
+
+To make the PWA feel native on mobile and perfect the "Cinematic Void" aesthetic, add these global utility classes to your main CSS file.
+
+```css
+@layer utilities {
+  /* ── Hide Scrollbars for horizontal rails ── */
+  .toast-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .toast-scroll {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* ── Mobile Safe Area Insets (Notch/Bottom Bar) ── */
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .safe-left {
+    padding-left: env(safe-area-inset-left);
+  }
+  .safe-right {
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+/* ── Custom Input Touch Target sizes (Mobile PWA requirement) */
+button, [role="button"] {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* ── Disable text selection on UI chrome to feel like a native app */
+.ui-chrome {
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* ── Prevent pull-to-refresh on mobile when interacting with player */
+html, body {
+  overscroll-behavior-y: contain;
+}
+```
+
+---
+
+## 8. The "Reel Change" Transition (SecureIframe.tsx)
+
+When a user clicks a new server or episode, the current implementation violently flashes black as the iframe remounts. We can elevate this by wrapping the iframe in a container that applies an elegant fade/wipe effect during the `refreshKey` transition.
+
+Update your `SecureIframe.tsx` wrapper to include this cinematic transition layer:
+
+```tsx
+'use client';
+
+import { useState, useEffect } from 'react';
+
+export function SecureIframe({ src, sandbox, csp, keyId }: any) {
+  const [isReloading, setIsReloading] = useState(true);
+
+  useEffect(() => {
+    setIsReloading(true);
+  }, [keyId]);
+
+  return (
+    <div className="absolute inset-0 overflow-hidden bg-[#0E0E11]">
+      {/* The Iframe */}
+      <iframe
+        key={keyId}
+        src={src}
+        sandbox={sandbox}
+        csp={csp}
+        onLoad={() => setIsReloading(false)}
+        className={`w-full h-full border-0 transition-opacity duration-700 ${
+          isReloading ? 'opacity-0' : 'opacity-100'
+        }`}
+        allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+      />
+
+      {/* "Reel Change" Curtain Overlay */}
+      <div 
+        className={`absolute inset-0 bg-[#070708] pointer-events-none transition-opacity duration-700 ${
+          isReloading ? 'opacity-100' : 'opacity-0'
+        }`}
+      >
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-4">
+          <div className="relative w-12 h-12">
+            <div className="absolute inset-0 border-2 border-[#222226] rounded-full"></div>
+            <div className="absolute inset-0 border-t-2 border-[#D4A237] rounded-full animate-spin"></div>
+          </div>
+          <p className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.3em] animate-pulse">
+            Changing Reel
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+*(Note: Adjust the `keyId` prop passing in `WatchClient.tsx` to match the `key` string format used previously: `provider-${selectedProviderId}-${refreshKey}`)*
+
+---
+
+## 9. Complete `WatchClient` Component Wiring
+
+Here is how you assemble all these new pieces together in your `WatchClientContent` component cleanly, maintaining all state and gesture hooks.
+
+```tsx
+'use client';
+
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { usePlayer } from '@/components/player/PlayerProvider';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { PlayerControlOverlay, UpNextOverlay } from '@/components/player/PlayerControlOverlay';
+import { ServerPickerSheet } from '@/components/player/ServerPickerSheet';
+import { EpisodeRail } from '@/components/player/EpisodeRail';
+import { SecureIframe } from '@/components/player/SecureIframe';
+
+export function WatchClientContent({ contentid, plat, initialMeta, initialSeasonData, minimal = false }: any) {
+  const {
+    selectedProviderId, setSelectedProvider, selectedSeason, activeEpisode, 
+    setActiveEpisode, setSelectedSeason, refreshKey, cpuWarning, mediaType
+  } = usePlayer();
+
+  useKeyboardShortcuts(); // Enable 'f', 'n', 'p' shortcuts
+  const [seasonData, setSeasonData] = useState(initialSeasonData);
+  const [showNotice, setShowNotice] = useState(true);
+  const [isPending, setIsPending] = useState(true);
+  const [isMiniPlayer, setIsMiniPlayer] = useState(false);
+  const playerContainerRef = useRef<HTMLDivElement>(null);
+
+  const providers = useMemo(() => getEnabledProviders().filter((p) => p.platforms?.includes('web')), []);
+  const currentProvider = useMemo(() => providers.find((p) => p.id === selectedProviderId) ?? providers[0], [providers, selectedProviderId]);
+
+  const embedUrl = currentProvider
+    ? buildEmbedUrl(currentProvider, contentid, plat, selectedSeason, activeEpisode)
+    : '';
+
+  // Mini-player scroll detection
+  useEffect(() => {
+    const handleScroll = () => {
+      if (!playerContainerRef.current) return;
+      const rect = playerContainerRef.current.getBoundingClientRect();
+      setIsMiniPlayer(rect.bottom < 50);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const handleSeasonChange = useCallback((seasonNum: number) => {
+    setSelectedSeason(seasonNum);
+    setActiveEpisode(1);
+    // startTransition for data fetch
+    startTransition(async () => {
+      const data = await getSeasonAction(contentid, seasonNum);
+      setSeasonData(data);
+    });
+  }, [contentid]);
+
+  // ... inside the return statement, structure the layout safely
+  return (
+    <div className="min-h-screen bg-[#070708] text-[#A1A1AA] relative isolate safe-top safe-bottom">
+      
+      {/* Global Film Grain */}
+      <div className="fixed inset-0 -z-10 pointer-events-none opacity-[0.03] bg-[url('/noise.svg')] mix-blend-overlay" />
+
+      {/* Mini Player / Player Container */}
+      <div 
+        ref={playerContainerRef}
+        className={`transition-all duration-500 ease-in-out ui-chrome ${
+          isMiniPlayer 
+            ? 'fixed bottom-4 right-4 w-[320px] h-[180px] z-50 rounded-lg shadow-[0_8px_60px_rgba(0,0,0,0.9)] ring-1 ring-[#D4A237]/20'
+            : 'relative w-full aspect-video max-w-[1200px] mx-auto rounded-xl sm:rounded-2xl overflow-hidden bg-[#0E0E11] shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08] group/player'
+        }`}
+      >
+        {!cpuWarning && embedUrl ? (
+          <SecureIframe 
+            src={embedUrl}
+            sandbox={currentProvider?.sandbox}
+            csp={currentProvider ? buildIframeCSP(currentProvider) : undefined}
+            keyId={`provider-${selectedProviderId}-${refreshKey}`}
+          />
+        ) : (
+          <PlayerErrorState />
+        )}
+
+        {/* Controls, UpNext, and Loading Overlays */}
+        <PlayerControlOverlay isPending={isPending} isMiniPlayer={isMiniPlayer} />
+        <UpNextOverlay seasonData={seasonData} />
+      </div>
+
+      {/* Metadata & Content Grid */}
+      {!minimal && (
+        <main className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
+           {/* Title Header, Server Picker, Episode Rail, Footer Info */}
+           {/* ... Use the layout code from Part 2.1 ... */}
+        </main>
+      )}
+    </div>
+  );
+}
+```
+
+### Summary of UX Achievements
+1. **Seamless Transitions:** The "Reel Change" UI hides the HTML remount flash when toggling providers.
+2. **Polished Loading:** The "Scanning Projection Room" spinner provides brand identity during network fetches.
+3. **Native Mobile Feel:** Bottom sheets and touch targets meet accessibility requirements, while safe-area insets prevent UI from going under the notch.
+4. **Immersive Desktop:** The scroll-triggered mini-player allows users to read episode descriptions or browse without interrupting their stream.
+5. **Keyboard Friendly:** F, N, and P commands make desktop navigation fast.

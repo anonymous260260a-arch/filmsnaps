@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@cliqz/adblocker": "^1.34.0",
     "@filmsnaps/shared": "workspace:*",
     "@hookform/resolvers": "^3.10.0",
     "@opennextjs/cloudflare": "^1.19.11",

@@ -9,6 +9,8 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "postinstall": "pnpm --filter @filmsnaps/shared build",
     "build:shared": "cd packages/shared && pnpm build",
+    "compile:filters": "cd packages/filter-compiler && node dist/compile.js",
+    "build:filters": "cd packages/filter-compiler && pnpm build",
     "dev:web": "cd apps/web && pnpm dev",
     "build:web": "cd apps/web && pnpm build",
     "cf:build": "cd apps/web && pnpm cf:build",

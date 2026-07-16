@@ -4,6 +4,7 @@
 
 import type { ProviderDefinition } from './types';
 import { getProvider } from './providers';
+import { matchFilterUrl, isFilterEngineLoaded, getFilterStats } from './filterService';
 
 // ═══════════════════════════════════════════════════════════════
 // DEFAULT BLOCKED PATTERNS — trackers, ads, analytics, miners
@@ -135,6 +136,9 @@ export interface FilterContext {
 
 /**
  * Check whether a URL should be blocked.
+ * Uses the @cliqz/adblocker filter engine first (if loaded), then
+ * falls back to provider-specific and global block patterns.
+ *
  * Respects per-provider protection settings:
  *   - provider.protection.enabled = false → allow everything
  *   - provider.protection.allowPatterns → override blocklist
@@ -167,7 +171,22 @@ export function shouldBlockUrl(url: string, context?: FilterContext): boolean {
     }
   }
 
-  // ── Check global block patterns ──
+  // ── @cliqz/adblocker filter engine check (if loaded) ──
+  if (isFilterEngineLoaded()) {
+    // Use the provider's base URL as the source URL context
+    const sourceUrl = provider?.baseUrl || url;
+    const result = matchFilterUrl(url, sourceUrl, context?.requestType);
+    if (result !== null) {
+      // If the engine says "blocked", respect it
+      if (result.blocked) {
+        return true;
+      }
+      // If the engine says "not blocked" AND it's loaded (not a legacy fallback),
+      // still fall through to check legacy patterns below
+    }
+  }
+
+  // ── Check global block patterns (legacy fallback) ──
   for (const pattern of DEFAULT_BLOCKED_PATTERNS) {
     if (urlLower.includes(pattern.toLowerCase())) {
       return true;
@@ -797,6 +816,7 @@ export function rewriteAssetUrls(
     /<script([^>]*)\s+src=["']([^"']+)["']/gi,
     (match, attrs, src) => {
       if (shouldBlockUrl(src, { provider })) {
+        console.log(`[Protection:${providerId}] BLOCKED script  ${src}`);
         return `<script data-blocked="true"${attrs}`;
       }
       const absoluteSrc = src.startsWith('http')
@@ -812,6 +832,7 @@ export function rewriteAssetUrls(
     /<link([^>]*)\s+href=["']([^"']+)["']/gi,
     (match, attrs, href) => {
       if (shouldBlockUrl(href, { provider })) {
+        console.log(`[Protection:${providerId}] BLOCKED link/href  ${href}`);
         return `<link data-blocked="true"${attrs}`;
       }
       const absoluteHref = href.startsWith('http')
@@ -827,6 +848,7 @@ export function rewriteAssetUrls(
     /<iframe([^>]*)\s+src=["']([^"']+)["']/gi,
     (match, attrs, src) => {
       if (shouldBlockUrl(src, { provider })) {
+        console.log(`[Protection:${providerId}] BLOCKED iframe  ${src}`);
         return `<iframe data-blocked="true"${attrs}`;
       }
       const absoluteSrc = src.startsWith('http')
