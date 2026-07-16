@@ -11,6 +11,7 @@ const Hero = dynamic(
 );
 
 import { MediaCarouselClient as MediaCarousel } from '@/components/MediaCarouselClient';
+import { ContinueWatchingWrapper } from '@/components/ContinueWatchingWrapper';
 import { tmdb } from '@/lib/tmdb.server';
 
 export default async function Home() {
@@ -40,6 +41,9 @@ export default async function Home() {
         <Suspense fallback={<SkeletonHero />}>
           {featuredMovies.length > 0 && <Hero movies={featuredMovies} />}
         </Suspense>
+
+        {/* ── Continue Watching Rail ── */}
+        <ContinueWatchingWrapper />
 
         <div className="space-y-12 sm:space-y-16 py-10 sm:py-14">
           {trendingMovies.results.length > 0 && (

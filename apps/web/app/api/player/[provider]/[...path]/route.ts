@@ -4,7 +4,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { getProvider } from '@filmsnaps/shared';
+import { getProvider } from '@filmsnaps/shared/providers';
 import {
   shouldBlockUrl,
   rewriteAssetUrls,
@@ -13,6 +13,8 @@ import {
   getContentTypeFromUrl,
   getEmptyResponseBody,
 } from '@/lib/movieProviders/protection';
+import { isFilterEngineLoaded } from '@/lib/movieProviders/filterService';
+import { buildProviderCSP } from '@/lib/movieProviders/cspBuilder';
 
 export async function GET(
   req: Request,
@@ -41,9 +43,15 @@ export async function GET(
     // Block if matches filter
     if (shouldBlockUrl(fullUrl, { provider })) {
       const ct = getContentTypeFromUrl(fullUrl);
+      const filterEngine = isFilterEngineLoaded() ? 'cliqz' : 'legacy';
+      console.log(`[Player Proxy:${providerKey}] BLOCKED (${filterEngine})  ${fullUrl}`);
       return new NextResponse(getEmptyResponseBody(ct), {
         status: 204,
-        headers: { 'X-Blocked-By': 'Filmsnaps-Filter' },
+        headers: {
+          'Content-Type': ct,
+          'X-Blocked-By': 'Filmsnaps-Filter',
+          'X-Filter-Source': filterEngine,
+        },
       });
     }
 
@@ -139,8 +147,7 @@ export async function GET(
         'Cache-Control': 'no-store',
         'Referrer-Policy': 'no-referrer',
         'X-Content-Type-Options': 'nosniff',
-        'Content-Security-Policy':
-          "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-src * data: blob:; worker-src * data: blob:; connect-src * data: blob:; img-src * data: blob:; media-src * data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline'; form-action 'none'; navigate-to 'none';",
+        'Content-Security-Policy': buildProviderCSP(provider),
       },
     });
   } catch (error) {

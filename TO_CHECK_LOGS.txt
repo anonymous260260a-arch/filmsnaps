@@ -1,0 +1,30 @@
+Ways to verify it's working
+1. Check the filter stats endpoint — start the dev server and open this in your browser:
+
+
+http://localhost:3000/api/filter-stats
+It returns JSON showing if the engine is loaded, filter counts, and block/match stats:
+
+
+{ "status": "active", "filters": { "network": 140991, "cosmetic": 42097 }, "runtime": { "matches": 0, "blocked": 0 } }
+2. Watch the terminal for BLOCKED logs when playing a movie — every time the proxy blocks a URL, you'll see:
+
+
+[Player Proxy:nxsha] BLOCKED (cliqz)  https://ads.doubleclick.net/...
+[Protection:nxsha] BLOCKED script  https://provider.com/analytics/tracker.js
+The (cliqz) tag means it was blocked by the EasyList filter engine. If you ever see (legacy), the engine wasn't loaded and it fell back to the old pattern matching.
+
+3. Use browser devtools — Network tab shows X-Blocked-By: Filmsnaps-Filter and X-Filter-Source: cliqz headers on blocked requests (status 204 for assets, or the HTML element gets a data-blocked="true" attribute).
+
+4. Enable verbose per-URL logging — start the dev server with:
+
+
+DEBUG=filmsnaps:filter pnpm dev:web
+This logs EVERY URL check the filter engine evaluates ("BLOCKED", "ALLOWED", "PASS"), so you can see exactly what it's matching against.
+
+5. Or just run a quick Node test — the standalone test I ran earlier:
+
+
+cd packages/filter-compiler && node dist/compile.js   # compile the engine
+node -e "..."                                         # test specific URLs
+Already confirmed: doubleclick → blocked, nxcdn.app → allowed.

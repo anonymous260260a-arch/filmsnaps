@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,7 +7,7 @@ import { BlurView } from 'expo-blur';
 
 /**
  * Tab bar styled per the cinematic design system:
- * - #0f0f0f background, subtle top border
+ * - #0E0E11 background, subtle top border
  * - Gold dot indicator below the active icon (no label)
  * - iOS: BlurView visual effect behind the bar
  * - Icons: filled variant for active, outline for inactive
@@ -27,7 +27,7 @@ function TabIcon({
       <Ionicons
         name={focused ? activeIcon : inactiveIcon}
         size={24}
-        color={focused ? '#e8a020' : '#52525b'}
+        color={focused ? '#D4A237' : '#52525b'}
       />
       {/* Gold dot indicator */}
       {focused && (
@@ -36,7 +36,7 @@ function TabIcon({
             width: 4,
             height: 4,
             borderRadius: 2,
-            backgroundColor: '#e8a020',
+            backgroundColor: '#D4A237',
             marginTop: 2,
           }}
         />
@@ -55,14 +55,14 @@ export default function TabLayout() {
         headerShown: false,
         tabBarShowLabel: false,
         tabBarStyle: {
-          backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#0f0f0f',
-          borderTopColor: '#252525',
+          backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#0E0E11',
+          borderTopColor: '#222226',
           borderTopWidth: 0.5,
           paddingBottom: bottomInset + 4,
           paddingTop: 10,
           height: 80 + bottomInset,
         },
-        tabBarActiveTintColor: '#e8a020',
+        tabBarActiveTintColor: '#D4A237',
         tabBarInactiveTintColor: '#52525b',
         tabBarBackground: () =>
           Platform.OS === 'ios' ? (

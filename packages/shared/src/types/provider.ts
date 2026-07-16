@@ -33,6 +33,53 @@ export interface ProviderDefinition {
   };
   /** Security protection config (per-provider toggle) */
   protection?: ProviderProtection;
+
+  /**
+   * Which platforms this provider should be available on.
+   * Omit or set to all platforms (default) to show everywhere.
+   * Example: ['web'] to only show on web, ['mobile'] for mobile only.
+   */
+  platforms?: ('web' | 'mobile')[];
+
+  /**
+   * Custom sandbox attributes for the iframe embedding this provider.
+   *
+   * Controls what browser capabilities the iframe gets. Harder sandbox
+   * = fewer popups/redirects but some providers may break.
+   *
+   * Default: "allow-scripts allow-same-origin allow-presentation"
+   *   (-) No allow-popups — blocks window.open popups
+   *   (-) No allow-forms  — blocks form submissions
+   *   (+) allow-presentation — enables Presentation API (casting)
+   */
+  sandbox?: string;
+
+  /**
+   * Allowed external origins for Content-Security-Policy headers.
+   *
+   * These drive the `frame-src`, `media-src`, `connect-src`, and
+   * `script-src` directives on proxied response headers so that
+   * provider video players and CDN chunks can load.
+   *
+   * Typically just the provider's baseUrl origin, but some providers
+   * use separate CDN origins for video chunks, subtitles, etc.
+   *
+   * Example: ['https://cdn.peachify.top', 'https://fonts.googleapis.com']
+   */
+  allowedOrigins?: string[];
+
+  /**
+   * Positioned overlay divs that cover known ad elements on the provider's page.
+   *
+   * Same-Origin Policy prevents us from reaching into the cross-origin iframe
+   * DOM to hide elements. Instead, we place covering divs on the parent page
+   * at the exact coordinates of the ad element on top of the iframe.
+   *
+   * These use `pointer-events: none` so video controls still work through them.
+   *
+   * Example: `[{ top: '80px', left: '40%', width: '200px', height: '60px' }]`
+   */
+  coverOverlays?: Array<{ top: string; left: string; width: string; height: string }>;
 }
 
 /**

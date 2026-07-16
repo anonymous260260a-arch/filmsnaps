@@ -4,12 +4,13 @@
  */
 
 import { NextResponse } from 'next/server';
-import { getProvider } from '@filmsnaps/shared';
+import { getProvider } from '@filmsnaps/shared/providers';
 import {
   shouldBlockUrl,
   getContentTypeFromUrl,
   getEmptyResponseBody,
 } from '@/lib/movieProviders/protection';
+import { isFilterEngineLoaded } from '@/lib/movieProviders/filterService';
 
 export async function GET(
   req: Request,
@@ -41,7 +42,8 @@ export async function GET(
 
   // ── Block if matches filter patterns ──
   if (shouldBlockUrl(targetUrl, { provider })) {
-    console.log(`[Asset Proxy:${providerKey}] Blocked:`, targetUrl);
+    const filterEngine = isFilterEngineLoaded() ? 'cliqz' : 'legacy';
+    console.log(`[Asset Proxy:${providerKey}] BLOCKED (${filterEngine})  ${targetUrl}`);
     const ct = getContentTypeFromUrl(targetUrl);
     return new NextResponse(getEmptyResponseBody(ct), {
       status: 200,
@@ -49,6 +51,7 @@ export async function GET(
         'Content-Type': ct,
         'Cache-Control': 'public, max-age=3600',
         'X-Blocked-By': 'Filmsnaps-Filter',
+        'X-Filter-Source': filterEngine,
       },
     });
   }

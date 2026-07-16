@@ -14,6 +14,7 @@ import {
   Mail,
   ArrowLeft,
   Download,
+  Clock,
 } from 'lucide-react';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { GlassButton } from '@/components/ui/glass-button';
@@ -66,6 +67,7 @@ export function Header() {
       { href: '/movie', label: 'Movies' },
       { href: '/tv', label: 'TV Shows' },
       { href: '/saved', label: 'Saved', count: savedMovies?.length },
+      { href: '/history', label: 'History' },
       ...(!isDesktop ? [{ href: '/download', label: 'Download' }] : []),
     ],
     [savedMovies?.length, isDesktop]
@@ -190,10 +192,13 @@ export function Header() {
 
           {/* ── Logo ── */}
           <Link href="/" className="flex items-center gap-2 group flex-shrink-0">
-            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-primary/10 group-hover:bg-primary/20 transition-all duration-300">
-              <Film className="h-5 w-5 text-primary" />
+            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-[#D4A237]/10 group-hover:bg-[#D4A237]/20 transition-all duration-300">
+              <Film className="h-5 w-5 text-[#D4A237]" />
             </div>
-            <span className="text-xl font-bold tracking-tight text-foreground">
+            <span
+              className="text-xl font-bold tracking-tight text-foreground"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
               FilmSnaps
             </span>
           </Link>

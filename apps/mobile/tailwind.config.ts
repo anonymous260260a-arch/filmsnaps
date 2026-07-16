@@ -1,4 +1,4 @@
-/** @type {import('tailwindcss').Config} */
+﻿/** @type {import('tailwindcss').Config} */
 module.exports = {
   darkMode: 'class',
   content: [
@@ -9,18 +9,19 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        void: '#080808',
-        surface: '#0f0f0f',
-        elevated: '#191919',
-        subtle: '#252525',
-        'gold-dim': '#c17a10',
-        gold: '#e8a020',
-        blue: '#5b9cf6',
-        jade: '#4caf82',
-        crimson: '#e05252',
-        t1: '#f2ede6',
-        t2: '#9b9590',
-        t3: '#534f4c',
+        void: '#070708',
+        surface: '#0E0E11',
+        elevated: '#16161A',
+        subtle: '#222226',
+        primary: '#D4A237',
+        'primary-dim': '#B88B2A',
+        secondary: '#8B5CF6',
+        success: '#4CAF82',
+        destructive: '#E05252',
+        info: '#5B9CF6',
+        'text-primary': '#F4F4F5',
+        'text-secondary': '#A1A1AA',
+        'text-tertiary': '#52525B',
       },
     },
   },

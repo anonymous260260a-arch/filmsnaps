@@ -169,6 +169,67 @@ Multi-layered approach:
 
 ---
 
+## Filter Compiler System (`packages/filter-compiler/`)
+
+New package implementing the expert-recommended ad-blocking architecture:
+
+### Architecture
+1. **Compile time** (`packages/filter-compiler/src/compile.ts`):
+   - Fetches EasyList, EasyPrivacy, AdGuard Base, uBlock Unbreak, uBlock Badware filter lists
+   - Generates per-provider allow rules (video CDN domains never blocked)
+   - Merges legacy AD_PATTERNS as fallback
+   - Compiles via `FiltersEngine.parse()` → serializes to `build/compiled-engine.bin` (~7MB, 141K network + 42K cosmetic filters)
+   
+2. **Runtime** (`packages/filter-compiler/src/index.ts`):
+   - `loadFilterEngine()` — deserializes engine from binary, caches as singleton
+   - `matchUrl(engine, url, sourceUrl, type?)` — returns `MatchResult` with blocked/matchedRule/category
+   - `getCosmeticCSS(engine, pageUrl)` — returns cosmetic CSS for page
+   - `getEngineStats(engine)` — returns filter counts
+
+3. **Minimal guard** (`packages/filter-compiler/src/minimal-guard.ts`):
+   - `buildMinimalGuardScript()` — ~80 lines, replaces the 15-layer playerGuard (defense-in-depth)
+   - `buildCosmeticInjectScript(css)` — injects style tag for cosmetic CSS
+   - `buildAllPlayerScripts(css?)` — combines both
+
+4. **Per-provider overrides** (`packages/filter-compiler/src/overrides/index.ts`):
+   - 11 provider override definitions (nxsha, peachify, screenscape, nhdapi, zxcstream, cinemaos, vidnest, chillflix, toustream, streamguide, vidking)
+   - Each with CDN allowPatterns and optional blockPatterns
+   - Converted to EasyList syntax at compile time: `@@||domain^$document`
+
+### Web Integration
+- **Filter service** (`apps/web/lib/movieProviders/filterService.ts`): Lazy-loaded singleton wrapping the engine, with path resolution to filter-compiler's build output
+- **Protection.ts enhanced**: `shouldBlockUrl()` now checks the @cliqz/adblocker engine first, falls back to legacy patterns
+- **SecureIframe.tsx**: Added `sandbox="allow-scripts allow-same-origin allow-forms allow-popups"` — the browser-enforced hard barrier against top navigation and unwanted capabilities
+- **Dependency**: `@cliqz/adblocker` added to web app's dependencies
+
+### Build Commands
+```bash
+pnpm build:filters       # TypeScript compile filter-compiler package
+pnpm compile:filters     # Fetch + compile filter lists into engine binary
+pnpm postinstall          # Also rebuilds filter-compiler TypeScript (but not compile step)
+```
+
+### Verification
+- Filter engine compiles with 141K network + 42K cosmetic filters
+- DoubleClick URLs correctly blocked
+- Provider CDN URLs (nxcdn.app) correctly allowed
+- TypeScript compiles cleanly across all packages
+
+---
+
+## Current Work — Cinematic Void Redesign
+
+Phase 1 (shared package foundation) is complete. The shared package now has:
+- **Design tokens** at `packages/shared/src/theme/tokens.ts` — colors, typography, glassmorphism, spacing
+- **Storage layer** at `packages/shared/src/state/` — StorageAdapter interface + localStorage/AsyncStorage adapters + unified hooks for watchlist and watch history
+- **Security script** at `packages/shared/src/security/playerGuard.ts` — pure function returning 15-layer popup/ad-blocking JS
+- **Health checks** at `packages/shared/src/providers/health.ts` — provider health checking and ranking
+- **Verified:** `pnpm --filter @filmsnaps/shared build` compiles cleanly
+
+Next: Phase 2 — Web redesign (CSS variable migration, Playfair Display font, WatchClient decomposition, feature parity)
+
+---
+
 ## Build & Run Commands
 
 ```bash
