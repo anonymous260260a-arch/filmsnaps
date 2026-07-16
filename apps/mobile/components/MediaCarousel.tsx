@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { View, Text, FlatList, useWindowDimensions, TouchableOpacity } from 'react-native';
 import { typography } from '../lib/typography';
 import type { Movie } from '@filmsnaps/shared';
@@ -24,7 +24,7 @@ export function MediaCarousel({ title, data, onItemPress, onSeeAll }: MediaCarou
 
   return (
     <View className="mb-7">
-      {/* Section header — Playfair heading + gold "See All" */}
+      {/* Section header â€” Playfair heading + gold "See All" */}
       <View className="flex-row items-center justify-between px-4 mb-3">
         <Text style={typography.heading}>{title}</Text>
         {onSeeAll && (
@@ -33,10 +33,10 @@ export function MediaCarousel({ title, data, onItemPress, onSeeAll }: MediaCarou
               style={{
                 fontFamily: 'Inter_500Medium',
                 fontSize: 12,
-                color: '#e8a020',
+                color: '#D4A237',
               }}
             >
-              See All →
+              See All â†’
             </Text>
           </TouchableOpacity>
         )}

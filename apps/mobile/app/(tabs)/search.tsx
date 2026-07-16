@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+﻿import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -93,7 +93,7 @@ export default function SearchScreen() {
 
   const filteredResults = useMemo(() => {
     if (debouncedQuery.length >= 2) return textResults;
-    // No text query — use discover API results
+    // No text query â€” use discover API results
     const movieResults = movieFilterResult.data?.results ?? [];
     const tvResults = tvFilterResult.data?.results ?? [];
     if (mediaTypeFilter === 'movie') return movieResults;
@@ -155,20 +155,20 @@ export default function SearchScreen() {
   const hasActiveFilters = selectedGenreIds.length > 0 || mediaTypeFilter !== 'all';
 
   return (
-    <View className="flex-1 bg-void" style={{ paddingTop: insets.top, backgroundColor: '#080808' }}>
+    <View className="flex-1 bg-void" style={{ paddingTop: insets.top, backgroundColor: '#070708' }}>
       {/* Search header */}
       <View className="px-4 pt-4 pb-2">
-        <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: '#f2ede6', marginBottom: 16 }}>
+        <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: '#F4F4F5', marginBottom: 16 }}>
           Search
         </Text>
 
-        {/* Search bar — pill shaped */}
+        {/* Search bar â€” pill shaped */}
         <View className="flex-row items-center bg-elevated rounded-[50] px-4 h-11 border-[0.5px] border-subtle">
-          <Ionicons name="search" size={18} color="#9b9590" />
+          <Ionicons name="search" size={18} color="#A1A1AA" />
           <TextInput
-            className="flex-1 text-[#f2ede6] text-base ml-2.5"
+            className="flex-1 text-[#F4F4F5] text-base ml-2.5"
             placeholder="Movies, TV shows..."
-            placeholderTextColor="#534f4c"
+            placeholderTextColor="#52525B"
             value={query}
             onChangeText={setQuery}
             autoCapitalize="none"
@@ -177,7 +177,7 @@ export default function SearchScreen() {
           />
           {query.length > 0 && (
             <TouchableOpacity onPress={() => setQuery('')} activeOpacity={0.7}>
-              <Ionicons name="close-circle" size={18} color="#534f4c" />
+              <Ionicons name="close-circle" size={18} color="#52525B" />
             </TouchableOpacity>
           )}
         </View>
@@ -188,7 +188,7 @@ export default function SearchScreen() {
             <TouchableOpacity
               key={type}
               onPress={() => { setMediaTypeFilter(type); setPage(1); }}
-              className={`flex-1 py-2 rounded-md items-center ${mediaTypeFilter === type ? 'bg-gold' : ''}`}
+              className={`flex-1 py-2 rounded-md items-center ${mediaTypeFilter === type ? 'bg-primary' : ''}`}
               activeOpacity={0.7}
             >
               <Text className={`text-xs font-bold ${mediaTypeFilter === type ? 'text-void' : 'text-zinc-400'}`}>
@@ -213,12 +213,12 @@ export default function SearchScreen() {
                 activeOpacity={0.7}
                 className={`px-3 py-1.5 rounded-full border ${
                   selectedGenreIds.includes(Number(id))
-                    ? 'border-gold bg-gold/10'
+                    ? 'border-primary bg-primary/10'
                     : 'border-zinc-700 bg-zinc-800/50'
                 }`}
               >
                 <Text className={`text-[10px] font-semibold ${
-                  selectedGenreIds.includes(Number(id)) ? 'text-gold' : 'text-zinc-300'
+                  selectedGenreIds.includes(Number(id)) ? 'text-primary' : 'text-zinc-300'
                 }`}>
                   {name}
                 </Text>
@@ -231,7 +231,7 @@ export default function SearchScreen() {
             className="ml-2 w-9 h-9 rounded-full bg-zinc-800 items-center justify-center"
             activeOpacity={0.7}
           >
-            <Ionicons name="funnel-outline" size={16} color="#9b9590" />
+            <Ionicons name="funnel-outline" size={16} color="#A1A1AA" />
           </TouchableOpacity>
         </View>
 
@@ -242,10 +242,10 @@ export default function SearchScreen() {
               <TouchableOpacity
                 key={opt.value}
                 onPress={() => { setSortBy(opt.value); setShowSortPicker(false); setPage(1); }}
-                className={`px-4 py-2.5 rounded-lg ${sortBy === opt.value ? 'bg-gold/20' : ''}`}
+                className={`px-4 py-2.5 rounded-lg ${sortBy === opt.value ? 'bg-primary/20' : ''}`}
                 activeOpacity={0.7}
               >
-                <Text className={`text-sm ${sortBy === opt.value ? 'text-gold font-bold' : 'text-zinc-300'}`}>
+                <Text className={`text-sm ${sortBy === opt.value ? 'text-primary font-bold' : 'text-zinc-300'}`}>
                   {opt.label}
                 </Text>
               </TouchableOpacity>
@@ -260,7 +260,7 @@ export default function SearchScreen() {
             className="self-start mt-2"
             activeOpacity={0.7}
           >
-            <Text className="text-gold text-xs font-semibold">Clear filters</Text>
+            <Text className="text-primary text-xs font-semibold">Clear filters</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -268,7 +268,7 @@ export default function SearchScreen() {
       {/* Content */}
       {isLoading ? (
         <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color="#e8a020" />
+          <ActivityIndicator size="large" color="#D4A237" />
         </View>
       ) : (query.length >= 2 || hasActiveFilters) && filteredResults.length > 0 ? (
         <FlatList
@@ -291,17 +291,17 @@ export default function SearchScreen() {
         />
       ) : query.length >= 2 ? (
         <View className="flex-1 items-center justify-center px-8">
-          <Ionicons name="search-outline" size={48} color="#252525" />
-          <Text className="text-t2 text-base mt-3">No results found</Text>
-          <Text className="text-t3 text-sm mt-1 text-center">
+          <Ionicons name="search-outline" size={48} color="#222226" />
+          <Text className="text-text-secondary text-base mt-3">No results found</Text>
+          <Text className="text-text-tertiary text-sm mt-1 text-center">
             Try a different search term or adjust filters
           </Text>
         </View>
       ) : (
         <View className="flex-1 items-center justify-center px-8">
-          <Ionicons name="search" size={48} color="#252525" />
-          <Text className="text-t2 text-base mt-3">Search movies & TV shows</Text>
-          <Text className="text-t3 text-sm mt-1 text-center">
+          <Ionicons name="search" size={48} color="#222226" />
+          <Text className="text-text-secondary text-base mt-3">Search movies & TV shows</Text>
+          <Text className="text-text-tertiary text-sm mt-1 text-center">
             Type at least 2 characters, or use filters above to discover
           </Text>
         </View>

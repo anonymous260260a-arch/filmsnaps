@@ -90,9 +90,9 @@ export default function CategoryListScreen() {
 
   if (!config) {
     return (
-      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#080808', paddingTop: insets.top }}>
-        <Text className="text-t2 text-lg">Category not found</Text>
-        <TouchableOpacity onPress={() => router.back()} className="bg-gold rounded-xl py-3 px-8 mt-4" activeOpacity={0.8}>
+      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
+        <Text className="text-text-secondary text-lg">Category not found</Text>
+        <TouchableOpacity onPress={() => router.back()} className="bg-primary rounded-xl py-3 px-8 mt-4" activeOpacity={0.8}>
           <Text className="text-void font-bold">Go Back</Text>
         </TouchableOpacity>
       </View>
@@ -102,20 +102,20 @@ export default function CategoryListScreen() {
   const itemWidth = (SCREEN_WIDTH - PADDING * 2 - GAP * (NUM_COLUMNS - 1)) / NUM_COLUMNS;
 
   return (
-    <View className="flex-1 bg-void" style={{ backgroundColor: '#080808', paddingTop: insets.top }}>
+    <View className="flex-1 bg-void" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
       {/* Header */}
       <View className="flex-row items-center px-4 pt-2 pb-3">
-        <TouchableOpacity onPress={() => router.back()} className="w-9 h-9 rounded-full bg-black/40 items-center justify-center mr-3" activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={22} color="#f2ede6" />
+        <TouchableOpacity onPress={() => router.back()} className="w-9 h-9 rounded-full bg-black/40 items-center justify-center mr-3" activeOpacity={0.7} accessibilityLabel="Go back" accessibilityRole="button">
+          <Ionicons name="chevron-back" size={22} color="#F4F4F5" />
         </TouchableOpacity>
-        <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#f2ede6' }}>
+        <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#F4F4F5' }}>
           {config.title}
         </Text>
       </View>
 
       {isLoading && page === 1 ? (
         <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color="#e8a020" />
+          <ActivityIndicator size="large" color="#D4A237" />
         </View>
       ) : (
         <FlatList
@@ -125,7 +125,7 @@ export default function CategoryListScreen() {
           contentContainerStyle={{ padding: PADDING, paddingBottom: 100 }}
           columnWrapperStyle={{ gap: GAP }}
           showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#e8a020" />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#D4A237" />}
           ListFooterComponent={
             allResults.length > 0 ? (
               <TouchableOpacity

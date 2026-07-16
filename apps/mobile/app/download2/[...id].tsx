@@ -256,12 +256,12 @@ export default function Download2Screen() {
       <View style={{ paddingTop: insets.top }} className="absolute top-0 left-0 right-0 z-30">
         <View className="flex-row items-center justify-between px-4 py-2">
           <View className="flex-row items-center">
-            <TouchableOpacity onPress={() => router.back()} className="w-9 h-9 rounded-full bg-black/40 items-center justify-center" activeOpacity={0.7}>
+            <TouchableOpacity onPress={() => router.back()} className="w-9 h-9 rounded-full bg-black/40 items-center justify-center" activeOpacity={0.7} accessibilityLabel="Close download" accessibilityRole="button">
               <Ionicons name="close" size={20} color="#fff" />
             </TouchableOpacity>
             <Text className="text-white font-bold text-sm ml-3">Download</Text>
           </View>
-          <TouchableOpacity onPress={() => webViewRef.current?.reload()} className="w-9 h-9 rounded-full bg-black/40 items-center justify-center" activeOpacity={0.7}>
+          <TouchableOpacity onPress={() => webViewRef.current?.reload()} className="w-9 h-9 rounded-full bg-black/40 items-center justify-center" activeOpacity={0.7} accessibilityLabel="Reload page" accessibilityRole="button">
             <Ionicons name="refresh" size={16} color="#fff" />
           </TouchableOpacity>
         </View>
