@@ -1,19 +1,29 @@
 /**
- * WatchClient — composed video player.
+ * WatchClient — composed video player with cinematic UX.
  *
- * Coordinates: PlayerProvider, SecureIframe, ServerPickerSheet,
- * EpisodeRail, PlayerControlOverlay, and Electron integration.
- *
- * Much smaller than the original 869-line WatchClient — state
- * management and security guards have been extracted into
- * the player component tree.
+ * Layout: server top, video center, episodes bottom — compact.
+ * Features: keyboard shortcuts, error/loading states.
  */
 
 'use client';
 
-import React, { useTransition, useRef, useCallback, useEffect, useMemo, useState } from 'react';
+import React, {
+  useTransition,
+  useRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import Link from 'next/link';
-import { AlertCircle, X, Film, ArrowLeft } from 'lucide-react';
+import {
+  AlertCircle,
+  X,
+  Film,
+  ArrowLeft,
+  Clapperboard,
+  RefreshCw,
+} from 'lucide-react';
 import { getSeasonAction } from '@/lib/actions';
 import { getEnabledProviders } from '@filmsnaps/shared';
 import { getImageUrl } from '@/lib/tmdb';
@@ -22,6 +32,7 @@ import { SecureIframe } from '@/components/player/SecureIframe';
 import { ServerPickerSheet } from '@/components/player/ServerPickerSheet';
 import { EpisodeRail } from '@/components/player/EpisodeRail';
 import { PlayerControlOverlay } from '@/components/player/PlayerControlOverlay';
+import { buildIframeCSP } from '@/lib/movieProviders/cspBuilder';
 import type { ProviderDefinition } from '@filmsnaps/shared';
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -35,7 +46,7 @@ interface WatchClientContentProps {
   minimal?: boolean;
 }
 
-// ── Embed URL builder ─────────────────────────────────────────────
+// ── Embed URL builder — direct provider URLs ─────────────────────
 
 function buildEmbedUrl(
   provider: ProviderDefinition,
@@ -44,19 +55,47 @@ function buildEmbedUrl(
   selectedSeason: number,
   activeEpisode: number,
 ): string {
-  // Nxsha/chillflix: load directly (Cloudflare providers work best this way)
-  if (provider.id === 'nxsha' || provider.id === 'chillflix') {
-    const embedPath =
-      plat === 'tv'
-        ? provider.embed.tv(contentid, selectedSeason, activeEpisode)
-        : provider.embed.movie(contentid);
-    return `${provider.baseUrl}${embedPath}`;
-  }
+  const embedPath =
+    plat === 'tv'
+      ? provider.embed.tv(contentid, selectedSeason, activeEpisode)
+      : provider.embed.movie(contentid);
+  return `${provider.baseUrl}${embedPath}`;
+}
 
-  if (plat === 'tv') {
-    return `/api/player/${provider.id}?tvId=${contentid}&season=${selectedSeason}&episode=${activeEpisode}`;
-  }
-  return `/api/player/${provider.id}?id=${contentid}`;
+function absUrl(path: string): string {
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  return `${window.location.origin}${path}`;
+}
+
+// ── Keyboard shortcuts hook ─────────────────────────────────────
+
+function useKeyboardShortcuts() {
+  const { toggleFullscreen, goToNextEpisode, goToPrevEpisode } = usePlayer();
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return;
+
+      switch (e.key.toLowerCase()) {
+        case 'f':
+          e.preventDefault();
+          toggleFullscreen();
+          break;
+        case 'n':
+          e.preventDefault();
+          goToNextEpisode();
+          break;
+        case 'p':
+          e.preventDefault();
+          goToPrevEpisode();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [toggleFullscreen, goToNextEpisode, goToPrevEpisode]);
 }
 
 // ── Content (inner) — lives inside PlayerProvider ─────────────────
@@ -70,9 +109,8 @@ function WatchClientContent({
 }: WatchClientContentProps) {
   const [isPending, startTransition] = useTransition();
   const [seasonData, setSeasonData] = useState(initialSeasonData);
-  const [showNotice, setShowNotice] = useState(true);
   const [electronVideoOpen, setElectronVideoOpen] = useState(false);
-  const playerContainerRef = useRef<HTMLDivElement>(null);
+  const [playerReady, setPlayerReady] = useState(false);
 
   const {
     selectedProviderId,
@@ -82,21 +120,77 @@ function WatchClientContent({
     setActiveEpisode,
     setSelectedSeason,
     refreshKey,
+    refreshIframe,
     cpuWarning,
+    iframeLoadError,
+    setIframeLoadError,
     mediaType,
-    contentId,
   } = usePlayer();
 
-  const providers = useMemo(() => getEnabledProviders(), []);
+  // ── Hooks ──
+  useKeyboardShortcuts();
 
-  // Resolve current provider object
+  // Only show providers marked for web
+  const providers = useMemo(
+    () => getEnabledProviders().filter((p) => p.platforms?.includes('web')),
+    [],
+  );
+
+  // Resolve current provider
   const currentProvider = useMemo(
     () => providers.find((p) => p.id === selectedProviderId) ?? providers[0],
     [providers, selectedProviderId],
   );
 
+  // ── Embed URL ──
+  const embedUrl = currentProvider
+    ? buildEmbedUrl(currentProvider, contentid, plat, selectedSeason, activeEpisode)
+    : '';
+
+  // Reset loading state when URL changes
+  useEffect(() => {
+    setPlayerReady(false);
+    setIframeLoadError(false);
+  }, [embedUrl, setIframeLoadError]);
+
+  // ── Callbacks ──
+  const handleIframeLoad = useCallback(() => {
+    setPlayerReady(true);
+    setIframeLoadError(false);
+  }, [setIframeLoadError]);
+
+  const handleIframeError = useCallback(() => {
+    setIframeLoadError(true);
+  }, [setIframeLoadError]);
+
+  const handleRetry = useCallback(() => {
+    setPlayerReady(false);
+    setIframeLoadError(false);
+    refreshIframe();
+  }, [setIframeLoadError, refreshIframe]);
+
+  const handleSeasonChange = useCallback(
+    (seasonNum: number) => {
+      setSelectedSeason(seasonNum);
+      setActiveEpisode(1);
+      startTransition(async () => {
+        const data = await getSeasonAction(contentid, seasonNum);
+        setSeasonData(data);
+      });
+    },
+    [contentid, setSelectedSeason, setActiveEpisode],
+  );
+
+  const handleProviderSelect = useCallback(
+    (provider: ProviderDefinition) => {
+      setSelectedProvider(provider.id);
+    },
+    [setSelectedProvider],
+  );
+
   // ── Desktop Electron integration ──
-  const isDesktop = typeof window !== 'undefined' && (window as any).electronAPI?.isDesktop === true;
+  const isDesktop =
+    typeof window !== 'undefined' && (window as any).electronAPI?.isDesktop === true;
   const activeProviderRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -105,18 +199,22 @@ function WatchClientContent({
     if (activeProviderRef.current === currentProvider.id) return;
     activeProviderRef.current = currentProvider.id;
 
-    const embedUrl = buildEmbedUrl(currentProvider, contentid, plat, selectedSeason, activeEpisode);
-    (window as any).electronAPI?.openVideo({
-      type: plat,
-      id: contentid,
-      season: plat === 'tv' ? selectedSeason : undefined,
-      episode: plat === 'tv' ? activeEpisode : undefined,
-      provider: currentProvider.id,
-      embedUrl,
-    }).then((result: any) => {
-      if (result?.success) setElectronVideoOpen(true);
-    });
-  }, [isDesktop, currentProvider]);
+    const url = absUrl(
+      buildEmbedUrl(currentProvider, contentid, plat, selectedSeason, activeEpisode),
+    );
+    (window as any).electronAPI
+      ?.openVideo({
+        type: plat,
+        id: contentid,
+        season: plat === 'tv' ? selectedSeason : undefined,
+        episode: plat === 'tv' ? activeEpisode : undefined,
+        provider: currentProvider.id,
+        embedUrl: url,
+      })
+      .then((result: any) => {
+        if (result?.success) setElectronVideoOpen(true);
+      });
+  }, [isDesktop, currentProvider, contentid, plat, selectedSeason, activeEpisode]);
 
   useEffect(() => {
     if (!isDesktop || !(window as any).electronAPI) return;
@@ -134,182 +232,212 @@ function WatchClientContent({
     };
   }, []);
 
-  // ── Season change handler ──
-  const handleSeasonChange = useCallback(
-    (seasonNum: number) => {
-      setSelectedSeason(seasonNum);
-      setActiveEpisode(1);
-      startTransition(async () => {
-        const data = await getSeasonAction(contentid, seasonNum);
-        setSeasonData(data);
-      });
-    },
-    [contentid, setSelectedSeason, setActiveEpisode],
-  );
-
-  // ── Provider selection handler ──
-  const handleProviderSelect = useCallback(
-    (provider: ProviderDefinition) => {
-      setSelectedProvider(provider.id);
-    },
-    [setSelectedProvider],
-  );
-
-  // ── Embed URL (for the iframe) ──
-  const embedUrl = currentProvider
-    ? buildEmbedUrl(currentProvider, contentid, plat, selectedSeason, activeEpisode)
-    : '';
-
-  // ── Re-open Electron player ──
   const reopenElectronPlayer = useCallback(() => {
     if (!currentProvider) return;
     setElectronVideoOpen(false);
     setTimeout(() => {
-      const embedUrl = buildEmbedUrl(currentProvider, contentid, plat, selectedSeason, activeEpisode);
-      (window as any).electronAPI?.openVideo({
-        type: plat, id: contentid, provider: currentProvider.id, embedUrl,
-      }).then((r: any) => {
-        if (r?.success) setElectronVideoOpen(true);
-      });
+      const url = absUrl(
+        buildEmbedUrl(currentProvider, contentid, plat, selectedSeason, activeEpisode),
+      );
+      (window as any).electronAPI
+        ?.openVideo({ type: plat, id: contentid, provider: currentProvider.id, embedUrl: url })
+        .then((r: any) => {
+          if (r?.success) setElectronVideoOpen(true);
+        });
     }, 100);
   }, [currentProvider, contentid, plat, selectedSeason, activeEpisode]);
 
   const openElectronPlayer = useCallback(() => {
     if (!currentProvider) return;
-    const embedUrl = buildEmbedUrl(currentProvider, contentid, plat, selectedSeason, activeEpisode);
-    (window as any).electronAPI?.openVideo({
-      type: plat, id: contentid, provider: currentProvider.id, embedUrl,
-    }).then((r: any) => {
-      if (r?.success) setElectronVideoOpen(true);
-    });
+    const url = absUrl(
+      buildEmbedUrl(currentProvider, contentid, plat, selectedSeason, activeEpisode),
+    );
+    (window as any).electronAPI
+      ?.openVideo({ type: plat, id: contentid, provider: currentProvider.id, embedUrl: url })
+      .then((r: any) => {
+        if (r?.success) setElectronVideoOpen(true);
+      });
   }, [currentProvider, contentid, plat, selectedSeason, activeEpisode]);
 
   const displayTitle = initialMeta?.name || initialMeta?.title || '';
   const year = (initialMeta?.release_date || initialMeta?.first_air_date || '').slice(0, 4);
 
+  // ── PC / Console fallback for Electron ──
+  if (isDesktop && electronVideoOpen) {
+    return (
+      <div className="min-h-screen bg-[#070708] text-[#A1A1AA] flex items-center justify-center p-4">
+        <DesktopVideoPlayer
+          provider={currentProvider}
+          meta={initialMeta}
+          plat={plat}
+          onReopen={reopenElectronPlayer}
+        />
+      </div>
+    );
+  }
+  if (isDesktop && !electronVideoOpen) {
+    return (
+      <div className="min-h-screen bg-[#070708] text-[#A1A1AA] flex items-center justify-center p-4">
+        <DesktopVideoIdle
+          provider={currentProvider}
+          meta={initialMeta}
+          plat={plat}
+          onOpen={openElectronPlayer}
+        />
+      </div>
+    );
+  }
+
+  // ── Render ──
   return (
     <div className="min-h-screen bg-[#070708] text-[#A1A1AA]">
-      <main
-        className={`max-w-6xl mx-auto px-3 sm:px-4 ${
-          minimal
-            ? 'min-h-screen flex flex-col justify-center py-0 sm:py-2'
-            : 'py-4 sm:py-6 lg:py-12'
-        }`}
-      >
-        {/* ── Header Area ── */}
+      {/* Film grain */}
+      <div className="fixed inset-0 pointer-events-none opacity-[0.03] bg-[url('/noise.svg')] mix-blend-overlay -z-10" />
+
+      <div className="mx-auto w-full max-w-[1200px] px-3 sm:px-4 lg:px-6">
+        {/* ── Title + Server area ── */}
         {!minimal && (
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-3 sm:gap-4 mb-6 sm:mb-8 px-1 sm:px-2">
-            <div>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 pb-2">
+            <div className="min-w-0">
               <h1
-                className="text-xl sm:text-2xl md:text-3xl font-bold text-[#F4F4F5] tracking-tight leading-none mb-2"
+                className="text-lg sm:text-xl font-bold text-[#F4F4F5] truncate"
                 style={{ fontFamily: 'var(--font-display)' }}
               >
                 {displayTitle}
               </h1>
-              <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-[#52525B]">
-                <span className="text-[#F4F4F5]/80">{plat}</span>
-                <span className="w-1 h-1 rounded-full bg-[#222226]" />
+              <div className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">
+                <span className="text-[#D4A237]">{plat === 'tv' ? 'Series' : 'Film'}</span>
+                <span className="w-1 h-1 rounded-full bg-zinc-700" />
                 <span>{year}</span>
               </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <ServerPickerSheet onSelect={handleProviderSelect} selectedId={selectedProviderId} />
             </div>
           </div>
         )}
 
-        {/* ── Server Picker ── */}
-        {!minimal && (
-          <ServerPickerSheet
-            onSelect={handleProviderSelect}
-            selectedId={selectedProviderId}
-          />
-        )}
-
-        {/* ── Dismissible Notice ── */}
-        {!minimal && showNotice && (
-          <div className="flex items-center gap-3 text-sm bg-white/[0.03] px-4 sm:px-5 py-3 rounded-xl border border-white/[0.05] mb-4 sm:mb-6 backdrop-blur-sm">
-            <AlertCircle size={16} className="text-[#A1A1AA] flex-shrink-0" />
-            <p className="flex-1 text-xs sm:text-sm text-[#A1A1AA]">
-              If the video is stuck, try switching to a different server above.
-            </p>
-            <button
-              onClick={() => setShowNotice(false)}
-              className="text-[#52525B] hover:text-[#F4F4F5] transition-colors p-1 flex-shrink-0"
-              aria-label="Dismiss"
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )}
-
         {/* ── Video Player ── */}
-        {isDesktop && electronVideoOpen ? (
-          <DesktopVideoPlayer
-            provider={currentProvider}
-            meta={initialMeta}
-            plat={plat}
-            onReopen={reopenElectronPlayer}
-          />
-        ) : isDesktop && !electronVideoOpen ? (
-          <DesktopVideoIdle
-            provider={currentProvider}
-            meta={initialMeta}
-            plat={plat}
-            onOpen={openElectronPlayer}
-          />
-        ) : (
-          <div
-            ref={playerContainerRef}
-            className="relative aspect-video w-full rounded-xl sm:rounded-2xl overflow-hidden bg-[#0E0E11] shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08] group/player"
-          >
-            {/* Ambient glow */}
-            <div className="absolute -inset-4 bg-gradient-radial from-[#D4A237]/5 via-transparent to-transparent opacity-60 pointer-events-none z-0" />
+        <div className="relative w-full aspect-video rounded-xl sm:rounded-2xl overflow-hidden bg-[#0E0E11] shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08] group/player">
+          {/* Ambient glow */}
+          <div className="absolute -inset-4 bg-gradient-radial from-[#D4A237]/5 via-transparent to-transparent opacity-60 pointer-events-none z-0" />
 
-            {/* CPU Warning — blank the iframe */}
-            {cpuWarning && currentProvider && (
-              <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#070708]/80 backdrop-blur-sm">
-                <div className="flex items-center gap-3 text-sm text-[#E05252] bg-red-500/10 px-5 py-4 rounded-xl border border-red-500/20 max-w-md mx-4">
-                  <AlertCircle size={16} className="text-[#E05252] flex-shrink-0" />
-                  <div className="flex-1 text-xs sm:text-sm">
-                    This server is using too much CPU — it has been stopped.
-                    <span className="block mt-1 text-[#A1A1AA]">
-                      Switch to a different server above to continue watching.
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => {}}
-                    className="text-[#52525B] hover:text-[#F4F4F5] transition-colors p-1 flex-shrink-0"
-                    aria-label="Dismiss"
-                  >
-                    <X size={14} />
-                  </button>
+          {/* CPU Warning */}
+          {cpuWarning && currentProvider && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#070708]/80 backdrop-blur-sm">
+              <div className="flex items-center gap-3 text-sm text-[#E05252] bg-red-500/10 px-5 py-4 rounded-xl border border-red-500/20 max-w-md mx-4">
+                <AlertCircle size={16} className="text-[#E05252] flex-shrink-0" />
+                <div className="flex-1 text-xs sm:text-sm">
+                  This server is using too much CPU — it has been stopped.
+                  <span className="block mt-1 text-[#A1A1AA]">
+                    Switch to a different server above to continue watching.
+                  </span>
                 </div>
+                <button
+                  onClick={() => {}}
+                  className="text-[#52525B] hover:text-[#F4F4F5] transition-colors p-1 flex-shrink-0"
+                  aria-label="Dismiss"
+                >
+                  <X size={14} />
+                </button>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* The iframe */}
-            {!cpuWarning && embedUrl && (
-              <SecureIframe
-                src={embedUrl}
-                key={`provider-${refreshKey}`}
-              />
-            )}
+          {/* Error State */}
+          {iframeLoadError && !cpuWarning && (
+            <PlayerErrorState onRetry={handleRetry} />
+          )}
 
-            {/* Loading overlay */}
-            <PlayerControlOverlay isPending={isPending} />
-          </div>
-        )}
+          {/* The iframe */}
+          {!cpuWarning && !iframeLoadError && embedUrl && (
+            <SecureIframe
+              src={embedUrl}
+              sandbox={currentProvider?.sandbox}
+              csp={currentProvider ? buildIframeCSP(currentProvider) : undefined}
+              key={`provider-${selectedProviderId}-${selectedSeason}-${activeEpisode}-${refreshKey}`}
+              onLoad={handleIframeLoad}
+              onError={handleIframeError}
+            />
+          )}
+
+          {/* Cover overlays — visual band-aid, never block clicks */}
+          {currentProvider?.coverOverlays?.map((o, i) => (
+            <div
+              key={`cover-${i}`}
+              className="absolute z-20 pointer-events-none"
+              style={{
+                top: o.top,
+                left: o.left,
+                width: o.width,
+                height: o.height,
+                borderRadius: '20px',
+                background: 'rgba(14, 14, 17, 0.9)',
+              }}
+            />
+          ))}
+
+          {/* Loading / controls overlay */}
+          <PlayerControlOverlay isPending={!playerReady || isPending} />
+        </div>
+
+        {/* ── Stuck-video hint ── */}
+        <div className="flex items-center gap-2.5 px-3 py-2.5 mt-2 rounded-xl bg-[#D4A237]/8 border border-[#D4A237]/15">
+          <AlertCircle size={14} className="text-[#D4A237] shrink-0" />
+          <p className="text-xs sm:text-sm text-zinc-400">
+            Video stuck? Switch the source server at the top.
+          </p>
+        </div>
 
         {/* ── Episode Rail (TV only) ── */}
-        <EpisodeRail
-          seasonData={seasonData}
-          seasons={initialMeta?.seasons}
-          onSeasonChange={handleSeasonChange}
-        />
-      </main>
+        {plat === 'tv' && (
+          <EpisodeRail
+            seasonData={seasonData}
+            seasons={initialMeta?.seasons}
+            onSeasonChange={handleSeasonChange}
+          />
+        )}
+
+        {/* ── Movie overview ── */}
+        {plat === 'movie' && !minimal && initialMeta?.overview && (
+          <div className="mt-4 pb-4">
+            <p className="text-xs sm:text-sm text-zinc-500 leading-relaxed line-clamp-3">
+              {initialMeta.overview}
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-// ── Main WatchClient — wraps content in PlayerProvider ────────────
+// ── Error State Component ───────────────────────────────────────
+
+function PlayerErrorState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070708] z-40 gap-4 px-6">
+      <Clapperboard className="text-[#D4A237]" size={48} strokeWidth={1.5} />
+      <p
+        className="text-xl text-[#F4F4F5] font-bold text-center"
+        style={{ fontFamily: 'var(--font-display)' }}
+      >
+        Projection Reel Snapped
+      </p>
+      <p className="text-sm text-[#A1A1AA] text-center max-w-xs">
+        We couldn&apos;t load this stream. The source server might be offline.
+      </p>
+      <button
+        onClick={onRetry}
+        className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#D4A237] text-[#070708] text-sm font-bold hover:bg-[#B88B2A] transition-colors active:scale-95"
+      >
+        <RefreshCw size={14} />
+        Reload Source
+      </button>
+    </div>
+  );
+}
+
+// ── Wrapper — wraps content in PlayerProvider ────────────────────
 
 interface WatchClientProps {
   contentid: string;
@@ -371,9 +499,8 @@ function DesktopPlayerCard({
   const posterUrl = meta?.poster_path ? getImageUrl(meta.poster_path, 'w185') : null;
 
   return (
-    <div className="relative aspect-video w-full rounded-xl sm:rounded-2xl overflow-hidden bg-gradient-to-br from-[#16161A] via-[#0E0E11] to-[#070708] shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08]">
+    <div className="relative aspect-video w-full max-w-2xl rounded-xl sm:rounded-2xl overflow-hidden bg-gradient-to-br from-[#16161A] via-[#0E0E11] to-[#070708] shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08]">
       <div className="absolute inset-0 bg-gradient-radial from-[#D4A237]/[0.04] via-transparent to-transparent" />
-
       {showBackButton && (
         <div className="absolute top-3 left-3 z-20">
           <Link
@@ -385,7 +512,6 @@ function DesktopPlayerCard({
           </Link>
         </div>
       )}
-
       <div className="absolute inset-0 flex items-center gap-6 p-6 sm:p-8">
         <div className="flex-shrink-0 hidden sm:block">
           {posterUrl ? (
@@ -400,7 +526,6 @@ function DesktopPlayerCard({
             </div>
           )}
         </div>
-
         <div className="flex-1 min-w-0">
           <div className="mb-3">
             <h2 className="text-lg sm:text-xl font-bold text-[#F4F4F5] tracking-tight truncate">
@@ -414,14 +539,6 @@ function DesktopPlayerCard({
             </div>
           </div>
           {children}
-        </div>
-      </div>
-
-      <div className="sm:hidden absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent pointer-events-none">
-        <h3 className="text-sm font-bold text-[#F4F4F5] truncate">{displayTitle}</h3>
-        <div className="flex items-center gap-2 mt-0.5">
-          {year && <span className="text-xs text-[#A1A1AA]">{year}</span>}
-          <span className="text-[10px] font-black uppercase tracking-widest text-[#52525B]">{plat}</span>
         </div>
       </div>
     </div>
@@ -440,7 +557,6 @@ function DesktopVideoPlayer({
   onReopen: () => void;
 }) {
   const [showLoader, setShowLoader] = useState(true);
-
   useEffect(() => {
     const t = setTimeout(() => setShowLoader(false), 2000);
     return () => clearTimeout(t);
@@ -474,8 +590,8 @@ function DesktopVideoPlayer({
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[#52525B] mb-3">
             <span className="flex items-center gap-1.5">{provider?.displayName || provider?.id}</span>
-            <span className="text-[#52525B] hidden sm:inline">·</span>
-            <span className="text-[#52525B]">All security layers active</span>
+            <span className="hidden sm:inline">·</span>
+            <span>All security layers active</span>
           </div>
           <button
             onClick={onReopen}
