@@ -15,6 +15,7 @@ import { getImageUrl } from '@filmsnaps/shared';
 import { ProgressiveImage } from '../../components/ProgressiveImage';
 import { MediaCard } from '../../components/MediaCard';
 import { usePersonDetails, usePersonCredits } from '../../hooks/useTMDB';
+import { PersonSkeleton } from '../../components/Skeletons';
 
 export default function PersonDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -35,11 +36,7 @@ export default function PersonDetailScreen() {
     .sort((a: any, b: any) => ((b.first_air_date || '') > (a.first_air_date || '') ? 1 : -1));
 
   if (loadingPerson) {
-    return (
-      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
-        <ActivityIndicator size="large" color="#D4A237" />
-      </View>
-    );
+    return <PersonSkeleton />;
   }
 
   if (!person) {
@@ -61,8 +58,9 @@ export default function PersonDetailScreen() {
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         {/* Back button */}
         <View className="px-4 pt-2 pb-3">
-          <TouchableOpacity onPress={() => router.back()} className="w-9 h-9 rounded-full bg-black/40 items-center justify-center" activeOpacity={0.7} accessibilityLabel="Go back" accessibilityRole="button">
-            <Ionicons name="chevron-back" size={22} color="#F4F4F5" />
+          <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} accessibilityLabel="Go back" accessibilityRole="button" style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(8,8,8,0.7)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 }}>
+            <Ionicons name="chevron-back" size={18} color="#F4F4F5" />
+            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: '#F4F4F5', marginLeft: 2 }}>Back</Text>
           </TouchableOpacity>
         </View>
 

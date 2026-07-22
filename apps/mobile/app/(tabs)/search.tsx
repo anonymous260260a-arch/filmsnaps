@@ -1,4 +1,4 @@
-﻿import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import { useDebounce } from '../../hooks/useDebounce';
 import { useSearch, useFilteredMovies, useFilteredTVShows } from '../../hooks/useTMDB';
 import { tmdbApi } from '../../lib/api';
 import { MediaCard } from '../../components/MediaCard';
+import { SearchSkeleton } from '../../components/Skeletons';
 import type { Movie } from '@filmsnaps/shared';
 
 const NUM_COLUMNS = 3;
@@ -267,8 +268,13 @@ export default function SearchScreen() {
 
       {/* Content */}
       {isLoading ? (
-        <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color="#D4A237" />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', padding: PADDING, gap: GAP }}>
+          {Array.from({ length: 9 }).map((_, i) => (
+            <View key={i} style={{ width: itemWidth }}>
+              <View style={{ width: itemWidth, height: itemHeight, borderRadius: 12, backgroundColor: '#1C1C20' }} />
+              <View style={{ width: '80%', height: 10, borderRadius: 4, backgroundColor: '#1C1C20', marginTop: 6 }} />
+            </View>
+          ))}
         </View>
       ) : (query.length >= 2 || hasActiveFilters) && filteredResults.length > 0 ? (
         <FlatList

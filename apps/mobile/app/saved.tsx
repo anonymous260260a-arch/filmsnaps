@@ -1,4 +1,4 @@
-﻿import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,19 +6,43 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   useWindowDimensions,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { tmdbApi } from '../../lib/api';
-import { MediaCard } from '../../components/MediaCard';
-import { getAllBookmarks, clearAllBookmarks } from '../../lib/bookmarks';
-import type { Bookmark } from '../../lib/bookmarks';
+import { tmdbApi } from '../lib/api';
+import { MediaCard } from '../components/MediaCard';
+import { getAllBookmarks, clearAllBookmarks } from '../lib/bookmarks';
+import type { Bookmark } from '../lib/bookmarks';
 
 const NUM_COLUMNS = 3;
 const GAP = 8;
 const PADDING = 16;
+
+function SavedSkeleton() {
+  const { width: SCREEN_WIDTH } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const cardWidth = (SCREEN_WIDTH - 32 - 16) / 3;
+  const cardHeight = cardWidth * 1.5;
+  return (
+    <View style={{ flex: 1, backgroundColor: '#070708', paddingTop: insets.top }}>
+      <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between' }}>
+        <View style={{ width: 70, height: 22, borderRadius: 4, backgroundColor: '#1C1C20' }} />
+        <View style={{ width: 48, height: 20, borderRadius: 4, backgroundColor: '#1C1C20' }} />
+      </View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', padding: 16, gap: 8 }}>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <View key={i} style={{ width: cardWidth }}>
+            <View style={{ width: cardWidth, height: cardHeight, borderRadius: 12, backgroundColor: '#1C1C20' }} />
+            <View style={{ width: '80%', height: 10, borderRadius: 4, backgroundColor: '#1C1C20', marginTop: 6 }} />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
 
 export default function SavedScreen() {
   const router = useRouter();
@@ -80,22 +104,36 @@ export default function SavedScreen() {
   );
 
   if (loading) {
-    return (
-      <View className="flex-1 bg-void items-center justify-center" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
-        <ActivityIndicator size="large" color="#D4A237" />
-      </View>
-    );
+    return <SavedSkeleton />;
   }
 
   return (
     <View className="flex-1 bg-void" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
       {/* Header */}
       <View className="px-5 pt-4 pb-2 flex-row items-center justify-between">
-        <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: '#F4F4F5' }}>
-          Saved
-        </Text>
+        <View className="flex-row items-center">
+          <TouchableOpacity
+            onPress={() => router.back()}
+            className="w-9 h-9 rounded-full bg-zinc-800/60 items-center justify-center mr-3"
+            activeOpacity={0.7}
+          >
+            <Ionicons name="chevron-back" size={20} color="#F4F4F5" />
+          </TouchableOpacity>
+          <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: '#F4F4F5' }}>
+            Saved
+          </Text>
+        </View>
         {bookmarks.length > 0 && (
-          <TouchableOpacity onPress={handleClearAll} activeOpacity={0.7} className="flex-row items-center">
+          <TouchableOpacity onPress={() => {
+            Alert.alert(
+              'Clear Saved',
+              'This will remove all your saved items. This cannot be undone.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Clear All', style: 'destructive', onPress: handleClearAll },
+              ]
+            );
+          }} activeOpacity={0.7} className="flex-row items-center">
             <Ionicons name="trash-outline" size={16} color="#ef4444" />
             <Text className="text-red-400 text-xs ml-1.5 font-semibold">Clear</Text>
           </TouchableOpacity>

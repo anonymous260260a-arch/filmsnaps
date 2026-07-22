@@ -247,7 +247,7 @@ export function generateNavBlockerScript(
       ancestorOrigins: { length: 0, contains: function(){return false;}, item: function(){return null;} },
       assign: function(u){ console.log('[NavBlocker] Blocked location.assign:', u); },
       replace: function(u){ console.log('[NavBlocker] Blocked location.replace:', u); },
-      reload: function(){ location.reload(); },
+      reload: function(){ console.log('[NavBlocker] Blocked location.reload'); },
       toString: function(){ return TARGET; }
     };
     try { Object.freeze(loc); } catch(e){}
@@ -535,7 +535,7 @@ export function generateRuntimeProtectionScript(
       ancestorOrigins: { length: 0, contains: function(){return false;}, item: function(){return null;} },
       assign: function(u){ warn('location.assign blocked: ' + u); },
       replace: function(u){ warn('location.replace blocked: ' + u); },
-      reload: function(){ location.reload(); },
+      reload: function(){ console.log('[NavBlocker] Blocked location.reload'); },
       toString: function(){ return TARGET_URL; }
     };
     // Also freeze the nested ancestorOrigins

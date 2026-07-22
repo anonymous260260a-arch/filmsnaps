@@ -1,8 +1,8 @@
-﻿/**
+/**
  * EpisodeRail â€” Season/Episode picker bottom sheet modal for TV shows on mobile.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { getImageUrl } from '@filmsnaps/shared';
 import { ProgressiveImage } from '../ProgressiveImage';
 import { useSeasonEpisodes, useTVSeasonsOnly } from '../../hooks/useTMDB';
@@ -38,6 +39,9 @@ export function EpisodeRail({
 }: EpisodeRailProps) {
   const { height: SCREEN_HEIGHT } = Dimensions.get('window');
   const [pickerSeason, setPickerSeason] = useState(currentSeason);
+  const nextUpFound = useRef(false);
+  // Reset nextUp tracker when season changes
+  useEffect(() => { nextUpFound.current = false; }, [pickerSeason]);
 
   const {
     data: seasonData,
@@ -164,16 +168,20 @@ export function EpisodeRail({
                 const epProg = episodeProgress[progKey];
                 const hasProgress = epProg && !epProg.completed && epProg.percent > 0.05;
                 const isCompleted = epProg?.completed;
+                const isNextUp = !isActive && !isCompleted && !hasProgress && !nextUpFound.current;
+                if (isNextUp) nextUpFound.current = true;
 
                 return (
                   <TouchableOpacity
                     key={ep.id ?? index}
-                    onPress={() => onSelect(pickerSeason, epNum ?? 1)}
+                    onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onSelect(pickerSeason, epNum ?? 1); }}
                     activeOpacity={0.7}
                     className={`flex-row rounded-lg overflow-hidden mb-1.5 ${
                       isActive
                         ? 'bg-primary/10 border border-amber-500/20'
-                        : 'bg-zinc-800/40'
+                        : isNextUp
+                          ? 'bg-zinc-800/40 border-l-2 border-l-primary'
+                          : 'bg-zinc-800/40'
                     }`}
                   >
                     {/* Thumbnail */}
@@ -232,6 +240,11 @@ export function EpisodeRail({
                         <Text className="text-zinc-400 text-[10px] font-semibold">
                           E{String(epNum ?? index + 1).padStart(2, '0')}
                         </Text>
+                        {isNextUp && (
+                          <View className="bg-primary/20 px-1.5 py-0.5 rounded-full">
+                            <Text className="text-primary text-[8px] font-bold">Next Up</Text>
+                          </View>
+                        )}
                         {ep.runtime ? (
                           <>
                             <Text className="text-zinc-600 text-[10px]">Â·</Text>

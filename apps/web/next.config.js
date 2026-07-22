@@ -4,7 +4,7 @@ const nextConfig = {
   // (bundles server + deps into .next/standalone/ for Electron)
   output: process.env.BUILD_FOR_DESKTOP === 'true' ? 'standalone' : undefined,
   reactStrictMode: true,
-
+  allowedDevOrigins:["192.168.100.7"],
   // Performance optimizations
   poweredByHeader: false,
   compress: true,

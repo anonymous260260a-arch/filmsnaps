@@ -23,6 +23,7 @@ import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.URL
 import java.util.LinkedHashMap
+import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.GZIPInputStream
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -43,18 +44,329 @@ class PlayerWebViewOverlayView(
 ) : FrameLayout(context) {
 
   companion object {
-    // ── Dynamic WebView Pool ──
-    // On low-end devices (<4GB RAM / isLowRamDevice), only keep 1 reserved
-    // WebView to avoid OOM kills (each Chromium renderer uses ~40-80MB RSS).
-    // On modern devices, keep 2 for snappier provider switches.
-    private val maxPoolSize: Int by lazy {
-      // Use the Dalvik heap limit as a proxy for device class.
-      // Devices with <=128MB heap (typically <=3GB RAM) get pool size 1
-      // to avoid OOM kills from multiple Chromium renderer processes.
-      val maxHeapMb = Runtime.getRuntime().maxMemory() / (1024L * 1024L)
-      if (maxHeapMb <= 128) 1 else 2
+    // ── Double-Buffer Swap Timeout ──
+    // Force swap after this duration even if onPageFinished hasn't fired.
+    // Prevents the user from being stuck on a blank screen if the new
+    // provider's page never finishes loading.
+    private const val SWAP_TIMEOUT_MS = 4000L
+
+    // ── disable-devtool Redirect Blocker ──
+    // Injected into the MAIN FRAME via addDocumentStartJavaScript.
+    // The disable-devtool script detects "tampering" (our injected globals)
+    // and tries to redirect to its 404 page. We let the script load
+    // (providers check for it), but override window.location.href/assign/replace
+    // to block the redirect at the DOM level. The script silently gives up.
+    // ── disable-devtool: Source-Code-Targeted Defense ──
+    // Based on analysis of the actual disable-devtool source code.
+    // Surgically neutralizes each detector by name:
+    //   - DefineIdDetector: Object.defineProperty(div, 'id', {get: trigger})
+    //   - PerformanceDetector: console.table() vs console.log() timing
+    //   - DateToStringDetector: Date.toString() counter via console.log
+    //   - FuncToStringDetector: Function toString() counter via console.log
+    //   - closeWindow: redirect to 404.html via window.location.href
+    private val DEVTOOT_REDIRECT_BLOCKER = """
+      (function(){
+        'use strict';
+        var _nativeDefProp = Object.defineProperty;
+
+        // Cloaking Helper — prevents script from detecting hijacked native methods.
+        // Stores _fsNativeStr so Function.prototype.toString (overridden below)
+        // returns the fake native code string, defeating Function.prototype.toString.call(fn)
+        // checks that the disable-devtool library uses to detect tampering.
+        function maskNative(fn, name) {
+          if (!fn) return fn;
+          try {
+            var fakeToString = function() { return 'function ' + name + '() { [native code] }'; };
+            _nativeDefProp.call(Object, fn, 'toString', { value: fakeToString, configurable: true, writable: true });
+            _nativeDefProp.call(Object, fakeToString, 'toString', {
+              value: function() { return 'function toString() { [native code] }'; },
+              configurable: true, writable: true
+            });
+            _nativeDefProp.call(Object, fn, '_fsNativeStr', { value: 'function ' + name + '() { [native code] }', configurable: false });
+          } catch(e) {}
+          return fn;
+        }
+
+        // Override Function.prototype.toString — clones the approach from BRIDGE_SCRIPT_SNIPPET.
+        // Without this, the library calls Function.prototype.toString.call(ourWrappedFn)
+        // and sees the REAL native code signature, detecting our monkey-patches instantly.
+        try {
+          var _origFnToString = Function.prototype.toString;
+          Function.prototype.toString = maskNative(function() {
+            if (typeof this === 'function' && this._fsNativeStr) return this._fsNativeStr;
+            return _origFnToString.apply(this, arguments);
+          }, 'toString');
+        } catch(e) {}
+
+        // Android outerWidth/outerHeight spoofing
+        try {
+          _nativeDefProp.call(Object, window, 'outerWidth', { get: function() { return window.innerWidth; }, configurable: true });
+          _nativeDefProp.call(Object, window, 'outerHeight', { get: function() { return window.innerHeight; }, configurable: true });
+        } catch(e) {}
+
+        // ═══════════════════════════════════════════════════════════════════
+        // DefineIdDetector NEUTRALIZATION (the ROOT CAUSE of all detections)
+        // ═══════════════════════════════════════════════════════════════════
+        // The library's define-id.ts does:
+        //   1. this.div.__defineGetter__('id', () => onDevToolOpen())
+        //   2. Object.defineProperty(this.div, 'id', { get: () => onDevToolOpen() })
+        //   3. log(this.div) = console.log(div)
+        //   4. Chromium ALWAYS accesses div.id when serializing a DOM element
+        //      for console.log, even WITHOUT devtools connected.
+        //   5. The __defineGetter__ callback fires -> onDevToolOpen() -> closeWindow()
+        //
+        // This is a FALSE POSITIVE in the library: console.log(div) accesses
+        // div.id in EVERY browser, not just when devtools is open.
+        //
+        // Fix: Block __defineGetter__('id', ...) AND
+        // Object.defineProperty(el, 'id', {get: ...}) on DOM elements.
+        // With the id getter never set, log(this.div) is harmless.
+
+        // Layer 1: Block __defineGetter__ for 'id' on elements
+        try {
+          var _origDefGetter = Object.prototype.__defineGetter__;
+          if (typeof _origDefGetter === 'function') {
+            Object.defineProperty(Object.prototype, '__defineGetter__', {
+              value: function(prop, cb) {
+                if (prop === 'id' && this != null && typeof this.tagName === 'string') {
+                  return;
+                }
+                return _origDefGetter.call(this, prop, cb);
+              },
+              writable: true, configurable: true
+            });
+          }
+        } catch(e) {}
+
+        // Layer 2: Block __defineSetter__ for 'id' on elements (defense in depth)
+        try {
+          var _origDefSetter = Object.prototype.__defineSetter__;
+          if (typeof _origDefSetter === 'function') {
+            Object.defineProperty(Object.prototype, '__defineSetter__', {
+              value: function(prop, cb) {
+                if (prop === 'id' && this != null && typeof this.tagName === 'string') {
+                  return;
+                }
+                return _origDefSetter.call(this, prop, cb);
+              },
+              writable: true, configurable: true
+            });
+          }
+        } catch(e) {}
+
+        // Layer 3: Block Object.defineProperty for 'id' getter on elements
+        try {
+          var wrappedDefProp = function(obj, prop, desc) {
+            if (obj && typeof obj.tagName === 'string' && prop === 'id' && desc && desc.get) {
+              return obj;
+            }
+            return _nativeDefProp.apply(this, arguments);
+          };
+          Object.defineProperty = maskNative(wrappedDefProp, 'defineProperty');
+        } catch(e) {}
+
+        // Redirect Interception (masked)
+        var HINTS = ['theajack.github.io', 'disable-devtool', '/404.html'];
+        function blocked(u) {
+          if (u == null) return false;
+          var s = String(u);
+          for (var i = 0; i < HINTS.length; i++) {
+            if (s.indexOf(HINTS[i]) !== -1) return true;
+          }
+          return false;
+        }
+
+        // BUG FIX: window.Location is undefined in Chromium (the Location
+        // constructor is NOT exposed on window). Use the prototype from
+        // the actual location object instead.
+        try {
+          var locProto = Object.getPrototypeOf(window.location);
+          var d = Object.getOwnPropertyDescriptor(locProto, 'href');
+          if (d && d.set) {
+            var origHrefSet = d.set;
+            var newHrefSet = function(u) { if (!blocked(u)) origHrefSet.call(this, u); };
+            _nativeDefProp.call(Object, locProto, 'href', {
+              configurable: true, enumerable: true, get: d.get, set: maskNative(newHrefSet, 'set')
+            });
+          }
+        } catch(e) {}
+
+        // Override window.location setter — catches window.location = url
+        // (uses Window.prototype.location, NOT Location.prototype.href)
+        try {
+          var winProto = Object.getPrototypeOf(window);
+          var wlDesc = Object.getOwnPropertyDescriptor(winProto, 'location');
+          if (wlDesc && wlDesc.set) {
+            var origWinLocSet = wlDesc.set;
+            Object.defineProperty(winProto, 'location', {
+              configurable: true, enumerable: true,
+              get: function() { return wlDesc.get.call(this); },
+              set: function(u) { if (!blocked(u)) origWinLocSet.call(this, u); }
+            });
+          }
+        } catch(e) {}
+
+        ['assign', 'replace'].forEach(function(m) {
+          try {
+            var locProto = Object.getPrototypeOf(window.location);
+            var orig = locProto[m];
+            locProto[m] = maskNative(function(u) { if (!blocked(u)) return orig.call(this, u); }, m);
+          } catch(e) {}
+        });
+
+        // Prevent disable-devtool's closeWindow() from clearing the DOM
+        // before it attempts the redirect. Some versions nuke document.body
+        // as a side effect before the navigation we already block.
+        try {
+          var bodyDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+          if (bodyDesc && bodyDesc.set) {
+            var origBodySet = bodyDesc.set;
+            Object.defineProperty(Element.prototype, 'innerHTML', {
+              configurable: true,
+              set: function(val) {
+                if (val === '' && this === (document.body || document.documentElement)) return;
+                return origBodySet.call(this, val);
+              },
+              get: function() { return bodyDesc.get.call(this); }
+            });
+          }
+        } catch(e) {}
+        try {
+          var origWrite = Document.prototype.write;
+          Document.prototype.write = maskNative(function() { return null; }, 'write');
+        } catch(e) {}
+        try {
+          var origWriteln = Document.prototype.writeln;
+          Document.prototype.writeln = maskNative(function() { return null; }, 'writeln');
+        } catch(e) {}
+        try {
+          var origOpen = Document.prototype.open;
+          Document.prototype.open = maskNative(function() { return this; }, 'open');
+        } catch(e) {}
+
+        try { window.close = maskNative(function() {}, 'close'); } catch(e) {}
+        try { History.prototype.back = maskNative(function() {}, 'back'); } catch(e) {}
+        try {
+          var _origOpen = window.open;
+          window.open = maskNative(function(u) {
+            if (blocked(u) || u === '') return null;
+            return _origOpen.apply(this, arguments);
+          }, 'open');
+        } catch(e) {}
+      })();
+    """.trimIndent()
+
+    // ── Chromium Renderer Warmup ──
+    // Pre-spawn the Chromium renderer process at app launch. Creating a
+    // WebView after warmup skips the process spawn (~50-80ms vs ~500ms).
+    private val rendererWarmed = AtomicBoolean(false)
+
+    fun warmupRenderer(context: Context) {
+      if (!rendererWarmed.compareAndSet(false, true)) return
+      // Initialize remote blocklist config (fetch + cache)
+      BlocklistConfigLoader.init(context)
+      // Apply config to effective sets (may update from cached version)
+      val cfg = BlocklistConfigLoader.config
+      if (cfg.version > 0) applyRemoteConfig(cfg)
+      android.os.Handler(android.os.Looper.getMainLooper()).post {
+        try {
+          val warmup = WebView(context)
+          warmup.loadUrl("about:blank")
+          android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            warmup.destroy()
+          }, 5000)
+        } catch (_: Exception) {}
+      }
     }
-    private val webViewPool: MutableList<WebView> = mutableListOf()
+
+    // ── Remote Config Integration ──
+    @Volatile private var remoteBlockedDomains: Set<String>? = null
+    @Volatile private var remoteProviderProfiles: Map<String, Set<String>>? = null
+    @Volatile private var remoteProviderRootHosts: Set<String>? = null
+
+    /**
+     * Effective CDN allowlist — flattened from blocklist.json's provider CDN domains.
+     * Hardcoded set removed Phase 1 (all config comes from BlocklistConfigLoader now).
+     */
+    val effectiveAllowedCdnHosts: Set<String>
+      get() = BlocklistConfigLoader.allCdnHosts
+    val effectiveBlockedDomains: Set<String>
+      get() = remoteBlockedDomains ?: emptySet()
+    val effectiveProviderProfiles: Map<String, Set<String>>
+      get() = remoteProviderProfiles ?: providerProfiles
+    val effectiveProviderRootHosts: Set<String>
+      get() = remoteProviderRootHosts ?: PROVIDER_ROOT_HOSTS
+
+    fun applyRemoteConfig(cfg: BlocklistConfig) {
+      if (cfg.blockedDomains.isNotEmpty()) {
+        remoteBlockedDomains = cfg.blockedDomains
+      }
+      if (cfg.providerProfiles.isNotEmpty()) {
+        remoteProviderProfiles = providerProfiles + cfg.providerProfiles
+      }
+      if (cfg.providerRootHosts.isNotEmpty()) {
+        remoteProviderRootHosts = PROVIDER_ROOT_HOSTS + cfg.providerRootHosts
+      }
+      android.util.Log.d("PlayerWebView",
+        "Applied remote config v${cfg.version}: " +
+        "allowed=${effectiveAllowedCdnHosts.size}, " +
+        "blocked=${effectiveBlockedDomains.size}, " +
+        "profiles=${effectiveProviderProfiles.size}, " +
+        "rootHosts=${effectiveProviderRootHosts.size}")
+    }
+
+    // Known video CDN domains — now comes from BlocklistConfigLoader (blocklist.json V2)
+    // Hardcoded set removed in Phase 1. See BlocklistConfigLoader.allCdnHosts.
+    // private val allowedCdnHosts: Set<String> = setOf(...)
+
+    // ── Video file extensions for MSE-based fetching ──
+    // Used by the workers.dev strict partitioning rule to distinguish
+    // media content (HLS/DASH manifests, video chunks) from ad payloads.
+    private val videoExtensions: Set<String> = setOf(
+      ".m3u8", ".ts", ".mp4", ".webm", ".key", ".m4s", ".init", ".mpd"
+    )
+
+    // ═══════════════════════════════════════════════════════════════
+    // R0: Video detection regex patterns (Phase 1 — Expert Rec)
+    // ═══════════════════════════════════════════════════════════════
+    // Path is lowercased before matching, so IGNORE_CASE is unnecessary.
+
+    // Media file extensions: HLS, DASH, MP4, segments, DRM keys
+    // Catches: master.m3u8, index.mpd, segment-001.ts, video.mp4, encryption.key
+    // Also catches with query params: master.m3u8?token=abc
+    private val VIDEO_EXTENSION_REGEX = Regex(
+      "\\.(m3u8|mpd|ts|m4s|mp4|webm|mkv|m4v|3gp|cmfv|cmfa|aac|key)(\\?.*)?$"
+    )
+
+    // Structured provider video paths: /tv/94997/1/1/master.m3u8, /movie/1431071/video.mp4
+    // Matches paths like /embed/movie/123, /watch/tv/456/2/3/manifest.m3u8, /tou/movies/789
+    private val VIDEO_PATH_REGEX = Regex(
+      "/(movie|tv|embed|watch|player|tou)/\\d+(/\\d+)?(/\\d+)?/.*\\.(m3u8|mpd|ts|m4s|mp4|webm)(\\?.*)?$"
+    )
+
+    // Base64-session paths: /nitro/ZXlKaGJHY2lPaUpJ.../master.m3u8 (nxsha proxy pattern)
+    // Also catches /{long-base64}/{filename}.{ext}
+    private val BASE64_VIDEO_PATH_REGEX = Regex(
+      "^/[a-zA-Z0-9_-]{20,}/(master|index|playlist|manifest)\\.(m3u8|mpd)(\\?.*)?$"
+    )
+
+    // Disguised HLS/DASH segments: providers serve video segments with non-video
+    // extensions (.woff2, .woff, .png, .css, .js) to evade adblockers that
+    // match on .ts/.m4s/.mp4.
+    //
+    // The path still follows HLS packaging conventions: seg-N, init-N, chunk-N,
+    // or part-N at the end of the URL path.
+    //
+    // Matches:  /v4/np/lnhlsj/seg-1-f1-v1.woff2
+    //           /v4/np/lnhlsj/init-f1-a1.woff
+    //           /{cdn}/{session}/chunk-3-video.png
+    //           /{cdn}/{session}/part-2-data.css
+    // Non-match: /fonts/inter/Inter-Regular.woff2
+    //           /css/main.css
+    //           /segue-styles.css
+    private val DISGUISED_MEDIA_REGEX = Regex(
+      "/(seg|init|chunk|part)(-\\d{1,4})?(-[a-zA-Z0-9]+)*\\.(woff2?|png|jpg|jpeg|gif|svg|css|js)(\\?.*)?$"
+    )
 
     // ── Per-Provider Essential Resource Profiles ──
     // Instead of a general-purpose blocklist (which grows perpetually), each
@@ -79,9 +391,33 @@ class PlayerWebViewOverlayView(
       "chillflix.lol" to setOf("chillflix.lol", "vidapi.cloud", "cloudfront.net"),
       "vidnest.fun" to setOf("vidnest.fun", "workers.dev", "vidnees",
                              "wyzie.io", "vdrk.site", "cloudfront.net",
-                             "themoviedb.org", "image.tmdb.org"),
+                             "themoviedb.org", "image.tmdb.org",
+                             "east-cloud.v01d.lol", "upcloud.animanga.fun",
+                             "megacloud.animanga.fun", "oo.itsnitrox.tech",
+                             "proxy.itsnitrox.tech"),
       "nhdapi.com" to setOf("nhdapi.com", "cloudfront.net"),
+      "zxcstream.xyz" to setOf("zxcstream.xyz", "test.zxcstream.xyz",
+                               "player.zxcstream.xyz", "cloudfront.net"),
+      "vidsync.live" to setOf("vidsync.live", "cloudfront.net", "workers.dev"),
       // New providers without profiles yet fall back to heuristic + blocklist
+    )
+
+    // All known provider root hosts (mirrors packages/shared/src/providers/registry.ts)
+    // Used by the P0 cross-provider policy check to identify and block
+    // navigations/resources from other providers within the locked session.
+    val PROVIDER_ROOT_HOSTS: Set<String> = setOf(
+      "web.nxsha.app", "nxcdn.app", "cdn.nxsha.app",
+      "peachify.top", "stats.peachify.top",
+      "screenscape.me", "www.googletagmanager.com",
+      "nhdapi.com",
+      "zxcstream.xyz", "test.zxcstream.xyz", "player.zxcstream.xyz",
+      "cinemaos.live",
+      "www.chillflix.lol", "chillflix.lol", "vidapi.cloud",
+      "vidnest.fun", "vidnees", "wyzie.io", "vdrk.site",
+      "toustream.xyz",
+      "vidsync.live",
+      "streamguide.cfd",
+      // Subtitle / data services (non-provider, must be in allowedCdnHosts too)
     )
 
     // ── DNS Cache Warming ──
@@ -98,6 +434,8 @@ class PlayerWebViewOverlayView(
       "api.themoviedb.org", "image.tmdb.org",
       "sub.wyzie.io", "sub.vdrk.site",
       "nhdapi.com",
+      "challenges.cloudflare.com",
+      "east-cloud.v01d.lol", "upcloud.animanga.fun", "megacloud.animanga.fun",
     )
 
     /** Warm the platform DNS cache on a background thread. Called once. */
@@ -114,40 +452,289 @@ class PlayerWebViewOverlayView(
         "DNS cache warmed: ${dnsCacheDomains.size} domains")
     }
 
-    // ── Child Frame Bridge HTML Injection ──
-    // addDocumentStartJavaScript silently fails to inject into cross-origin
-    // child iframes on some devices (MediaTek Helio G35 / Android 14).
-    // As a fallback, we inject the bridge script directly into the HTML
-    // response of child iframes via shouldInterceptRequest.
-
+    // ── Child Frame Bridge + Full Guard Script Injection ──
+    // Injects comprehensive ad-blocking layers into cross-origin child iframes
+    // via shouldInterceptRequest HTML interception. This bypasses Android's
+    // addDocumentStartJavaScript bug (silent failure on cross-origin iframes
+    // on MediaTek Helio G35 / Android 14+).
+    // Reference: EXPERTS.md "Q2/Timing of Script Injection"
     private val BRIDGE_SCRIPT_SNIPPET: String = """
 <script>
 (function(){
-if(window.__childBridgeInit)return;window.__childBridgeInit=true;
-var _fi=setInterval(function(){
-var _v=document.querySelector('video');
-if(!_v)return;clearInterval(_fi);var _ls=0;
-_v.addEventListener('timeupdate',function(){
-if(_v.duration<=0||_v.currentTime<=5)return;
-var _n=Date.now();if(_n-_ls<5000)return;_ls=_n;
-try{window.top.postMessage({type:'__player:child_anchor',readyState:'injected_ct',href:location.href,host:location.hostname,ts:Date.now()},'*')}catch(e){}
-try{window.top.postMessage({type:'__player:progress',currentTime:_v.currentTime,duration:_v.duration,percent:_v.currentTime/_v.duration},'*')}catch(e){}
-});
-window.addEventListener('message',function(e){
-if(!e.data||e.data.type!=='__player:seek')return;
-var _si=setInterval(function(){
-if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().catch(function(){})}catch(ex){}clearInterval(_si)}
-},200);
-});
-},500);
+if(window.__childFrameGuardInit)return;window.__childFrameGuardInit=true;
+
+// ── Native function masking helper (anti-anti-adblock) ──
+// Providers detect monkey-patches via toString() checks.
+// This wrapper overrides toString to return the native string.
+var _maskFn=function(fn,nativeStr){fn.toString=function(){return nativeStr};fn.toString.toString=function(){return 'function toString() { [native code] }'};try{Object.defineProperty(fn,'_fsNativeStr',{value:nativeStr,enumerable:false,configurable:false})}catch(e){}return fn};
+
+(function(){var _t=Function.prototype.toString;Function.prototype.toString=_maskFn(function(){if(this&&this._fsNativeStr)return this._fsNativeStr;return _t.call(this)},'function toString() { [native code] }')})();
+
+// ── Block window.open ──
+var _origOpen=window.open;
+window.open=_maskFn(function(url,name,features){
+  if(url&&typeof url==='string'){
+    try{
+      var u=new URL(url,location.href);
+      if(u.hostname!==location.hostname){
+        try{return new Proxy({},{get:function(){return function(){return null}}})}catch(e){return null}
+      }
+    }catch(e){}
+  }
+  try{return _origOpen.apply(window,arguments)}catch(e){return null}
+},'function open() { [native code] }');
+
+// ── Block disable-devtool hijack redirect ──
+// Override window.location.href setter to prevent navigation to
+// theajack.github.io/disable-devtool/404.html (white robot page).
+// The script detects "tampering" (our injected globals) and tries to
+// redirect. We let the script load (providers check for it) but
+// neutralize its redirect payload at the DOM level.
+(function(){
+  try{
+    var _locProto=window.location.constructor.prototype;
+    var _hrefDesc=Object.getOwnPropertyDescriptor(_locProto,'href');
+    if(_hrefDesc&&_hrefDesc.set){
+      var _origHrefSet=_hrefDesc.set;
+      Object.defineProperty(_locProto,'href',{
+        set:function(url){
+          if(typeof url==='string'&&url.indexOf('theajack.github.io/disable-devtool')!==-1){
+            try{console.log('[FS] blocked devtool redirect:',url)}catch(e){}
+            return;
+          }
+          return _origHrefSet.call(this,url);
+        },
+        get:_hrefDesc.get,
+        configurable:true
+      });
+    }
+    // Also override location.assign and location.replace
+    var _origAssign=window.location.assign;
+    var _origReplace=window.location.replace;
+    window.location.assign=function(url){
+      if(typeof url==='string'&&url.indexOf('theajack.github.io/disable-devtool')!==-1)return;
+      return _origAssign.apply(window.location,arguments);
+    };
+    window.location.replace=function(url){
+      if(typeof url==='string'&&url.indexOf('theajack.github.io/disable-devtool')!==-1)return;
+      return _origReplace.apply(window.location,arguments);
+    };
+  }catch(e){}
 })();
-</script>
-""".trimIndent()
+
+// ── Seal window.open permanently (anti-anti-adblock, scriptlet-style) ──
+_maskFn(window.open,'function open() { [native code] }');
+try{Object.defineProperty(window,'open',{value:window.open,writable:false,configurable:false})}catch(e){}
+window.showModalDialog=function(){return null};
+
+// ── Block a[target="_blank"] navigations ──
+document.addEventListener('click',function(e){
+  var target=e.target;
+  while(target){
+    if(target.tagName==='A'&&(target.getAttribute('target')==='_blank'||target.target==='_blank')){
+      e.preventDefault();e.stopPropagation();return false
+    }
+    target=target.parentNode
+  }
+},true);
+
+// ── DOM sweeper: remove ad iframes, hide high-z-index overlays ──
+function _sweep(){
+  var adSrc=['doubleclick','popad','adservexsha','adsterra','propellerads','exoclick','popunder','frowstyambler','zoaclachan','hai8g','developdomicile'];
+  try{
+    var all=document.querySelectorAll('iframe');
+    for(var i=0;i<all.length;i++){
+      var src=all[i].getAttribute('src')||all[i].src||'';
+      var ls=src.toLowerCase();
+      for(var si=0;si<adSrc.length;si++){if(ls.indexOf(adSrc[si])!==-1){all[i].remove();break}}
+    }
+    var fixeds=document.querySelectorAll('div[style*="position: fixed"],div[style*="position:fixed"],section[style*="position: fixed"]');
+    for(var fi=0;fi<fixeds.length;fi++){
+      try{
+        var fCs=window.getComputedStyle(fixeds[fi]);
+        var fZ=parseInt(fCs.zIndex);
+        if(!isNaN(fZ)&&fZ>50&&(fCs.position==='fixed'||fCs.position==='sticky')){
+          if(!fixeds[fi].querySelector('video')){fixeds[fi].style.display='none'}
+        }
+      }catch(e){}
+    }
+  }catch(e){}
+}
+_sweep();
+try{setInterval(_sweep,3000)}catch(e){}
+
+// ── Intercept fetch/XHR for ad URLs ──
+function isAdUrl(url){
+  if(!url||typeof url!=='string')return false;
+  var l=url.toLowerCase();
+  var patterns=['doubleclick','googleadservices','googlesyndication','popad','adservexsha','adsterra','propellerads','exoclick','popunder','frowstyambler','zoaclachan','hai8g','developdomicile','cloudflareinsights'];
+  for(var i=0;i<patterns.length;i++){if(l.indexOf(patterns[i])!==-1)return true}
+  return false
+}
+try{var _fetch=window.fetch;window.fetch=_maskFn(function(input,init){
+  var url=(typeof input==='string')?input:(input&&input.url)||'';
+  if(isAdUrl(url))return Promise.resolve(new Response('',{status:204}));
+  return _fetch.call(window,input,init)
+},'function fetch() { [native code] }')}catch(e){}
+try{var _xhrOpen=XMLHttpRequest.prototype.open;
+XMLHttpRequest.prototype.open=_maskFn(function(method,url){
+  if(isAdUrl(url)){this._aborted=true;return}
+  return _xhrOpen.apply(this,arguments)
+},'function open() { [native code] }');
+var _xhrSend=XMLHttpRequest.prototype.send;
+XMLHttpRequest.prototype.send=function(){if(this._aborted)return;return _xhrSend.apply(this,arguments)}}catch(e){}
+
+// ── Progress bridge (video timeupdate reporting) ──
+var _fi=setInterval(function(){
+  var _v=document.querySelector('video');
+  if(!_v)return;clearInterval(_fi);var _ls=0;
+  _v.addEventListener('timeupdate',function(){
+    if(_v.duration<=0||_v.currentTime<=5)return;
+    var _n=Date.now();if(_n-_ls<5000)return;_ls=_n;
+    try{window.top.postMessage({type:'__player:child_anchor',readyState:'injected_ct',href:location.href,host:location.hostname,ts:Date.now()},'*')}catch(e){}
+    try{window.top.postMessage({type:'__player:progress',currentTime:_v.currentTime,duration:_v.duration,percent:_v.currentTime/_v.duration},'*')}catch(e){}
+  });
+  window.addEventListener('message',function(e){
+    if(!e.data||e.data.type!=='__player:seek')return;
+    var _si=setInterval(function(){
+      if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().catch(function(){})}catch(ex){}clearInterval(_si)}
+    },200);
+  });
+},500);
+	})();
+
+	// ── Anti-anti-adblock scriptlets (uBlock Origin style) ──
+	// Neutralizes anti-adblock detection that providers use to detect
+	// our window.open, fetch, and other JS monkey-patches.
+	(function(){
+	if(window.__fsScriptlets)return;window.__fsScriptlets=true;
+
+	// abort-on-property-read: throw when common ad vars are read
+	try{(function(){
+	var _keys=['_popAds','popAds','popad','show_ad','showad','adblock','isAdBlockActive'];
+	for(var _i=0;_i<_keys.length;_i++){
+	try{(function(k){
+	var c=k.split('.');var t=window;
+	for(var j=0;j<c.length-1;j++){t=t[c[j]];if(!t)return}
+	Object.defineProperty(t,c[c.length-1],{get:function(){throw new Error('abort:'+k)},set:function(v){Object.defineProperty(t,c[c.length-1],{value:v,writable:true,configurable:true})},configurable:true})
+	})()}catch(e){}
+	}
+	})()}catch(e){}
+
+	// set-constant: force ad vars to false
+	try{(function(){
+	var _vars={'adsEnabled':false,'canShowAds':false,'showPopUnder':false,'popunderAllowed':false,'enableAds':false,'showAds':false,'ad_block':false};
+	for(var _k in _vars){try{(function(k,v){
+	var c=k.split('.');var t=window;
+	for(var j=0;j<c.length-1;j++){t=t[c[j]];if(!t)return}
+	Object.defineProperty(t,c[c.length-1],{get:function(){return v},set:function(){},configurable:false})
+	})()}catch(e){}
+	}
+	})()}catch(e){}
+
+	// prevent-addEventListener: block visibility/focus listeners
+	// used by anti-adblock to detect popup blocking
+	try{(function(){
+	var _origAdd=EventTarget.prototype.addEventListener;
+	EventTarget.prototype.addEventListener=function(type,listener,opts){
+	if(type==='visibilitychange'||type==='webkitvisibilitychange'||type==='blur'||type==='focus'){return}
+	return _origAdd.call(this,type,listener,opts);
+	};
+	})()}catch(e){}
+
+	// no-setInterval-if: block ad-lookup polling
+	try{(function(){
+	var _origSI=window.setInterval;
+	window.setInterval=function(handler,delay){
+	if(typeof handler==='string'&&(handler.indexOf('popAds')!==-1||handler.indexOf('popunder')!==-1)){return 0}
+	return _origSI.apply(window,arguments);
+	};
+	})()}catch(e){}
+
+	// nowoif: reinforce window.open seal in child frames
+	try{(function(){var _noop=function(){return null};
+	Object.defineProperty(window,'open',{value:_noop,writable:false,configurable:false})})()}catch(e){}
+	})();
+</script>""".trimIndent()
+
 
     // Cache of (url) -> injected HTML bytes to avoid re-fetching on repeat navigations
     private val htmlCache = object : LinkedHashMap<String, ByteArray>(32, 0.75f, true) {
       override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>): Boolean {
         return size > 20
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Request Logger — circular-buffer audit trail of every network
+    // request passing through shouldInterceptRequest, with outcome
+    // (BLOCK/ALLOW/INJECT) and the rule that decided it.
+    //
+    // Outputs:
+    //   1. logcat: adb logcat -s ReqLog   (real-time)
+    //   2. File:   logcat-requests.txt in app cache dir (persistent)
+    //   3. Buffer: JS dump via postMessage({type:'__player:dumpRequestLog'})
+    // ═══════════════════════════════════════════════════════════════
+    private const val MAX_LOG_ENTRIES = 3000
+    private const val LOG_FILE_NAME = "logcat-requests.txt"
+    private val requestLogStartMs = System.currentTimeMillis()
+    private var requestLogDir: java.io.File? = null
+    private val requestLogBuffer = object : LinkedHashMap<Long, String>(MAX_LOG_ENTRIES, 0.75f, true) {
+      override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, String>): Boolean {
+        return size > MAX_LOG_ENTRIES
+      }
+    }
+
+    /** Initialize the request logger with a writable directory. */
+    private fun initRequestLogDir(context: Context) {
+      requestLogDir = java.io.File(context.cacheDir, "request-logs").also {
+        it.mkdirs()
+      }
+    }
+
+    /**
+     * Log one request decision. Thread-safe (synchronized on the buffer).
+     *
+     * @param action  "ALLOW", "BLOCK", or "INJECT"
+     * @param rule    Short rule identifier, e.g. "R1:media", "ADBLOCK_ENGINE", "R2:cdn"
+     * @param host    Request hostname
+     * @param dest    Sec-Fetch-Dest header value (or "unknown")
+     * @param url     Full URL (will be truncated internally)
+     */
+    private fun logRequest(action: String, rule: String, host: String, dest: String, url: String) {
+      val elapsed = System.currentTimeMillis() - requestLogStartMs
+      val line = String.format("%06dms | %-5s | %-24s | %-30s | %-12s | %s",
+        elapsed, action, rule, host, dest, url.take(140))
+      synchronized(requestLogBuffer) {
+        requestLogBuffer[System.nanoTime()] = line
+      }
+      android.util.Log.d("ReqLog", line)
+      // Append to file (fire-and-forget on a worker thread)
+      requestLogDir?.let { dir ->
+        try {
+          val file = java.io.File(dir, LOG_FILE_NAME)
+          java.io.FileWriter(file, true).use { writer ->
+            writer.append(line).append('\n')
+          }
+        } catch (_: Exception) {}
+      }
+    }
+
+    /**
+     * Format the entire request log buffer as a printable string.
+     */
+    private fun dumpRequestLog(): String {
+      synchronized(requestLogBuffer) {
+        if (requestLogBuffer.isEmpty()) return "=== Request Log: EMPTY ==="
+        val sb = StringBuilder()
+        val timeRunning = System.currentTimeMillis() - requestLogStartMs
+        sb.appendLine("═══ Request Log (${requestLogBuffer.size} entries, $timeRunning ms running) ═══")
+        sb.appendLine(String.format("%-9s | %-5s | %-24s | %-30s | %-12s | %s",
+          "ELAPSED", "ACTION", "RULE", "HOST", "DEST", "URL"))
+        sb.appendLine("─".repeat(140))
+        requestLogBuffer.values.forEach { sb.appendLine(it) }
+        sb.appendLine("═══ End ═══")
+        return sb.toString()
       }
     }
   }
@@ -158,12 +745,77 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
   private val reactContext: ReactContext? =
     (context as? ReactContext) ?: (appContext.reactContext as? ReactContext)
 
-  // The real WebView — lives in the Activity window, not in Fabric's tree
-  private var webView: WebView? = null
+  // ── Request Logger init ──
+  init { initRequestLogDir(context) }
+
+  // ── Adblock Engine ──
+  // Lazy-loaded native filter engine with 106k+ blocked domains + 17k
+  // cosmetic selectors from EasyList/EasyPrivacy/AdGuard/uBO.
+  // Compiled by packages/filter-compiler/src/export-android.ts
+  private val adblockEngine: AdblockEngine by lazy { AdblockEngine(context) }
+
+  // ═══════════════════════════════════════════════════════════════
+  // R0b: Session-Trusted CDN Hosts (Phase 1 — Expert Rec)
+  // ═══════════════════════════════════════════════════════════════
+  // A host that has served a recognized video URL (detected by R0 regex)
+  // is added here. All future requests to it bypass every blocking layer.
+  // Cleared on provider switch so each session starts fresh.
+  private val sessionTrustedCdnHosts = ConcurrentHashMap<String, Boolean>()
+
+  private fun addSessionTrustedHost(host: String) {
+    if (host.isNotEmpty()) sessionTrustedCdnHosts[host] = true
+  }
+
+  private fun isSessionTrustedHost(host: String): Boolean =
+    sessionTrustedCdnHosts.containsKey(host)
+
+  private fun clearSessionTrust() {
+    sessionTrustedCdnHosts.clear()
+  }
+
+  // ── Per-Provider Adblock Disable ──
+  // Some providers (e.g., screenscape, cinemaos) serve video directly
+  // through their embed domain without third-party CDN hops. Their requests
+  // shouldn't be blocked by the adblock engine or heuristic rules.
+  // Config-driven via blocklist.json providers[].adblockDisabled.
+  private val currentProviderConfig: ProviderConfig?
+    get() {
+      val host = currentUrl?.let { Uri.parse(it) }?.host?.lowercase() ?: return null
+      val cfg = BlocklistConfigLoader.config
+      return cfg.providers.firstOrNull { provider ->
+        provider.enabled && provider.embedDomains.any { host.contains(it) || it.contains(host) }
+      }
+    }
+
+  private val isCurrentProviderAdblockDisabled: Boolean
+    get() = currentProviderConfig?.adblockDisabled == true
+
+  // ── Double-Buffer WebView Slots ──
+  // Instead of pooling WebViews (which leaks stale state between providers),
+  // we destroy the old WebView and create a brand-new one. The old WebView
+  // stays VISIBLE while the new one loads in the background. When the new
+  // page is ready, we swap instantly and destroy the old one.
+  private var currentWebView: WebView? = null    // The visible, active WebView
+  private var incomingWebView: WebView? = null   // Background WebView being loaded
+  private var isSwapping = false                 // Guard against concurrent swaps
+  private val swapHandler = android.os.Handler(android.os.Looper.getMainLooper())
+  private val swapRunnable = Runnable { swapViews() }
+
   private var pageStartedFired = false
   private var pendingLoadUrl: String? = null
-  private var currentUrl: String? = null
+  @Volatile private var currentUrl: String? = null
   private var isLoading = false
+
+  // ── Session-locked provider allowlist (P0: expert review) ──
+  // When loadProviderUrl() is called, we lock the provider root host and
+  // compute the set of ALLOWED hosts for this session. Any navigation or
+  // resource request to a host NOT in this set is blocked as a cross-
+  // provider hijack. This replaces the unreliable userInitiatedNavigation
+  // flag which leaked across in-page navigations.
+  private val sessionLock = Any()
+  private var lockedRootHost: String? = null
+  private var lockedAllowedHosts: Set<String> = emptySet()
+
   private var lastFinishedUrl: String = ""
   private var isOverlayAttached = false
 
@@ -191,7 +843,7 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
   private val pageFinishedFallbackHandler = android.os.Handler(android.os.Looper.getMainLooper())
   private val pageFinishedFallbackRunnable = object : Runnable {
     override fun run() {
-      val wv = webView
+      val wv = currentWebView
       val url = currentUrl
       if (isLoading && url != null) {
         android.util.Log.w("PlayerWebView",
@@ -206,7 +858,8 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
     set(value) {
       field = value
       if (value.isNotEmpty()) {
-        webView?.let { WebViewCompat.addDocumentStartJavaScript(it, value, setOf("*")) }
+        currentWebView?.let { WebViewCompat.addDocumentStartJavaScript(it, value, setOf("*")) }
+        incomingWebView?.let { WebViewCompat.addDocumentStartJavaScript(it, value, setOf("*")) }
       }
     }
 
@@ -216,20 +869,20 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
   var supportMultipleWindows: Boolean = false
     set(value) {
       field = value
-      webView?.settings?.setSupportMultipleWindows(value)
+      currentWebView?.settings?.setSupportMultipleWindows(value)
     }
 
   var javaScriptCanOpenWindowsAutomatically: Boolean = false
     set(value) {
       field = value
-      webView?.settings?.javaScriptCanOpenWindowsAutomatically = value
+      currentWebView?.settings?.javaScriptCanOpenWindowsAutomatically = value
     }
 
   var userAgent: String? = null
     set(value) {
       field = value
       if (value != null) {
-        webView?.settings?.userAgentString = value
+        currentWebView?.settings?.userAgentString = value
       }
     }
 
@@ -255,7 +908,7 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
     // that pauses JS timers for ALL WebViews. Without this call, any
     // previous onDetachedFromWindow's pauseTimers() would leave timers
     // suspended across the entire process.
-    webView?.resumeTimers()
+    currentWebView?.resumeTimers()
   }
 
   override fun onDetachedFromWindow() {
@@ -265,8 +918,8 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
     android.util.Log.d("PlayerWebView", "OVERLAY DETACHED anchor=$anchorId")
     viewTreeObserver.removeOnPreDrawListener(preDrawListener)
     cancelPageFinishedFallback()
+    swapHandler.removeCallbacks(swapRunnable)
 
-    // Clean up any lingering fullscreen custom view
     customView?.let { cv ->
       val parent = cv.parent as? ViewGroup
       parent?.removeView(cv)
@@ -275,47 +928,18 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
       customViewCallback = null
     }
 
-    // WebView pool: park the WebView instead of destroying it.
-    // The pool saves ~500-800ms of UI thread freeze on every provider
-    // switch by reusing the Chromium renderer process initialization.
-    webView?.let { wv ->
-      // CRITICAL ORDER: onPause() MUST come before loadUrl("about:blank").
-      // onPause() immediately pauses video playback by suspending the
-      // WebView's internal renderer. If we call loadUrl first, the video
-      // continues playing asynchronously while about:blank navigates.
-      wv.onPause()
-      wv.pauseTimers()
-      // loadUrl("about:blank") cancels all JS timers and safely tears
-      // down the DOM without destroying the native C++ peer. This is
-      // preferred over destroy() + recreate because the Chromium
-      // renderer process stays alive.
-      wv.loadUrl("about:blank")
-      wv.visibility = View.GONE
-      val parent = wv.parent as? ViewGroup
-      parent?.removeView(wv)
-      // Clear client references to prevent memory leaks. Use reflection
-      // to bypass compileSdk 36's non-null declaration.
-      try { wv.javaClass.getMethod("setWebViewClient", android.webkit.WebViewClient::class.java).invoke(wv, null) } catch (_: Exception) {}
-      try { wv.javaClass.getMethod("setWebChromeClient", android.webkit.WebChromeClient::class.java).invoke(wv, null) } catch (_: Exception) {}
-      // Park into the pool, or destroy if pool is full
-      synchronized(webViewPool) {
-        if (webViewPool.size < maxPoolSize) {
-          webViewPool.add(wv)
-          android.util.Log.d("PlayerWebView",
-            "OVERLAY POOLED WebView anchor=$anchorId poolSize=${webViewPool.size}")
-        } else {
-          wv.destroy()
-          android.util.Log.d("PlayerWebView",
-            "OVERLAY DESTROYED (pool full) anchor=$anchorId")
-        }
-      }
-    }
-    webView = null
+    // Destroy both WebViews — no pooling. New WebView = guaranteed clean slate.
+    incomingWebView?.let { destroyWebViewCompletely(it) }
+    incomingWebView = null
+    currentWebView?.let { destroyWebViewCompletely(it) }
+    currentWebView = null
+    isSwapping = false
   }
 
   override fun onVisibilityChanged(changedView: View, visibility: Int) {
     super.onVisibilityChanged(changedView, visibility)
-    webView?.visibility = visibility
+    currentWebView?.visibility = visibility
+    // Incoming stays INVISIBLE until swap — don't change its visibility
   }
 
   override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
@@ -412,6 +1036,9 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
         cancelPageFinishedFallback()
         pageFinishedFallbackPosted = true
         pageFinishedFallbackHandler.postDelayed(pageFinishedFallbackRunnable, 12000L)
+
+        // Backup: re-inject disable-devtool blocker via evaluateJavascript.
+        view?.evaluateJavascript(DEVTOOT_REDIRECT_BLOCKER, null)
       }
 
       override fun onPageFinished(view: WebView?, url: String?) {
@@ -439,198 +1066,12 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
       override fun shouldOverrideUrlLoading(
         view: WebView?,
         request: WebResourceRequest?
-      ): Boolean {
-        val url = request?.url?.toString() ?: return false
-        trackRequestIfAuditing(url, request)
-        if (url.startsWith("intent:")) return true
-
-        // User-gesture heuristic: block unsolicited top-level navigations.
-        // If this navigation was NOT triggered by a user-initiated loadUrl(),
-        // and the target is a new domain, it's likely an ad hijack (Type A/B).
-        val headers = request.requestHeaders ?: emptyMap()
-        val secFetchDest = headers["Sec-Fetch-Dest"]
-        val isUserGesture = request.isForMainFrame &&
-          (secFetchDest == null || secFetchDest == "document")
-
-        if (request.isForMainFrame && !userInitiatedNavigation) {
-          // If the navigation target is NOT the current provider host, block it
-          val targetHost = Uri.parse(url).host?.lowercase()
-          val currentHost = currentUrl?.let { Uri.parse(it) }?.host?.lowercase()
-          if (targetHost != null && currentHost != null &&
-              targetHost != currentHost &&
-              !allowedCdnHosts.any { targetHost.contains(it) }
-          ) {
-            android.util.Log.w("PlayerWebView",
-              "[AB] HIJACK BLOCK (unsolicited nav): ${url.take(120)}")
-            // IMPORTANT: Do NOT call window.stop() here. Returning true is
-            // sufficient to block the navigation. window.stop() would also
-            // cancel all in-flight video CDN requests (HLS manifests, chunks),
-            // forcing the video player into retry loop and causing the
-            // 20-30 second delay on providers like nxsha.
-            userInitiatedNavigation = false
-            return true
-          }
-        }
-        // Consume the user-gesture flag after the first navigation
-        if (request.isForMainFrame) userInitiatedNavigation = false
-
-        // Domain-based nav blocking (catch known ad domains for Type A hijacks)
-        if (isAdOrTracker(url)) {
-          android.util.Log.w("PlayerWebView",
-            "[AB] NAV BLOCK: ${url.take(120)}")
-          return true
-        }
-        return false
-      }
+      ): Boolean = shouldOverrideNavForWebView(request)
 
       override fun shouldInterceptRequest(
         view: WebView?,
         request: WebResourceRequest?
-      ): WebResourceResponse? {
-        val url = request?.url?.toString() ?: return null
-        val host = Uri.parse(url).host?.lowercase() ?: return null
-
-        // Enhanced audit tracking with request metadata
-        trackRequestIfAuditing(url, request)
-
-        val headers = request.requestHeaders ?: emptyMap()
-        val currentHost = currentUrl?.let { Uri.parse(it) }?.host?.lowercase() ?: ""
-
-        // ── Child Frame Bridge Injection ──
-        // Intercept HTML document loads in cross-origin child iframes
-        // and inject the postMessage bridge script. This is necessary
-        // because addDocumentStartJavaScript silently fails to inject
-        // into cross-origin child iframes on some devices.
-        val secFetchDest = headers["Sec-Fetch-Dest"]?.lowercase()
-        val isCrossOrigin = currentHost.isNotEmpty() && host != currentHost
-        if (isCrossOrigin && !isAdOrTracker(host) &&
-          (secFetchDest == "iframe" ||
-           (secFetchDest == null && !request.isForMainFrame && (headers["Accept"] ?: "").contains("text/html")))) {
-          val injected = injectBridgeIntoHtml(url)
-          if (injected != null) {
-            android.util.Log.d("PlayerWebView",
-              "[INJECT] Child frame bridge injected: ${url.take(100)}")
-            return injected
-          }
-        }
-
-        // ═══════════════════════════════════════════════════════════
-        // HEURISTIC-BASED AD BLOCKING
-        // ═══════════════════════════════════════════════════════════
-        // Instead of relying solely on domain blocklists (which ad
-        // networks rotate daily), we analyze HTTP request headers to
-        // determine the PURPOSE of each request. This approach is
-        // immune to rotating ad domains — we block based on what the
-        // browser is trying to do, not where it's trying to go.
-        //
-        // Order of operations (first match wins):
-        //   1. Video/audio content or range requests → ALLOW (CDN)
-        //   2. CDN allowlist                      → ALLOW
-        //   3. Current provider host               → ALLOW
-        //   4. iframe/script from unknown third-party → HEURISTIC BLOCK
-        //   5. Per-provider profile (if available) → PROFILE BLOCK
-        //   6. Domain blocklist                    → DOMAIN BLOCK
-        //   7. Path-based blocking                 → PATH BLOCK
-        //   8. Default                            → ALLOW
-        // ═══════════════════════════════════════════════════════════
-
-        val hasRangeHeader = headers.containsKey("Range")
-
-        // Rule 1: Always allow video/audio content and range requests
-        // (HLS/DASH video chunk requests). These are always legitimate
-        // video streaming traffic regardless of origin.
-        if (hasRangeHeader || secFetchDest in setOf("video", "audio")) {
-          return null // ALLOW
-        }
-
-        // Rule 2: Never block known CDN domains
-        if (allowedCdnHosts.any { host.contains(it) }) return null
-
-        // Rule 3: Allow current provider domain and subdomains
-        if (currentHost.isNotEmpty() && host.endsWith(".$currentHost")) return null
-        if (currentHost.isNotEmpty() && host == currentHost) return null
-
-        // Rule 4: Heuristic blocking for iframe/script/image requests
-        // to unknown third-party domains. Streaming providers rarely
-        // load third-party scripts — if it's not the provider's own
-        // domain, it's almost certainly an ad or tracker.
-        if (secFetchDest in setOf("iframe", "script", "image")) {
-          // Check if the referer matches the current provider
-          val referer = headers["Referer"]?.lowercase()
-          val isRefererMatching = referer?.contains(currentHost) == true
-          val isProviderReferer = currentHost.isEmpty() || isRefererMatching
-
-          if (isProviderReferer && host != currentHost && !host.contains("google")) {
-            // Google Fonts / APIs are fine — allow those
-            if (host.contains("google") || host.contains("gstatic")) return null
-            android.util.Log.w("PlayerWebView",
-              "[AB] HEURISTIC BLOCK ($secFetchDest): ${url.take(120)}")
-            return WebResourceResponse("text/plain", "utf-8",
-              ByteArrayInputStream(ByteArray(0)))
-          }
-        }
-
-        // Rule 5: Per-provider profile blocking (Essential Resource Map).
-        // If the current provider has a profile, use it as a strict allowlist
-        // for script/iframe/image requests — block EVERYTHING not in the profile.
-        // This is stricter and more efficient than the general heuristic because
-        // it doesn't depend on referer matching. Providers without a profile
-        // fall through to the general rules below.
-        if (currentHost.isNotEmpty()) {
-          val profile = providerProfiles.entries.firstOrNull { (key, _) ->
-            currentHost.contains(key) || key.contains(currentHost)
-          }
-          if (profile != null) {
-            val allowedHosts = profile.value
-            // Apply profile blocking to resource types that ads typically use.
-            // Fonts/styles are excluded (Google Fonts/gstatic are always safe).
-            if (secFetchDest in setOf("script", "iframe", "image")) {
-              // Always allow Google domains (fonts, APIs, gstatic)
-              if (!host.contains("google") && !host.contains("gstatic")) {
-                val isAllowed = allowedHosts.any { host.contains(it) }
-                if (!isAllowed) {
-                  android.util.Log.w("PlayerWebView",
-                    "[AB] PROFILE BLOCK ($secFetchDest): ${url.take(120)}")
-                  return WebResourceResponse("text/plain", "utf-8",
-                    ByteArrayInputStream(ByteArray(0)))
-                }
-              }
-            }
-            // For document/main-frame requests, block cross-origin navigation
-            // to domains NOT in the profile (catches hijack without window.stop())
-            if (secFetchDest == "document" && host != currentHost) {
-              val isAllowed = allowedHosts.any { host.contains(it) }
-              if (!isAllowed) {
-                android.util.Log.w("PlayerWebView",
-                  "[AB] PROFILE BLOCK (doc nav): ${url.take(120)}")
-                return WebResourceResponse("text/plain", "utf-8",
-                  ByteArrayInputStream(ByteArray(0)))
-              }
-            }
-          }
-        }
-
-        // Rule 6 (fallback): Domain-based blocking (catch known ad networks)
-        if (adDomains.any { host.contains(it) }) {
-          android.util.Log.w("PlayerWebView",
-            "[AB] DOMAIN BLOCK: ${url.take(120)}")
-          return WebResourceResponse("text/plain", "utf-8",
-            ByteArrayInputStream(ByteArray(0)))
-        }
-
-        // Rule 7 (fallback): Path-based blocking (same-origin ads)
-        if (currentHost.isNotEmpty() && host == currentHost) {
-          val path = Uri.parse(url).path ?: ""
-          if (adPathPatterns.any { path.contains(it) }) {
-            android.util.Log.w("PlayerWebView",
-              "[AB] PATH BLOCK: ${url.take(120)}")
-            return WebResourceResponse("text/plain", "utf-8",
-              ByteArrayInputStream(ByteArray(0)))
-          }
-        }
-
-        return null // ALLOW
-      }
+      ): WebResourceResponse? = interceptRequestForWebView(request)
 
       override fun onRenderProcessGone(
         view: WebView?,
@@ -643,6 +1084,578 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
       }
     }
   }
+
+  /**
+   * WebViewClient for the incoming (background) WebView in double-buffer mode.
+   * Same blocking rules as the primary client, but triggers swapViews() on
+   * onPageFinished instead of dispatchPageFinished().
+   */
+  private fun makeSwapWebViewClient(wv: WebView): WebViewClient {
+    return object : WebViewClient() {
+      override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+        currentUrl = url
+        isLoading = true
+        // Re-inject disable-devtool blocker
+        view?.evaluateJavascript(DEVTOOT_REDIRECT_BLOCKER, null)
+      }
+      override fun onPageFinished(view: WebView?, url: String?) {
+        // Trigger swap — incoming page is ready
+        swapViews()
+        // Re-inject guard script on main frame (post-swap)
+        if (injectedScript.isNotEmpty()) {
+          wv.evaluateJavascript(injectedScript, null)
+        }
+      }
+      override fun shouldOverrideUrlLoading(
+        view: WebView?,
+        request: WebResourceRequest?
+      ): Boolean = shouldOverrideNavForWebView(request)
+
+      override fun shouldInterceptRequest(
+        view: WebView?,
+        request: WebResourceRequest?
+      ): WebResourceResponse? = interceptRequestForWebView(request)
+
+      override fun onRenderProcessGone(
+        view: WebView?,
+        detail: RenderProcessGoneDetail?
+      ): Boolean {
+        dispatchEvent("onRenderProcessGone") {
+          putBoolean("didCrash", detail?.didCrash() ?: false)
+        }
+        // If the incoming WebView crashes during swap, abort the swap
+        if (isSwapping && view == incomingWebView) {
+          swapHandler.removeCallbacks(swapRunnable)
+          isSwapping = false
+          incomingWebView?.let { destroyWebViewCompletely(it) }
+          incomingWebView = null
+        }
+        return true
+      }
+    }
+  }
+
+  // ── Shared Navigation / Request Interception ──
+  // Extracted from WebViewClient callbacks so both the primary and swap
+  // WebViews share identical blocking rules without code duplication.
+
+  private fun shouldOverrideNavForWebView(request: WebResourceRequest?): Boolean {
+    val url = request?.url?.toString() ?: return false
+
+    // Block disable-devtool hijack redirect (white robot page)
+    if (url.contains("theajack.github.io/disable-devtool/404.html")) {
+      logRequest("BLOCK", "NAV:devtool-hijack", "theajack.github.io", "navigation", url)
+      android.util.Log.d("PlayerWebView",
+        "[AB] BLOCKED disable-devtool hijack redirect: ${url.take(120)}")
+      return true
+    }
+
+    trackRequestIfAuditing(url, request)
+    val targetHost = Uri.parse(url).host?.lowercase() ?: "unknown"
+    val navDest = request.requestHeaders?.get("Sec-Fetch-Dest") ?: "navigation"
+    if (url.startsWith("intent:")) {
+      logRequest("BLOCK", "NAV:intent-scheme", targetHost, navDest, url)
+      return true
+    }
+
+    // P0: Session-locked allowlist (replaces userInitiatedNavigation flag).
+    if (request.isForMainFrame) {
+      val (root, allowed) = synchronized(this@PlayerWebViewOverlayView.sessionLock) {
+        this@PlayerWebViewOverlayView.lockedRootHost to this@PlayerWebViewOverlayView.lockedAllowedHosts
+      }
+      if (root != null && targetHost !in allowed) {
+        logRequest("BLOCK", "NAV:hijack-allowlist", targetHost, navDest, url)
+        android.util.Log.w("PlayerWebView",
+          "[AB] HIJACK BLOCK (not in session allowlist): ${url.take(120)}")
+        return true
+      }
+    }
+
+    if (isAdOrTracker(url)) {
+      logRequest("BLOCK", "NAV:ad-domain", targetHost, navDest, url)
+      android.util.Log.w("PlayerWebView",
+        "[AB] NAV BLOCK: ${url.take(120)}")
+      return true
+    }
+    logRequest("ALLOW", "NAV:default", targetHost, navDest, url)
+    return false
+  }
+
+  private fun interceptRequestForWebView(request: WebResourceRequest?): WebResourceResponse? {
+    val url = request?.url?.toString() ?: return null
+
+    // ═══════════════════════════════════════════════════════════════
+    // R0b: SESSION-TRUSTED CDN HOST (fastest path — Phase 1)
+    // ═══════════════════════════════════════════════════════════════
+    // Once a host has been seen serving a recognized video URL (R0 below),
+    // all future requests to it bypass EVERY blocking layer. This is O(1)
+    // and handles hundreds of .ts segment requests without regex overhead.
+    val r0Host = Uri.parse(url).host?.lowercase() ?: ""
+    if (isSessionTrustedHost(r0Host)) {
+      logRequest("ALLOW", "R0b:session-trust", r0Host, synthesizeSecFetchDest(request), url)
+      return null
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // R0: VIDEO MEDIA DETECTION (Regex-based — Phase 1)
+    // ═══════════════════════════════════════════════════════════════
+    // Detects HLS manifests, DASH manifests, media segments, and DRM keys
+    // by matching the path portion (query params stripped) against regex.
+    // Path is lowercased first so regex patterns don't need IGNORE_CASE.
+    val r0Path = Uri.parse(url).path?.lowercase() ?: ""
+    val hasVideoExt = VIDEO_EXTENSION_REGEX.containsMatchIn(r0Path)
+    val hasStructPath = VIDEO_PATH_REGEX.containsMatchIn(r0Path)
+    val hasBase64Path = BASE64_VIDEO_PATH_REGEX.containsMatchIn(r0Path)
+    val hasDisguisedMedia = DISGUISED_MEDIA_REGEX.containsMatchIn(r0Path)
+    if (hasVideoExt || hasStructPath || hasBase64Path || hasDisguisedMedia) {
+      addSessionTrustedHost(r0Host)
+      logRequest("ALLOW", "R0:video-detection", r0Host, synthesizeSecFetchDest(request), url)
+      return null
+    }
+
+    // Block disable-devtool — Layer 2: Serve a stub script.
+    // Providers check for HTTP 200 + typeof disableDevtool === 'function'.
+    // Returning empty body breaks providers. Returning a real-shaped stub
+    // satisfies the check while the Layer 1 no-op prevents detectors from running.
+    if (url.contains("theajack.github.io/disable-devtool")) {
+      val isPage = url.contains("404.html")
+      logRequest("BLOCK", if (isPage) "REQ:devtool-404" else "REQ:devtool-stub",
+        "theajack.github.io", if (isPage) "empty" else "script", url)
+      if (isPage) {
+        return WebResourceResponse("text/html", "utf-8", 200, "OK",
+          mapOf("Cache-Control" to "no-store"),
+          ByteArrayInputStream(ByteArray(0)))
+      }
+      // Stub body — sized ~4KB to defeat naive length checks.
+      // Re-asserts the no-op + installs redirect guards as defense in depth.
+      val stub = buildString {
+        append("(function(){'use strict';\n")
+        append("var noop=function(o){return{close:function(){},isRunning:function(){return false;}}};\n")
+        append("noop.close=function(){};noop.isRunning=function(){return false;};\n")
+        append("noop.version='0.0.0';\n")
+        append("try{Object.defineProperty(window,'disableDevtool',{value:noop,writable:false,configurable:false,enumerable:true});}catch(e){window.disableDevtool=noop;}\n")
+        // Pad to ~4KB to defeat naive length checks
+        repeat(4000) { append(" ") }
+        append("})();\n")
+      }.toByteArray(Charsets.UTF_8)
+      return WebResourceResponse("application/javascript", "utf-8", 200, "OK",
+        mapOf("Content-Type" to "application/javascript; charset=utf-8",
+              "Content-Length" to stub.size.toString(),
+              "Cache-Control" to "no-cache, no-store, must-revalidate"),
+        ByteArrayInputStream(stub))
+    }
+
+    val host = Uri.parse(url).host?.lowercase() ?: return null
+    val dest = synthesizeSecFetchDest(request)
+
+    trackRequestIfAuditing(url, request)
+
+    val headers = request.requestHeaders ?: emptyMap()
+    val currentHost = currentUrl?.let { Uri.parse(it) }?.host?.lowercase() ?: ""
+
+    // ═══════════════════════════════════════════════════════════════
+    // P0: CROSS-PROVIDER POLICY CHECK
+    // ═══════════════════════════════════════════════════════════════
+    val (lockedRoot, lockedAllowed) = synchronized(this@PlayerWebViewOverlayView.sessionLock) {
+        this@PlayerWebViewOverlayView.lockedRootHost to this@PlayerWebViewOverlayView.lockedAllowedHosts
+    }
+    if (lockedRoot != null) {
+        val normalHost = host.removePrefix("www.")
+        if (!request.isForMainFrame && normalHost in effectiveProviderRootHosts && normalHost !in lockedAllowed) {
+            if (looksLikeDocumentLoad(request)) {
+                logRequest("BLOCK", "P0:cross-provider-doc", host, dest, url)
+                return emptyDocumentResponse()
+            }
+            logRequest("BLOCK", "P0:cross-provider-resource", host, dest, url)
+            return emptyResourceResponse()
+        }
+        if (request.isForMainFrame && normalHost !in lockedAllowed) {
+            logRequest("BLOCK", "P0:cross-provider-main", host, dest, url)
+            return emptyDocumentResponse()
+        }
+    }
+
+    // ── Remote config blocked domains ──
+    if (effectiveBlockedDomains.any { host.contains(it) }) {
+        logRequest("BLOCK", "REMOTE:blocked-domain", host, dest, url)
+        return WebResourceResponse("text/plain", "utf-8",
+            ByteArrayInputStream(ByteArray(0)))
+    }
+
+    // ── HTML Response Interception (disable-devtool defense) ──
+    // For main-frame document loads from provider domains, fetch the HTML
+    // and prepend our JS blocker at the TOP. This guarantees our code runs
+    // BEFORE any inline <script> blocks, solving the timing issue where
+    // addDocumentStartJavaScript doesn't execute before inline scripts.
+    //
+    // ALSO strips disable-devtool script tags from the HTML so the library
+    // never loads — nuclear option for providers that bundle the library.
+    if (request.isForMainFrame && dest == "document" && host in effectiveProviderRootHosts) {
+        try {
+            val conn = URL(url).openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            // Copy WebView's User-Agent and Cookies for auth
+            currentWebView?.settings?.userAgentString?.let {
+                conn.setRequestProperty("User-Agent", it)
+            }
+            val cookie = CookieManager.getInstance().getCookie(url)
+            if (!cookie.isNullOrEmpty()) {
+                conn.setRequestProperty("Cookie", cookie)
+            }
+            conn.connect()
+            val responseCode = conn.responseCode
+            if (responseCode == 200) {
+                val contentType = conn.contentType ?: ""
+                if (contentType.contains("text/html")) {
+                    var html = conn.inputStream.bufferedReader().use { it.readText() }
+
+                    // ── Strip disable-devtool scripts from HTML ──
+                    // Remove external <script src="...disable-devtool...">
+                    html = html.replace(
+                        Regex("<script\\s+[^>]*src\\s*=\\s*[\"'][^\"']*(?:theajack|disable.?dev)[^\"']*[\"'][^>]*>\\s*</script>",
+                            RegexOption.IGNORE_CASE),
+                        "<!-- stripped: disable-devtool -->"
+                    )
+                    // Remove inline <script> containing disable-devtool code
+                    html = html.replace(
+                        Regex("<script[^>]*>[^<]*(?:theajack\\.github|disable.?devtool|disableDevtool|closeWindow|defineIdDetector)[^<]*</script>",
+                            RegexOption.IGNORE_CASE),
+                        "<!-- stripped: disable-devtool inline -->"
+                    )
+                    // Remove disable-devtool via CDN (jsdelivr, unpkg, cdnjs)
+                    html = html.replace(
+                        Regex("<script\\s+[^>]*src\\s*=\\s*[\"'][^\"']*(?:jsdelivr\\.net|unpkg\\.com|cdnjs\\.cloudflare\\.com)[^\"']*/(?:npm/)?disable[.-]devtool[^\"']*[\"'][^>]*>\\s*</script>",
+                            RegexOption.IGNORE_CASE),
+                        "<!-- stripped: disable-devtool-cdn -->"
+                    )
+
+                    // Prepend our JS blocker at the very top of the HTML
+                    val finalHtml = "<script>" + DEVTOOT_REDIRECT_BLOCKER + "</script>" + html
+                    val responseHeaders = mutableMapOf<String, String>()
+                    conn.headerFields.forEach { (key, values) ->
+                        if (key != null && values.isNotEmpty() &&
+                            !key.equals("Content-Length", true) &&
+                            !key.equals("Content-Encoding", true)) {
+                            responseHeaders[key] = values.joinToString("; ")
+                        }
+                    }
+                    responseHeaders["Content-Length"] = finalHtml.toByteArray().size.toString()
+                    logRequest("INJECT", "html:devtool-strip+blocker", host, dest, url)
+                    return WebResourceResponse("text/html", "utf-8", 200, "OK",
+                        responseHeaders, ByteArrayInputStream(finalHtml.toByteArray()))
+                }
+            }
+            conn.disconnect()
+        } catch (e: Exception) {
+            android.util.Log.w("PlayerWebView", "HTML intercept failed: ${e.message}")
+        }
+    }
+
+    // ── Child Frame Bridge Injection ──
+    val secFetchDest = synthesizeSecFetchDest(request)
+    val isCrossOrigin = currentHost.isNotEmpty() && host != currentHost
+    if (isCrossOrigin && !isAdOrTracker(host) &&
+      secFetchDest == "iframe") {
+      val injected = injectBridgeIntoHtml(url)
+      if (injected != null) {
+        logRequest("INJECT", "bridge:child-frame", host, dest, url)
+        android.util.Log.d("PlayerWebView",
+          "[INJECT] Child frame bridge injected: ${url.take(100)}")
+        return injected
+      }
+    }
+
+    val hasRangeHeader = headers.containsKey("Range")
+
+    // Rule 1: video/audio/range → ALLOW
+    if (hasRangeHeader || secFetchDest in setOf("video", "audio")) {
+      logRequest("ALLOW", "R1:media/range", host, dest, url)
+      return null
+    }
+
+    // workers.dev strict partitioning
+    if (host.endsWith("workers.dev")) {
+      // Allow if the current provider's profile explicitly includes workers.dev
+      // as a wildcard (e.g., vidnest.fun profile has "workers.dev")
+      if (currentHost.isNotEmpty()) {
+        val currentProfile = effectiveProviderProfiles.entries.firstOrNull { (key, _) ->
+          currentHost.contains(key) || key.contains(currentHost)
+        }?.value
+        if (currentProfile != null && currentProfile.any { host.contains(it) }) {
+          logRequest("ALLOW", "WDEV:profile-allow", host, dest, url)
+          return null
+        }
+      }
+      // Allow workers.dev domains that match known CDN patterns (e.g., vidnees)
+      if (effectiveAllowedCdnHosts.any { host.contains(it) }) {
+        logRequest("ALLOW", "WDEV:cdn-match", host, dest, url)
+        return null
+      }
+      val path = Uri.parse(url).path?.lowercase() ?: ""
+      if (secFetchDest == "empty" &&
+        videoExtensions.any { path.contains(it) }) {
+        logRequest("ALLOW", "WDEV:media-ext", host, dest, url)
+        return null
+      }
+      logRequest("BLOCK", "WDEV:non-media", host, dest, url)
+      android.util.Log.w("PlayerWebView",
+        "[AB] WORKERS.DEV BLOCK ($secFetchDest): ${url.take(120)}")
+      return WebResourceResponse("text/plain", "utf-8",
+        ByteArrayInputStream(ByteArray(0)))
+    }
+
+    // Rule 2: CDN allowlist → ALLOW
+    if (effectiveAllowedCdnHosts.any { host.contains(it) }) {
+      logRequest("ALLOW", "R2:cdn-allowlist", host, dest, url)
+      return null
+    }
+
+    // Rule 3: Current provider domain → ALLOW
+    if (currentHost.isNotEmpty() && host.endsWith(".$currentHost")) {
+      logRequest("ALLOW", "R3:prov-subdomain", host, dest, url)
+      return null
+    }
+    if (currentHost.isNotEmpty() && host == currentHost) {
+      logRequest("ALLOW", "R3:prov-exact", host, dest, url)
+      return null
+    }
+
+    // ADBLOCK DISABLED — skip native adblock for this provider
+    // Controlled by blocklist.json providers[].adblockDisabled.
+    // When set, the provider's embed requests bypass ALL blocking rules
+    // (AdblockEngine, heuristic, profile, domain/path blocklists) and
+    // go straight to default-allow. Use for providers whose video delivery
+    // infrastructure overlaps with ad/tracker domains.
+    if (isCurrentProviderAdblockDisabled) {
+      logRequest("ALLOW", "ADBLOCK_DISABLED:provider-override", host, dest, url)
+      return null
+    }
+
+    // ADBLOCK ENGINE
+    if (adblockEngine.shouldBlock(url, host)) {
+      logRequest("BLOCK", "ADBLOCK_ENGINE", host, dest, url)
+      android.util.Log.w("PlayerWebView",
+        "[AB] ADBLOCK ENGINE BLOCK: ${url.take(120)}")
+      return WebResourceResponse("text/plain", "utf-8",
+        ByteArrayInputStream(ByteArray(0)))
+    }
+
+    // Rule 4: Heuristic blocking
+    if (secFetchDest in setOf("iframe", "script", "image")) {
+      val referer = headers["Referer"]?.lowercase()
+      val isRefererMatching = referer?.contains(currentHost) == true
+      val isProviderReferer = currentHost.isEmpty() || isRefererMatching
+
+      if (isProviderReferer && host != currentHost && !host.contains("google")) {
+        if (host.contains("google") || host.contains("gstatic")) {
+          logRequest("ALLOW", "R3b:google-safe", host, dest, url)
+          return null
+        }
+        logRequest("BLOCK", "R4:heuristic", host, dest, url)
+        android.util.Log.w("PlayerWebView",
+          "[AB] HEURISTIC BLOCK ($secFetchDest): ${url.take(120)}")
+        return WebResourceResponse("text/plain", "utf-8",
+          ByteArrayInputStream(ByteArray(0)))
+      }
+    }
+
+    // Rule 5: Per-provider profile blocking
+    if (currentHost.isNotEmpty()) {
+      val profile = providerProfiles.entries.firstOrNull { (key, _) ->
+        currentHost.contains(key) || key.contains(currentHost)
+      }
+      if (profile != null) {
+        val allowedHosts = profile.value
+        if (secFetchDest in setOf("script", "iframe", "image")) {
+          if (!host.contains("google") && !host.contains("gstatic")) {
+            val isAllowed = allowedHosts.any { host.contains(it) }
+            if (!isAllowed) {
+              logRequest("BLOCK", "R5:profile-resource", host, dest, url)
+              android.util.Log.w("PlayerWebView",
+                "[AB] PROFILE BLOCK ($secFetchDest): ${url.take(120)}")
+              return WebResourceResponse("text/plain", "utf-8",
+                ByteArrayInputStream(ByteArray(0)))
+            }
+          }
+        }
+        if (secFetchDest == "document" && host != currentHost) {
+          val isAllowed = allowedHosts.any { host.contains(it) }
+          if (!isAllowed) {
+            logRequest("BLOCK", "R5:profile-docnav", host, dest, url)
+            android.util.Log.w("PlayerWebView",
+              "[AB] PROFILE BLOCK (doc nav): ${url.take(120)}")
+            return WebResourceResponse("text/plain", "utf-8",
+              ByteArrayInputStream(ByteArray(0)))
+          }
+        }
+      }
+    }
+
+    // Rule 6: Domain blocklist
+    if (adDomains.any { host.contains(it) }) {
+      logRequest("BLOCK", "R6:domain-blocklist", host, dest, url)
+      android.util.Log.w("PlayerWebView",
+        "[AB] DOMAIN BLOCK: ${url.take(120)}")
+      return WebResourceResponse("text/plain", "utf-8",
+        ByteArrayInputStream(ByteArray(0)))
+    }
+
+    // Rule 7: Path-based blocking
+    if (currentHost.isNotEmpty() && host == currentHost) {
+      val path = Uri.parse(url).path ?: ""
+      if (adPathPatterns.any { path.contains(it) }) {
+        logRequest("BLOCK", "R7:path-blocklist", host, dest, url)
+        android.util.Log.w("PlayerWebView",
+          "[AB] PATH BLOCK: ${url.take(120)}")
+        return WebResourceResponse("text/plain", "utf-8",
+          ByteArrayInputStream(ByteArray(0)))
+      }
+    }
+
+    logRequest("ALLOW", "R8:default-allow", host, dest, url)
+    return null
+  }
+
+  // ── Double-Buffer: Destroy & Recreate ──
+
+  /**
+   * Destroy a WebView completely — nukes its entire storage context,
+   * renderer process state, and JS globals. This is the only way to
+   * guarantee a clean slate for the next provider.
+   */
+  private fun destroyWebViewCompletely(wv: WebView) {
+    wv.onPause()
+    wv.loadUrl("about:blank")
+    wv.visibility = View.GONE
+    val parent = wv.parent as? ViewGroup
+    parent?.removeView(wv)
+    try { wv.javaClass.getMethod("setWebViewClient", android.webkit.WebViewClient::class.java).invoke(wv, null) } catch (_: Exception) {}
+    try { wv.javaClass.getMethod("setWebChromeClient", android.webkit.WebChromeClient::class.java).invoke(wv, null) } catch (_: Exception) {}
+    wv.removeJavascriptInterface("ReactNativeWebView")
+    wv.destroy()
+  }
+
+  /**
+   * Switch to a new provider URL using double-buffering.
+   *
+   * Creates a new invisible WebView in the background and starts loading
+   * the new URL. The old WebView stays visible while loading. When the new
+   * page finishes loading (or after SWAP_TIMEOUT_MS), we swap instantly
+   * and destroy the old WebView.
+   *
+   * This eliminates state-leakage bugs between providers (stale cookies,
+   * IndexedDB, addDocumentStartJavaScript registrations, JS globals)
+   * because each provider gets a brand-new WebView.
+   */
+  fun switchProvider(url: String) {
+    val act = appContext.currentActivity ?: return
+    if (isSwapping) {
+      // Rapid switch — cancel pending swap, destroy incoming, start fresh
+      incomingWebView?.let { destroyWebViewCompletely(it) }
+      incomingWebView = null
+      isSwapping = false
+    }
+
+    // 1. Create new WebView INVISIBLE
+    val newWv = WebView(act)
+    newWv.visibility = View.INVISIBLE
+    incomingWebView = newWv
+    isSwapping = true
+
+    // 2. Apply settings, clients, JS interface
+    applyWebViewSettings(newWv)
+    newWv.webViewClient = makeSwapWebViewClient(newWv)
+    newWv.webChromeClient = makeWebChromeClient(newWv)
+    newWv.addJavascriptInterface(JsBridgeInterface(), "ReactNativeWebView")
+
+    // 3. Apply guard scripts
+    WebViewCompat.addDocumentStartJavaScript(newWv, DEVTOOT_REDIRECT_BLOCKER, setOf("*"))
+    if (injectedScript.isNotEmpty()) {
+      WebViewCompat.addDocumentStartJavaScript(newWv, injectedScript, setOf("*"))
+    }
+
+    // 4. Add to Activity root (behind current — INVISIBLE)
+    val rootContent = act.findViewById<ViewGroup>(android.R.id.content)
+    rootContent.addView(newWv)
+    // Position it at same location as current, but use ANCHOR dimensions
+    // (currentWebView may have stale dimensions from before React Native layout pass)
+    currentWebView?.let { cur ->
+      newWv.x = cur.x; newWv.y = cur.y
+    }
+    val lp = newWv.layoutParams
+    if (lp != null) {
+      // Use anchor view's current dimensions (updated by RN layout)
+      lp.width = width.coerceAtLeast(1)
+      lp.height = height.coerceAtLeast(1)
+      newWv.layoutParams = lp
+    }
+
+    // 5. Start loading
+    currentUrl = url
+    isLoading = true
+    if (referrer.isNotEmpty()) {
+      newWv.loadUrl(url, mapOf("Referer" to referrer))
+    } else {
+      newWv.loadUrl(url)
+    }
+
+    // 6. Safety timeout — force swap after SWAP_TIMEOUT_MS
+    swapHandler.removeCallbacks(swapRunnable)
+    swapHandler.postDelayed(swapRunnable, SWAP_TIMEOUT_MS)
+
+    dispatchEvent("onLoadingStart") { putString("url", url) }
+    logRequest("SWITCH", "double-buffer", Uri.parse(url).host ?: "", "navigation", url)
+    android.util.Log.d("PlayerWebView",
+      "OVERLAY switchProvider url=${url.take(80)} hasScript=${injectedScript.isNotEmpty()}")
+  }
+
+  /**
+   * Complete the double-buffer swap: make the incoming WebView visible,
+   * destroy the old one.
+   */
+  private fun swapViews() {
+    if (!isSwapping) return
+    swapHandler.removeCallbacks(swapRunnable)
+    isSwapping = false
+
+    val incoming = incomingWebView ?: return
+    val old = currentWebView
+
+    // Make incoming visible
+    incoming.visibility = View.VISIBLE
+    incoming.bringToFront()
+
+    // Promote BEFORE syncWebViewFrame so the incoming WebView gets
+    // the correct container dimensions. The old WebView was created
+    // with outdated (nxsha) dimensions in switchProvider() because the
+    // React Native layout pass hadn't run yet; syncWebViewFrame updates
+    // currentWebView's dimensions to match the current container size.
+    //
+    // WARNING: syncWebViewFrame has an early-return guard that exits when
+    // this.width == lastAnchorW && this.height == lastAnchorH. After the
+    // container already resized (in onLayout before swapViews runs), those
+    // match, so syncWebViewFrame would short-circuit without touching the
+    // incoming WebView's layout. Reset the cache to force a full update.
+    lastAnchorW = -1
+    lastAnchorH = -1
+    currentWebView = incoming
+    syncWebViewFrame()
+
+    // Destroy old WebView completely
+    old?.let { destroyWebViewCompletely(it) }
+
+    incomingWebView = null
+
+    isLoading = false
+    dispatchEvent("onLoadingFinish") { putString("url", currentUrl ?: "") }
+
+    android.util.Log.d("PlayerWebView",
+      "OVERLAY swapViews complete url=${currentUrl?.take(80)}")
+  }
+
+  // ── Double-Buffer: Destroy & Recreate ──
 
   private fun makeWebChromeClient(wv: WebView): WebChromeClient {
     return object : WebChromeClient() {
@@ -749,65 +1762,46 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
   }
 
   private fun ensureWebView() {
-    if (webView != null) return
-    // Warm the OS DNS cache on first call (fires once, daemon thread)
+    if (currentWebView != null) return
     warmDnsCache()
     val act = appContext.currentActivity ?: run {
       android.util.Log.e("PlayerWebView", "OVERLAY: No activity — cannot create WebView")
       return
     }
     WebView.setWebContentsDebuggingEnabled(true)
+    warmupRenderer(act)
+    val cfg = BlocklistConfigLoader.config
+    if (cfg.version > 0) applyRemoteConfig(cfg)
     val anchorId = System.identityHashCode(this)
 
-    // Try the pool first — avoids ~500ms Chromium renderer process init
-    val wv: WebView
-    synchronized(webViewPool) {
-      wv = if (webViewPool.isNotEmpty()) {
-        webViewPool.removeAt(0).also {
-          android.util.Log.d("PlayerWebView",
-            "OVERLAY Pool REUSE anchor=$anchorId poolRemaining=${webViewPool.size}")
-        }
-      } else {
-        WebView(act).also {
-          android.util.Log.d("PlayerWebView",
-            "OVERLAY CREATED new WebView anchor=$anchorId")
-        }
-      }
-    }
+    val wv = WebView(act)
+    android.util.Log.d("PlayerWebView",
+      "OVERLAY CREATED new WebView anchor=$anchorId")
 
-    // If pooled, resume the WebView from paused state (onPause was called
-    // before parking). Without onResume(), video playback remains suspended.
-    wv.onResume()
-
-    // Apply/re-apply standard settings, client, and chrome client
     applyWebViewSettings(wv)
     wv.webViewClient = makeWebViewClient(wv)
     wv.webChromeClient = makeWebChromeClient(wv)
     wv.addJavascriptInterface(JsBridgeInterface(), "ReactNativeWebView")
 
-    // Apply deferred props
-    webView = wv
+    currentWebView = wv
     userAgent?.let { wv.settings.userAgentString = it }
     if (supportMultipleWindows) wv.settings.setSupportMultipleWindows(true)
     if (javaScriptCanOpenWindowsAutomatically) wv.settings.javaScriptCanOpenWindowsAutomatically = true
+
+    // Inject disable-devtool redirect blocker into MAIN FRAME
+    WebViewCompat.addDocumentStartJavaScript(wv, DEVTOOT_REDIRECT_BLOCKER, setOf("*"))
+
     if (injectedScript.isNotEmpty()) {
       android.util.Log.d("PlayerWebView",
         "OVERLAY INJECTING SCRIPT length=${injectedScript.length} start=${injectedScript.take(120).replace('\n', ' ')}")
-      WebViewCompat.addDocumentStartJavaScript(wv, injectedScript, emptySet())
+      WebViewCompat.addDocumentStartJavaScript(wv, injectedScript, setOf("*"))
     } else {
       android.util.Log.w("PlayerWebView", "OVERLAY INJECTING SCRIPT SKIPPED — script is empty")
     }
 
-    android.util.Log.d("PlayerWebView",
-      "OVERLAY Applied deferred props: userAgent=${userAgent?.take(40)}..." +
-      " supportMultWin=$supportMultipleWindows jsCanOpen=$javaScriptCanOpenWindowsAutomatically" +
-      " scriptLen=${injectedScript.length}")
-
-    // Add to Activity root content — bypasses Fabric entirely
     val rootContent = act.findViewById<ViewGroup>(android.R.id.content)
     rootContent.addView(wv)
 
-    // Flush any pending URL
     pendingLoadUrl?.let { url ->
       android.util.Log.d("PlayerWebView",
         "OVERLAY Flushing pendingLoadUrl=$url anchor=$anchorId" +
@@ -824,7 +1818,7 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
    *  position and skip the call entirely when nothing has changed.
    */
   private fun syncWebViewFrame() {
-    val wv = webView ?: return
+    val wv = currentWebView ?: return
     val act = appContext.currentActivity ?: return
     if (!isShown) {
       wv.visibility = View.GONE
@@ -877,7 +1871,7 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
   // ── Navigation ────────────────────────────────────────────────────
 
   fun loadUrl(url: String) {
-    val wv = webView
+    val wv = currentWebView
     if (wv == null) {
       pendingLoadUrl = url
       return
@@ -888,7 +1882,6 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
     }
     currentUrl = url
     isLoading = true
-    userInitiatedNavigation = true // All RN-triggered loads are user-initiated
     android.util.Log.d("PlayerWebView", "OVERLAY loadUrl url=${url.take(80)}")
     if (referrer.isNotEmpty()) {
       wv.loadUrl(url, mapOf("Referer" to referrer))
@@ -897,12 +1890,44 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
     }
   }
 
+  /**
+   * P0: Load a provider URL and lock the session allowlist (expert review).
+   *
+   * Computes the set of ALLOWED hosts from the URL's root host, the
+   * provider profile, and the global CDN allowlist. Any navigation or
+   * resource request to a host outside this set is blocked as a cross-
+   * provider hijack. Call this instead of loadUrl() whenever the React
+   * layer selects a new provider.
+   *
+   * Thread-safe via sessionLock — called from the main thread (React prop
+   * setters) but the allowlist is read from WebViewClient callbacks that
+   * may run on WebView's internal thread pool.
+   */
+  fun loadProviderUrl(url: String) {
+    // Clear session trust for the new provider
+    clearSessionTrust()
+    val host = Uri.parse(url).host?.lowercase()
+    if (host != null) {
+      synchronized(sessionLock) {
+        lockedRootHost = host
+        // Compute allowed set: profile hosts (including CDNs) + root host + global CDNs
+        val profile = effectiveProviderProfiles.entries.firstOrNull { (key, _) ->
+          host.contains(key) || key.contains(host)
+        }?.value ?: emptySet()
+        lockedAllowedHosts = (profile + host + host.removePrefix("www.") + effectiveAllowedCdnHosts).toSet()
+      }
+      android.util.Log.d("PlayerWebView",
+        "OVERLAY loadProviderUrl host=$host allowedSize=${lockedAllowedHosts.size}")
+    }
+    loadUrl(url)
+  }
+
   fun reload() {
-    webView?.post { webView?.reload() }
+    currentWebView?.post { currentWebView?.reload() }
   }
 
   fun stop() {
-    webView?.post { webView?.stopLoading() }
+    currentWebView?.post { currentWebView?.stopLoading() }
   }
 
   // ── Props ─────────────────────────────────────────────────────────
@@ -911,11 +1936,25 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
     set(value) {
       if (value == field || value.isEmpty()) return
       field = value
+      // Clear session trust for the new provider
+      clearSessionTrust()
       android.util.Log.d("PlayerWebView",
         "OVERLAY sourceUri SET anchor=${System.identityHashCode(this)} url=${value.take(60)}")
-      if (webView != null && isOverlayAttached) {
-        loadUrl(value)
+      // Lock session allowlist for the new provider
+      val host = Uri.parse(value).host?.lowercase()
+      if (host != null) {
+        synchronized(sessionLock) {
+          lockedRootHost = host
+          val profile = effectiveProviderProfiles.entries.firstOrNull { (key, _) ->
+            host.contains(key) || key.contains(host)
+          }?.value ?: emptySet()
+          lockedAllowedHosts = (profile + host + host.removePrefix("www.") + effectiveAllowedCdnHosts).toSet()
+        }
+      }
+      if (currentWebView != null && isOverlayAttached) {
+        switchProvider(value)  // Double-buffer switch — destroy old, create new
       } else {
+        // First load — will be flushed in ensureWebView()
         pendingLoadUrl = value
       }
     }
@@ -925,7 +1964,7 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
       field = value
       if (value.isNotEmpty() && value != lastInjectedJS) {
         lastInjectedJS = value
-        webView?.evaluateJavascript(value, null)
+        currentWebView?.evaluateJavascript(value, null)
       }
     }
   private var lastInjectedJS: String = ""
@@ -939,12 +1978,6 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
         loadUrl(value)
       }
     }
-
-  // ── User-Gesture Tracking ──
-  // Tracks whether a navigation was initiated by a user action (play button
-  // click, provider switch) vs an unsolicited JS redirect. Used by
-  // shouldOverrideUrlLoading to block unsolicited ad hijacks.
-  private var userInitiatedNavigation: Boolean = false
 
   // ── Audit Mode (Domain Discovery / Phase 3) ──
   // When enabled, every hostname encountered in shouldInterceptRequest
@@ -1068,29 +2101,68 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
     "/cx/"
   )
 
-  // Known video CDN domains — never block even if they match ad patterns.
-  // Providers proxy video through Cloudflare Workers (xxx.*.workers.dev) with
-  // predictable prefixes (xbm=video, mp4=video). The unique suffix (e.g.
-  // "elga15c1ba") changes per session, so we match on the prefix pattern.
-  private val allowedCdnHosts: Set<String> = setOf(
-    "akamai.net", "akamaiedge.net", "cloudfront.net",
-    "fastly.net", "fastlylb.net",
-    
-    // Cloudflare Worker video CDNs (xbm.*.workers.dev, mp4.*.workers.dev)
-    "xbm.",
-    "mp4.",
-    // Provider-specific video infrastructure
-    "vidapi.cloud",
-    "vidnees",
-    "eat-peach.sbs"
-  )
+  // ── P0: Cross-provider document detection helpers (expert review) ──
+
+  /**
+   * Detect whether a resource request is loading a document (HTML page)
+   * rather than a subresource (script, style, fetch, media). Uses multiple
+   * signals since Sec-Fetch-Dest is unreliable on Android WebView.
+   */
+  private fun looksLikeDocumentLoad(request: WebResourceRequest): Boolean {
+    val accept = request.requestHeaders?.get("Accept") ?: ""
+    if (accept.contains("text/html") || accept.contains("xhtml")) return true
+    val url = request.url.toString()
+    if (url.endsWith(".html", true) || url.endsWith(".htm", true)) return true
+    if (url.indexOf('?') < 0 && request.requestHeaders?.get("Sec-Fetch-Dest") == "iframe") return true
+    val path = request.url.path ?: ""
+    if (path.isNotEmpty() && path.indexOf('.') < 0 && accept.isEmpty()) return true
+    return false
+  }
+
+  /**
+   * P1: Synthesize Sec-Fetch-Dest header when the real header is null.
+   *
+   * Android WebView often omits Sec-Fetch-Dest for iframe loads, redirects,
+   * and requests from older Chromium builds. Without this header, the R4/R5
+   * heuristic blocking rules are skipped entirely, allowing cross-provider
+   * iframe documents to load unchecked.
+   *
+   * This polyfill examines Accept header, URL patterns, and request type
+   * to produce a reliable value. The default is "empty" (non-document
+   * subresource) which is the safe fallback — it can only ADD blocks,
+   * never remove them.
+   */
+  private fun synthesizeSecFetchDest(request: WebResourceRequest): String {
+    val raw = request.requestHeaders?.get("Sec-Fetch-Dest")?.lowercase()
+    if (raw != null && raw != "unknown") return raw
+    if (request.isForMainFrame) return "document"
+    val accept = request.requestHeaders?.get("Accept") ?: ""
+    if (accept.contains("text/html") || accept.contains("xhtml")) return "iframe"
+    val path = request.url.path?.lowercase() ?: ""
+    if (path.endsWith(".js")) return "script"
+    if (path.endsWith(".css")) return "style"
+    if (path.endsWith(".html") || path.endsWith(".htm")) return "iframe"
+    return "empty"
+  }
+
+  /** Empty 200 OK HTML document — prevents iframe rendering without error signals. */
+  private fun emptyDocumentResponse(): WebResourceResponse =
+    WebResourceResponse("text/html", "utf-8", 200, "OK",
+      mapOf("Cache-Control" to "no-store", "Content-Length" to "0"),
+      ByteArrayInputStream(ByteArray(0)))
+
+  /** Empty 200 OK opaque response — blocks subresource loads silently. */
+  private fun emptyResourceResponse(): WebResourceResponse =
+    WebResourceResponse("application/octet-stream", null, 200, "OK",
+      mapOf("Cache-Control" to "no-store", "Content-Length" to "0"),
+      ByteArrayInputStream(ByteArray(0)))
 
   private fun isAdOrTracker(url: String): Boolean {
     val uri = Uri.parse(url)
     val host = uri.host?.lowercase() ?: return false
 
     // 1. Never block known video CDNs
-    if (allowedCdnHosts.any { host.contains(it) }) return false
+    if (effectiveAllowedCdnHosts.any { host.contains(it) }) return false
 
     // 2. Domain-based blocking
     if (adDomains.any { host.contains(it) }) return true
@@ -1122,8 +2194,8 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
       }
 
       val conn = urlObj.openConnection() as HttpURLConnection
-      conn.connectTimeout = 10000
-      conn.readTimeout = 10000
+      conn.connectTimeout = 2000       // 2s connect (down from 10s — iframe should respond fast)
+      conn.readTimeout = 2000           // 2s read (down from 10s — don't stall video pipeline)
       conn.instanceFollowRedirects = true
       conn.setRequestProperty("Accept", "text/html,application/xhtml+xml")
       conn.setRequestProperty("Accept-Encoding", "identity") // Avoid gzip to simplify parsing
@@ -1177,14 +2249,32 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
       conn.disconnect()
 
       val html = buffer.toString("utf-8")
-      val bridgeSnippet = BRIDGE_SCRIPT_SNIPPET
 
-      // Inject the bridge script right after <head> (handles both <head> and <head ...>)
+      // ── Contextual cosmetic CSS injection ──
+      // Fetch only the selectors matching this iframe's domain (not all 17k
+      // globally). Per expert recommendation, inject natively as a <style>
+      // tag in the HTML so Blink renders it before any paint, avoiding FOUC.
+      val cosmeticSelectors = try {
+        val iframeHost = urlObj.host?.lowercase() ?: ""
+        adblockEngine.getCosmeticSelectors(iframeHost)
+      } catch (_: Exception) { emptyList() }
+      val cssSnippet = if (cosmeticSelectors.isNotEmpty()) {
+        val css = cosmeticSelectors.joinToString(" ") { "$it{display:none!important}" }
+        "<style id=\"fs-adblock-css\">$css</style>"
+      } else {
+        ""
+      }
+
+      val bridgeSnippet = BRIDGE_SCRIPT_SNIPPET
+      val injectionSnippet = "$cssSnippet${bridgeSnippet}"
+
+      // Inject the bridge script + cosmetic CSS right after <head>
+      // (handles both <head> and <head ...>)
       val headEndTag = "</head>"
       val modifiedHtml = if (html.contains(headEndTag, ignoreCase = true)) {
         html.replaceFirst(
           Regex("</head>", RegexOption.IGNORE_CASE),
-          "$bridgeSnippet</head>"
+          "$injectionSnippet</head>"
         )
       } else {
         // No head tag — inject before </html> or append
@@ -1192,10 +2282,10 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
         if (html.contains(htmlEndTag, ignoreCase = true)) {
           html.replaceFirst(
             Regex("</html>", RegexOption.IGNORE_CASE),
-            "$bridgeSnippet</html>"
+            "$injectionSnippet</html>"
           )
         } else {
-          html + bridgeSnippet
+          html + injectionSnippet
         }
       }
 
@@ -1240,9 +2330,17 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
         responseHeaders,
         ByteArrayInputStream(resultBytes)
       )
+    } catch (e: java.net.SocketTimeoutException) {
+      android.util.Log.w("PlayerWebView",
+        "[INJECT] TIMEOUT (${e.message}): ${url.take(80)} — falling back to raw HTML")
+      return null // Timeout — let WebView fetch original HTML natively
+    } catch (e: java.io.IOException) {
+      android.util.Log.w("PlayerWebView",
+        "[INJECT] IO ERROR (${e.message}): ${url.take(80)} — falling back to raw HTML")
+      return null // IO error — don't stall video pipeline
     } catch (e: Exception) {
       android.util.Log.w("PlayerWebView",
-        "[INJECT] Failed to inject bridge into $url: ${e.message}")
+        "[INJECT] FAILED (${e.message}): ${url.take(80)} — falling back to raw HTML")
       return null // Fall through — let WebView handle normally
     }
   }
@@ -1286,7 +2384,7 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
    * fallback timer share the same path.
    */
   private fun dispatchPageFinished(url: String) {
-    val wv = webView
+    val wv = currentWebView
     isLoading = false
 
     if (url == lastFinishedUrl) {
@@ -1384,6 +2482,26 @@ if(_v.readyState>=1){try{_v.currentTime=e.data.time;if(e.data.play)_v.play().cat
   private inner class JsBridgeInterface {
     @android.webkit.JavascriptInterface
     fun postMessage(message: String) {
+      try {
+        val obj = org.json.JSONObject(message)
+        if (obj.optString("type") == "__player:dumpRequestLog") {
+          val logDump = dumpRequestLog()
+          android.util.Log.d("ReqLog", "Dump requested via JS bridge:\n$logDump")
+          // Send dump back via console.log so it appears in Metro terminal
+          val escaped = logDump.replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+          val wv = currentWebView
+          if (wv != null) {
+            wv.evaluateJavascript(
+              "console.log('=== ReqLog Dump ===\\n$escaped\\n=== End ReqLog Dump ===')",
+              null
+            )
+          }
+          return
+        }
+      } catch (_: Exception) {}
       dispatchEvent("onMessage") { putString("data", message) }
     }
   }

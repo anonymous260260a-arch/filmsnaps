@@ -19,9 +19,11 @@ import { useMovieDetails } from '../../hooks/useTMDB';
 import { MediaCarousel } from '../../components/MediaCarousel';
 import { CastCarousel } from '../../components/CastCarousel';
 import { TrailerModal } from '../../components/TrailerModal';
+import { DetailSkeleton } from '../../components/Skeletons';
 import { isBookmarked, saveBookmark, removeBookmark } from '../../lib/bookmarks';
 import type { Movie } from '@filmsnaps/shared';
 import { LinearGradient } from 'react-native-svg';
+import * as Haptics from 'expo-haptics';
 
 export default function MovieDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -38,6 +40,7 @@ export default function MovieDetailScreen() {
 
   const [bookmarked, setBookmarked] = useState(false);
   const [trailerOpen, setTrailerOpen] = useState(false);
+  const [overviewExpanded, setOverviewExpanded] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -46,6 +49,7 @@ export default function MovieDetailScreen() {
   }, [id]);
 
   const toggleBookmark = useCallback(async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (bookmarked) {
       await removeBookmark(id!);
       setBookmarked(false);
@@ -63,11 +67,7 @@ export default function MovieDetailScreen() {
   }, [id, bookmarked, movie]);
 
   if (isLoading) {
-    return (
-      <View className="flex-1 items-center justify-center bg-void" style={{ backgroundColor: '#070708' }}>
-        <ActivityIndicator size="large" color="#D4A237" />
-      </View>
-    );
+    return <DetailSkeleton />;
   }
 
   if (!movie) {
@@ -254,19 +254,34 @@ export default function MovieDetailScreen() {
             </View>
           </View>
 
-          {/* Overview */}
+          {/* Overview — expandable */}
           {movie.overview ? (
             <View className="mt-6">
               <Text style={[typography.title, { marginBottom: 8, color: '#F4F4F5' }]}>
                 Overview
               </Text>
-              <Text style={typography.body}>{movie.overview}</Text>
+              <Text
+                style={typography.body}
+                numberOfLines={overviewExpanded ? undefined : 3}
+              >
+                {movie.overview}
+              </Text>
+              {movie.overview.length > 120 && (
+                <TouchableOpacity
+                  onPress={() => setOverviewExpanded(!overviewExpanded)}
+                  activeOpacity={0.7}
+                  style={{ marginTop: 4 }}
+                >
+                  <Text style={{ color: '#D4A237', fontSize: 12, fontFamily: 'Inter_500Medium' }}>
+                    {overviewExpanded ? 'Show less' : 'Read more'}
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           ) : null}
 
-          {/* Action buttons */}
+          {/* ── Row 1: Primary action + Bookmark ── */}
           <View className="flex-row mt-6" style={{ gap: 10 }}>
-            {/* Watch Now — primary gold CTA */}
             <TouchableOpacity
               onPress={() => router.push(`/watch/movie/${id}?backdrop=${movie.backdrop_path || ''}`)}
               activeOpacity={0.9}
@@ -290,18 +305,11 @@ export default function MovieDetailScreen() {
               }}
             >
               <Ionicons name="play" size={18} color="#070708" style={{ marginRight: 8 }} />
-              <Text
-                style={{
-                  fontFamily: 'Inter_600SemiBold',
-                  fontSize: 14,
-                  color: '#070708',
-                }}
-              >
+              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#070708' }}>
                 Watch Now
               </Text>
             </TouchableOpacity>
 
-            {/* Bookmark toggle */}
             <TouchableOpacity
               onPress={toggleBookmark}
               activeOpacity={0.8}
@@ -322,26 +330,70 @@ export default function MovieDetailScreen() {
                 color={bookmarked ? '#D4A237' : '#A1A1AA'}
               />
             </TouchableOpacity>
+          </View>
 
-            {/* Download 2 — secondary with subtle border */}
+          {/* ── Row 2: Download options — compact pills ── */}
+          <View className="flex-row mt-2" style={{ gap: 8 }}>
             <TouchableOpacity
-              onPress={() => router.push(`/download2/movie/${id}`)}
+              onPress={() => router.push(`/download/nxsha/movie/${id}`)}
               activeOpacity={0.8}
               style={{
-                backgroundColor: 'transparent',
+                flex: 1,
+                backgroundColor: 'rgba(212,162,55,0.08)',
                 borderWidth: 0.5,
-                borderColor: '#222226',
-                borderRadius: 10,
-                paddingVertical: 14,
-                paddingHorizontal: 18,
+                borderColor: 'rgba(212,162,55,0.35)',
+                borderRadius: 8,
+                paddingVertical: 10,
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
             >
-              <Ionicons name="cloud-download-outline" size={18} color="#5b9cf6" style={{ marginRight: 6 }} />
-              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: '#5b9cf6' }}>
-                Download
+              <Ionicons name="download-outline" size={15} color="#D4A237" style={{ marginRight: 5 }} />
+              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 11, color: '#D4A237' }}>
+                Server 1
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => router.push(`/download2/movie/${id}`)}
+              activeOpacity={0.8}
+              style={{
+                flex: 1,
+                backgroundColor: 'rgba(255,255,255,0.04)',
+                borderWidth: 0.5,
+                borderColor: '#222226',
+                borderRadius: 8,
+                paddingVertical: 10,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ionicons name="cloud-download-outline" size={15} color="#A1A1AA" style={{ marginRight: 5 }} />
+              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 11, color: '#A1A1AA' }}>
+                Alt DL
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => router.push(`/download/falix/movie/${id}`)}
+              activeOpacity={0.8}
+              style={{
+                flex: 1,
+                backgroundColor: 'rgba(91,156,246,0.08)',
+                borderWidth: 0.5,
+                borderColor: 'rgba(91,156,246,0.35)',
+                borderRadius: 8,
+                paddingVertical: 10,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ionicons name="cloud-download-outline" size={15} color="#5b9cf6" style={{ marginRight: 5 }} />
+              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 11, color: '#5b9cf6' }}>
+                Falix
               </Text>
             </TouchableOpacity>
           </View>

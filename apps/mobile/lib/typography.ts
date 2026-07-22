@@ -37,14 +37,14 @@ export const typography: Record<string, TextStyle> = {
   },
   caption: {
     fontFamily: 'Inter_400Regular',
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: 12,
+    lineHeight: 16,
     color: '#A1A1AA',
   },
   label: {
     fontFamily: 'Inter_500Medium',
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: 12,
+    lineHeight: 16,
     color: '#A1A1AA',
   },
 };

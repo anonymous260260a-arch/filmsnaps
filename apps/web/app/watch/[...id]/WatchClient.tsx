@@ -29,6 +29,7 @@ import { getEnabledProviders } from '@filmsnaps/shared';
 import { getImageUrl } from '@/lib/tmdb';
 import { PlayerProvider, usePlayer } from '@/components/player/PlayerProvider';
 import { SecureIframe } from '@/components/player/SecureIframe';
+import { FalixPlayer } from '@/components/player/FalixPlayer';
 import { ServerPickerSheet } from '@/components/player/ServerPickerSheet';
 import { EpisodeRail } from '@/components/player/EpisodeRail';
 import { PlayerControlOverlay } from '@/components/player/PlayerControlOverlay';
@@ -46,7 +47,28 @@ interface WatchClientContentProps {
   minimal?: boolean;
 }
 
-// ── Embed URL builder — direct provider URLs ─────────────────────
+// ── Embed URL builder — direct or proxied ────────────────────────
+
+/**
+ * Providers that should be routed through our server-side proxy
+ * for ad-blocking, tracker-filtering, and protection script injection.
+ * Their HTML is fetched server-side, rewritten to block ads/trackers,
+ * and injected with a runtime protection script.
+ *
+ * Proxied providers use TLS-fingerprinting HTTP (tlsFetch) to bypass
+ * Cloudflare JS challenges at the network layer. Set FLARESOLVERR_URL
+ * env var (Docker) for an additional headless-browser fallback.
+ */
+// No providers currently use the server-side proxy.
+// Proxy code (protection.ts, tlsFetch, FlareSolverr) is preserved for future use.
+const PROXIED_PROVIDERS = new Set<string>([]);
+
+/**
+ * Providers that serve direct video file URLs (not iframe embeds).
+ * These are rendered with a custom video.js player (FalixPlayer)
+ * instead of SecureIframe.
+ */
+const DIRECT_VIDEO_PROVIDERS = new Set<string>(['falix']);
 
 function buildEmbedUrl(
   provider: ProviderDefinition,
@@ -59,6 +81,15 @@ function buildEmbedUrl(
     plat === 'tv'
       ? provider.embed.tv(contentid, selectedSeason, activeEpisode)
       : provider.embed.movie(contentid);
+
+  // Route through server-side proxy to strip ads/trackers and
+  // inject the runtime protection script.
+  if (PROXIED_PROVIDERS.has(provider.id)) {
+    const [pathPart, queryPart] = embedPath.split('?');
+    const proxyPath = `/api/player/${provider.id}${pathPart}`;
+    return queryPart ? `${proxyPath}?${queryPart}` : proxyPath;
+  }
+
   return `${provider.baseUrl}${embedPath}`;
 }
 
@@ -349,12 +380,31 @@ function WatchClientContent({
             <PlayerErrorState onRetry={handleRetry} />
           )}
 
-          {/* The iframe */}
-          {!cpuWarning && !iframeLoadError && embedUrl && (
+          {/* Direct-video player (Falix) */}
+          {!cpuWarning && currentProvider && DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
+            <FalixPlayer
+              tmdbId={contentid}
+              mediaType={plat}
+              selectedSeason={selectedSeason}
+              activeEpisode={activeEpisode}
+              onLoad={handleIframeLoad}
+            />
+          )}
+
+          {/* Embed iframe player (all other providers) */}
+          {!cpuWarning && !iframeLoadError && embedUrl && currentProvider && !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
             <SecureIframe
               src={embedUrl}
               sandbox={currentProvider?.sandbox}
-              csp={currentProvider ? buildIframeCSP(currentProvider) : undefined}
+              // Skip iframe CSP attribute for proxied providers — the
+              // server already sets a CSP header on the response, and
+              // `default-src 'none'` from buildIframeCSP is too restrictive
+              // for same-origin proxied content.
+              csp={
+                currentProvider && !PROXIED_PROVIDERS.has(currentProvider.id)
+                  ? buildIframeCSP(currentProvider)
+                  : undefined
+              }
               key={`provider-${selectedProviderId}-${selectedSeason}-${activeEpisode}-${refreshKey}`}
               onLoad={handleIframeLoad}
               onError={handleIframeError}
@@ -377,8 +427,8 @@ function WatchClientContent({
             />
           ))}
 
-          {/* Loading / controls overlay */}
-          <PlayerControlOverlay isPending={!playerReady || isPending} />
+          {/* Loading / controls overlay — skip for direct-video providers (FalixPlayer manages its own UI) */}
+          <PlayerControlOverlay isPending={(!playerReady || isPending) && !DIRECT_VIDEO_PROVIDERS.has(currentProvider?.id)} />
         </div>
 
         {/* ── Stuck-video hint ── */}

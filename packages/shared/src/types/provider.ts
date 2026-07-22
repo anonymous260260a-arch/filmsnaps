@@ -80,6 +80,14 @@ export interface ProviderDefinition {
    * Example: `[{ top: '80px', left: '40%', width: '200px', height: '60px' }]`
    */
   coverOverlays?: Array<{ top: string; left: string; width: string; height: string }>;
+
+  /**
+   * If true, this provider is ONLY available for download pages,
+   * not for the watch page server picker. Useful for direct-download
+   * providers like Falix that don't have a streaming embed player.
+   * Default: false
+   */
+  forDownloadOnly?: boolean;
 }
 
 /**
