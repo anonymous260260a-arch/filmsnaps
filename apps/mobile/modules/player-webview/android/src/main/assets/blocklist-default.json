@@ -1,0 +1,114 @@
+{
+  "version": 2,
+  "allowedCdnHosts": [
+    "akamai.net", "akamaiedge.net", "cloudfront.net",
+    "fastly.net", "fastlylb.net",
+    "xbm.", "mp4.",
+    "vidapi.cloud", "vidnees", "eat-peach.sbs",
+    "opensubtitles.org", "allorigins.win",
+    "cdn.jsdelivr.net", "embedmafia.in", "api.ipify.org",
+    "image.tmdb.org", "api.themoviedb.org",
+    "sub.wyzie.io", "sub.vdrk.site",
+    "1.1.1.1",
+    "fonts.googleapis.com", "fonts.gstatic.com",
+    "appwrite.io", "cloudflareinsights.com", "googletagmanager.com",
+    "theajack.github.io", "vjs.zencdn.net", "cache.vdrk.site",
+    "api.theintrodb.org", "gstatic.com",
+    "proxy.itsnitrox.tech", "oo.itsnitrox.tech"
+  ],
+  "blockedDomains": [
+    "fj.topperanlases.com", "wz.afgodscarpe.com", "llvpn.com",
+    "google-analytics.com"
+  ],
+  "providerProfiles": {
+    "web.nxsha.app": ["web.nxsha.app", "workers.dev", "cloudfront.net"],
+    "peachify.top": ["peachify.top", "eat-peach.sbs", "workers.dev", "theintrodb.org", "flagcdn.com", "fonts.googleapis.com", "gstatic.com", "cloudfront.net"],
+    "screenscape.me": ["screenscape.me", "googletagmanager.com", "fonts.googleapis.com", "gstatic.com"],
+    "www.chillflix.lol": ["www.chillflix.lol", "vidapi.cloud", "cloudfront.net"],
+    "chillflix.lol": ["chillflix.lol", "vidapi.cloud", "cloudfront.net"],
+    "vidnest.fun": ["vidnest.fun", "workers.dev", "vidnees", "wyzie.io", "vdrk.site", "cloudfront.net", "themoviedb.org", "image.tmdb.org"],
+    "nhdapi.com": ["nhdapi.com", "cloudfront.net"],
+    "zxcstream.xyz": ["zxcstream.xyz", "test.zxcstream.xyz", "cloudfront.net"]
+  },
+  "providerRootHosts": [
+    "web.nxsha.app", "nxcdn.app", "cdn.nxsha.app",
+    "peachify.top", "stats.peachify.top",
+    "screenscape.me", "www.googletagmanager.com",
+    "nhdapi.com",
+    "zxcstream.xyz", "test.zxcstream.xyz",
+    "cinemaos.live",
+    "www.chillflix.lol", "chillflix.lol", "vidapi.cloud",
+    "vidnest.fun", "vidnees", "wyzie.io", "vdrk.site",
+    "toustream.xyz", "streamguide.cfd"
+  ],
+  "providers": [
+    {
+      "id": "nxsha",
+      "embedDomains": ["web.nxsha.app"],
+      "cdnDomains": ["nxcdn.app", "cdn.nxsha.app", "proxy.itsnitrox.tech", "oo.itsnitrox.tech"],
+      "enabled": true
+    },
+    {
+      "id": "peachify",
+      "embedDomains": ["peachify.top"],
+      "cdnDomains": ["eat-peach.sbs", "peachify.top"],
+      "enabled": true
+    },
+    {
+      "id": "screenscape",
+      "embedDomains": ["screenscape.me"],
+      "cdnDomains": [],
+      "enabled": true,
+      "adblockDisabled": true
+    },
+    {
+      "id": "nhdapi",
+      "embedDomains": ["nhdapi.com"],
+      "cdnDomains": ["nhdcdn.com", "nhd.video"],
+      "enabled": true
+    },
+    {
+      "id": "zxcstream",
+      "embedDomains": ["zxcstream.xyz"],
+      "cdnDomains": ["test.zxcstream.xyz"],
+      "enabled": true
+    },
+    {
+      "id": "cinemaos",
+      "embedDomains": ["cinemaos.live"],
+      "cdnDomains": [],
+      "enabled": true,
+      "adblockDisabled": true
+    },
+    {
+      "id": "vidnest",
+      "embedDomains": ["vidnest.fun"],
+      "cdnDomains": ["vidnees", "wyzie.io", "vdrk.site"],
+      "enabled": true
+    },
+    {
+      "id": "chillflix",
+      "embedDomains": ["www.chillflix.lol", "chillflix.lol"],
+      "cdnDomains": ["vidapi.cloud"],
+      "enabled": true
+    },
+    {
+      "id": "toustream",
+      "embedDomains": ["toustream.xyz"],
+      "cdnDomains": [],
+      "enabled": true
+    },
+    {
+      "id": "vidking",
+      "embedDomains": ["www.vidking.net"],
+      "cdnDomains": [],
+      "enabled": true
+    },
+    {
+      "id": "streamguide",
+      "embedDomains": ["streamguide.cfd"],
+      "cdnDomains": [],
+      "enabled": true
+    }
+  ]
+}

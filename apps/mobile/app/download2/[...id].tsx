@@ -6,7 +6,7 @@ import { WebView } from 'react-native-webview';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system/legacy';
+import { useDownloadInfra } from '../../lib/download';
 
 // ── Safe video extensions ──
 const VIDEO_EXTS = ['.mp4', '.mkv', '.webm', '.avi', '.mov', '.m3u8', '.ts', '.flv', '.wmv', '.m4v', '.3gp'];
@@ -23,87 +23,81 @@ function getFileExt(url: string): string | null {
   } catch { return null; }
 }
 
-// ── Lightweight ad/popup blocker ──
+// ── Comprehensive ad/popup blocker (matching watch page) ──
 const INJECTED_SCRIPT = `
 (function() {
-  var AD_KEYWORDS = [
-    'doubleclick','googleadservices','googlesyndication','googletagmanager','gtag',
-    'pagead2','adnxs','rubiconproject','adsystem','adserver',
-    'popads','popcash','popunder','adsterra',
-    'propellerads','trafficfactory',
-    'histats','scorecardresearch',
-    'exoclick','juicyads','plugrush',
-    'clickadu','clicksco','hilltopads',
-    'pyppo','hakumnata','tags.crwdcntrl','crwdcntrl',
+  var AD_DOMAINS = [
+    'doubleclick.net','googleadservices.com','googlesyndication.com',
+    'googletagmanager.com','gtag/js','pagead2.googlesyndication.com',
+    'adnxs.com','rubiconproject.com','adsystem.','adserver.',
+    'popads.','popcash.','popunder.','adsterra.com',
+    'propellerads.com','trafficfactory.biz',
+    'histats.com','scorecardresearch.com',
+    'exoclick.com','juicyads.com','plugrush.com',
+    'trafficjunky.com','adreactor.com','adcash.com',
+    'clickadu.com','clicksco.net','hilltopads.com',
+    'pyppo.com','jr.prahmnatured.com','brigadedelegatesandbox.com',
+    'hakumnata.com','tags.crwdcntrl.net','crwdcntrl.net',
     'tawk.to','va.tawk.to','embed.tawk.to',
-    'adservex','mgid','cpmstar','advanse',
-    'xhamster','xporn','adult','porn',
-    'onclickads','clkrev','adf.ly','shortlink',
-    'ouo.io','shrinkme','linkbucks',
-    'adreactor','adcash','trafficjunky',
-    'adroll','optimizely','outbrain','taboola',
-    'peachify','peach','trafficwave','trafficboss',
-    'clickfrog','hilltopads','adsterra',
-    'clk.sh','sh.st','viid.me',
-    'admicro','adpiler','adtica','adnium',
-    '7eer.net','axf8.net','d2pr','d3p',
-    'a.mo','cpm','revcontent','taboola',
-    'spoutable','nativo','triplelift','sovrn',
-    'sharethrough','undertone','districtm',
-    'indexww','pubmatic','openx',
-    'appnexus','rhythmone','spotx',
-    'insticator','sekindo','bidfilter',
-    'contextweb','comcluster','cpx',
-    'advertising','sponsor','affiliate',
   ];
 
-  function isAd(url) {
+  function isAdUrl(url) {
     if (!url) return false;
-    var l = url.toLowerCase();
-    for (var i = 0; i < AD_KEYWORDS.length; i++) {
-      if (l.indexOf(AD_KEYWORDS[i]) !== -1) return true;
-    }
+    try {
+      var host = new URL(url).hostname.toLowerCase();
+      for (var i = 0; i < AD_DOMAINS.length; i++) {
+        if (host.indexOf(AD_DOMAINS[i]) !== -1) return true;
+      }
+    } catch(e) {}
     return false;
   }
 
-  function isIntent(url) {
-    return url && typeof url === 'string' && (url.indexOf('intent://') === 0 || url.indexOf('android-app://') === 0);
+  function isIntentUrl(url) {
+    return url && (typeof url === 'string') &&
+      (url.indexOf('intent://') === 0 || url.indexOf('android-app://') === 0);
   }
 
   try {
-    var _f = window.fetch;
-    window.fetch = function(i, o) {
-      var u = (typeof i === 'string') ? i : (i && i.url) || '';
-      if (isAd(u) || isIntent(u)) return Promise.resolve(new Response('', {status: 204}));
-      return _f.call(this, i, o);
+    var _origFetch = window.fetch;
+    window.fetch = function(input, init) {
+      var url = (typeof input === 'string') ? input : (input && input.url) || '';
+      var urlStr = (typeof url === 'string') ? url : '';
+      if (isAdUrl(urlStr) || isIntentUrl(urlStr)) {
+        return Promise.resolve(new Response('', {status: 204}));
+      }
+      return _origFetch.call(this, input, init);
     };
   } catch(e) {}
 
   try {
-    var _xo = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function(m, u) {
-      if (isAd(u) || isIntent(u)) { this._aborted = true; return; }
-      return _xo.apply(this, arguments);
+    var _origXHROpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {
+      this._url = (typeof url === 'string') ? url : (url && url.url) || '';
+      if (isAdUrl(this._url) || isIntentUrl(this._url)) { this._aborted = true; return; }
+      return _origXHROpen.apply(this, arguments);
     };
-    var _xs = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(b) {
+    var _origXHRSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
       if (this._aborted) return;
-      return _xs.apply(this, arguments);
+      return _origXHRSend.apply(this, arguments);
     };
   } catch(e) {}
 
   try { window.open = function() { return null; }; } catch(e) {}
 
   try {
-    var _lp = Object.getPrototypeOf(window.location);
-    var _hd = Object.getOwnPropertyDescriptor(_lp, 'href');
-    if (_hd && _hd.set) {
-      Object.defineProperty(_lp, 'href', {
-        set: function(v) {
-          if (v && typeof v === 'string' && (isAd(v) || isIntent(v))) return;
-          return _hd.set.call(this, v);
+    var _locProto = Object.getPrototypeOf(window.location);
+    var _hrefDesc = Object.getOwnPropertyDescriptor(_locProto, 'href');
+    if (_hrefDesc && _hrefDesc.set) {
+      Object.defineProperty(_locProto, 'href', {
+        set: function(val) {
+          if (val && typeof val === 'string') {
+            if (isIntentUrl(val)) return;
+            if (isAdUrl(val)) return;
+          }
+          return _hrefDesc.set.call(this, val);
         },
-        get: function() { return _hd.get.call(this); },
+        get: function() { return _hrefDesc.get.call(this); },
         configurable: false,
       });
     }
@@ -112,7 +106,7 @@ const INJECTED_SCRIPT = `
   try {
     var _lr = window.location.constructor.prototype.replace;
     window.location.constructor.prototype.replace = function(u) {
-      if (u && typeof u === 'string' && (isAd(u) || isIntent(u))) return;
+      if (u && typeof u === 'string' && (isAdUrl(u) || isIntentUrl(u))) return;
       return _lr.call(this, u);
     };
   } catch(e) {}
@@ -120,27 +114,28 @@ const INJECTED_SCRIPT = `
   try {
     var _la = window.location.constructor.prototype.assign;
     window.location.constructor.prototype.assign = function(u) {
-      if (u && typeof u === 'string' && (isAd(u) || isIntent(u))) return;
+      if (u && typeof u === 'string' && (isAdUrl(u) || isIntentUrl(u))) return;
       return _la.call(this, u);
     };
   } catch(e) {}
 
+  // Click interceptor
   document.addEventListener('click', function(e) {
     var el = e.target;
     while (el && el.tagName !== 'BODY') {
       if (el.tagName === 'A') {
-        var h = el.getAttribute('href') || el.href || '';
-        if (h && (isAd(h) || isIntent(h))) { e.preventDefault(); e.stopPropagation(); return false; }
+        var h = el.getAttribute('href') || '';
+        if (h) {
+          try {
+            var absUrl = new URL(h, location.href).toString();
+            if (isAdUrl(absUrl)) { e.preventDefault(); return false; }
+          } catch(e) {}
+        }
         break;
       }
       el = el.parentElement;
     }
   }, true);
-
-  try {
-    var metas = document.querySelectorAll('meta[http-equiv="refresh"]');
-    for (var i = 0; i < metas.length; i++) { try { metas[i].remove(); } catch(e) {} }
-  } catch(e) {}
 })();
 true;
 `;
@@ -152,7 +147,6 @@ export default function Download2Screen() {
   const webViewRef = useRef<WebView>(null);
   const [loading, setLoading] = useState(true);
   const [binUrl, setBinUrl] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
 
   const params = useMemo(() => {
     const segs = rawParams.id ?? [];
@@ -168,28 +162,24 @@ export default function Download2Screen() {
     return `https://02moviedownloader.site/api/download/movie/${params.id}`;
   }, [params.id, params.type, params.season, params.episode]);
 
-  // ── Save .bin as .mp4 via expo-file-system ──
-  const saveAsMp4 = useCallback(async () => {
+  const { enqueue } = useDownloadInfra();
+
+  // ── Save .bin as .mp4 via download store ──
+  const saveAsMp4 = useCallback(() => {
     if (!binUrl) return;
-    setSaving(true);
-    try {
-      const filename = `filmsnaps-${params.type}-${params.id}.mp4`;
-      const fileUri = FileSystem.documentDirectory + filename;
-      const download = FileSystem.createDownloadResumable(binUrl, fileUri, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-        md5: false,
-      });
-      const result = await download.downloadAsync();
-      if (result) {
-        Alert.alert('✅ Saved as MP4', `File saved as:\n${filename}`);
-        setBinUrl(null);
-      }
-    } catch (e: any) {
-      Alert.alert('Save Failed', e.message);
-    } finally {
-      setSaving(false);
-    }
-  }, [binUrl, params.type, params.id]);
+    const filename = `filmsnaps-${params.type}-${params.id}.mp4`;
+
+    enqueue({
+      url: binUrl,
+      fileName: filename,
+      server: 'alt-dl',
+      mediaType: params.type,
+      tmdbId: params.id,
+      title: `FilmSnaps ${params.type} ${params.id}`,
+    });
+
+    setBinUrl(null);
+  }, [binUrl, params.type, params.id, enqueue]);
 
   // ── Navigation handler with file-type checks ──
   const handleNavigation = useCallback((request: any): boolean => {
@@ -202,6 +192,30 @@ export default function Download2Screen() {
     // Block dangerous files
     if (ext && BLOCKED_EXTS.includes(ext)) {
       Alert.alert('🚫 Blocked', `This file type (${ext}) is not allowed.`);
+      return false;
+    }
+
+    // Detect video files -> prompt download
+    if (ext && VIDEO_EXTS.includes(ext)) {
+      const filename = `filmsnaps-${params.type}-${params.id}${ext}`;
+      Alert.alert(
+        '🎬 Video Detected',
+        'Download this video file?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Save Video', onPress: () => {
+            enqueue({
+              url: request.url,
+              fileName: filename,
+              server: 'alt-dl',
+              mediaType: params.type,
+              tmdbId: params.id,
+              title: `FilmSnaps ${params.type} ${params.id}`,
+              extension: ext.replace('.', ''),
+            });
+          }},
+        ]
+      );
       return false;
     }
 
@@ -235,7 +249,7 @@ export default function Download2Screen() {
       }
     } catch {}
     return true;
-  }, []);
+  }, [enqueue, params]);
 
   if (!params.id || !params.type || !downloadUrl) {
     return (
@@ -286,13 +300,12 @@ export default function Download2Screen() {
             </Text>
             <TouchableOpacity
               onPress={saveAsMp4}
-              disabled={saving}
               className="bg-blue-600 rounded-full py-2.5 flex-row items-center justify-center"
               activeOpacity={0.8}
             >
               <Ionicons name="download" size={16} color="#fff" />
               <Text className="text-white text-xs font-bold ml-1.5">
-                {saving ? 'Saving...' : '💾 Save as .mp4 (via app)'}
+                💾 Save as .mp4 (via app)
               </Text>
             </TouchableOpacity>
           </View>

@@ -10,6 +10,11 @@ class PlayerWebviewModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("PlayerWebview")
 
+    // Warm up Chromium renderer process at module init
+    OnCreate {
+      appContext.reactContext?.let { PlayerWebViewOverlayView.warmupRenderer(it) }
+    }
+
     // Window-Overlay WebView — attaches the real WebView to the Activity window,
     // bypassing Fabric's compositing pipeline entirely.
     // File: PlayerWebViewOverlayView.kt
@@ -76,6 +81,9 @@ class PlayerWebviewModule : Module() {
     }
 
     AsyncFunction("clearAllState") {
+      // Belt-and-suspenders: destroying the WebView already nukes its
+      // storage context. This clears any global CookieManager/WebStorage
+      // state that survives individual WebView destruction.
       clearWebViewState()
     }
   }

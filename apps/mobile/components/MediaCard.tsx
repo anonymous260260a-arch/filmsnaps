@@ -1,4 +1,4 @@
-﻿import React, { useRef, useCallback, useMemo } from 'react';
+import React, { useRef, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, useWindowDimensions, Animated } from 'react-native';
 import { getImageUrl } from '@filmsnaps/shared';
 import { ProgressiveImage } from './ProgressiveImage';
@@ -112,7 +112,7 @@ export function MediaCard({ item, onPress, variant = 'default' }: MediaCardProps
         <Text
           style={{
             color: '#A1A1AA',
-            fontSize: 11,
+            fontSize: 12,
             fontFamily: 'Inter_500Medium',
             marginTop: 6,
           }}

@@ -23,6 +23,7 @@ import { isFilterEngineLoaded } from './filterService';
 
 // ── Configuration ───────────────────────────────────────────────────
 
+
 const FLARESOLVERR_URL =
   process.env.FLARESOLVERR_URL || 'http://localhost:8191';
 const CACHE_DIR = join(process.cwd(), '.cf-cache');
@@ -207,7 +208,7 @@ function cacheCookie(providerId: string, url: string, cfCookie: any): void {
   }
 }
 
-function getCachedCookie(providerId: string): CachedCookie | null {
+export function getCachedCookie(providerId: string): CachedCookie | null {
   const path = cachePath(providerId);
   if (!existsSync(path)) return null;
 

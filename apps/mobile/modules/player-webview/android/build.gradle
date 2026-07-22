@@ -15,11 +15,20 @@ android {
   defaultConfig {
     minSdk safeExtGet('minSdkVersion', 23)
     targetSdk safeExtGet('targetSdkVersion', 34)
+
+    // Remote blocklist config URL — override via gradle.properties or env:
+    //   BLOCKLIST_CONFIG_URL=https://my-cdn.com/blocklist.json
+    buildConfigField "String", "BLOCKLIST_CONFIG_URL",
+      "\"${project.findProperty('BLOCKLIST_CONFIG_URL') ?: ''}\""
   }
 
   compileOptions {
     sourceCompatibility JavaVersion.VERSION_17
     targetCompatibility JavaVersion.VERSION_17
+  }
+
+  buildFeatures {
+    buildConfig true
   }
 
   kotlinOptions {

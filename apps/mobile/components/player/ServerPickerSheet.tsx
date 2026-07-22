@@ -6,6 +6,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, Modal, ScrollView, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import type { ProviderDefinition } from '@filmsnaps/shared';
 
 interface ServerPickerSheetProps {
@@ -57,7 +58,7 @@ export function ServerPickerSheet({
               return (
                 <TouchableOpacity
                   key={p.id}
-                  onPress={() => onSelect(p.id)}
+                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onSelect(p.id); }}
                   activeOpacity={0.7}
                   className={`flex-row items-center px-4 py-4 rounded-xl mb-1 ${
                     isActive ? 'bg-primary/10 border border-amber-500/20' : 'bg-zinc-800/40'

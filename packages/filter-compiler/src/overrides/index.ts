@@ -1,13 +1,23 @@
 /**
  * Per-provider overrides.
  *
- * These define provider-specific video CDN allowlists (so the adblocker
- * doesn't accidentally block video content) and additional ad/tracker
- * patterns specific to each provider.
+ * CDN allow patterns are now derived from the single source of truth:
+ * `blocklist.json` at the project root (via @filmsnaps/adblock-config).
+ *
+ * This file only maintains overrides for things NOT in blocklist.json:
+ *   - `blockPatterns` — extra ad/tracker domains specific to a provider
+ *   - `notes` — human-readable comments
+ *   - Virtual/internal providers (e.g., "nitro") not in the public list
+ *
+ * At build time, loadAllOverrides() merges the static definitions below
+ * with CDN domains read from blocklist.json, producing the full set.
  *
  * Allow patterns become:   @@||domain^$document
  * Block patterns become:   ||domain^$third-party
  */
+
+import { loadBlocklistConfig } from '@filmsnaps/adblock-config';
+import type { ProviderConfig } from '@filmsnaps/adblock-config';
 
 export interface ProviderOverride {
   providerId: string;
@@ -19,126 +29,171 @@ export interface ProviderOverride {
   note?: string;
 }
 
-// ── All provider overrides ─────────────────────────────────────────
+// ── Static overrides (supplemental — only what blocklist.json lacks) ──
+//
+// CDN domains (allowPatterns) for these providers are read from
+// blocklist.json providers[].cdnDomains at runtime.
+// This file only keeps blockPatterns + notes on top.
 
-const ALL_OVERRIDES: ProviderOverride[] = [
+const STATIC_OVERRIDES: ProviderOverride[] = [
   // ── Server 1: Nxsha ──────────────────────────────────────────
   {
     providerId: 'nxsha',
     displayName: 'Nxsha / Server 1',
-    allowPatterns: [
-      'nxsha.app',
-      'web.nxsha.app',
-      'nxcdn.app',
-      'nxcdn.video',
-      'nxs-ha.com',
-    ],
+    allowPatterns: [],
     blockPatterns: [],
-    note: 'NXCloud CDN serves from various subdomains',
+    note: 'NXCloud CDN serves from various subdomains; see blocklist.json',
   },
   // ── Server 2: Peachify ───────────────────────────────────────
   {
     providerId: 'peachify',
     displayName: 'Peachify / Server 2',
-    allowPatterns: ['peachify.top'],
+    allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 3: ScreenScape ────────────────────────────────────
   {
     providerId: 'screenscape',
     displayName: 'ScreenScape / Server 3',
-    allowPatterns: ['screenscape.me'],
+    allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 4: NHD Api ────────────────────────────────────────
   {
     providerId: 'nhdapi',
     displayName: 'NHD Api / Server 4',
-    allowPatterns: [
-      'nhdapi.com',
-      'nhdcdn.com',
-      'nhd.video',
-    ],
+    allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 5: ZxcStream ──────────────────────────────────────
   {
     providerId: 'zxcstream',
     displayName: 'ZxcStream / Server 5',
-    allowPatterns: ['zxcstream.xyz'],
+    allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 6: CinemaOS ───────────────────────────────────────
   {
     providerId: 'cinemaos',
     displayName: 'CinemaOS / Server 6',
-    allowPatterns: ['cinemaos.live'],
+    allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 14: VidNest ────────────────────────────────────────
   {
     providerId: 'vidnest',
     displayName: 'VidNest / Server 14',
-    allowPatterns: [
-      'vidnest.fun',
-      'vidnest-prod.com',
-    ],
+    allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 18: ChillFlix ─────────────────────────────────────
   {
     providerId: 'chillflix',
     displayName: 'ChillFlix / Server 18',
-    allowPatterns: [
-      'chillflix.pw',
-      'chillflix.lol',
-      'chillflix.bond',
-      'chillflix.biz',
-      'www.chillflix.lol',
-    ],
+    allowPatterns: [],
     blockPatterns: [],
-    note: 'Multiple TLDs — rotates frequently',
+    note: 'Multiple TLDs — rotates frequently; see blocklist.json',
   },
   // ── Server 19: TouStream ─────────────────────────────────────
   {
     providerId: 'toustream',
     displayName: 'TouStream / Server 19',
-    allowPatterns: ['toustream.xyz'],
+    allowPatterns: [],
     blockPatterns: [],
   },
   // ── StreamGuide ──────────────────────────────────────────────
   {
     providerId: 'streamguide',
     displayName: 'StreamGuide',
-    allowPatterns: ['streamguide.cfd'],
+    allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 20: VidKing ────────────────────────────────────────
   {
     providerId: 'vidking',
     displayName: 'VidKing / Server 20',
+    allowPatterns: [],
+    blockPatterns: [],
+  },
+  // ── Nitro HLS Proxy CDN ──────────────────────────────────────
+  {
+    providerId: 'nitro',
+    displayName: 'Nitro HLS Proxy',
+    // "nitro" is a virtual provider not listed in blocklist.json,
+    // so its CDN domains are kept here as static overrides.
     allowPatterns: [
-      'vidking.net',
-      'www.vidking.net',
+      'proxy.itsnitrox.tech',
+      'oo.itsnitrox.tech',
     ],
     blockPatterns: [],
+    note: 'HLS video delivery CDN used by streaming providers',
   },
 ];
 
-// ── Public API ─────────────────────────────────────────────────────
+// ── Public API ────────────────────────────────────────────────────────
 
 /**
- * Load all provider overrides.
+ * Load all provider overrides, merging CDN domains from blocklist.json
+ * with the static overrides defined above.
+ *
+ * blocklist.json providers are matched by `id`. Any provider in
+ * blocklist.json that is NOT in STATIC_OVERRIDES gets a generated entry.
+ * Any domain listed in blocklist.json `providers[].cdnDomains` is used
+ * as the allow pattern for that provider.
  */
 export function loadAllOverrides(): ProviderOverride[] {
-  return ALL_OVERRIDES;
+  const merged = new Map<string, ProviderOverride>();
+
+  // 1. Seed with static overrides
+  for (const ov of STATIC_OVERRIDES) {
+    merged.set(ov.providerId, { ...ov, allowPatterns: [...ov.allowPatterns] });
+  }
+
+  // 2. Merge CDN domains from blocklist.json
+  try {
+    const blConfig = loadBlocklistConfig();
+
+    if (blConfig?.providers) {
+      for (const provider of blConfig.providers) {
+        if (!provider.enabled) continue;
+
+        const cdnDomains = provider.cdnDomains ?? [];
+        const embedDomains = provider.embedDomains ?? [];
+
+        // Combine embed + CDN domains as allow patterns (both are safe)
+        const domainsFromConfig = [...new Set([...embedDomains, ...cdnDomains])];
+
+        if (merged.has(provider.id)) {
+          // Merge into existing override — append config domains
+          const existing = merged.get(provider.id)!;
+          const allPatterns = new Set([
+            ...existing.allowPatterns,
+            ...domainsFromConfig,
+          ]);
+          existing.allowPatterns = [...allPatterns];
+        } else {
+          // Provider from config not in static overrides — create entry
+          merged.set(provider.id, {
+            providerId: provider.id,
+            displayName: `${provider.id} (from blocklist.json)`,
+            allowPatterns: domainsFromConfig,
+            blockPatterns: [],
+          });
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[overrides] Failed to load blocklist.json — using static overrides only:', (e as Error).message);
+  }
+
+  return [...merged.values()];
 }
 
 /**
  * Get overrides for a specific provider by ID.
  */
 export function getOverrideFor(providerId: string): ProviderOverride | undefined {
-  return ALL_OVERRIDES.find((o) => o.providerId === providerId);
+  return loadAllOverrides().find((o) => o.providerId === providerId);
 }
 
 /**

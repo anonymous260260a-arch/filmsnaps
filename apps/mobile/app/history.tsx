@@ -1,4 +1,4 @@
-﻿import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,22 +7,49 @@ import {
   ActivityIndicator,
   RefreshControl,
   useWindowDimensions,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { tmdbApi } from '../../lib/api';
-import { MediaCard } from '../../components/MediaCard';
-import { ProgressiveImage } from '../../components/ProgressiveImage';
-import { getAllProgress, getAggregatedHistory, clearAllProgress, clearProgress } from '../../lib/watchHistory';
+import { tmdbApi } from '../lib/api';
+import { MediaCard } from '../components/MediaCard';
+import { ProgressiveImage } from '../components/ProgressiveImage';
+import { getAllProgress, getAggregatedHistory, clearAllProgress, clearProgress } from '../lib/watchHistory';
 import { getImageUrl } from '@filmsnaps/shared';
 import type { Movie } from '@filmsnaps/shared';
-import type { WatchProgress } from '../../lib/watchHistory';
+import type { WatchProgress } from '../lib/watchHistory';
 
 const NUM_COLUMNS = 3;
 const GAP = 8;
 const PADDING = 16;
+
+function HistorySkeleton() {
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={{ flex: 1, backgroundColor: '#070708', paddingTop: insets.top }}>
+      <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between' }}>
+        <View style={{ width: 80, height: 22, borderRadius: 4, backgroundColor: '#1C1C20' }} />
+        <View style={{ width: 48, height: 20, borderRadius: 4, backgroundColor: '#1C1C20' }} />
+      </View>
+      {Array.from({ length: 5 }).map((_, i) => (
+        <View key={i} style={{ flexDirection: 'row', backgroundColor: '#141414', borderRadius: 12, marginHorizontal: 16, marginBottom: 8, overflow: 'hidden' }}>
+          <View style={{ width: 68, height: 102, backgroundColor: '#1C1C20' }} />
+          <View style={{ flex: 1, padding: 10, justifyContent: 'center' }}>
+            <View style={{ width: '70%', height: 14, borderRadius: 4, backgroundColor: '#1C1C20' }} />
+            <View style={{ width: '40%', height: 10, borderRadius: 4, backgroundColor: '#1C1C20', marginTop: 6 }} />
+            <View style={{ width: '100%', height: 4, borderRadius: 2, backgroundColor: '#1C1C20', marginTop: 8 }} />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
+              <View style={{ width: 50, height: 10, borderRadius: 4, backgroundColor: '#1C1C20' }} />
+              <View style={{ width: 40, height: 10, borderRadius: 4, backgroundColor: '#1C1C20' }} />
+            </View>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
 
 export default function HistoryScreen() {
   const router = useRouter();
@@ -46,15 +73,6 @@ export default function HistoryScreen() {
     else if (!loadedRef.current) setLoading(true);
     try {
       const agg = await getAggregatedHistory();
-      console.log('[History] Loaded', agg.length, 'aggregated entries');
-      console.log('[History] Raw entries:', JSON.stringify(agg.map(e => ({
-        tmdbId: e.latest.tmdbId,
-        mediaType: e.latest.mediaType,
-        percent: e.latest.percent,
-        completed: e.latest.completed,
-        episodeCount: e.episodeCount,
-        updatedAt: new Date(e.latest.updatedAt).toISOString(),
-      }))));
       setEntries(agg);
 
       // Fetch TMDB metadata for each unique ID
@@ -85,7 +103,7 @@ export default function HistoryScreen() {
     setRefreshing(false);
   }, []);
 
-  // Reload whenever the tab gains focus (handles mount + tab switch)
+  // Reload whenever the screen gains focus
   useFocusEffect(
     useCallback(() => {
       loadHistory();
@@ -146,24 +164,36 @@ export default function HistoryScreen() {
   };
 
   if (loading) {
-    return (
-      <View className="flex-1 bg-void items-center justify-center" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
-        <ActivityIndicator size="large" color="#D4A237" />
-      </View>
-    );
+    return <HistorySkeleton />;
   }
 
   return (
     <View className="flex-1 bg-void" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
       {/* Header */}
       <View className="px-5 pt-4 pb-2 flex-row items-center justify-between">
-        <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: '#F4F4F5' }}>
-          History
-        </Text>
+        <View className="flex-row items-center">
+          <TouchableOpacity
+            onPress={() => router.back()}
+            className="w-9 h-9 rounded-full bg-zinc-800/60 items-center justify-center mr-3"
+            activeOpacity={0.7}
+          >
+            <Ionicons name="chevron-back" size={20} color="#F4F4F5" />
+          </TouchableOpacity>
+          <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: '#F4F4F5' }}>
+            History
+          </Text>
+        </View>
         {entries.length > 0 && (
           <TouchableOpacity
             onPress={() => {
-              clearAllProgress().then(() => loadHistory());
+              Alert.alert(
+                'Clear History',
+                'This will remove all your watch history. This cannot be undone.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Clear All', style: 'destructive', onPress: () => clearAllProgress().then(() => loadHistory()) },
+                ]
+              );
             }}
             activeOpacity={0.7}
             className="flex-row items-center"
@@ -221,7 +251,7 @@ export default function HistoryScreen() {
               </TouchableOpacity>
             ) : entries.length > 0 ? (
               <View className="self-center mt-4 mb-8">
-                <Text className="text-text-tertiary text-xs">All caught up â€” {entries.length} items</Text>
+                <Text className="text-text-tertiary text-xs">All caught up — {entries.length} items</Text>
               </View>
             ) : null
           }
@@ -271,7 +301,6 @@ export default function HistoryScreen() {
                     </Text>
                   )}
 
-                  {/* Provider badge intentionally omitted â€” don't reveal server names */}
                   {isFullyWatched ? (
                     <View className="bg-green-900/40 rounded-sm px-1.5 py-0.5 self-start">
                       <Text className="text-green-400 text-[9px] font-bold">COMPLETED</Text>

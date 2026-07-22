@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useRef, useState, useEffect } from 'react';
+import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { View, ScrollView, RefreshControl, Text, ActivityIndicator, useWindowDimensions, FlatList, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,7 +10,7 @@ import { ProgressiveImage } from '../../components/ProgressiveImage';
 import { useTrendingMovies, useTrendingTV, usePopularMovies } from '../../hooks/useTMDB';
 import { tmdbApi } from '../../lib/api';
 import { getAggregatedHistory } from '../../lib/watchHistory';
-import { getImageUrl } from '@filmsnaps/shared';
+import { getImageUrl, PROVIDERS } from '@filmsnaps/shared';
 import type { Movie } from '@filmsnaps/shared';
 import type { WatchProgress } from '../../lib/watchHistory';
 
@@ -58,6 +58,14 @@ export default function HomeScreen() {
   }>>([]);
   const [historyMeta, setHistoryMeta] = useState<Record<string, Movie | null>>({});
   const historyLoadedRef = useRef(false);
+
+  // Provider display name lookup for Continue Watching
+  const providerLabelMap = useRef<Record<string, string>>({});
+  if (Object.keys(providerLabelMap.current).length === 0) {
+    for (const p of PROVIDERS) {
+      providerLabelMap.current[p.id] = p.displayName ?? p.name;
+    }
+  }
 
   const loadHistory = useCallback(async () => {
     if (historyLoadedRef.current) return;
@@ -157,9 +165,22 @@ export default function HomeScreen() {
   if (loadingMovies && loadingTV && loadingPopular) {
     return (
       <View className="flex-1 bg-void" style={{ paddingTop: insets.top, backgroundColor: '#070708' }}>
-        <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color="#D4A237" />
-        </View>
+        {/* Hero skeleton */}
+        <View style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH * 0.56, backgroundColor: '#141414' }} />
+        {/* Sections skeleton */}
+        {[1, 2].map((s) => (
+          <View key={s} className="mb-6 px-4 mt-4">
+            <View className="w-36 h-5 bg-subtle rounded" style={{ backgroundColor: '#1C1C20' }} />
+            <View className="flex-row mt-3" style={{ gap: 10 }}>
+              {Array.from({ length: SKELETON_ITEMS }).map((_, i) => (
+                <View
+                  key={i}
+                  style={{ width: itemWidth, height: itemHeight, borderRadius: 12, backgroundColor: '#1C1C20' }}
+                />
+              ))}
+            </View>
+          </View>
+        ))}
       </View>
     );
   }
@@ -324,6 +345,23 @@ export default function HomeScreen() {
                           </Text>
                         </View>
                       )}
+                      {/* Provider label */}
+                      {p.providerId ? (
+                        <View style={{
+                          position: 'absolute',
+                          bottom: 6,
+                          left: 4,
+                          backgroundColor: 'rgba(212,162,55,0.2)',
+                          borderRadius: 3,
+                          paddingHorizontal: 4,
+                          paddingVertical: 1,
+                          maxWidth: cardWidth - 8,
+                        }}>
+                          <Text className="text-primary text-[8px] font-bold" numberOfLines={1}>
+                            {providerLabelMap.current[p.providerId] ?? p.providerId}
+                          </Text>
+                        </View>
+                      ) : null}
                       {/* Completed badge */}
                       {item.fullyWatched && (
                         <View style={{

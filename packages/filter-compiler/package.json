@@ -29,7 +29,8 @@
     "compile:dev": "tsx src/compile.ts"
   },
   "dependencies": {
-    "@cliqz/adblocker": "^1.34.0"
+    "@cliqz/adblocker": "^1.34.0",
+    "@filmsnaps/adblock-config": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22",

@@ -12,47 +12,118 @@
  * @returns A self-executing JS string to inject into the player page
  */
 
-export function buildGuardScript(providerHostname: string): string {
+import { buildAllScriptlets, getProviderScriptlets } from './scriptlets';
+
+// ── Default ad/tracker patterns (fallback when no config injected) ──
+//
+// These cover the most common ad/tracker domains from EasyList that are
+// unlikely to ever serve video content. When the WebView injects
+// window.__FILMSNAPS_CONFIG__, these are replaced with the live
+// blocklist.json rules.alwaysBlock.domains.
+//
+// The DOM sweeper layer also includes its own focused subset for the
+// aggressive fixed-position overlay removal it performs.
+
+export const DEFAULT_AD_FULL_PATTERNS = [
+  'doubleclick.net', 'googleadservices.com', 'googlesyndication.com',
+  'google-analytics.com', 'googletagmanager.com', 'gtag/js',
+  'pagead2.googlesyndication.com', 'adnxs.com', 'rubiconproject.com',
+  'criteo.com', 'criteo.net', 'outbrain.com', 'taboola.com',
+  'revcontent.com', 'adsystem.', 'adserver.', 'ads.',
+  'popads.', 'popcash.', 'popunder.', 'adsterra.com',
+  'propellerads.com', 'trafficfactory.biz',
+  'pixel.', 'track.', 'tracking.', 'beacon.',
+  'histats.com', 'statcounter.com', 'scorecardresearch.com',
+  'amazon-adsystem.com', 'casalemedia.com', 'contextweb.com',
+  'openx.net', 'pubmatic.com', 'sharethrough.com',
+  'media.net', 'advertising.com', 'adap.tv',
+  'moatads.com', 'servedby.', 'exdynsrv.com',
+  'exoclick.com', 'juicyads.com', 'plugrush.com',
+  'trafficjunky.com', 'adreactor.com', 'adcash.com',
+  'adhitz.com', 'adk2.com', 'adpierce.com',
+  'clickadu.com', 'clicksco.net', 'hilltopads.com',
+  'interlinecustomroofingllc.com', '1xlite',
+  'riverlayboy.shop', 'hai8g.com',
+  'zoaclachan.cyou', 'florian.sorrilylivyershape.cyou',
+  'ag.phrymaphytic.com', 'my.rtmark.net',
+  's.click.aliexpress.com', 'developdomicile.com',
+  'cloudflareinsights.com', 'frowstyambler', 'qpon',
+  'go.', 'click.', 'adx.', 'adv.', 'banner.',
+  'traffic.', 'redirect.', 'redirecting.',
+  'bestchange', 'best-',
+];
+
+export const DEFAULT_AD_SHORT_PATTERNS = [
+  'doubleclick.net', 'googleadservices.com', 'googlesyndication.com',
+  'google-analytics.com', 'googletagmanager.com', 'gtag/js',
+  'pagead2.googlesyndication.com', 'adnxs.com', 'popads.', 'popcash.',
+  'popunder.', 'adsterra.com', 'exoclick.com', 'juicyads.com',
+  'plugrush.com', 'adcash.com', 'clickadu.com',
+  'frowstyambler', 'zoaclachan', 'riverlayboy', 'hai8g',
+  'developdomicile', 'cloudflareinsights',
+];
+
+export function buildGuardScript(
+  providerHostname: string,
+  blockedDomains?: string[],
+): string {
+  const fullPatterns = blockedDomains ?? DEFAULT_AD_FULL_PATTERNS;
+  const shortPatterns = blockedDomains ?? DEFAULT_AD_SHORT_PATTERNS;
+  const patternsJson = JSON.stringify(fullPatterns);
+  const shortPatternsJson = JSON.stringify(shortPatterns);
+
   return `
 (function() {
+  // ── Injected ad/tracker domain patterns (from blocklist.json or default) ──
+  var BLOCKED_DOMAINS = ${patternsJson};
+  var BLOCKED_DOMAINS_SHORT = ${shortPatternsJson};
+
+  // ── Native function masking helper (anti-anti-adblock) ──
+  // Providers detect monkey-patched APIs by checking toString():
+  //   window.fetch.toString() !== 'function fetch() { [native code] }'
+  // This helper wraps any override to lie about its toString() output.
+  //
+  // Also tags the function with a hidden _fsNativeStr property so the
+  // Function.prototype.toString override below works for the more
+  // sophisticated Function.prototype.toString.call(fetch) bypass.
+  function _maskFn(fn, nativeStr) {
+    fn.toString = function() { return nativeStr; };
+    fn.toString.toString = function() { return 'function toString() { [native code] }'; };
+    // Tag with hidden property for Function.prototype.toString.call() defense.
+    // This defeats providers using:
+    //   Function.prototype.toString.call(window.fetch)  // bypasses fn.toString()
+    try { Object.defineProperty(fn, '_fsNativeStr', { value: nativeStr, enumerable: false, configurable: false }); } catch(e) {}
+    return fn;
+  }
+
+  // ── Global Function.prototype.toString override (anti-anti-adblock) ──
+  // Sophisticated anti-adblock scripts (AdShield, BlockAdBlock) bypass
+  // per-function fn.toString() overrides by using:
+  //   Function.prototype.toString.call(window.fetch)
+  // This reads the ACTUAL function source, defeating our _maskFn.
+  //
+  // Our override intercepts ALL Function.prototype.toString calls and,
+  // if 'this' has a _fsNativeStr property (set by _maskFn), returns
+  // the spoofed native string instead of the real source.
+  (function() {
+    var _origFuncToString = Function.prototype.toString;
+    Function.prototype.toString = _maskFn(function toString() {
+      if (this && this._fsNativeStr) return this._fsNativeStr;
+      return _origFuncToString.call(this);
+    }, 'function toString() { [native code] }');
+  })();
+
   // ── Popup blocking (Layer 1) ──
   // Override window.open with smart filtering — allow same-origin, block ad domains.
   (function() {
     var _origOpen = window.open;
-    window.open = function(url, name, features) {
+    window.open = _maskFn(function(url, name, features) {
       if (url && typeof url === 'string') {
         try {
           var u = new URL(url, location.href);
           if (u.hostname !== location.hostname) {
             var l = u.href.toLowerCase();
-            var AD_PATTERNS = [
-              'doubleclick.net', 'googleadservices.com', 'googlesyndication.com',
-              'google-analytics.com', 'googletagmanager.com', 'gtag/js',
-              'pagead2.googlesyndication.com', 'adnxs.com', 'rubiconproject.com',
-              'criteo.com', 'criteo.net', 'outbrain.com', 'taboola.com',
-              'revcontent.com', 'adsystem.', 'adserver.', 'ads.',
-              'popads.', 'popcash.', 'popunder.', 'adsterra.com',
-              'propellerads.com', 'trafficfactory.biz',
-              'pixel.', 'track.', 'tracking.', 'beacon.',
-              'histats.com', 'statcounter.com', 'scorecardresearch.com',
-              'amazon-adsystem.com', 'casalemedia.com', 'contextweb.com',
-              'openx.net', 'pubmatic.com', 'sharethrough.com',
-              'media.net', 'advertising.com', 'adap.tv',
-              'moatads.com', 'servedby.', 'exdynsrv.com',
-              'exoclick.com', 'juicyads.com', 'plugrush.com',
-              'trafficjunky.com', 'adreactor.com', 'adcash.com',
-              'adhitz.com', 'adk2.com', 'adpierce.com',
-              'clickadu.com', 'clicksco.net', 'hilltopads.com',
-              'interlinecustomroofingllc.com', '1xlite',
-              'riverlayboy.shop', 'hai8g.com',
-              'zoaclachan.cyou', 'florian.sorrilylivyershape.cyou',
-              'ag.phrymaphytic.com', 'my.rtmark.net',
-              's.click.aliexpress.com', 'developdomicile.com',
-              'cloudflareinsights.com', 'frowstyambler', 'qpon',
-              'go.', 'click.', 'adx.', 'adv.', 'banner.',
-              'traffic.', 'redirect.', 'redirecting.',
-              'bestchange', 'best-',
-            ];
+            var AD_PATTERNS = BLOCKED_DOMAINS;
             for (var i = 0; i < AD_PATTERNS.length; i++) {
               if (l.indexOf(AD_PATTERNS[i]) !== -1) {
                 try { return new Proxy({}, {get:function(){return function(){return null}}}); } catch(e){ return null; }
@@ -62,39 +133,12 @@ export function buildGuardScript(providerHostname: string): string {
         } catch(e) {}
       }
       try { return _origOpen.apply(window, arguments); } catch(e) { return null; }
-    };
+    }, 'function open() { [native code] }');
   })();
 
   // ── Ad / tracker network blocklist (Layer 2) ──
   (function() {
-    var AD_PATTERNS = [
-      'doubleclick.net', 'googleadservices.com', 'googlesyndication.com',
-      'google-analytics.com', 'googletagmanager.com', 'gtag/js',
-      'pagead2.googlesyndication.com', 'adnxs.com', 'rubiconproject.com',
-      'criteo.com', 'criteo.net', 'outbrain.com', 'taboola.com',
-      'revcontent.com', 'adsystem.', 'adserver.', 'ads.',
-      'popads.', 'popcash.', 'popunder.', 'adsterra.com',
-      'propellerads.com', 'trafficfactory.biz',
-      'pixel.', 'track.', 'tracking.', 'beacon.',
-      'histats.com', 'statcounter.com', 'scorecardresearch.com',
-      'amazon-adsystem.com', 'casalemedia.com', 'contextweb.com',
-      'openx.net', 'pubmatic.com', 'sharethrough.com',
-      'media.net', 'advertising.com', 'adap.tv',
-      'moatads.com', 'servedby.', 'exdynsrv.com',
-      'exoclick.com', 'juicyads.com', 'plugrush.com',
-      'trafficjunky.com', 'adreactor.com', 'adcash.com',
-      'adhitz.com', 'adk2.com', 'adpierce.com',
-      'clickadu.com', 'clicksco.net', 'hilltopads.com',
-      'interlinecustomroofingllc.com', '1xlite',
-      'riverlayboy.shop', 'hai8g.com',
-      'zoaclachan.cyou', 'florian.sorrilylivyershape.cyou',
-      'ag.phrymaphytic.com', 'my.rtmark.net',
-      's.click.aliexpress.com', 'developdomicile.com',
-      'cloudflareinsights.com', 'frowstyambler', 'qpon',
-      'click.', 'adx.', 'adv.', 'banner.',
-      'traffic.', 'redirect.', 'redirecting.',
-      'bestchange', 'best-',
-    ];
+    var AD_PATTERNS = BLOCKED_DOMAINS;
     function isAdUrl(url) {
       if (!url || typeof url !== 'string') return false;
       var l = url.toLowerCase();
@@ -106,19 +150,19 @@ export function buildGuardScript(providerHostname: string): string {
     // Intercept fetch
     try {
       var _fetch = window.fetch;
-      window.fetch = function(input, init) {
+      window.fetch = _maskFn(function(input, init) {
         var url = (typeof input === 'string') ? input : (input && input.url) || '';
         if (isAdUrl(url)) return Promise.resolve(new Response('', {status: 204}));
         return _fetch.call(window, input, init);
-      };
+      }, 'function fetch() { [native code] }');
     } catch(e) {}
     // Intercept XHR
     try {
       var _xhrOpen = XMLHttpRequest.prototype.open;
-      XMLHttpRequest.prototype.open = function(method, url) {
+      XMLHttpRequest.prototype.open = _maskFn(function(method, url) {
         if (isAdUrl(url)) { this._aborted = true; return; }
         return _xhrOpen.apply(this, arguments);
-      };
+      }, 'function open() { [native code] }');
       var _xhrSend = XMLHttpRequest.prototype.send;
       XMLHttpRequest.prototype.send = function() {
         if (this._aborted) return;
@@ -129,15 +173,7 @@ export function buildGuardScript(providerHostname: string): string {
 
   // ── DOM mutation sweeper (Layer 3) ──
   (function() {
-    var AD_PATTERNS = [
-      'doubleclick.net', 'googleadservices.com', 'googlesyndication.com',
-      'google-analytics.com', 'googletagmanager.com', 'gtag/js',
-      'pagead2.googlesyndication.com', 'adnxs.com', 'popads.', 'popcash.',
-      'popunder.', 'adsterra.com', 'exoclick.com', 'juicyads.com',
-      'plugrush.com', 'adcash.com', 'clickadu.com',
-      'frowstyambler', 'zoaclachan', 'riverlayboy', 'hai8g',
-      'developdomicile', 'cloudflareinsights',
-    ];
+    var AD_PATTERNS = BLOCKED_DOMAINS_SHORT;
     function isAdUrl(url) {
       if (!url || typeof url !== 'string') return false;
       var l = url.toLowerCase();
@@ -281,9 +317,129 @@ export function buildGuardScript(providerHostname: string): string {
     };
   } catch(e) {}
 
+  // ── Devtool redirect blocker (Layer 7b) ──────────────────────────
+  // The disable-devtool library (theajack.github.io) detects WebView
+  // debug mode and redirects location.href every ~500ms. Our native
+  // adblock blocks the actual navigation, but the script keeps firing.
+  // This layer intercepts location.replace/assign AND the Location
+  // prototype's href setter to silently drop devtool-domain redirects.
+  (function() {
+    // ── DefineIdDetector neutralization ─────────────────────────
+    // The disable-devtool library's define-id.ts creates a div with
+    // __defineGetter__('id', callback), then calls console.log(div).
+    // Chromium always accesses div.id when serializing a DOM element
+    // for console.log — even WITHOUT devtools. Block __defineGetter__
+    // for 'id' on elements to prevent this false positive.
+    try {
+      var _origDefGetter = Object.prototype.__defineGetter__;
+      if (typeof _origDefGetter === 'function') {
+        Object.defineProperty(Object.prototype, '__defineGetter__', {
+          value: function(prop, cb) {
+            if (prop === 'id' && this != null && typeof this.tagName === 'string') {
+              return;
+            }
+            return _origDefGetter.call(this, prop, cb);
+          },
+          writable: true, configurable: true
+        });
+      }
+    } catch(e) {}
+    try {
+      var _origDefSetter = Object.prototype.__defineSetter__;
+      if (typeof _origDefSetter === 'function') {
+        Object.defineProperty(Object.prototype, '__defineSetter__', {
+          value: function(prop, cb) {
+            if (prop === 'id' && this != null && typeof this.tagName === 'string') {
+              return;
+            }
+            return _origDefSetter.call(this, prop, cb);
+          },
+          writable: true, configurable: true
+        });
+      }
+    } catch(e) {}
+    var DEVTOOL_PATTERNS = ['theajack.github.io', 'disable-devtool',
+      'devtool', 'devtools', 'devtools-detect'];
+    function _isDevtoolUrl(url) {
+      if (!url || typeof url !== 'string') return false;
+      var l = url.toLowerCase();
+      for (var i = 0; i < DEVTOOL_PATTERNS.length; i++) {
+        if (l.indexOf(DEVTOOL_PATTERNS[i]) !== -1) return true;
+      }
+      return false;
+    }
+    // Override Location.prototype.replace
+    try {
+      var _origReplace = Location.prototype.replace;
+      Location.prototype.replace = _maskFn(function(url) {
+        if (_isDevtoolUrl(url)) return null;
+        return _origReplace.call(this, url);
+      }, 'function replace() { [native code] }');
+    } catch(e) {}
+    // Override Location.prototype.assign
+    try {
+      var _origAssign = Location.prototype.assign;
+      Location.prototype.assign = _maskFn(function(url) {
+        if (_isDevtoolUrl(url)) return null;
+        return _origAssign.call(this, url);
+      }, 'function assign() { [native code] }');
+    } catch(e) {}
+    // Override Location.prototype.href setter — catches all
+    // location.href = '...' calls at the prototype level.
+    try {
+      var _hrefDesc = Object.getOwnPropertyDescriptor(Location.prototype, 'href');
+      if (_hrefDesc && _hrefDesc.set) {
+        Object.defineProperty(Location.prototype, 'href', {
+          set: function(val) {
+            if (_isDevtoolUrl(val)) return;
+            return _hrefDesc.set.call(this, val);
+          },
+          get: function() { return _hrefDesc.get.call(this); },
+          configurable: true
+        });
+      }
+    } catch(e) {}
+    // Override Window.prototype.location setter — catches window.location = url
+    try {
+      var _winLocDesc = Object.getOwnPropertyDescriptor(
+        Object.getPrototypeOf(window), 'location');
+      if (_winLocDesc && _winLocDesc.set) {
+        var _origWinLocSet = _winLocDesc.set;
+        Object.defineProperty(Object.getPrototypeOf(window), 'location', {
+          set: function(val) {
+            if (typeof val === 'string' && _isDevtoolUrl(val)) return;
+            return _origWinLocSet.call(this, val);
+          },
+          get: function() { return _winLocDesc.get.call(this); },
+          configurable: true
+        });
+      }
+    } catch(e) {}
+    // DOM clearing protection — prevent closeWindow() from nuking page content
+    try {
+      var _bodyInnerHtmlDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+      if (_bodyInnerHtmlDesc && _bodyInnerHtmlDesc.set) {
+        var _origBodySet = _bodyInnerHtmlDesc.set;
+        Object.defineProperty(Element.prototype, 'innerHTML', {
+          set: function(val) {
+            if (val === '' && this === (document.body || document.documentElement)) return;
+            return _origBodySet.call(this, val);
+          },
+          get: function() { return _bodyInnerHtmlDesc.get.call(this); },
+          configurable: true
+        });
+      }
+    } catch(e) {}
+    // Block Document.prototype.open/write/writeln (used by some libs to replace content)
+    try { Document.prototype.open = _maskFn(function() { return this; }, 'open'); } catch(e) {}
+    try { Document.prototype.write = _maskFn(function() {}, 'write'); } catch(e) {}
+    try { Document.prototype.writeln = _maskFn(function() {}, 'writeln'); } catch(e) {}
+  })();
+
   // ── Seal window.open permanently (Layer 8) ──
   try {
     var _noopWin = function() { try{ return new Proxy({}, {get:function(){return function(){return null}}}); }catch(e){ return null; } };
+    _maskFn(_noopWin, 'function open() { [native code] }');
     Object.defineProperty(window, 'open', { value: _noopWin, writable: false, configurable: false });
   } catch(e) {}
 
@@ -549,11 +705,31 @@ true;
 
 /**
  * Build the complete set of scripts to inject into a player WebView/iframe.
- * Combines all guard layers into a single concatenated string.
+ * Combines all guard layers + uBO scriptlets into a single concatenated string.
  */
-export function buildAllScripts(providerHostname: string): string {
+export function buildAllScripts(providerHostname: string, blockedDomains?: string[]): string {
   return [
-    buildGuardScript(providerHostname),
+    buildGuardScript(providerHostname, blockedDomains),
+    buildContentReadyScript(),
+    buildBridgeScript(),
+  ].join('\n\n');
+}
+
+/**
+ * Build all scripts including uBlock Origin scriptlets.
+ * Use this variant when anti-anti-adblock scriptlets are desired.
+ *
+ * @param providerHostname - Provider hostname for referrer spoofing
+ * @param providerId - Optional provider ID for provider-specific scriptlets
+ */
+export function buildAllScriptsWithScriptlets(providerHostname: string, providerId?: string, blockedDomains?: string[]): string {
+  const baseScriptlets = buildAllScriptlets();
+  const providerScriptlets = providerId ? getProviderScriptlets(providerId) : [];
+
+  return [
+    buildGuardScript(providerHostname, blockedDomains),
+    baseScriptlets,
+    ...providerScriptlets,
     buildContentReadyScript(),
     buildBridgeScript(),
   ].join('\n\n');

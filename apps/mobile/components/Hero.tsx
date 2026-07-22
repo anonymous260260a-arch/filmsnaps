@@ -1,4 +1,4 @@
-﻿import React from 'react';
+﻿import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, useWindowDimensions, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getImageUrl } from '@filmsnaps/shared';
@@ -26,6 +26,7 @@ interface HeroProps {
 export function Hero({ item, onWatchPress }: HeroProps) {
   const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = useWindowDimensions();
   const HERO_HEIGHT = SCREEN_HEIGHT * 0.50;
+  const [overviewExpanded, setOverviewExpanded] = useState(false);
 
   const backdropUrl = getImageUrl(item.backdrop_path, 'w780');
   const title = item.title || item.name || '';
@@ -157,14 +158,27 @@ export function Hero({ item, onWatchPress }: HeroProps) {
           </Text>
         </View>
 
-        {/* Overview â€” 2 lines */}
+        {/* Overview */}
         {overview ? (
-          <Text
-            style={[typography.body, { color: '#A1A1AA', marginBottom: 20 }]}
-            numberOfLines={2}
-          >
-            {overview}
-          </Text>
+          <View style={{ marginBottom: 20 }}>
+            <Text
+              style={[typography.body, { color: '#A1A1AA' }]}
+              numberOfLines={overviewExpanded ? undefined : 2}
+            >
+              {overview}
+            </Text>
+            {overview.length > 100 && (
+              <TouchableOpacity
+                onPress={() => setOverviewExpanded(!overviewExpanded)}
+                activeOpacity={0.7}
+                style={{ marginTop: 2 }}
+              >
+                <Text style={{ color: '#D4A237', fontSize: 11, fontFamily: 'Inter_500Medium' }}>
+                  {overviewExpanded ? 'Less' : 'More'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
         ) : null}
 
         {/* Watch Now â€” gold CTA */}

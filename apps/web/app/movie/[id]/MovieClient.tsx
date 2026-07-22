@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { Star, Clock, ArrowLeft, Play, Youtube } from 'lucide-react';
+import { Star, Clock, ArrowLeft, Play, Youtube, Download, CloudDownload } from 'lucide-react';
 import { getImageUrl, getTrailerKey } from '@/lib/tmdb';
 import dynamic from 'next/dynamic';
 import { MediaCarousel } from '@/components/MediaCarousel';
@@ -148,6 +148,20 @@ export default function MovieClient({ movie }: { movie: any }) {
                   >
                     <Play className="w-4 h-4 fill-current" />
                     Watch Now
+                  </Button>
+                  <Button
+                    onClick={() => router.push(`/download/nxsha/movie/${movie.id}`)}
+                    className="gap-2.5 px-5 py-3 h-auto rounded-full border border-primary/50 bg-transparent hover:bg-primary/10 text-primary font-semibold text-sm transition-all"
+                  >
+                    <Download className="w-4 h-4" />
+                    Server 1 DL
+                  </Button>
+                  <Button
+                    onClick={() => router.push(`/download/falix/movie/${movie.id}`)}
+                    className="gap-2.5 px-5 py-3 h-auto rounded-full border border-blue-500/50 bg-transparent hover:bg-blue-500/10 text-blue-500 font-semibold text-sm transition-all"
+                  >
+                    <CloudDownload className="w-4 h-4" />
+                    Falix DL
                   </Button>
                   <SaveButton
                     movie={movie}

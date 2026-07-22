@@ -30,7 +30,7 @@ const Page = async ({ params, searchParams }) => {
       plat={plat}
       initialMeta={meta}
       initialSeasonData={initialSeasonData}
-      defaultProvider={sp.provider}
+      defaultProvider={sp.provider || 'cinemaos'}
       minimal={sp.minimal === '1'}
       initialSeason={initialSeason}
       initialEpisode={initialEpisode}

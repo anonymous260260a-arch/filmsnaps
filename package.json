@@ -28,5 +28,11 @@
   "packageManager": "pnpm@10.10.0",
   "engines": {
     "node": ">=18"
+  },
+  "version": "1.0.0",
+  "dependencies": {
+    "expo": "~55.0.27",
+    "react": "19.2.0",
+    "react-native": "0.83.6"
   }
 }

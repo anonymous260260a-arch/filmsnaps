@@ -10,7 +10,7 @@ import type { ProviderDefinition } from '../types/provider';
  * Enabled servers in order: 1, 2, 3, 4, 5, 6, 14, 18, 19, 20, StreamGuide
  */
 export const PROVIDERS: ProviderDefinition[] = [
-  // ── Server 1 ────────────────────────────────────────────────
+  // ── Server 1 (DISABLED — behind Cloudflare, proxy unreliable) ──
   {
     id: 'nxsha',
     name: 'Nxsha',
@@ -21,10 +21,30 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?disable_dl_button=true&disable_app_ad=true&lang=hi`,
     },
     sandbox: 'allow-scripts allow-same-origin ',
-    platforms: ['web'],
+   // platforms: ['web'],
     allowedOrigins: [
       'https://web.nxsha.app',
+      // Common video CDNs nxsha may use for streaming
+      'https://nxcdn.app',
+      'https://cdn.nxsha.app',
     ],
+    coverOverlays: [
+      // Cover any overlay ads that survive the proxy
+      { top: '0', left: '0', width: '100%', height: '60px' },
+    ],
+    protection: {
+      enabled: true,
+      customBlockPatterns: [
+        '/pop.js',
+        '/popunder.js',
+        '/track.php',
+        '/ad.php',
+        '/banner.',
+        'adservexsha',
+        'nxsha-ads',
+        'popad.',
+      ],
+    },
 
   },
   // ── Server 2 ────────────────────────────────────────────────
@@ -108,6 +128,25 @@ export const PROVIDERS: ProviderDefinition[] = [
       { top: '8px', left: '23%', width: '127px', height: '67px' },
     ],
     platforms: ['web'],
+  },
+  // ── Falix [Direct, Fast] ────────────────────────────────────────
+  // DISABLED: All content is HEVC-encoded (x265 10bit).
+  // WebCodecs-based HEVC playback was attempted but failed on both
+  // Windows Brave and Android Chrome (see docs/hevc-playback-issue.md).
+  // Enable when a solution for HEVC playback is found.
+  {
+    id: 'falix',
+    name: 'Falix',
+    displayName: 'Falix [Direct]',
+    enabled: true,
+    forDownloadOnly: true,
+    order: 7,
+    baseUrl: 'https://download-falix-falixmovies-backend-hf.hf.space',
+    embed: {
+      movie: (id) => `/api/id/${id}`,
+      tv: (id) => `/api/id/${id}`,
+    },
+    platforms: ['mobile'],
   },
   // ── Server 22 (disabled — was Server 5) ──────────────────────
   {
@@ -334,6 +373,21 @@ export const PROVIDERS: ProviderDefinition[] = [
     },
     allowedOrigins: ['https://streamguide.cfd'],
   },
+  // ── VidSync ────────────────────────────────────────────────
+  {
+    id: 'vidsync',
+    name: 'VidSync',
+    displayName: 'VidSync',
+    baseUrl: 'https://vidsync.live',
+    embed: {
+      movie: (id, startAt) =>
+        `/embed/movie/${id}?defaultServer=CINEDUB-2${startAt ? `&startTime=${Math.floor(startAt)}` : ''}`,
+      tv: (id, season, episode, startAt) =>
+        `/embed/tv/${id}/${season}/${episode}?autoPlay=true&autoNext=true&defaultServer=CINEDUB-2${startAt ? `&startTime=${Math.floor(startAt)}` : ''}`,
+    },
+    allowedOrigins: ['https://vidsync.live'],
+    platforms: ['web', 'mobile'],
+  },
 ];
 
 /**
@@ -345,9 +399,10 @@ export function getProvider(id: string): ProviderDefinition | undefined {
 
 /**
  * Get only enabled providers (for UI dropdown, sorted by priority)
+ * @param includeDownloadOnly - if true, includes providers marked as forDownloadOnly
  */
-export function getEnabledProviders(): ProviderDefinition[] {
-  return PROVIDERS.filter((p) => p.enabled !== false).sort(
+export function getEnabledProviders(includeDownloadOnly = false): ProviderDefinition[] {
+  return PROVIDERS.filter((p) => p.enabled !== false && (includeDownloadOnly || !p.forDownloadOnly)).sort(
     (a, b) => (a.order ?? 999) - (b.order ?? 999),
   );
 }
