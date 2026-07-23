@@ -685,7 +685,7 @@ export function buildBridgeScript(): string {
   window.addEventListener('message', function(event) {
     try {
       var data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-      if (data && data.type === 'progress') {
+      if (data && (data.type === 'progress' || data.type === 'player:progress')) {
         window.ReactNativeWebView.postMessage(JSON.stringify(data));
       }
     } catch(e) {}
@@ -693,11 +693,220 @@ export function buildBridgeScript(): string {
 
   // Expose seek API so the app can send seek commands
   window.__seekTo = function(time) {
+    // Search current document for video elements
     var videos = document.querySelectorAll('video');
+
+    if (videos.length === 0) {
+      // Try child iframes
+      var iframes = document.querySelectorAll('iframe');
+      for (var fi = 0; fi < iframes.length; fi++) {
+        try {
+          var iframeDoc = iframes[fi].contentDocument || iframes[fi].contentWindow.document;
+          var iframeVids = iframeDoc.querySelectorAll('video');
+          for (var vi = 0; vi < iframeVids.length; vi++) {
+            iframeVids[vi].currentTime = time;
+          }
+        } catch(e) {
+          // Permission denied accessing cross-origin iframe — expected
+        }
+      }
+    }
+
     for (var i = 0; i < videos.length; i++) {
       videos[i].currentTime = time;
     }
   };
+})();
+true;
+`;
+}
+
+/**
+ * Build the universal video progress tracker script.
+ *
+ * Injected into every provider WebView via addDocumentStartJavaScript.
+ * Polls <video> elements every 3 seconds and sends player:progress
+ * events to React Native via window.ReactNativeWebView.postMessage().
+ *
+ * Features:
+ * - MutationObserver to detect video elements added after page load
+ * - Capturing-phase timeupdate listener for MSE-based players (Hls.js, Shaka)
+ * - Message listener to relay player:progress from child iframes
+ * - Console bridge integration (Layer 14) forwards logs to RN terminal
+ * - Dedup: only sends when progress changes by >=2% or >=2 seconds
+ */
+export function buildProgressTrackerScript(): string {
+  return `
+(function() {
+  if (window.__progressTrackerInit) return;
+  window.__progressTrackerInit = true;
+
+  var pollTimer = null;
+  var lastSentCt = 0;
+  var lastSentPct = 0;
+  var MIN_TIME_DIFF = 2;      // seconds — skip if change < 2s
+  var MIN_PCT_DIFF = 0.02;    // 2% — skip if change < 2%
+
+  console.log('[ProgressTracker] Initializing...');
+
+  // ── Helper: send player:progress to RN ──
+  function sendProgress(ct, dur) {
+    if (ct < 0 || dur <= 0) return;
+    var pct = ct / dur;
+    if (pct > 1) pct = 1;
+
+    // Dedup: skip if not enough change
+    var timeDiff = Math.abs(ct - lastSentCt);
+    var pctDiff = Math.abs(pct - lastSentPct);
+    if (timeDiff < MIN_TIME_DIFF && pctDiff < MIN_PCT_DIFF) return;
+
+    lastSentCt = ct;
+    lastSentPct = pct;
+
+    var msg = JSON.stringify({
+      type: 'player:progress',
+      data: {
+        currentTime: ct,
+        duration: dur,
+        percent: pct
+      }
+    });
+
+    try {
+      if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+        window.ReactNativeWebView.postMessage(msg);
+        console.log('[ProgressTracker] Sent: ct=' + ct.toFixed(1) + 's dur=' + dur.toFixed(1) + 's pct=' + (pct * 100).toFixed(1) + '%');
+      } else {
+        console.log('[ProgressTracker] ReactNativeWebView not available (iframe?) ct=' + ct.toFixed(1) + 's');
+      }
+    } catch (e) {
+      console.warn('[ProgressTracker] postMessage error: ' + e);
+    }
+  }
+
+  // ── Poll: read <video> currentTime/duration ──
+  function poll() {
+    var videos = document.querySelectorAll('video');
+    if (videos.length === 0) {
+      console.log('[ProgressTracker] Poll: no <video> elements found yet');
+      return;
+    }
+
+    // Use the video with the longest duration (the main player)
+    var best = videos[0];
+    for (var i = 1; i < videos.length; i++) {
+      if ((videos[i].duration || 0) > (best.duration || 0)) {
+        best = videos[i];
+      }
+    }
+
+    var ct = best.currentTime || 0;
+    var dur = best.duration || 0;
+
+    if (dur === 0 || isNaN(dur)) {
+      console.log('[ProgressTracker] Poll: video found but duration=0 (not loaded yet)');
+      return;
+    }
+
+    if (ct === 0 || isNaN(ct)) {
+      console.log('[ProgressTracker] Poll: video found, currentTime=0 (not playing yet)');
+      return;
+    }
+
+    sendProgress(ct, dur);
+  }
+
+  // ── Start polling ──
+  function startPolling(src) {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+    }
+    console.log('[ProgressTracker] Starting 3s poll interval (trigger: ' + src + ')');
+    poll();
+    pollTimer = setInterval(poll, 3000);
+  }
+
+  // ── MutationObserver: detect <video> added to DOM ──
+  var obs = new MutationObserver(function(muts) {
+    for (var i = 0; i < muts.length; i++) {
+      for (var j = 0; j < muts[i].addedNodes.length; j++) {
+        var n = muts[i].addedNodes[j];
+        if (n.nodeType !== 1) continue;
+        // Check if the added node is a <video> or contains one
+        if (n.tagName === 'VIDEO') {
+          console.log('[ProgressTracker] <video> element added via DOM');
+
+          // Also listen for timeupdate on this specific video element
+          n.addEventListener('timeupdate', function(e) {
+            var v = e.target;
+            if (v && v.tagName === 'VIDEO') {
+              var ct = v.currentTime || 0;
+              var dur = v.duration || 0;
+              if (dur > 0 && ct > 0) {
+                // Send immediately on timeupdate for smoother tracking
+                sendProgress(ct, dur);
+              }
+            }
+          });
+
+          // Stop observing once we find a video
+          obs.disconnect();
+          startPolling('MutationObserver:VIDEO');
+          return;
+        }
+        // Check inside the added subtree
+        var inner = n.querySelector && n.querySelector('video');
+        if (inner) {
+          console.log('[ProgressTracker] <video> found inside added element');
+          inner.addEventListener('timeupdate', function(e) {
+            var v = e.target;
+            if (v && v.tagName === 'VIDEO') {
+              var ct = v.currentTime || 0;
+              var dur = v.duration || 0;
+              if (dur > 0 && ct > 0) sendProgress(ct, dur);
+            }
+          });
+          obs.disconnect();
+          startPolling('MutationObserver:video-in-container');
+          return;
+        }
+      }
+    }
+  });
+
+  try {
+    obs.observe(document.documentElement, { childList: true, subtree: true });
+    console.log('[ProgressTracker] MutationObserver active');
+  } catch (e) {
+    console.warn('[ProgressTracker] MutationObserver failed: ' + e);
+  }
+
+  // ── Check for existing video elements (loaded before this script?) ──
+  var existing = document.querySelectorAll('video');
+  if (existing.length > 0) {
+    console.log('[ProgressTracker] Found ' + existing.length + ' existing <video> element(s)');
+
+    // Attach timeupdate listeners
+    for (var k = 0; k < existing.length; k++) {
+      existing[k].addEventListener('timeupdate', function(e) {
+        var v = e.target;
+        if (v && v.tagName === 'VIDEO') {
+          var ct = v.currentTime || 0;
+          var dur = v.duration || 0;
+          if (dur > 0 && ct > 0) sendProgress(ct, dur);
+        }
+      });
+    }
+
+    // Start poll (with a short delay to let video metadata load)
+    setTimeout(function() { startPolling('existing-video'); }, 1000);
+  } else {
+    console.log('[ProgressTracker] No existing <video> — waiting via MutationObserver');
+  }
+
+  console.log('[ProgressTracker] Initialized');
+
+  // NOTE: player:progress relay from child iframes is handled by buildBridgeScript
 })();
 true;
 `;
@@ -712,6 +921,7 @@ export function buildAllScripts(providerHostname: string, blockedDomains?: strin
     buildGuardScript(providerHostname, blockedDomains),
     buildContentReadyScript(),
     buildBridgeScript(),
+    buildProgressTrackerScript(),
   ].join('\n\n');
 }
 
@@ -732,5 +942,6 @@ export function buildAllScriptsWithScriptlets(providerHostname: string, provider
     ...providerScriptlets,
     buildContentReadyScript(),
     buildBridgeScript(),
+    buildProgressTrackerScript(),
   ].join('\n\n');
 }

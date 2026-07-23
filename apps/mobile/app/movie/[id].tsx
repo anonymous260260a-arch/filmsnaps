@@ -236,9 +236,7 @@ export default function MovieDetailScreen() {
                       borderColor: 'rgba(76,175,130,0.3)',
                     }}
                   >
-                    <Text style={{ color: '#4caf82', fontSize: 11, fontWeight: '700', marginRight: 4 }}>
-                      ★
-                    </Text>
+                    <Ionicons name="star" size={14} color="#4caf82" style={{ marginRight: 4 }} />
                     <Text style={{ color: '#4caf82', fontSize: 11, fontWeight: '700' }}>
                       {movie.vote_average.toFixed(1)}
                     </Text>

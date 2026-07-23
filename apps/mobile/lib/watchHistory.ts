@@ -58,9 +58,13 @@ export function buildStorageKey(
 async function loadAll(): Promise<WatchHistoryMap> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as WatchHistoryMap;
-  } catch {
-    // Silently fail — app works fine without history
+    if (raw) {
+      const parsed = JSON.parse(raw) as WatchHistoryMap;
+      const keys = Object.keys(parsed);
+      return parsed;
+    }
+  } catch (e) {
+    console.warn('[WatchHistory] ⚠️ AsyncStorage read error:', e);
   }
   return {};
 }
@@ -70,9 +74,10 @@ async function loadAll(): Promise<WatchHistoryMap> {
  */
 async function persistAll(map: WatchHistoryMap): Promise<void> {
   try {
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(map));
-  } catch {
-    // Silently fail — storage write is non-critical
+    const serialized = JSON.stringify(map);
+    await AsyncStorage.setItem(STORAGE_KEY, serialized);
+  } catch (e) {
+    console.warn('[WatchHistory] ⚠️ AsyncStorage write error:', e);
   }
 }
 
@@ -98,7 +103,10 @@ export async function saveProgress(progress: WatchProgress): Promise<void> {
   const shouldPersist =
     progress.currentTime > 5 || progress.completed;
 
-  if (!shouldPersist) return;
+  if (!shouldPersist) {
+    
+    return;
+  }
 
   const isFinished = progress.percent >= 0.95 || progress.completed;
 
@@ -106,6 +114,7 @@ export async function saveProgress(progress: WatchProgress): Promise<void> {
   // — the new provider may start tracking from 0% for the same episode).
   // Always allow completed entries to overwrite non-completed ones.
   if (existing && !isFinished && progress.percent < existing.percent) {
+    
     return;
   }
 
@@ -130,7 +139,8 @@ export async function getProgress(
 ): Promise<WatchProgress | null> {
   const key = buildStorageKey(tmdbId, mediaType, season, episode);
   const map = await loadAll();
-  return map[key] ?? null;
+  const entry = map[key] ?? null;
+  return entry;
 }
 
 /**
@@ -273,9 +283,10 @@ export async function clearProgress(
  */
 export async function getAllProgress(): Promise<WatchProgress[]> {
   const map = await loadAll();
-  return Object.values(map)
+  const entries = Object.values(map)
     .filter((e) => e.currentTime > 0 || e.completed)
     .sort((a, b) => b.updatedAt - a.updatedAt);
+  return entries;
 }
 
 /**

@@ -32,10 +32,7 @@ object BlocklistConfigLoader {
     private const val CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000L // 6 hours
     private const val BUNDLED_DEFAULT = "blocklist-default.json"
 
-    // Default URL — hosted on the web app. Override via BuildConfig.BLOCKLIST_CONFIG_URL.
-    private const val DEFAULT_CONFIG_PATH = "/api/blocklist"
-
-    private val _config = AtomicReference<BlocklistConfig?>(null)
+private val _config = AtomicReference<BlocklistConfig?>(null)
     val config: BlocklistConfig get() = _config.get() ?: BlocklistConfig()
 
     /**
@@ -102,11 +99,10 @@ object BlocklistConfigLoader {
     /**
      * Resolve the config URL. Priority:
      *   1. BuildConfig.BLOCKLIST_CONFIG_URL (set via gradle.properties / env)
-     *   2. WEB_URL + /api/blocklist (from Expo public env)
-     *   3. Hardcoded fallback
+     *   2. Hardcoded fallback to GitHub raw
      */
     private fun getConfigUrl(): String {
-        // 1. Check BuildConfig override
+        // Check BuildConfig override (env variable)
         try {
             val buildUrl = Class.forName("expo.modules.playerwebview.BuildConfig")
                 .getField("BLOCKLIST_CONFIG_URL")
@@ -114,17 +110,7 @@ object BlocklistConfigLoader {
             if (!buildUrl.isNullOrBlank()) return buildUrl
         } catch (_: Exception) {}
 
-        // 2. Try to read EXPO_PUBLIC_WEB_URL from BuildConfig (set by Expo)
-        try {
-            val webUrl = Class.forName("com.filmSnaps.BuildConfig")
-                .getField("EXPO_PUBLIC_WEB_URL")
-                .get(null) as? String
-            if (!webUrl.isNullOrBlank()) {
-                return webUrl.trimEnd('/') + DEFAULT_CONFIG_PATH
-            }
-        } catch (_: Exception) {}
-
-        // 3. Fallback to GitHub raw
+        // Fallback to GitHub raw
         return "https://raw.githubusercontent.com/anonymous260260a-arch/filmsnaps/main/blocklist.json"
     }
 

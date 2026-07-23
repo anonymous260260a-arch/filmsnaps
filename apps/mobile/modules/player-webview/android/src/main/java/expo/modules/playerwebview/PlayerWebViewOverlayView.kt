@@ -657,6 +657,69 @@ var _fi=setInterval(function(){
 	})();
 </script>""".trimIndent()
 
+    private val PROGRESS_TRACKER_SNIPPET: String = """
+<script>
+(function(){
+if(window.__fsProgressTracker)return;window.__fsProgressTracker=true;
+console.log('[ProgressTracker] init');
+
+var _video=null;
+var _lastTime=0;
+var _lastPct=0;
+
+function _report(){
+  if(!_video)return;
+  try{
+    var ct=_video.currentTime;
+    var dur=_video.duration;
+    if(dur<=0||ct<=5)return;
+    var pct=ct/dur;
+    if(pct-_lastPct<0.02&&ct-_lastTime<2)return;
+    _lastTime=ct;_lastPct=pct;
+    var data=JSON.stringify({
+      type:'player:progress',
+      data:{currentTime:ct,duration:dur,percent:pct,completed:pct>=0.95}
+    });
+    console.log('[ProgressTracker] ct='+ct.toFixed(1)+'s dur='+dur.toFixed(1)+'s pct='+(pct*100).toFixed(1)+'%');
+    window.ReactNativeWebView.postMessage(data);
+  }catch(e){
+    console.log('[ProgressTracker] Error: '+(e.message||'unknown'));
+  }
+}
+
+// Immediate check
+_video=document.querySelector('video');
+if(_video){
+  console.log('[ProgressTracker] Video found immediately');
+  setInterval(_report,3000);
+  _video.addEventListener('timeupdate',_report,false);
+}
+
+// MutationObserver for lazy-loaded videos
+new MutationObserver(function(){
+  if(_video)return;
+  _video=document.querySelector('video');
+  if(_video){
+    console.log('[ProgressTracker] Video found via MutationObserver');
+    setInterval(_report,3000);
+    _video.addEventListener('timeupdate',_report,false);
+  }
+}).observe(document.documentElement,{childList:true,subtree:true});
+
+// Poll fallback (up to 60s)
+var _p=0;
+(function _poll(){
+  if(_video)return;_p++;
+  if(_p>20)return;
+  _video=document.querySelector('video');
+  if(_video){
+    console.log('[ProgressTracker] Video found via poll');
+    setInterval(_report,3000);
+    _video.addEventListener('timeupdate',_report,false);
+  }else{setTimeout(_poll,3000)}
+})();
+})();
+</script>""".trimIndent()
 
     // Cache of (url) -> injected HTML bytes to avoid re-fetching on repeat navigations
     private val htmlCache = object : LinkedHashMap<String, ByteArray>(32, 0.75f, true) {
@@ -1300,7 +1363,9 @@ var _fi=setInterval(function(){
             currentWebView?.settings?.userAgentString?.let {
                 conn.setRequestProperty("User-Agent", it)
             }
-            val cookie = CookieManager.getInstance().getCookie(url)
+            val cookie = try {
+                CookieManager.getInstance().getCookie(url)
+            } catch (_: Throwable) { null }
             if (!cookie.isNullOrEmpty()) {
                 conn.setRequestProperty("Cookie", cookie)
             }
@@ -1691,6 +1756,19 @@ var _fi=setInterval(function(){
       }
       override fun onPermissionRequest(request: PermissionRequest?) {
         request?.grant(request.resources)
+      }
+      override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
+        if (msg != null) {
+          val messageStr = msg.message() ?: ""
+          // Log progress-tracker messages to History tag for adb logcat filtering
+          if (messageStr.contains("[ProgressTracker]") || messageStr.contains("[Bridge]")) {
+            android.util.Log.d("History",
+              "${messageStr} -- ${msg.sourceId()}:${msg.lineNumber()}")
+          }
+          android.util.Log.d("PlayerWebView",
+            "[Console:${msg.messageLevel()}] ${messageStr} -- ${msg.sourceId()}:${msg.lineNumber()}")
+        }
+        return true
       }
       override fun onCreateWindow(
         view: WebView?,
@@ -2207,7 +2285,7 @@ var _fi=setInterval(function(){
         if (cookies != null && cookies.isNotEmpty()) {
           conn.setRequestProperty("Cookie", cookies)
         }
-      } catch (_: Exception) {}
+      } catch (_: Throwable) {}
 
       val responseCode = conn.responseCode
       if (responseCode != 200) {
@@ -2266,7 +2344,8 @@ var _fi=setInterval(function(){
       }
 
       val bridgeSnippet = BRIDGE_SCRIPT_SNIPPET
-      val injectionSnippet = "$cssSnippet${bridgeSnippet}"
+      val progressTrackerSnippet = PROGRESS_TRACKER_SNIPPET
+      val injectionSnippet = "$cssSnippet${bridgeSnippet}${progressTrackerSnippet}"
 
       // Inject the bridge script + cosmetic CSS right after <head>
       // (handles both <head> and <head ...>)
@@ -2484,7 +2563,8 @@ var _fi=setInterval(function(){
     fun postMessage(message: String) {
       try {
         val obj = org.json.JSONObject(message)
-        if (obj.optString("type") == "__player:dumpRequestLog") {
+        val msgType = obj.optString("type")
+        if (msgType == "__player:dumpRequestLog") {
           val logDump = dumpRequestLog()
           android.util.Log.d("ReqLog", "Dump requested via JS bridge:\n$logDump")
           // Send dump back via console.log so it appears in Metro terminal
@@ -2500,6 +2580,18 @@ var _fi=setInterval(function(){
             )
           }
           return
+        }
+        if (msgType == "player:progress" || msgType == "screenscape:progress") {
+          try {
+            val data = obj.optJSONObject("data")
+            if (data != null) {
+              val ct = data.optDouble("currentTime", 0.0)
+              val dur = data.optDouble("duration", 0.0)
+              val pct = data.optDouble("percent", 0.0)
+              android.util.Log.d("History",
+                "[Bridge] $msgType: ct=${"%.1f".format(ct)}s dur=${"%.1f".format(dur)}s pct=${"%.1f".format(pct * 100)}%")
+            }
+          } catch (_: Exception) {}
         }
       } catch (_: Exception) {}
       dispatchEvent("onMessage") { putString("data", message) }

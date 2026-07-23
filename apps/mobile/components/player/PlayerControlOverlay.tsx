@@ -1,11 +1,11 @@
-﻿/**
- * PlayerControlOverlay â€” glassmorphism overlay with player controls for mobile.
+/**
+ * PlayerControlOverlay — glassmorphism overlay with player controls for mobile.
  *
  * Features: close/back, season/episode badge, server switcher, fullscreen toggle,
  * server info pill at bottom, loading state, tap-to-reveal in fullscreen.
  */
 
-import React, { useRef, useCallback, useEffect } from 'react';
+import React, { useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -35,6 +35,8 @@ interface PlayerControlOverlayProps {
   auditMode: boolean;
 }
 
+// ── Component ──
+
 export function PlayerControlOverlay({
   isFullscreen,
   isTV,
@@ -57,7 +59,7 @@ export function PlayerControlOverlay({
 
   return (
     <>
-      {/* â”€â”€ Animated overlay bar (fades in/out) â”€â”€ */}
+      {/* ── Animated overlay bar (fades in/out) ── */}
       <Animated.View
         className="absolute top-0 left-0 right-0 z-30"
         style={{ opacity: overlayOpacity, paddingTop: insets.top + 4 }}
@@ -120,7 +122,7 @@ export function PlayerControlOverlay({
         </View>
       </Animated.View>
 
-      {/* â”€â”€ Server pill (bottom) â€” also fades with overlay â”€â”€ */}
+      {/* ── Server pill (bottom) — also fades with overlay ── */}
       <Animated.View
         className="absolute bottom-0 left-0 right-0 z-30 px-4"
         style={{ opacity: overlayOpacity, paddingBottom: insets.bottom + 12 }}
@@ -145,7 +147,7 @@ export function PlayerControlOverlay({
         </TouchableOpacity>
       </Animated.View>
 
-      {/* â”€â”€ Loading overlay â”€â”€ */}
+      {/* ── Loading overlay ── */}
       {loading && (
         <View className="absolute inset-0 z-20 items-center justify-center bg-black/80">
           <View className="items-center">
@@ -155,7 +157,7 @@ export function PlayerControlOverlay({
         </View>
       )}
 
-      {/* â”€â”€ Tap-to-reveal layer (only in fullscreen when overlay is hidden) â”€â”€ */}
+      {/* ── Tap-to-reveal layer (only in fullscreen when overlay is hidden) ── */}
       {isFullscreen && !overlayVisible && (
         <TouchableOpacity
           style={{

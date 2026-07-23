@@ -90,8 +90,8 @@ export const metadata: Metadata = {
 
   // ── PWA / Installable App ──
   icons: {
-    icon: '/icon.svg',
-    apple: '/icon.svg',
+    icon: '/icon.png',
+    apple: '/icon.png',
   },
   other: {
     'theme-color': '#070708',

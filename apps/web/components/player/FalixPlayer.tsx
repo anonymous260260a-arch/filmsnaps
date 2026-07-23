@@ -21,6 +21,8 @@ import 'video.js/dist/video-js.css';
 import { Clapperboard, RefreshCw } from 'lucide-react';
 import { WebCodecsPlayer } from './WebCodecsPlayer';
 import { checkHevcSupport } from '@/lib/streamingMkvParser';
+import { createLocalStorageAdapter } from '@filmsnaps/shared';
+import type { WatchProgress } from '@filmsnaps/shared';
 
 // ── Types ─────────────────────────────────────────────────────────
 
