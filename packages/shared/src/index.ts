@@ -35,5 +35,5 @@ export type { WatchlistState, WatchlistActions } from './state/useWatchlist';
 export type { WatchHistoryState, WatchHistoryActions } from './state/useWatchHistory';
 
 // ── Security ──
-export { buildGuardScript, buildContentReadyScript, buildBridgeScript, buildAllScripts, buildAllScriptsWithScriptlets, DEFAULT_AD_FULL_PATTERNS, DEFAULT_AD_SHORT_PATTERNS } from './security/playerGuard';
+export { buildGuardScript, buildContentReadyScript, buildBridgeScript, buildProgressTrackerScript, buildAllScripts, buildAllScriptsWithScriptlets, DEFAULT_AD_FULL_PATTERNS, DEFAULT_AD_SHORT_PATTERNS } from './security/playerGuard';
 export { buildAllScriptlets, getProviderScriptlets } from './security/scriptlets';

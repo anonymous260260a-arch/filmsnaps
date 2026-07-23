@@ -98,10 +98,8 @@ export function MediaCard({ item, onPress, variant = 'default' }: MediaCardProps
                 alignItems: 'center',
               }}
             >
-              <Text style={{ color: '#D4A237', fontSize: 10, fontWeight: '700', marginRight: 2 }}>
-                â˜…
-              </Text>
-              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>
+              <Ionicons name="star" size={12} color="#D4A237" />
+              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600', marginLeft: 2 }}>
                 {item.vote_average.toFixed(1)}
               </Text>
             </View>

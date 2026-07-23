@@ -13,7 +13,7 @@ files:
   - dist/**/*
   - resources/**/*
 
-icon: resources/icon.ico
+icon: resources/icon.png
 
 # In production, bundle the web app's Next.js standalone output
 # so Electron can serve the app locally. The standalone output

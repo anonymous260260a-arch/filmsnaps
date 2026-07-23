@@ -110,7 +110,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
           zIndex: 2,
         }}
       >
-        {/* Rating badge â€” gold with subtle bg */}
+        {/* Rating badge — gold with subtle bg */}
         {rating > 0 && (
           <View
             style={{
@@ -126,9 +126,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
               marginBottom: 10,
             }}
           >
-            <Text style={{ color: '#D4A237', fontSize: 11, fontWeight: '700', marginRight: 4 }}>
-              â˜…
-            </Text>
+            <Ionicons name="star" size={14} color="#D4A237" style={{ marginRight: 4 }} />
             <Text style={{ color: '#D4A237', fontSize: 11, fontWeight: '700' }}>
               {rating.toFixed(1)}
             </Text>

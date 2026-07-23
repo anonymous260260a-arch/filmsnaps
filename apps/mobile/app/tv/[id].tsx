@@ -233,10 +233,8 @@ export default function TVDetailScreen() {
                       borderColor: 'rgba(76,175,130,0.3)',
                     }}
                   >
-                    <Text style={{ color: '#4caf82', fontSize: 11, fontWeight: '700', marginRight: 4 }}>
-                      ★
-                    </Text>
-                    <Text style={{ color: '#4caf82', fontSize: 11, fontWeight: '700' }}>
+                    <Ionicons name="star" size={12} color="#4caf82" />
+                    <Text style={{ color: '#4caf82', fontSize: 11, fontWeight: '700', marginLeft: 4 }}>
                       {show.vote_average.toFixed(1)}
                     </Text>
                   </View>

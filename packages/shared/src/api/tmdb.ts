@@ -71,6 +71,9 @@ export function createTmdbApi(apiBase: string) {
       return fetchTmdb(`/discover/movie?${q}`);
     },
 
+    getExternalIds: (id: number | string, mediaType: 'movie' | 'tv') =>
+      fetchTmdb(`/${mediaType}/${id}/external_ids`),
+
     getPersonDetails: (id: number) =>
       fetchTmdb(`/person/${id}`),
 

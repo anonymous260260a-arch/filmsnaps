@@ -19,6 +19,12 @@
       "skillPath": ".agents/skills/architecture-review/SKILL.md",
       "computedHash": "4acde3229835d6a07868ad374e8ce537f12cd3a7ef3d5ac1716e04f674d4150e"
     },
+    "argent-react-native-optimization": {
+      "source": "software-mansion/argent",
+      "sourceType": "github",
+      "skillPath": "packages/skills/skills/argent-react-native-optimization/SKILL.md",
+      "computedHash": "1590800102ae8fe20f4bd9ca4ae6082bb4faa71d8a3e85e0ece43ee05db22b60"
+    },
     "code-review": {
       "source": "mattpocock/skills",
       "sourceType": "github",
@@ -91,6 +97,18 @@
       "skillPath": "skills/premium-frontend-ui/SKILL.md",
       "computedHash": "e7f3d02a0233beafdd6fe5335427388109b9699ebcdc6a8782a8bada2826d916"
     },
+    "react-native-architecture": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/frontend-mobile-development/skills/react-native-architecture/SKILL.md",
+      "computedHash": "82b148f23840f412cb29f6085f0a4cf34052301646bc24ed8befe08ef2448f99"
+    },
+    "react-native-best-practices": {
+      "source": "callstackincubator/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/react-native-best-practices/SKILL.md",
+      "computedHash": "35ef1d9d1d78def668b784ebc7a371a3b5e3374c428552da570507e6c4f2b50c"
+    },
     "refactor": {
       "source": "github/awesome-copilot",
       "sourceType": "github",
@@ -114,6 +132,12 @@
       "sourceType": "github",
       "skillPath": "claude/skills/ui-ux-reviewer/SKILL.md",
       "computedHash": "b41eba015ca26ac1fa4c0068232760a37cc2f564fd9d07b914e37e98705d793b"
+    },
+    "vercel-react-best-practices": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/react-best-practices/SKILL.md",
+      "computedHash": "ca7b0c0c6e5f2750043f7f0cd72d16ac4e2abc48f9b5500d047a4b77a2506212"
     },
     "wrangler": {
       "source": "cloudflare/skills",
