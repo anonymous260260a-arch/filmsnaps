@@ -7,6 +7,8 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "cf:build": "npx @opennextjs/cloudflare build",
     "cf:deploy": "npx wrangler deploy",
     "cf:deploy:prod": "npx wrangler deploy --env production",

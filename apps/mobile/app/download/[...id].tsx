@@ -1123,7 +1123,7 @@ export default function DownloadScreen() {
           allowUniversalAccessFromFileURLs={false}
           javaScriptCanOpenWindowsAutomatically={false}
           incognito={true}
-          renderLoading={() => null}
+          renderLoading={() => null as unknown as React.ReactElement}
           onShouldStartLoadWithRequest={handleNavigation}
           onLoadEnd={() => {
             setLoading(false);

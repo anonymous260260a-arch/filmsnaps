@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState, useEffect } from 'react';
-import { View, ScrollView, RefreshControl, Text, ActivityIndicator, useWindowDimensions, FlatList, TouchableOpacity } from 'react-native';
+import { View, ScrollView, RefreshControl, Text, ActivityIndicator, useWindowDimensions, FlatList, TouchableOpacity, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -202,10 +202,12 @@ export default function HomeScreen() {
         {/* Header */}
         <View className="px-5 py-4 flex-row items-center justify-between">
           <View className="flex-row items-center">
-            <View className="w-9 h-9 rounded-full bg-primary items-center justify-center mr-3">
-              <Ionicons name="film" size={18} color="#000" />
-            </View>
-            <View>
+            <Image
+              source={require('../../assets/icon.png')}
+              style={{ width: 36, height: 36, borderRadius: 12 }}
+              accessibilityLabel="FilmSnaps logo"
+            />
+            <View className="ml-3">
               <Text className="text-text-primary text-xl font-bold tracking-tight">FilmSnaps</Text>
               <Text className="text-text-secondary text-xs">Discover & Watch</Text>
             </View>

@@ -221,7 +221,7 @@ function WatchClientContent({
 
   // ── Desktop Electron integration ──
   const isDesktop =
-    typeof window !== 'undefined' && (window as any).electronAPI?.isDesktop === true;
+    typeof window !== 'undefined' && window.electronAPI?.isDesktop === true;
   const activeProviderRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -233,7 +233,7 @@ function WatchClientContent({
     const url = absUrl(
       buildEmbedUrl(currentProvider, contentid, plat, selectedSeason, activeEpisode),
     );
-    (window as any).electronAPI
+    window.electronAPI
       ?.openVideo({
         type: plat,
         id: contentid,
@@ -242,23 +242,23 @@ function WatchClientContent({
         provider: currentProvider.id,
         embedUrl: url,
       })
-      .then((result: any) => {
+      .then((result) => {
         if (result?.success) setElectronVideoOpen(true);
       });
   }, [isDesktop, currentProvider, contentid, plat, selectedSeason, activeEpisode]);
 
   useEffect(() => {
-    if (!isDesktop || !(window as any).electronAPI) return;
+    if (!isDesktop || !window.electronAPI) return;
     const handleClosed = () => setElectronVideoOpen(false);
-    (window as any).electronAPI.onVideoClosed?.(handleClosed);
-    return () => (window as any).electronAPI?.removeVideoClosedListener?.();
+    window.electronAPI.onVideoClosed(handleClosed);
+    return () => window.electronAPI?.removeVideoClosedListener();
   }, [isDesktop]);
 
   useEffect(() => {
     return () => {
-      if (typeof window !== 'undefined' && (window as any).electronAPI) {
-        (window as any).electronAPI.closeVideo?.();
-        (window as any).electronAPI.removeVideoClosedListener?.();
+      if (typeof window !== 'undefined' && window.electronAPI) {
+        window.electronAPI.closeVideo();
+        window.electronAPI.removeVideoClosedListener();
       }
     };
   }, []);
@@ -270,9 +270,9 @@ function WatchClientContent({
       const url = absUrl(
         buildEmbedUrl(currentProvider, contentid, plat, selectedSeason, activeEpisode),
       );
-      (window as any).electronAPI
+      window.electronAPI
         ?.openVideo({ type: plat, id: contentid, provider: currentProvider.id, embedUrl: url })
-        .then((r: any) => {
+        .then((r) => {
           if (r?.success) setElectronVideoOpen(true);
         });
     }, 100);
@@ -283,9 +283,9 @@ function WatchClientContent({
     const url = absUrl(
       buildEmbedUrl(currentProvider, contentid, plat, selectedSeason, activeEpisode),
     );
-    (window as any).electronAPI
+    window.electronAPI
       ?.openVideo({ type: plat, id: contentid, provider: currentProvider.id, embedUrl: url })
-      .then((r: any) => {
+      .then((r) => {
         if (r?.success) setElectronVideoOpen(true);
       });
   }, [currentProvider, contentid, plat, selectedSeason, activeEpisode]);

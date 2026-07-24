@@ -34,14 +34,10 @@ export async function hydrateQueryClient(queryClient: QueryClient): Promise<void
         queryHash: queryKey,
       });
       // Restore cached data directly into the QueryClient store
+      // setQueryData marks the query as fresh (not stale) so it won't refetch
       queryClient.setQueryData(JSON.parse(queryKey), data, {
         updatedAt: timestamp,
       });
-      // Mark as fresh so it doesn't refetch immediately
-      queryClient.invalidateQueries(
-        { queryKey: JSON.parse(queryKey) },
-        { refetchType: 'none' },
-      );
     }
 
     console.log(`[QueryCache] Hydrated ${Object.keys(state).length} queries`);

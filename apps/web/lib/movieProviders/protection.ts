@@ -2,8 +2,8 @@
 // Centralized security engine — uBlock Origin–style URL filtering & navigation protection
 // All routes import from here instead of duplicating patterns
 
-import type { ProviderDefinition } from './types';
-import { getProvider } from './providers';
+import type { ProviderDefinition } from '@filmsnaps/shared/types';
+import { getProvider } from '@filmsnaps/shared/providers';
 import { matchFilterUrl, isFilterEngineLoaded, getFilterStats } from './filterService';
 
 // ═══════════════════════════════════════════════════════════════

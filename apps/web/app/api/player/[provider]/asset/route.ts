@@ -11,6 +11,7 @@ import {
   getEmptyResponseBody,
 } from '@/lib/movieProviders/protection';
 import { isFilterEngineLoaded } from '@/lib/movieProviders/filterService';
+import { getCorsHeaders, handleOptions } from '@/lib/cors';
 
 export async function GET(
   req: Request,
@@ -104,7 +105,7 @@ export async function GET(
     return new NextResponse(response.body, {
       headers: {
         'Content-Type': contentType,
-        'Access-Control-Allow-Origin': '*',
+        ...getCorsHeaders(req.headers.get('origin')),
         'Cache-Control': 'public, max-age=3600',
         'Referrer-Policy': 'no-referrer',
       },
@@ -119,14 +120,8 @@ export async function GET(
   }
 }
 
-export function OPTIONS() {
-  return new NextResponse(null, {
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-  });
+export async function OPTIONS(request: Request) {
+  return handleOptions(request);
 }
 
 // Reuse the same filtering for POST requests

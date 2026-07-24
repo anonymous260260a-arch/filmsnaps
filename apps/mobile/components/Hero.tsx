@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, useWindowDimensions, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getImageUrl } from '@filmsnaps/shared';
@@ -6,7 +6,6 @@ import { ProgressiveImage } from './ProgressiveImage';
 import { typography } from '../lib/typography';
 import { FilmGrain } from './FilmGrain';
 import type { Movie } from '@filmsnaps/shared';
-import { LinearGradient } from 'react-native-svg';
 
 interface HeroProps {
   item: Movie;
@@ -82,19 +81,16 @@ export function Hero({ item, onWatchPress }: HeroProps) {
         }}
       />
 
-      {/* Smooth gradient overlay â€” transparent at 30% top â†’ void at bottom */}
-      <LinearGradient
+      {/* Smooth gradient overlay — transparent at 30% top → void at bottom */}
+      <View
         style={{
           position: 'absolute',
           bottom: 0,
           left: 0,
           right: 0,
           height: HERO_HEIGHT * 0.7,
+          backgroundColor: 'rgba(8,8,8,0.65)',
         }}
-        colors={['rgba(8,8,8,0)', 'rgba(8,8,8,0.08)', 'rgba(8,8,8,0.35)', 'rgba(8,8,8,0.65)', '#070708']}
-        locations={[0, 0.2, 0.5, 0.8, 1]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
       />
 
       {/* Content block â€” anchored to bottom */}
@@ -183,6 +179,9 @@ export function Hero({ item, onWatchPress }: HeroProps) {
         <TouchableOpacity
           onPress={() => onWatchPress(item)}
           activeOpacity={0.9}
+          accessibilityRole="button"
+          accessibilityLabel={`Watch ${title}`}
+          accessibilityHint="Opens the video player"
           style={{
             backgroundColor: '#D4A237',
             borderRadius: 10,

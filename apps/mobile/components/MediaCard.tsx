@@ -2,6 +2,7 @@ import React, { useRef, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, useWindowDimensions, Animated } from 'react-native';
 import { getImageUrl } from '@filmsnaps/shared';
 import { ProgressiveImage } from './ProgressiveImage';
+import { Ionicons } from '@expo/vector-icons';
 import type { Movie } from '@filmsnaps/shared';
 
 const GAP = 10;
@@ -50,6 +51,9 @@ export function MediaCard({ item, onPress, variant = 'default' }: MediaCardProps
     }).start();
   }, [scaleAnim]);
 
+  const title = item.title || item.name || 'Untitled';
+  const accessibilityLabel = `${title}${item.vote_average ? `, rated ${item.vote_average.toFixed(1)} out of 10` : ''}`;
+
   return (
     <TouchableOpacity
       onPress={() => onPress(item)}
@@ -57,6 +61,9 @@ export function MediaCard({ item, onPress, variant = 'default' }: MediaCardProps
       onPressOut={onPressOut}
       activeOpacity={1}
       style={{ marginBottom: 14 }}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityHint="Double tap to view details"
     >
       <Animated.View
         style={{

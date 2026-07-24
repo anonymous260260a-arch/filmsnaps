@@ -14,6 +14,7 @@ import {
   Inter_600SemiBold,
 } from '@expo-google-fonts/inter';
 import { UpdateOverlay } from '../components/UpdateOverlay';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { DownloadInfraProvider, useDownloadQueue } from '../lib/download';
 import { SettingsProvider, useSettings } from '../lib/settings';
 import { hydrateQueryClient, startPersistLoop } from '../lib/queryCache';
@@ -62,6 +63,7 @@ export default function RootLayout() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#070708' }}>
+    <ErrorBoundary>
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
         <DownloadInfraProvider>
@@ -71,6 +73,7 @@ export default function RootLayout() {
         </DownloadInfraProvider>
       </QueryClientProvider>
     </SafeAreaProvider>
+    </ErrorBoundary>
     </View>
   );
 }

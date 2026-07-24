@@ -163,8 +163,12 @@ export function createDownloadEngine(): IDownloadEngine {
         }
 
         // ── Validate the downloaded file ──
-        const fileInfo = await getInfoAsync(result.uri);
-        const fileSize = fileInfo?.size ?? 0;
+        const fileInfo = await getInfoAsync(result.uri, { md5: false });
+        if (!fileInfo.exists) {
+          emitStatus(task.id, 'failed', 'Downloaded file not found');
+          return;
+        }
+        const fileSize = fileInfo.size ?? 0;
 
         if (fileSize < MIN_VALID_FILE_SIZE) {
           // Server returned an error page or empty response

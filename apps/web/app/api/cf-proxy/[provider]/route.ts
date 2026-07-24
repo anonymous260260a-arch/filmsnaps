@@ -32,6 +32,7 @@ import {
 import { isFilterEngineLoaded } from '@/lib/movieProviders/filterService';
 import { fetchWithFlareSolverr, isFlareSolverrConfigured } from '@/lib/movieProviders/flareSolverr';
 import { buildProviderCSP } from '@/lib/movieProviders/cspBuilder';
+import { getCorsHeaders } from '@/lib/cors';
 
 /**
  * GET /api/cf-proxy/{provider}?id=...  (movie)
@@ -176,7 +177,7 @@ function processHtml(
   return new NextResponse(html, {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
-      'Access-Control-Allow-Origin': '*',
+      ...getCorsHeaders(null),
       'Cache-Control': 'no-store',
       'Referrer-Policy': 'no-referrer',
       'X-Content-Type-Options': 'nosniff',

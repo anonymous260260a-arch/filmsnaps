@@ -32,6 +32,7 @@ import {
   markProviderChallenged,
   clearProviderChallenge,
 } from '@/lib/movieProviders/cloudflareDetect';
+import { getCorsHeaders } from '@/lib/cors';
 
 export async function GET(
   req: Request,
@@ -97,7 +98,7 @@ export async function GET(
         status: response.status,
         headers: {
           'Content-Type': contentType,
-          'Access-Control-Allow-Origin': '*',
+          ...getCorsHeaders(req.headers.get('origin')),
         },
       });
     }
@@ -143,7 +144,7 @@ export async function GET(
     return new NextResponse(html, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
-        'Access-Control-Allow-Origin': '*',
+        ...getCorsHeaders(req.headers.get('origin')),
         'Cache-Control': 'no-store',
         'Referrer-Policy': 'no-referrer',
         'X-Content-Type-Options': 'nosniff',

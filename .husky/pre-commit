@@ -1,0 +1,25 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+echo "🔒 Running pre-commit checks..."
+
+# Check for .env files being committed
+if git diff --cached --name-only | grep -qE '\.env$|\.env\.'; then
+  echo "❌ Error: .env files should not be committed!"
+  echo "   Found .env file in staged changes."
+  echo "   Please unstage them: git reset HEAD <file>"
+  exit 1
+fi
+
+# Check for common secret patterns in staged files
+SECRETS_PATTERN="(FIREBASE_PRIVATE_KEY|FIREBASE_CLIENT_EMAIL|TMDB_API_KEY.*=.*[A-Za-z0-9]{20,}|SUPABASE.*KEY.*=.*[A-Za-z0-9]{20,})"
+if git diff --cached --diff-filter=ACM | grep -qE "$SECRETS_PATTERN"; then
+  echo "⚠️  Warning: Possible secrets detected in staged changes!"
+  echo "   Please verify no API keys or private keys are being committed."
+  echo "   To bypass this check (if false positive): git commit --no-verify"
+fi
+
+# Run lint-staged (prettier formatting)
+npx lint-staged
+
+echo "✅ Pre-commit checks passed!"
