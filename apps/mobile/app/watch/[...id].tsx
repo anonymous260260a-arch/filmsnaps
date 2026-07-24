@@ -8,7 +8,7 @@ import { VideoWebView } from '../../components/VideoWebView';
 export default function WatchScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ id: string[]; backdrop?: string }>();
+  const params = useLocalSearchParams<{ id: string[]; backdrop?: string; provider?: string }>();
 
   const segments = params.id ?? [];
   const type = segments[0] as 'movie' | 'tv';

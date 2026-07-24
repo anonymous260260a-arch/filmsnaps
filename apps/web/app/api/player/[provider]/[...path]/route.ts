@@ -27,6 +27,7 @@ import {
   isFlareSolverrConfigured,
 } from '@/lib/movieProviders/flareSolverr';
 import { tlsFetch, getTlsFetchMode } from '@/lib/movieProviders/tlsFetch';
+import { getCorsHeaders, handleOptions } from '@/lib/cors';
 
 export async function GET(
   req: Request,
@@ -82,7 +83,7 @@ export async function GET(
         status: response.status,
         headers: {
           'Content-Type': contentType,
-          'Access-Control-Allow-Origin': '*',
+          ...getCorsHeaders(req.headers.get('origin')),
           'Cache-Control': 'public, max-age=3600',
         },
       });
@@ -199,7 +200,7 @@ export async function GET(
     return new NextResponse(html, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
-        'Access-Control-Allow-Origin': '*',
+        ...getCorsHeaders(req.headers.get('origin')),
         'Cache-Control': 'no-store',
         'Referrer-Policy': 'no-referrer',
         'X-Content-Type-Options': 'nosniff',
@@ -216,14 +217,8 @@ export async function GET(
   }
 }
 
-export function OPTIONS() {
-  return new NextResponse(null, {
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-  });
+export async function OPTIONS(request: Request) {
+  return handleOptions(request);
 }
 
 function cloudflareFallback() {

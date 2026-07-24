@@ -8,6 +8,8 @@
   "scripts": {
     "dev": "concurrently -k \"cd ../web && pnpm dev\" \"wait-on http://localhost:3000 && tsc && pnpm exec electron . --dev\"",
     "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "dist": "pnpm build && electron-builder --publish=never",
     "dist:publish": "pnpm build && electron-builder --publish=always",
     "pack": "pnpm build && electron-builder --dir",

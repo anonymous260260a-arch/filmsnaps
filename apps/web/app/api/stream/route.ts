@@ -8,6 +8,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { getCorsHeaders } from '@/lib/cors';
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -55,7 +56,7 @@ export async function GET(req: Request) {
     // Build response headers
     const responseHeaders: Record<string, string> = {
       'Content-Type': response.headers.get('content-type') || 'application/octet-stream',
-      'Access-Control-Allow-Origin': '*',
+      ...getCorsHeaders(req.headers.get('origin')),
       'Access-Control-Expose-Headers': 'Content-Range, Content-Length',
     };
 

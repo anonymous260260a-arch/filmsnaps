@@ -6,6 +6,9 @@
     "dev": "turbo dev",
     "build": "turbo build",
     "lint": "turbo lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "postinstall": "pnpm --filter @filmsnaps/shared build",
     "build:shared": "cd packages/shared && pnpm build",
@@ -19,11 +22,24 @@
     "dev:desktop": "cd apps/desktop && pnpm dev",
     "build:desktop": "cd apps/desktop && pnpm build",
     "dist:desktop": "cd apps/desktop && pnpm dist",
-    "typecheck:desktop": "cd apps/desktop && pnpm typecheck"
+    "typecheck:desktop": "cd apps/desktop && pnpm typecheck",
+    "prepare": "husky"
   },
   "devDependencies": {
     "turbo": "^2.0.0",
-    "prettier": "^3.0.0"
+    "prettier": "^3.0.0",
+    "vitest": "^3.2.1",
+    "@vitest/coverage-v8": "^3.2.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "prettier --write"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
   },
   "packageManager": "pnpm@10.10.0",
   "engines": {

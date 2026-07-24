@@ -4,7 +4,6 @@ import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  Film,
   Search,
   Menu,
   X,
@@ -192,8 +191,8 @@ export function Header() {
 
           {/* ── Logo ── */}
           <Link href="/" className="flex items-center gap-2 group flex-shrink-0">
-            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-[#D4A237]/10 group-hover:bg-[#D4A237]/20 transition-all duration-300">
-              <Film className="h-5 w-5 text-[#D4A237]" />
+            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-[#D4A237]/10 group-hover:bg-[#D4A237]/20 transition-all duration-300 overflow-hidden">
+              <img src="/logo.png" alt="FilmSnaps" className="h-7 w-7 object-contain" />
             </div>
             <span
               className="text-xl font-bold tracking-tight text-foreground"

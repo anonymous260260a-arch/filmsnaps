@@ -406,7 +406,7 @@ export default function FalixDownloadScreen() {
                 <Text className="text-zinc-500 text-xs">{data.release_year}</Text>
                 <Text className="text-zinc-600 text-xs">•</Text>
                 <Text className="text-zinc-500 text-xs">{data.rip}</Text>
-                {data.runtime && (
+                {'runtime' in data && data.runtime && (
                   <>
                     <Text className="text-zinc-600 text-xs">•</Text>
                     <Text className="text-zinc-500 text-xs">{data.runtime}m</Text>
@@ -420,17 +420,19 @@ export default function FalixDownloadScreen() {
                   </View>
                 ))}
               </View>
-              <View className="flex-row mt-3" style={{ gap: 8 }}>
-                <TouchableOpacity
-                  onPress={() => downloadFile(data.telegram?.[0]?.id || '', data.telegram?.[0]?.name || '', 'best')}
-                  disabled={!data.telegram?.length}
-                  className="bg-primary rounded-xl py-2 px-5 flex-row items-center"
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="download" size={16} color="#000" />
-                  <Text className="text-void font-bold text-sm ml-2">Best Quality</Text>
-                </TouchableOpacity>
-              </View>
+              {!isTV && data.telegram && (
+                <View className="flex-row mt-3" style={{ gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => downloadFile(data.telegram[0]?.id || '', data.telegram[0]?.name || '', 'best')}
+                    disabled={!data.telegram?.length}
+                    className="bg-primary rounded-xl py-2 px-5 flex-row items-center"
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="download" size={16} color="#000" />
+                    <Text className="text-void font-bold text-sm ml-2">Best Quality</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           </View>
         </View>

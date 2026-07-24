@@ -12,6 +12,7 @@ import {
   shouldBlockUrl,
   getContentTypeFromUrl,
 } from '@/lib/movieProviders/protection';
+import { getCorsHeaders, handleOptions } from '@/lib/cors';
 
 export async function GET(
   req: Request,
@@ -112,7 +113,7 @@ self.addEventListener('fetch', () => {});`,
       'Content-Type': contentType,
       'Cache-Control':
         response.headers.get('cache-control') || 'public, max-age=86400',
-      'Access-Control-Allow-Origin': '*',
+      ...getCorsHeaders(req.headers.get('origin')),
       'Cross-Origin-Resource-Policy': 'cross-origin',
     };
 
@@ -135,13 +136,6 @@ self.addEventListener('fetch', () => {});`,
   }
 }
 
-export function OPTIONS() {
-  return new NextResponse(null, {
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Range, Accept',
-      'Access-Control-Expose-Headers': 'Content-Range, Content-Length',
-    },
-  });
+export async function OPTIONS(request: Request) {
+  return handleOptions(request);
 }

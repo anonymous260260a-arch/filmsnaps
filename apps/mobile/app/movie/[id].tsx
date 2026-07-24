@@ -12,7 +12,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { getImageUrl, getTrailerKey } from '@filmsnaps/shared';
-import { ProgressiveImage, pickOptimalSize } from '../../components/ProgressiveImage';
+import { ProgressiveImage } from '../../components/ProgressiveImage';
 import { typography } from '../../lib/typography';
 import { FilmGrain } from '../../components/FilmGrain';
 import { useMovieDetails } from '../../hooks/useTMDB';
@@ -22,7 +22,6 @@ import { TrailerModal } from '../../components/TrailerModal';
 import { DetailSkeleton } from '../../components/Skeletons';
 import { isBookmarked, saveBookmark, removeBookmark } from '../../lib/bookmarks';
 import type { Movie } from '@filmsnaps/shared';
-import { LinearGradient } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 
 export default function MovieDetailScreen() {
@@ -104,18 +103,15 @@ export default function MovieDetailScreen() {
           <FilmGrain opacity={0.04} />
 
           {/* Smooth gradient — covers bottom 60% for poster overlap */}
-          <LinearGradient
+          <View
             style={{
               position: 'absolute',
               bottom: 0,
               left: 0,
               right: 0,
               height: BACKDROP_HEIGHT * 0.6,
+              backgroundColor: 'rgba(8,8,8,0.65)',
             }}
-            colors={['rgba(8,8,8,0)', 'rgba(8,8,8,0.12)', 'rgba(8,8,8,0.35)', 'rgba(8,8,8,0.65)', '#070708']}
-            locations={[0, 0.2, 0.5, 0.8, 1]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 0, y: 1 }}
           />
         </View>
 

@@ -1,6 +1,6 @@
 // app/tv/[id]/page.tsx
 import { tmdbTvFull } from '@/lib/tmdb.server';
-import TVClient from './TvClient';
+import TVClient from './TVClient';
 
 export default async function TVShowPage({ params }: { params: any }) {
   const { id } = await params;
