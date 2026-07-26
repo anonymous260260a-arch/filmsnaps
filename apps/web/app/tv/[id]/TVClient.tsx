@@ -1,24 +1,33 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import Image from 'next/image';
-import Link from 'next/link';
-import { Star, Calendar, Tv, ArrowLeft, Play, Youtube, Download, CloudDownload } from 'lucide-react';
-import { getImageUrl, getTrailerKey } from '@/lib/tmdb';
-import dynamic from 'next/dynamic';
-import { MediaCarousel } from '@/components/MediaCarousel';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import VideoSkeleton from '@/components/VideoSkeleton';
-import { Suspense } from 'react';
-import { SaveButton } from '@/components/SaveButton';
-import { useRouter } from 'next/navigation';
-import { CastCarousel } from '@/components/CastCarousel';
-import { TrailerModal } from '@/components/TrailerModal';
+import React, { useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
+import {
+  Star,
+  Calendar,
+  Tv,
+  ArrowLeft,
+  Play,
+  Youtube,
+  Download,
+  CloudDownload,
+} from "lucide-react";
+import { getImageUrl, getTrailerKey } from "@/lib/tmdb";
+import dynamic from "next/dynamic";
+import { MediaCarousel } from "@/components/MediaCarousel";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import VideoSkeleton from "@/components/VideoSkeleton";
+import { Suspense } from "react";
+import { SaveButton } from "@/components/SaveButton";
+import { useRouter } from "next/navigation";
+import { CastCarousel } from "@/components/CastCarousel";
+import { TrailerModal } from "@/components/TrailerModal";
 
 const VideoPlayer = dynamic(
   () =>
-    import('@/components/VideoPlayer').then((mod) => ({
+    import("@/components/VideoPlayer").then((mod) => ({
       default: mod.VideoPlayer,
     })),
   { ssr: false, loading: () => <VideoSkeleton /> },
@@ -40,7 +49,7 @@ export default function TVClient({ show }: { show: any }) {
           {show.backdrop_path && (
             <div className="absolute inset-0 h-[60vh]">
               <Image
-                src={getImageUrl(show.backdrop_path, 'original')}
+                src={getImageUrl(show.backdrop_path, "original")}
                 alt={show.name}
                 fill
                 priority
@@ -54,7 +63,10 @@ export default function TVClient({ show }: { show: any }) {
 
           <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
             <Link href="/">
-              <Button variant="ghost" className="mb-6 gap-2 text-muted-foreground hover:text-foreground -ml-3">
+              <Button
+                variant="ghost"
+                className="mb-6 gap-2 text-muted-foreground hover:text-foreground -ml-3"
+              >
                 <ArrowLeft className="h-4 w-4" />
                 Back to Home
               </Button>
@@ -66,7 +78,7 @@ export default function TVClient({ show }: { show: any }) {
                 {show.poster_path && (
                   <div className="relative aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl shadow-black/40 ring-1 ring-white/[0.06]">
                     <Image
-                      src={getImageUrl(show.poster_path, 'w500')}
+                      src={getImageUrl(show.poster_path, "w500")}
                       alt={show.name}
                       fill
                       sizes="(max-width: 1024px) 100vw, 33vw"
@@ -100,18 +112,22 @@ export default function TVClient({ show }: { show: any }) {
                     {show.first_air_date && (
                       <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
                         <Calendar className="h-3.5 w-3.5" />
-                        {new Date(show.first_air_date).toLocaleDateString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric',
-                        })}
+                        {new Date(show.first_air_date).toLocaleDateString(
+                          "en-US",
+                          {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          },
+                        )}
                       </span>
                     )}
 
                     {show.number_of_seasons && (
                       <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
                         <Tv className="h-3.5 w-3.5" />
-                        {show.number_of_seasons} Season{show.number_of_seasons !== 1 ? 's' : ''}
+                        {show.number_of_seasons} Season
+                        {show.number_of_seasons !== 1 ? "s" : ""}
                       </span>
                     )}
                   </div>
@@ -149,7 +165,9 @@ export default function TVClient({ show }: { show: any }) {
                     Watch Now
                   </Button>
                   <Button
-                    onClick={() => router.push(`/download/nxsha/tv/${show.id}/1/1`)}
+                    onClick={() =>
+                      router.push(`/download/nxsha/tv/${show.id}/1/1`)
+                    }
                     className="gap-2.5 px-5 py-3 h-auto rounded-full border border-primary/50 bg-transparent hover:bg-primary/10 text-primary font-semibold text-sm transition-all"
                   >
                     <Download className="w-4 h-4" />
