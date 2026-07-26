@@ -5,7 +5,13 @@
  * plus storage management, server preference, and support resources.
  */
 
-import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import React, {
+  useState,
+  useCallback,
+  useMemo,
+  useEffect,
+  useRef,
+} from "react";
 import {
   View,
   Text,
@@ -13,30 +19,42 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { useSettings } from '../../lib/settings';
-import { useDownloadList } from '../../lib/download';
-import { getEnabledProviders } from '@filmsnaps/shared';
-import { getInfoAsync, documentDirectory } from 'expo-file-system/legacy';
-import { clearAllBookmarks } from '../../lib/bookmarks';
+  Switch,
+  Share,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ForwardIcon } from "../../components/Icons";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import { useSettings } from "../../lib/settings";
+import { useDownloadList } from "../../lib/download";
+import { getEnabledProviders } from "@filmsnaps/shared";
+import { getInfoAsync, documentDirectory } from "expo-file-system/legacy";
+import Constants from "expo-constants";
 
 // ── Helpers ──
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
+  if (bytes === 0) return "0 B";
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(k)),
+    sizes.length - 1,
+  );
   const val = bytes / Math.pow(k, i);
   return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${sizes[i]}`;
 }
 
 // ── Section Card ──
 
-function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
+function SectionCard({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <View className="mb-6">
       <Text className="text-zinc-500 text-[10px] font-semibold uppercase tracking-widest px-5 mb-2">
@@ -44,7 +62,11 @@ function SectionCard({ title, children }: { title: string; children: React.React
       </Text>
       <View
         className="mx-4 rounded-xl overflow-hidden"
-        style={{ backgroundColor: '#0E0E11', borderWidth: 0.5, borderColor: '#1f1f1f' }}
+        style={{
+          backgroundColor: "#0E0E11",
+          borderWidth: 0.5,
+          borderColor: "#1f1f1f",
+        }}
       >
         {children}
       </View>
@@ -75,21 +97,26 @@ function SettingsRow({
       onPress={onPress}
       activeOpacity={onPress ? 0.7 : 1}
       className="flex-row items-center px-5 py-3.5"
-      style={{ backgroundColor: '#141414' }}
+      style={{ backgroundColor: "#141414" }}
     >
       {icon && (
         <View
           className="w-9 h-9 rounded-xl items-center justify-center mr-3"
-          style={{ backgroundColor: color ? `${color}18` : '#1f1f1f' }}
+          style={{ backgroundColor: color ? `${color}18` : "#1f1f1f" }}
         >
-          <Ionicons name={icon} size={18} color={color || '#A1A1AA'} />
+          <Ionicons name={icon} size={18} color={color || "#A1A1AA"} />
         </View>
       )}
       <View className="flex-1">
-        <Text className="text-zinc-200 text-sm font-bold" style={{ fontFamily: 'Inter_600SemiBold' }}>
+        <Text
+          className="text-zinc-200 text-sm font-bold"
+          style={{ fontFamily: "Inter_600SemiBold" }}
+        >
           {label}
         </Text>
-        {subtitle && <Text className="text-zinc-500 text-xs mt-0.5">{subtitle}</Text>}
+        {subtitle && (
+          <Text className="text-zinc-500 text-xs mt-0.5">{subtitle}</Text>
+        )}
       </View>
       {right}
     </Content>
@@ -99,12 +126,18 @@ function SettingsRow({
 // ── Divider ──
 
 function Divider() {
-  return <View className="h-[1px] mx-5" style={{ backgroundColor: '#1a1a1e' }} />;
+  return (
+    <View className="h-[1px] mx-5" style={{ backgroundColor: "#1a1a1e" }} />
+  );
 }
 
 // ── Collapsible Section — like SectionCard but with a toggle header ──
 
-function CollapsibleSection({ title, subtitle, children }: {
+function CollapsibleSection({
+  title,
+  subtitle,
+  children,
+}: {
   title: string;
   subtitle?: string;
   children: React.ReactNode;
@@ -126,7 +159,7 @@ function CollapsibleSection({ title, subtitle, children }: {
           )}
         </View>
         <Ionicons
-          name={open ? 'chevron-up' : 'chevron-down'}
+          name={open ? "chevron-up" : "chevron-down"}
           size={14}
           color="#52525b"
           style={{ marginLeft: 8 }}
@@ -135,7 +168,11 @@ function CollapsibleSection({ title, subtitle, children }: {
       {open && (
         <View
           className="mx-4 rounded-xl overflow-hidden"
-          style={{ backgroundColor: '#0E0E11', borderWidth: 0.5, borderColor: '#1f1f1f' }}
+          style={{
+            backgroundColor: "#0E0E11",
+            borderWidth: 0.5,
+            borderColor: "#1f1f1f",
+          }}
         >
           {children}
         </View>
@@ -151,6 +188,7 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { settings, updateSetting } = useSettings();
   const { all: downloads, active } = useDownloadList();
+  const appVersion = Constants.expoConfig?.version || "1.0.0";
 
   // ── Storage calculation ──
   const [cacheSize, setCacheSize] = useState<number | null>(null);
@@ -159,14 +197,11 @@ export default function SettingsScreen() {
 
   const totalDownloadSize = useMemo(() => {
     return downloads
-      .filter((t) => t.status === 'completed')
+      .filter((t) => t.status === "completed")
       .reduce((sum, t) => sum + (t.totalBytes || 0), 0);
   }, [downloads]);
 
-  const activeCount = useMemo(
-    () => active.length,
-    [active],
-  );
+  const activeCount = useMemo(() => active.length, [active]);
 
   useEffect(() => {
     if (storageCalculated.current || calculatingStorage) return;
@@ -177,9 +212,9 @@ export default function SettingsScreen() {
   const calculateCacheSize = useCallback(async () => {
     setCalculatingStorage(true);
     try {
-      const dir = (documentDirectory ?? '') + 'downloads/';
+      const dir = (documentDirectory ?? "") + "downloads/";
       const info = await getInfoAsync(dir);
-      if (info.exists && 'size' in info) {
+      if (info.exists && "size" in info) {
         setCacheSize((info as any).size || null);
       }
     } catch {}
@@ -189,14 +224,16 @@ export default function SettingsScreen() {
   // ── Actions ──
   const handleClearCache = useCallback(() => {
     Alert.alert(
-      'Clear Cache',
-      'This will only clear temporary data. Downloaded files are not affected.',
+      "Clear Cache",
+      "This will only clear temporary data. Downloaded files are not affected.",
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: "Cancel", style: "cancel" },
         {
-          text: 'Clear', style: 'destructive', onPress: () => {
+          text: "Clear",
+          style: "destructive",
+          onPress: () => {
             setCacheSize(0);
-            Alert.alert('Cache Cleared', 'Temporary data has been cleared.');
+            Alert.alert("Cache Cleared", "Temporary data has been cleared.");
           },
         },
       ],
@@ -204,44 +241,39 @@ export default function SettingsScreen() {
   }, []);
 
   const handleShareApp = useCallback(() => {
-    Alert.alert('Share FilmSnaps', 'Share this app with your friends!');
+    Share.share({
+      message: `🎬 Watch movies & TV shows free on FilmSnaps\nhttps://filmsnaps.app`,
+    });
   }, []);
 
-  const handleClearSaved = useCallback(() => {
-    Alert.alert(
-      'Clear Saved Items',
-      'This will remove all your saved movies and shows. This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear All', style: 'destructive', onPress: async () => {
-            await clearAllBookmarks();
-            Alert.alert('Cleared', 'All saved items have been removed.');
-          },
-        },
-      ],
-    );
-  }, []);
-
-  // ── Providers for default server picker ──
+  // ── Providers for default source picker ──
   const serverProviders = useMemo(() => {
     return getEnabledProviders().filter(
-      (p) => !p.platforms || !p.platforms.includes('web'),
+      (p) => !p.platforms || !p.platforms.includes("web"),
     );
   }, []);
 
   const selectedServer = settings.defaultServer;
   const selectedProviderName = useMemo(() => {
-    if (!selectedServer) return 'Auto (first available)';
+    if (!selectedServer) return "Auto (first available)";
     const p = serverProviders.find((sp) => sp.id === selectedServer);
     return p ? p.displayName || p.name : selectedServer;
   }, [selectedServer, serverProviders]);
 
   return (
-    <View className="flex-1" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
+    <View
+      className="flex-1"
+      style={{ backgroundColor: "#070708", paddingTop: insets.top }}
+    >
       {/* Header */}
       <View className="px-5 pt-4 pb-3">
-        <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: '#F4F4F5' }}>
+        <Text
+          style={{
+            fontFamily: "PlayfairDisplay_700Bold",
+            fontSize: 22,
+            color: "#F4F4F5",
+          }}
+        >
           Settings
         </Text>
       </View>
@@ -250,39 +282,131 @@ export default function SettingsScreen() {
         contentContainerStyle={{ paddingBottom: 60 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── 1. Library ── */}
-        <SectionCard title="Library">
+        {/* ── 1. Playback ── */}
+        <SectionCard title="Playback">
           <SettingsRow
-            icon="download-outline"
-            label="Downloads"
+            icon="videocam-outline"
+            label="Default Quality"
             subtitle={
-              activeCount > 0
-                ? `${activeCount} active download${activeCount > 1 ? 's' : ''}`
-                : totalDownloadSize > 0
-                  ? `${formatBytes(totalDownloadSize)} used`
-                  : 'Manage your downloads'
+              settings.defaultQuality === "Auto"
+                ? "Auto (recommended)"
+                : settings.defaultQuality
             }
             color="#D4A237"
-            onPress={() => router.push('/downloads')}
-            right={<Ionicons name="chevron-forward" size={16} color="#3f3f3f" />}
+            onPress={() => {
+              Alert.alert("Default Quality", "Preferred streaming quality", [
+                {
+                  text: "Auto",
+                  onPress: () => updateSetting("defaultQuality", "Auto"),
+                },
+                {
+                  text: "720p",
+                  onPress: () => updateSetting("defaultQuality", "720p"),
+                },
+                {
+                  text: "1080p",
+                  onPress: () => updateSetting("defaultQuality", "1080p"),
+                },
+                {
+                  text: "4K",
+                  onPress: () => updateSetting("defaultQuality", "4K"),
+                },
+                { text: "Cancel", style: "cancel" },
+              ]);
+            }}
+            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
           />
           <Divider />
           <SettingsRow
-            icon="time-outline"
-            label="Watch History"
-            subtitle="Movies and TV shows you've watched"
-            color="#5b9cf6"
-            onPress={() => router.push('/history')}
-            right={<Ionicons name="chevron-forward" size={16} color="#3f3f3f" />}
+            icon="language-outline"
+            label="Subtitle Language"
+            subtitle={settings.subtitleLanguage || "English"}
+            color="#D4A237"
+            onPress={() => {
+              Alert.alert("Subtitle Language", "Preferred subtitle language", [
+                {
+                  text: "English",
+                  onPress: () => updateSetting("subtitleLanguage", "English"),
+                },
+                {
+                  text: "Spanish",
+                  onPress: () => updateSetting("subtitleLanguage", "Spanish"),
+                },
+                {
+                  text: "French",
+                  onPress: () => updateSetting("subtitleLanguage", "French"),
+                },
+                {
+                  text: "German",
+                  onPress: () => updateSetting("subtitleLanguage", "German"),
+                },
+                {
+                  text: "Portuguese",
+                  onPress: () =>
+                    updateSetting("subtitleLanguage", "Portuguese"),
+                },
+                {
+                  text: "Arabic",
+                  onPress: () => updateSetting("subtitleLanguage", "Arabic"),
+                },
+                {
+                  text: "Hindi",
+                  onPress: () => updateSetting("subtitleLanguage", "Hindi"),
+                },
+                { text: "Cancel", style: "cancel" },
+              ]);
+            }}
+            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
           />
           <Divider />
           <SettingsRow
-            icon="bookmark-outline"
-            label="Saved"
-            subtitle="Your bookmarked films and shows"
-            color="#22c55e"
-            onPress={() => router.push('/saved')}
-            right={<Ionicons name="chevron-forward" size={16} color="#3f3f3f" />}
+            icon="text-outline"
+            label="Subtitle Size"
+            subtitle={
+              settings.subtitleFontSize === "small"
+                ? "Small"
+                : settings.subtitleFontSize === "large"
+                  ? "Large"
+                  : "Medium"
+            }
+            color="#D4A237"
+            onPress={() => {
+              Alert.alert("Subtitle Size", "Adjust subtitle text size", [
+                {
+                  text: "Small",
+                  onPress: () => updateSetting("subtitleFontSize", "small"),
+                },
+                {
+                  text: "Medium",
+                  onPress: () => updateSetting("subtitleFontSize", "medium"),
+                },
+                {
+                  text: "Large",
+                  onPress: () => updateSetting("subtitleFontSize", "large"),
+                },
+                { text: "Cancel", style: "cancel" },
+              ]);
+            }}
+            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+          />
+          <Divider />
+          <SettingsRow
+            icon="play-skip-forward-outline"
+            label="Auto-play Next"
+            subtitle={
+              settings.autoPlayNext
+                ? "On — automatically play next episode"
+                : "Off"
+            }
+            color="#D4A237"
+            right={
+              <Switch
+                value={settings.autoPlayNext}
+                onValueChange={(v) => updateSetting("autoPlayNext", v)}
+                trackColor={{ false: "#27272A", true: "rgba(212,162,55,0.4)" }}
+                thumbColor={settings.autoPlayNext ? "#D4A237" : "#52525B"}
+              />
+            }
           />
         </SectionCard>
 
@@ -291,71 +415,180 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="trash-outline"
             label="Clear Cache"
-            subtitle={cacheSize != null ? `${formatBytes(cacheSize)} currently cached` : 'Tap to clear temporary data'}
+            subtitle={
+              cacheSize != null
+                ? `${formatBytes(cacheSize)} currently cached`
+                : "Tap to clear temporary data"
+            }
             color="#ef4444"
             onPress={handleClearCache}
             right={
               calculatingStorage ? (
                 <ActivityIndicator size="small" color="#52525b" />
               ) : (
-                <Ionicons name="chevron-forward" size={16} color="#3f3f3f" />
+                <ForwardIcon width={16} height={16} color="#3f3f3f" />
               )
             }
           />
           <Divider />
           <SettingsRow
-            icon="bookmark-outline"
-            label="Clear Saved"
-            subtitle="Remove all bookmarked films and shows"
-            color="#ef4444"
-            onPress={handleClearSaved}
-            right={<Ionicons name="chevron-forward" size={16} color="#3f3f3f" />}
+            icon="folder-open-outline"
+            label="Downloads Storage"
+            subtitle={
+              totalDownloadSize > 0
+                ? `${formatBytes(totalDownloadSize)} used`
+                : "No completed downloads"
+            }
+            color="#D4A237"
+            onPress={() => router.push("/downloads")}
+            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
           />
           <Divider />
           <SettingsRow
-            icon="folder-open-outline"
-            label="Downloads Storage"
-            subtitle={totalDownloadSize > 0 ? `${formatBytes(totalDownloadSize)} used` : 'No completed downloads'}
+            icon="cellular-outline"
+            label="Download over Cellular"
+            subtitle={
+              settings.downloadOverCellular
+                ? "Allowed on mobile data"
+                : "Wi-Fi only"
+            }
             color="#D4A237"
-            onPress={() => router.push('/downloads')}
-            right={<Ionicons name="chevron-forward" size={16} color="#3f3f3f" />}
+            right={
+              <Switch
+                value={settings.downloadOverCellular}
+                onValueChange={(v) => updateSetting("downloadOverCellular", v)}
+                trackColor={{ false: "#27272A", true: "rgba(212,162,55,0.4)" }}
+                thumbColor={
+                  settings.downloadOverCellular ? "#D4A237" : "#52525B"
+                }
+              />
+            }
+          />
+          <Divider />
+          <SettingsRow
+            icon="download-outline"
+            label="Download Quality"
+            subtitle={
+              settings.downloadQuality === "Auto"
+                ? "Auto (recommended)"
+                : settings.downloadQuality === "720p"
+                  ? "720p — smaller files"
+                  : settings.downloadQuality === "4K"
+                    ? "4K — largest files"
+                    : "1080p — balanced"
+            }
+            color="#D4A237"
+            onPress={() => {
+              Alert.alert(
+                "Download Quality",
+                "Preferred quality for downloads",
+                [
+                  {
+                    text: "Auto",
+                    onPress: () => updateSetting("downloadQuality", "Auto"),
+                  },
+                  {
+                    text: "720p",
+                    onPress: () => updateSetting("downloadQuality", "720p"),
+                  },
+                  {
+                    text: "1080p",
+                    onPress: () => updateSetting("downloadQuality", "1080p"),
+                  },
+                  {
+                    text: "4K",
+                    onPress: () => updateSetting("downloadQuality", "4K"),
+                  },
+                  { text: "Cancel", style: "cancel" },
+                ],
+              );
+            }}
+            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+          />
+          <Divider />
+          <SettingsRow
+            icon="speedometer-outline"
+            label="Download Speed Limit"
+            subtitle={
+              settings.downloadSpeedLimit === "full"
+                ? "Full speed (unlimited)"
+                : settings.downloadSpeedLimit === "balanced"
+                  ? "Balanced (~500 KB/s)"
+                  : "Slower (~100 KB/s)"
+            }
+            color="#D4A237"
+            onPress={() => {
+              Alert.alert(
+                "Download Speed",
+                "Limit download speed to save bandwidth",
+                [
+                  {
+                    text: "Full (unlimited)",
+                    onPress: () => updateSetting("downloadSpeedLimit", "full"),
+                  },
+                  {
+                    text: "Balanced (~500 KB/s)",
+                    onPress: () =>
+                      updateSetting("downloadSpeedLimit", "balanced"),
+                  },
+                  {
+                    text: "Slower (~100 KB/s)",
+                    onPress: () =>
+                      updateSetting("downloadSpeedLimit", "slower"),
+                  },
+                  { text: "Cancel", style: "cancel" },
+                ],
+              );
+            }}
+            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
           />
         </SectionCard>
 
-        {/* ── 3. Default Server ── */}
+        {/* ── 3. Default Source ── */}
         <CollapsibleSection
-          title="Default Server"
+          title="Default Source"
           subtitle={selectedProviderName}
         >
           <View className="px-5 pt-3 pb-1">
             <Text className="text-zinc-400 text-xs leading-5 mb-2">
-              Choose your preferred streaming server. When available, this server will be tried first.
+              Choose your preferred streaming source. When available, this
+              source will be tried first.
             </Text>
           </View>
 
           {/* None / Auto option */}
           <TouchableOpacity
-            onPress={() => updateSetting('defaultServer', '')}
+            onPress={() => updateSetting("defaultServer", "")}
             activeOpacity={0.7}
             className="flex-row items-center px-5 py-3"
-            style={{ backgroundColor: '#141414' }}
+            style={{ backgroundColor: "#141414" }}
           >
             <View
               className="w-5 h-5 rounded-full border-2 items-center justify-center mr-3"
-              style={{ borderColor: selectedServer === '' ? '#D4A237' : '#333' }}
+              style={{
+                borderColor: selectedServer === "" ? "#D4A237" : "#333",
+              }}
             >
-              {selectedServer === '' && (
-                <View className="w-3 h-3 rounded-full" style={{ backgroundColor: '#D4A237' }} />
+              {selectedServer === "" && (
+                <View
+                  className="w-3 h-3 rounded-full"
+                  style={{ backgroundColor: "#D4A237" }}
+                />
               )}
             </View>
             <View className="flex-1">
               <Text
                 className="text-sm"
-                style={{ color: selectedServer === '' ? '#D4A237' : '#A1A1AA', fontFamily: 'Inter_600SemiBold' }}
+                style={{
+                  color: selectedServer === "" ? "#D4A237" : "#A1A1AA",
+                  fontFamily: "Inter_600SemiBold",
+                }}
               >
                 Auto
               </Text>
-              <Text className="text-zinc-500 text-[10px] mt-0.5">First available server</Text>
+              <Text className="text-zinc-500 text-[10px] mt-0.5">
+                First available source
+              </Text>
             </View>
           </TouchableOpacity>
 
@@ -365,27 +598,37 @@ export default function SettingsScreen() {
               <View key={p.id}>
                 {idx === 0 && <Divider />}
                 <TouchableOpacity
-                  onPress={() => updateSetting('defaultServer', isSelected ? '' : p.id)}
+                  onPress={() =>
+                    updateSetting("defaultServer", isSelected ? "" : p.id)
+                  }
                   activeOpacity={0.7}
                   className="flex-row items-center px-5 py-3"
-                  style={{ backgroundColor: '#141414' }}
+                  style={{ backgroundColor: "#141414" }}
                 >
                   <View
                     className="w-5 h-5 rounded-full border-2 items-center justify-center mr-3"
-                    style={{ borderColor: isSelected ? '#D4A237' : '#333' }}
+                    style={{ borderColor: isSelected ? "#D4A237" : "#333" }}
                   >
                     {isSelected && (
-                      <View className="w-3 h-3 rounded-full" style={{ backgroundColor: '#D4A237' }} />
+                      <View
+                        className="w-3 h-3 rounded-full"
+                        style={{ backgroundColor: "#D4A237" }}
+                      />
                     )}
                   </View>
                   <View className="flex-1">
                     <Text
                       className="text-sm"
-                      style={{ color: isSelected ? '#D4A237' : '#A1A1AA', fontFamily: 'Inter_500Medium' }}
+                      style={{
+                        color: isSelected ? "#D4A237" : "#A1A1AA",
+                        fontFamily: "Inter_500Medium",
+                      }}
                     >
                       {p.displayName || p.name}
                     </Text>
-                    <Text className="text-zinc-500 text-[10px] mt-0.5">{p.id}</Text>
+                    <Text className="text-zinc-500 text-[10px] mt-0.5">
+                      {p.id}
+                    </Text>
                   </View>
                 </TouchableOpacity>
                 {idx < serverProviders.length - 1 && <Divider />}
@@ -401,8 +644,17 @@ export default function SettingsScreen() {
             label="How to Use"
             subtitle="Guide to watching, downloading, and more"
             color="#D4A237"
-            onPress={() => router.push('/guide')}
-            right={<Ionicons name="chevron-forward" size={16} color="#3f3f3f" />}
+            onPress={() => router.push("/guide")}
+            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+          />
+          <Divider />
+          <SettingsRow
+            icon="information-circle-outline"
+            label="How Content Works"
+            subtitle="Content sourcing, ad blocking technology & transparency"
+            color="#5b9cf6"
+            onPress={() => router.push("/how-it-works")}
+            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
           />
           <Divider />
           <SettingsRow
@@ -411,15 +663,15 @@ export default function SettingsScreen() {
             subtitle="Tell your friends about FilmSnaps"
             color="#5b9cf6"
             onPress={handleShareApp}
-            right={<Ionicons name="chevron-forward" size={16} color="#3f3f3f" />}
+            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
           />
           <SettingsRow
             icon="shield-outline"
             label="Privacy Policy"
             subtitle="How we handle your data"
             color="#22c55e"
-            onPress={() => router.push('/privacy')}
-            right={<Ionicons name="chevron-forward" size={16} color="#3f3f3f" />}
+            onPress={() => router.push("/privacy")}
+            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
           />
           <Divider />
           <SettingsRow
@@ -427,8 +679,8 @@ export default function SettingsScreen() {
             label="Legal & DMCA"
             subtitle="Disclaimer, copyright, and terms"
             color="#a1a1aa"
-            onPress={() => router.push('/legal')}
-            right={<Ionicons name="chevron-forward" size={16} color="#3f3f3f" />}
+            onPress={() => router.push("/legal")}
+            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
           />
 
           {__DEV__ && (
@@ -439,8 +691,8 @@ export default function SettingsScreen() {
                 label="Experimental Providers"
                 subtitle="Test Nuvio provider extraction (dev only)"
                 color="#D4A237"
-                onPress={() => router.push('/experimental')}
-                right={<Ionicons name="chevron-forward" size={16} color="#3f3f3f" />}
+                onPress={() => router.push("/experimental")}
+                right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
               />
             </>
           )}
@@ -451,7 +703,9 @@ export default function SettingsScreen() {
           <Text className="text-zinc-600 text-[10px] font-semibold tracking-widest uppercase">
             FilmSnaps
           </Text>
-          <Text className="text-zinc-700 text-[10px] mt-1">v1.0.0 · Open Source</Text>
+          <Text className="text-zinc-700 text-[10px] mt-1">
+            v{appVersion} · Open Source
+          </Text>
         </View>
       </ScrollView>
     </View>

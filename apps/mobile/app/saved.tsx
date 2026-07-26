@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -7,15 +7,17 @@ import {
   ActivityIndicator,
   useWindowDimensions,
   Alert,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { useQueryClient } from '@tanstack/react-query';
-import { useRouter, useFocusEffect } from 'expo-router';
-import { tmdbApi } from '../lib/api';
-import { MediaCard } from '../components/MediaCard';
-import { getAllBookmarks, clearAllBookmarks } from '../lib/bookmarks';
-import type { Bookmark } from '../lib/bookmarks';
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { BackIcon } from "../components/Icons";
+import { Ionicons } from "@expo/vector-icons";
+import { useQueryClient } from "@tanstack/react-query";
+import { useRouter, useFocusEffect } from "expo-router";
+import { tmdbApi } from "../lib/api";
+import { MediaCard } from "../components/MediaCard";
+import { EmptyState } from "../components/EmptyState";
+import { getAllBookmarks, clearAllBookmarks } from "../lib/bookmarks";
+import type { Bookmark } from "../lib/bookmarks";
 
 const NUM_COLUMNS = 3;
 const GAP = 8;
@@ -27,16 +29,57 @@ function SavedSkeleton() {
   const cardWidth = (SCREEN_WIDTH - 32 - 16) / 3;
   const cardHeight = cardWidth * 1.5;
   return (
-    <View style={{ flex: 1, backgroundColor: '#070708', paddingTop: insets.top }}>
-      <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between' }}>
-        <View style={{ width: 70, height: 22, borderRadius: 4, backgroundColor: '#1C1C20' }} />
-        <View style={{ width: 48, height: 20, borderRadius: 4, backgroundColor: '#1C1C20' }} />
+    <View
+      style={{ flex: 1, backgroundColor: "#070708", paddingTop: insets.top }}
+    >
+      <View
+        style={{
+          paddingHorizontal: 20,
+          paddingTop: 16,
+          paddingBottom: 8,
+          flexDirection: "row",
+          justifyContent: "space-between",
+        }}
+      >
+        <View
+          style={{
+            width: 70,
+            height: 22,
+            borderRadius: 4,
+            backgroundColor: "#1C1C20",
+          }}
+        />
+        <View
+          style={{
+            width: 48,
+            height: 20,
+            borderRadius: 4,
+            backgroundColor: "#1C1C20",
+          }}
+        />
       </View>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', padding: 16, gap: 8 }}>
+      <View
+        style={{ flexDirection: "row", flexWrap: "wrap", padding: 16, gap: 8 }}
+      >
         {Array.from({ length: 6 }).map((_, i) => (
           <View key={i} style={{ width: cardWidth }}>
-            <View style={{ width: cardWidth, height: cardHeight, borderRadius: 12, backgroundColor: '#1C1C20' }} />
-            <View style={{ width: '80%', height: 10, borderRadius: 4, backgroundColor: '#1C1C20', marginTop: 6 }} />
+            <View
+              style={{
+                width: cardWidth,
+                height: cardHeight,
+                borderRadius: 12,
+                backgroundColor: "#1C1C20",
+              }}
+            />
+            <View
+              style={{
+                width: "80%",
+                height: 10,
+                borderRadius: 4,
+                backgroundColor: "#1C1C20",
+                marginTop: 6,
+              }}
+            />
           </View>
         ))}
       </View>
@@ -72,9 +115,9 @@ export default function SavedScreen() {
   const handleItemPress = useCallback(
     (item: Bookmark) => {
       const id = item.tmdbId;
-      if (item.mediaType === 'tv') {
+      if (item.mediaType === "tv") {
         queryClient.prefetchQuery({
-          queryKey: ['tv', id],
+          queryKey: ["tv", id],
           queryFn: () => tmdbApi.getTVDetails(Number(id)),
           staleTime: 1000 * 60 * 60,
         });
@@ -82,7 +125,7 @@ export default function SavedScreen() {
         router.push(`/tv/${id}`);
       } else {
         queryClient.prefetchQuery({
-          queryKey: ['movie', id],
+          queryKey: ["movie", id],
           queryFn: () => tmdbApi.getMovieDetails(Number(id)),
           staleTime: 1000 * 60 * 60,
         });
@@ -108,7 +151,10 @@ export default function SavedScreen() {
   }
 
   return (
-    <View className="flex-1 bg-void" style={{ backgroundColor: '#070708', paddingTop: insets.top }}>
+    <View
+      className="flex-1 bg-void"
+      style={{ backgroundColor: "#070708", paddingTop: insets.top }}
+    >
       {/* Header */}
       <View className="px-5 pt-4 pb-2 flex-row items-center justify-between">
         <View className="flex-row items-center">
@@ -117,48 +163,28 @@ export default function SavedScreen() {
             className="w-9 h-9 rounded-full bg-zinc-800/60 items-center justify-center mr-3"
             activeOpacity={0.7}
           >
-            <Ionicons name="chevron-back" size={20} color="#F4F4F5" />
+            <BackIcon width={20} height={20} color="#F4F4F5" />
           </TouchableOpacity>
-          <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: '#F4F4F5' }}>
+          <Text
+            style={{
+              fontFamily: "PlayfairDisplay_700Bold",
+              fontSize: 22,
+              color: "#F4F4F5",
+            }}
+          >
             Saved
           </Text>
         </View>
-        {bookmarks.length > 0 && (
-          <TouchableOpacity onPress={() => {
-            Alert.alert(
-              'Clear Saved',
-              'This will remove all your saved items. This cannot be undone.',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Clear All', style: 'destructive', onPress: handleClearAll },
-              ]
-            );
-          }} activeOpacity={0.7} className="flex-row items-center">
-            <Ionicons name="trash-outline" size={16} color="#ef4444" />
-            <Text className="text-red-400 text-xs ml-1.5 font-semibold">Clear</Text>
-          </TouchableOpacity>
-        )}
       </View>
 
       {bookmarks.length === 0 ? (
-        <View className="flex-1 items-center justify-center px-8">
-          <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#16161A', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
-            <Ionicons name="bookmark-outline" size={28} color="#52525B" />
-          </View>
-          <Text style={{ fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: '#F4F4F5', marginBottom: 8 }}>
-            Nothing saved yet
-          </Text>
-          <Text className="text-text-tertiary text-sm text-center leading-5">
-            Films you save will show up here for quick access.
-          </Text>
-          <TouchableOpacity
-            onPress={() => router.push('/')}
-            className="bg-primary rounded-xl py-3 px-8 mt-6"
-            activeOpacity={0.8}
-          >
-            <Text className="text-void font-bold text-sm">Discover Films</Text>
-          </TouchableOpacity>
-        </View>
+        <EmptyState
+          icon="bookmark-outline"
+          title="Nothing saved yet"
+          message="Films you save will show up here for quick access."
+          actionLabel="Discover Films"
+          onAction={() => router.push("/")}
+        />
       ) : (
         <FlatList
           data={bookmarks}
@@ -167,16 +193,43 @@ export default function SavedScreen() {
           contentContainerStyle={{ padding: PADDING, gap: GAP }}
           columnWrapperStyle={{ gap: GAP }}
           showsVerticalScrollIndicator={false}
+          ListFooterComponent={
+            <TouchableOpacity
+              onPress={() => {
+                Alert.alert(
+                  "Clear Saved",
+                  "This will remove all your saved items. This cannot be undone.",
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Clear All",
+                      style: "destructive",
+                      onPress: handleClearAll,
+                    },
+                  ],
+                );
+              }}
+              activeOpacity={0.7}
+              className="self-center mt-6 mb-8"
+            >
+              <View className="flex-row items-center">
+                <Ionicons name="trash-outline" size={14} color="#ef4444" />
+                <Text className="text-red-400 text-xs ml-1.5">Clear All</Text>
+              </View>
+            </TouchableOpacity>
+          }
           renderItem={({ item }) => (
             <View style={{ width: itemWidth }}>
               <MediaCard
-                item={{
-                  id: Number(item.tmdbId),
-                  title: item.mediaType === 'tv' ? undefined : item.title,
-                  name: item.mediaType === 'tv' ? item.title : undefined,
-                  poster_path: item.posterPath ?? undefined,
-                  media_type: item.mediaType,
-                } as any}
+                item={
+                  {
+                    id: Number(item.tmdbId),
+                    title: item.mediaType === "tv" ? undefined : item.title,
+                    name: item.mediaType === "tv" ? item.title : undefined,
+                    poster_path: item.posterPath ?? undefined,
+                    media_type: item.mediaType,
+                  } as any
+                }
                 onPress={() => handleItemPress(item)}
                 variant="default"
               />

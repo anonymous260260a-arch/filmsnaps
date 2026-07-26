@@ -1,10 +1,10 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const STORAGE_KEY = '@filmsnaps/bookmarks';
+const STORAGE_KEY = "@filmsnaps/bookmarks";
 
 export interface Bookmark {
   tmdbId: string;
-  mediaType: 'movie' | 'tv';
+  mediaType: "movie" | "tv";
   title: string;
   posterPath: string | null;
   year: string;
@@ -75,4 +75,38 @@ export async function getBookmarkCount(): Promise<number> {
  */
 export async function clearAllBookmarks(): Promise<void> {
   await AsyncStorage.removeItem(STORAGE_KEY);
+}
+
+// ── Debounced writes (trailing 400ms) ──
+
+const pendingWrites = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Save a bookmark with trailing debounce.
+ * Visual toggle should be optimistic — call this in background.
+ */
+export function debouncedSaveBookmark(item: Bookmark, delay = 400): void {
+  const key = item.tmdbId;
+  if (pendingWrites.has(key)) clearTimeout(pendingWrites.get(key)!);
+  pendingWrites.set(
+    key,
+    setTimeout(async () => {
+      pendingWrites.delete(key);
+      await saveBookmark(item);
+    }, delay),
+  );
+}
+
+/**
+ * Remove a bookmark with trailing debounce.
+ */
+export function debouncedRemoveBookmark(tmdbId: string, delay = 400): void {
+  if (pendingWrites.has(tmdbId)) clearTimeout(pendingWrites.get(tmdbId)!);
+  pendingWrites.set(
+    tmdbId,
+    setTimeout(async () => {
+      pendingWrites.delete(tmdbId);
+      await removeBookmark(tmdbId);
+    }, delay),
+  );
 }

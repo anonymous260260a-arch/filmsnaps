@@ -11,7 +11,7 @@
  *   4. Tap "Test Selected" — runs each provider in a hidden sandbox
  *   5. View results per provider (stream count, URL, quality)
  */
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -21,24 +21,25 @@ import {
   SafeAreaView,
   StatusBar,
   ActivityIndicator,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ProviderSandbox } from '../../components/experimental/ProviderSandbox';
-import { EXPERIMENTAL_PROVIDERS } from '../../components/experimental/providerSources';
+} from "react-native";
+import { useRouter } from "expo-router";
+import { BackIcon } from "../../components/Icons";
+import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ProviderSandbox } from "../../components/experimental/ProviderSandbox";
+import { EXPERIMENTAL_PROVIDERS } from "../../components/experimental/providerSources";
 import type {
   ProviderTestResult,
   ProviderStream,
-} from '../../components/experimental/types';
+} from "../../components/experimental/types";
 
 /** Default TMDB IDs for quick testing */
 const QUICK_IDS = [
-  { label: 'Oppenheimer', id: '872585' },
-  { label: 'Interstellar', id: '157336' },
-  { label: 'Dark (S1E1)', id: '70523', type: 'tv' as const },
-  { label: 'Pushpa 2', id: '1207898' },
-  { label: 'RRR', id: '916302' },
+  { label: "Oppenheimer", id: "872585" },
+  { label: "Interstellar", id: "157336" },
+  { label: "Dark (S1E1)", id: "70523", type: "tv" as const },
+  { label: "Pushpa 2", id: "1207898" },
+  { label: "RRR", id: "916302" },
 ];
 
 export default function ExperimentalPage() {
@@ -46,18 +47,20 @@ export default function ExperimentalPage() {
   const insets = useSafeAreaInsets();
 
   // ── Input state ──
-  const [tmdbId, setTmdbId] = useState('872585');
-  const [mediaType, setMediaType] = useState<'movie' | 'tv'>('movie');
-  const [season, setSeason] = useState('1');
-  const [episode, setEpisode] = useState('1');
+  const [tmdbId, setTmdbId] = useState("872585");
+  const [mediaType, setMediaType] = useState<"movie" | "tv">("movie");
+  const [season, setSeason] = useState("1");
+  const [episode, setEpisode] = useState("1");
   const [selectedProviders, setSelectedProviders] = useState<Set<string>>(
-    new Set(['dooflix']),
+    new Set(["dooflix"]),
   );
   const [showAdvanced, setShowAdvanced] = useState(true); // auto-expand logs
 
   // ── Test state ──
   const [isRunning, setIsRunning] = useState(false);
-  const [results, setResults] = useState<Record<string, ProviderTestResult>>({});
+  const [results, setResults] = useState<Record<string, ProviderTestResult>>(
+    {},
+  );
   const [logs, setLogs] = useState<string[]>([]);
   const resultCountRef = useRef(0);
   const expectedCountRef = useRef(0);
@@ -102,7 +105,7 @@ export default function ExperimentalPage() {
   const selectSimple = useCallback(() => {
     setSelectedProviders(
       new Set(
-        EXPERIMENTAL_PROVIDERS.filter((p) => p.complexity === 'simple').map(
+        EXPERIMENTAL_PROVIDERS.filter((p) => p.complexity === "simple").map(
           (p) => p.id,
         ),
       ),
@@ -112,8 +115,8 @@ export default function ExperimentalPage() {
   // ── Handle sandbox result ──
   const handleResult = useCallback(
     (providerId: string, sandboxResult: any) => {
-      if (sandboxResult.type === 'log') {
-        const msg = (sandboxResult.args || []).join(' ');
+      if (sandboxResult.type === "log") {
+        const msg = (sandboxResult.args || []).join(" ");
         addLog(`[${providerId}] ${msg}`);
         return; // Logs don't count as completion
       }
@@ -124,11 +127,11 @@ export default function ExperimentalPage() {
       setResults((prev) => {
         const current = prev[providerId] || {
           providerId,
-          status: 'pending',
+          status: "pending",
           streams: [],
         };
 
-        if (sandboxResult.type === 'error') {
+        if (sandboxResult.type === "error") {
           addLog(
             `[${providerId}] ERROR (${sandboxResult.elapsed}ms): ${sandboxResult.message}`,
           );
@@ -136,14 +139,14 @@ export default function ExperimentalPage() {
             ...prev,
             [providerId]: {
               ...current,
-              status: 'error',
+              status: "error",
               error: sandboxResult.message,
               elapsed: sandboxResult.elapsed,
             },
           };
         }
 
-        if (sandboxResult.type === 'result') {
+        if (sandboxResult.type === "result") {
           const streams: ProviderStream[] = sandboxResult.streams || [];
           addLog(
             `[${providerId}] DONE (${sandboxResult.elapsed}ms): ${streams.length} streams`,
@@ -153,8 +156,8 @@ export default function ExperimentalPage() {
             [providerId]: {
               ...current,
               streams,
-              status: streams.length > 0 ? 'success' : 'error',
-              error: streams.length === 0 ? 'No streams returned' : undefined,
+              status: streams.length > 0 ? "success" : "error",
+              error: streams.length === 0 ? "No streams returned" : undefined,
               elapsed: sandboxResult.elapsed,
             },
           };
@@ -192,7 +195,7 @@ export default function ExperimentalPage() {
     selected.forEach((p) => {
       initial[p.id] = {
         providerId: p.id,
-        status: 'running',
+        status: "running",
         streams: [],
         startTime: Date.now(),
       };
@@ -207,14 +210,18 @@ export default function ExperimentalPage() {
       setResults((prev) => {
         const updated = { ...prev };
         Object.keys(updated).forEach((id) => {
-          if (updated[id].status === 'running') {
-            updated[id] = { ...updated[id], status: 'error', error: 'Timed out (60s)' };
+          if (updated[id].status === "running") {
+            updated[id] = {
+              ...updated[id],
+              status: "error",
+              error: "Timed out (60s)",
+            };
           }
         });
         return updated;
       });
       setIsRunning(false);
-      addLog('Test timed out after 60s');
+      addLog("Test timed out after 60s");
     }, 60000);
 
     // Check if all done
@@ -223,7 +230,7 @@ export default function ExperimentalPage() {
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
         if (intervalRef.current) clearInterval(intervalRef.current);
         setIsRunning(false);
-        addLog('All providers complete');
+        addLog("All providers complete");
       }
     }, 500);
   }, [tmdbId, selectedProviders, addLog]);
@@ -238,22 +245,22 @@ export default function ExperimentalPage() {
 
   // ── Language badge colors ──
   const langColors: Record<string, string> = {
-    en: '#22c55e',
-    hi: '#f97316',
-    hin: '#f97316',
-    ta: '#ef4444',
-    tam: '#ef4444',
-    te: '#a855f7',
-    tel: '#a855f7',
-    ml: '#06b6d4',
-    kn: '#eab308',
-    id: '#6366f1',
-    pl: '#ec4899',
-    ar: '#14b8a6',
+    en: "#22c55e",
+    hi: "#f97316",
+    hin: "#f97316",
+    ta: "#ef4444",
+    tam: "#ef4444",
+    te: "#a855f7",
+    tel: "#a855f7",
+    ml: "#06b6d4",
+    kn: "#eab308",
+    id: "#6366f1",
+    pl: "#ec4899",
+    ar: "#14b8a6",
   };
 
   return (
-    <SafeAreaView className="flex-1" style={{ backgroundColor: '#070708' }}>
+    <SafeAreaView className="flex-1" style={{ backgroundColor: "#070708" }}>
       <StatusBar barStyle="light-content" />
       <View className="flex-1 px-4 pt-2">
         {/* ── Header ── */}
@@ -265,12 +272,12 @@ export default function ExperimentalPage() {
               activeOpacity={0.7}
               accessibilityLabel="Go back"
             >
-              <Ionicons name="arrow-back" size={22} color="#F4F4F5" />
+              <BackIcon width={22} height={22} color="#F4F4F5" />
             </TouchableOpacity>
             <View>
               <Text
                 className="text-lg text-white"
-                style={{ fontFamily: 'Inter_600SemiBold' }}
+                style={{ fontFamily: "Inter_600SemiBold" }}
               >
                 Experimental Providers
               </Text>
@@ -327,37 +334,37 @@ export default function ExperimentalPage() {
           {/* ── Media Type + Season/Episode ── */}
           <View className="flex-row items-center gap-3 mb-4">
             <TouchableOpacity
-              onPress={() => setMediaType('movie')}
+              onPress={() => setMediaType("movie")}
               className={`rounded-lg px-4 py-2 ${
-                mediaType === 'movie' ? 'bg-primary' : 'bg-zinc-900'
+                mediaType === "movie" ? "bg-primary" : "bg-zinc-900"
               }`}
               activeOpacity={0.7}
             >
               <Text
                 className={`text-sm font-semibold ${
-                  mediaType === 'movie' ? 'text-black' : 'text-zinc-400'
+                  mediaType === "movie" ? "text-black" : "text-zinc-400"
                 }`}
               >
                 Movie
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => setMediaType('tv')}
+              onPress={() => setMediaType("tv")}
               className={`rounded-lg px-4 py-2 ${
-                mediaType === 'tv' ? 'bg-primary' : 'bg-zinc-900'
+                mediaType === "tv" ? "bg-primary" : "bg-zinc-900"
               }`}
               activeOpacity={0.7}
             >
               <Text
                 className={`text-sm font-semibold ${
-                  mediaType === 'tv' ? 'text-black' : 'text-zinc-400'
+                  mediaType === "tv" ? "text-black" : "text-zinc-400"
                 }`}
               >
                 TV Show
               </Text>
             </TouchableOpacity>
 
-            {mediaType === 'tv' && (
+            {mediaType === "tv" && (
               <View className="flex-row items-center gap-2 flex-1">
                 <View className="flex-1">
                   <Text className="text-zinc-500 text-[10px] mb-0.5">S</Text>
@@ -406,8 +413,8 @@ export default function ExperimentalPage() {
                 onPress={() => toggleProvider(p.id)}
                 className={`flex-row items-center justify-between rounded-xl px-3 py-2.5 mb-1 border ${
                   selectedProviders.has(p.id)
-                    ? 'bg-zinc-800 border-zinc-700'
-                    : 'bg-zinc-900/50 border-zinc-800/50'
+                    ? "bg-zinc-800 border-zinc-700"
+                    : "bg-zinc-900/50 border-zinc-800/50"
                 }`}
                 activeOpacity={0.7}
               >
@@ -415,8 +422,8 @@ export default function ExperimentalPage() {
                   <View
                     className={`w-5 h-5 rounded-md border-2 mr-2.5 items-center justify-center ${
                       selectedProviders.has(p.id)
-                        ? 'bg-primary border-primary'
-                        : 'border-zinc-600'
+                        ? "bg-primary border-primary"
+                        : "border-zinc-600"
                     }`}
                   >
                     {selectedProviders.has(p.id) && (
@@ -433,12 +440,13 @@ export default function ExperimentalPage() {
                           key={lang}
                           className="rounded-sm px-1.5 py-0.5 mr-1"
                           style={{
-                            backgroundColor: (langColors[lang] || '#52525b') + '20',
+                            backgroundColor:
+                              (langColors[lang] || "#52525b") + "20",
                           }}
                         >
                           <Text
                             className="text-[10px]"
-                            style={{ color: langColors[lang] || '#a1a1aa' }}
+                            style={{ color: langColors[lang] || "#a1a1aa" }}
                           >
                             {lang}
                           </Text>
@@ -463,11 +471,11 @@ export default function ExperimentalPage() {
                 </View>
                 <Text
                   className={`text-[10px] uppercase ${
-                    p.complexity === 'simple'
-                      ? 'text-green-500'
-                      : p.complexity === 'medium'
-                        ? 'text-amber-500'
-                        : 'text-red-400'
+                    p.complexity === "simple"
+                      ? "text-green-500"
+                      : p.complexity === "medium"
+                        ? "text-amber-500"
+                        : "text-red-400"
                   }`}
                 >
                   {p.complexity}
@@ -480,9 +488,11 @@ export default function ExperimentalPage() {
           <View className="flex-row gap-3 mb-4">
             <TouchableOpacity
               onPress={runTest}
-              disabled={isTesting || selectedProviders.size === 0 || !tmdbId.trim()}
+              disabled={
+                isTesting || selectedProviders.size === 0 || !tmdbId.trim()
+              }
               className={`flex-1 rounded-xl py-3 items-center flex-row justify-center ${
-                isTesting ? 'bg-zinc-800' : 'bg-primary'
+                isTesting ? "bg-zinc-800" : "bg-primary"
               }`}
               activeOpacity={0.8}
             >
@@ -493,10 +503,10 @@ export default function ExperimentalPage() {
               )}
               <Text
                 className={`font-bold text-sm ml-2 ${
-                  isTesting ? 'text-zinc-400' : 'text-black'
+                  isTesting ? "text-zinc-400" : "text-black"
                 }`}
               >
-                {isTesting ? 'Testing...' : 'Test Selected'}
+                {isTesting ? "Testing..." : "Test Selected"}
               </Text>
             </TouchableOpacity>
 
@@ -516,123 +526,121 @@ export default function ExperimentalPage() {
                 Results
               </Text>
 
-              {EXPERIMENTAL_PROVIDERS.filter((p) => results[p.id]).map(
-                (p) => {
-                  const r = results[p.id];
-                  const isSuccess = r.status === 'success';
-                  const isError = r.status === 'error';
-                  const isRunning2 = r.status === 'running';
+              {EXPERIMENTAL_PROVIDERS.filter((p) => results[p.id]).map((p) => {
+                const r = results[p.id];
+                const isSuccess = r.status === "success";
+                const isError = r.status === "error";
+                const isRunning2 = r.status === "running";
 
-                  return (
-                    <View
-                      key={p.id}
-                      className={`rounded-xl border p-3 mb-2 ${
-                        isSuccess
-                          ? 'bg-green-950/30 border-green-900/50'
-                          : isError
-                            ? 'bg-red-950/30 border-red-900/50'
-                            : 'bg-zinc-900 border-zinc-800'
-                      }`}
-                    >
-                      {/* Header */}
-                      <View className="flex-row items-center justify-between mb-1.5">
-                        <View className="flex-row items-center">
-                          <Ionicons
-                            name={
-                              isSuccess
-                                ? 'checkmark-circle'
-                                : isError
-                                  ? 'close-circle'
-                                  : 'time-outline'
-                            }
-                            size={16}
-                            color={
-                              isSuccess
-                                ? '#22c55e'
-                                : isError
-                                  ? '#ef4444'
-                                  : '#a1a1aa'
-                            }
-                          />
-                          <Text className="text-white text-sm font-medium ml-1.5">
-                            {p.name}
-                          </Text>
-                        </View>
-                        {r.elapsed != null && (
-                          <Text className="text-zinc-500 text-[10px]">
-                            {(r.elapsed / 1000).toFixed(1)}s
+                return (
+                  <View
+                    key={p.id}
+                    className={`rounded-xl border p-3 mb-2 ${
+                      isSuccess
+                        ? "bg-green-950/30 border-green-900/50"
+                        : isError
+                          ? "bg-red-950/30 border-red-900/50"
+                          : "bg-zinc-900 border-zinc-800"
+                    }`}
+                  >
+                    {/* Header */}
+                    <View className="flex-row items-center justify-between mb-1.5">
+                      <View className="flex-row items-center">
+                        <Ionicons
+                          name={
+                            isSuccess
+                              ? "checkmark-circle"
+                              : isError
+                                ? "close-circle"
+                                : "time-outline"
+                          }
+                          size={16}
+                          color={
+                            isSuccess
+                              ? "#22c55e"
+                              : isError
+                                ? "#ef4444"
+                                : "#a1a1aa"
+                          }
+                        />
+                        <Text className="text-white text-sm font-medium ml-1.5">
+                          {p.name}
+                        </Text>
+                      </View>
+                      {r.elapsed != null && (
+                        <Text className="text-zinc-500 text-[10px]">
+                          {(r.elapsed / 1000).toFixed(1)}s
+                        </Text>
+                      )}
+                    </View>
+
+                    {/* Streams */}
+                    {isSuccess && r.streams.length > 0 && (
+                      <View className="mt-1">
+                        {r.streams
+                          .slice(0, 5)
+                          .map((stream: ProviderStream, i: number) => (
+                            <View
+                              key={i}
+                              className="bg-black/40 rounded-lg px-3 py-2 mb-1"
+                            >
+                              <View className="flex-row items-center justify-between">
+                                <Text
+                                  className="text-zinc-300 text-xs font-medium flex-1 mr-2"
+                                  numberOfLines={1}
+                                >
+                                  {stream.quality || "Auto"}
+                                </Text>
+                                <Text className="text-zinc-500 text-[10px]">
+                                  {stream.url?.includes(".m3u8")
+                                    ? "HLS"
+                                    : stream.url?.includes(".mp4")
+                                      ? "MP4"
+                                      : "LINK"}
+                                </Text>
+                              </View>
+                              <Text
+                                className="text-zinc-600 text-[10px] mt-0.5"
+                                numberOfLines={1}
+                              >
+                                {stream.url}
+                              </Text>
+                            </View>
+                          ))}
+                        {r.streams.length > 5 && (
+                          <Text className="text-zinc-600 text-[10px] text-center mt-1">
+                            +{r.streams.length - 5} more streams
                           </Text>
                         )}
                       </View>
+                    )}
 
-                      {/* Streams */}
-                      {isSuccess && r.streams.length > 0 && (
-                        <View className="mt-1">
-                          {r.streams
-                            .slice(0, 5)
-                            .map((stream: ProviderStream, i: number) => (
-                              <View
-                                key={i}
-                                className="bg-black/40 rounded-lg px-3 py-2 mb-1"
-                              >
-                                <View className="flex-row items-center justify-between">
-                                  <Text
-                                    className="text-zinc-300 text-xs font-medium flex-1 mr-2"
-                                    numberOfLines={1}
-                                  >
-                                    {stream.quality || 'Auto'}
-                                  </Text>
-                                  <Text className="text-zinc-500 text-[10px]">
-                                    {stream.url?.includes('.m3u8')
-                                      ? 'HLS'
-                                      : stream.url?.includes('.mp4')
-                                        ? 'MP4'
-                                        : 'LINK'}
-                                  </Text>
-                                </View>
-                                <Text
-                                  className="text-zinc-600 text-[10px] mt-0.5"
-                                  numberOfLines={1}
-                                >
-                                  {stream.url}
-                                </Text>
-                              </View>
-                            ))}
-                          {r.streams.length > 5 && (
-                            <Text className="text-zinc-600 text-[10px] text-center mt-1">
-                              +{r.streams.length - 5} more streams
-                            </Text>
-                          )}
-                        </View>
-                      )}
+                    {/* Error */}
+                    {isError && r.error && (
+                      <Text
+                        className="text-red-400/80 text-xs mt-1"
+                        numberOfLines={3}
+                      >
+                        {r.error}
+                      </Text>
+                    )}
 
-                      {/* Error */}
-                      {isError && r.error && (
-                        <Text
-                          className="text-red-400/80 text-xs mt-1"
-                          numberOfLines={3}
-                        >
-                          {r.error}
+                    {/* Running */}
+                    {isRunning2 && (
+                      <View className="flex-row items-center mt-1">
+                        <ActivityIndicator
+                          size={10}
+                          color="#a1a1aa"
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text className="text-zinc-500 text-xs">
+                          Running...
                         </Text>
-                      )}
-
-                      {/* Running */}
-                      {isRunning2 && (
-                        <View className="flex-row items-center mt-1">
-                          <ActivityIndicator
-                            size={10}
-                            color="#a1a1aa"
-                            style={{ marginRight: 6 }}
-                          />
-                          <Text className="text-zinc-500 text-xs">
-                            Running...
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  );
-                },
-              )}
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
             </View>
           )}
 
@@ -647,7 +655,7 @@ export default function ExperimentalPage() {
                   Logs ({logs.length})
                 </Text>
                 <Ionicons
-                  name={showAdvanced ? 'chevron-up' : 'chevron-down'}
+                  name={showAdvanced ? "chevron-up" : "chevron-down"}
                   size={14}
                   color="#52525b"
                 />
@@ -676,19 +684,20 @@ export default function ExperimentalPage() {
 
           {/* ── Invisible sandbox WebViews (active during test) ── */}
           {isTesting &&
-            EXPERIMENTAL_PROVIDERS.filter((p) => selectedProviders.has(p.id))
-              .map((p) => (
-                <View key={p.id} style={{ height: 0, width: 0 }}>
-                  <ProviderSandbox
-                    providerId={p.id}
-                    tmdbId={tmdbId.trim()}
-                    mediaType={mediaType}
-                    season={parseInt(season, 10) || 1}
-                    episode={parseInt(episode, 10) || 1}
-                    onResult={(result) => handleResult(p.id, result)}
-                  />
-                </View>
-              ))}
+            EXPERIMENTAL_PROVIDERS.filter((p) =>
+              selectedProviders.has(p.id),
+            ).map((p) => (
+              <View key={p.id} style={{ height: 0, width: 0 }}>
+                <ProviderSandbox
+                  providerId={p.id}
+                  tmdbId={tmdbId.trim()}
+                  mediaType={mediaType}
+                  season={parseInt(season, 10) || 1}
+                  episode={parseInt(episode, 10) || 1}
+                  onResult={(result) => handleResult(p.id, result)}
+                />
+              </View>
+            ))}
         </ScrollView>
       </View>
     </SafeAreaView>

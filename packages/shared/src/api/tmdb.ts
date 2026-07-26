@@ -1,4 +1,4 @@
-import { IMAGE_BASE_URL } from '../constants/tmdb';
+import { IMAGE_BASE_URL } from "../constants/tmdb";
 
 /**
  * Cross-platform TMDB client.
@@ -14,7 +14,7 @@ import { IMAGE_BASE_URL } from '../constants/tmdb';
 export function createTmdbApi(apiBase: string) {
   const fetchTmdb = async (path: string) => {
     const res = await fetch(`${apiBase}/api/tmdb${path}`, {
-      cache: 'force-cache',
+      cache: "force-cache",
     });
     if (!res.ok) {
       throw new Error(`TMDB API error: ${res.status} ${res.statusText}`);
@@ -23,13 +23,13 @@ export function createTmdbApi(apiBase: string) {
   };
 
   return {
-    getTrendingMovies: () => fetchTmdb('/trending/movie/week'),
+    getTrendingMovies: () => fetchTmdb("/trending/movie/week"),
 
-    getTrendingTV: () => fetchTmdb('/trending/tv/week'),
+    getTrendingTV: () => fetchTmdb("/trending/tv/week"),
 
     getPopularMovies: (page = 1) => fetchTmdb(`/movie/popular?page=${page}`),
 
-    getUpcomingMovies: () => fetchTmdb('/movie/upcoming'),
+    getUpcomingMovies: () => fetchTmdb("/movie/upcoming"),
 
     getMovieDetails: (id: number | string) =>
       fetchTmdb(`/movie/${id}?append_to_response=videos,credits,similar`),
@@ -37,14 +37,15 @@ export function createTmdbApi(apiBase: string) {
     getTVDetails: (id: number | string) =>
       fetchTmdb(`/tv/${id}?append_to_response=videos,credits,similar`),
 
-    getTVSeasonsOnly: (id: number | string) =>
-      fetchTmdb(`/tv/${id}`),
+    getTVSeasonsOnly: (id: number | string) => fetchTmdb(`/tv/${id}`),
 
     getSeasonEpisodes: (tvId: number | string, seasonNumber: number) =>
       fetchTmdb(`/tv/${tvId}/season/${seasonNumber}`),
 
-    searchMulti: (query: string) =>
-      fetchTmdb(`/search/multi?query=${encodeURIComponent(query)}`),
+    searchMulti: (query: string, page = 1) =>
+      fetchTmdb(
+        `/search/multi?query=${encodeURIComponent(query)}&page=${page}`,
+      ),
 
     getMovies: (params: {
       genreIds?: number[];
@@ -57,25 +58,27 @@ export function createTmdbApi(apiBase: string) {
       page?: number;
     }) => {
       const q = new URLSearchParams();
-      q.set('page', String(params.page ?? 1));
-      q.set('sort_by', params.sortBy ?? 'popularity.desc');
-      if (params.genreIds?.length) q.set('with_genres', params.genreIds.join(','));
+      q.set("page", String(params.page ?? 1));
+      q.set("sort_by", params.sortBy ?? "popularity.desc");
+      if (params.genreIds?.length)
+        q.set("with_genres", params.genreIds.join(","));
       if (params.yearStart && params.yearEnd) {
-        q.set('primary_release_date.gte', `${params.yearStart}-01-01`);
-        q.set('primary_release_date.lte', `${params.yearEnd}-12-31`);
+        q.set("primary_release_date.gte", `${params.yearStart}-01-01`);
+        q.set("primary_release_date.lte", `${params.yearEnd}-12-31`);
       }
-      if (params.minRating !== undefined) q.set('vote_average.gte', String(params.minRating));
-      if (params.maxRating !== undefined) q.set('vote_average.lte', String(params.maxRating));
-      if (params.language) q.set('with_original_language', params.language);
+      if (params.minRating !== undefined)
+        q.set("vote_average.gte", String(params.minRating));
+      if (params.maxRating !== undefined)
+        q.set("vote_average.lte", String(params.maxRating));
+      if (params.language) q.set("with_original_language", params.language);
 
       return fetchTmdb(`/discover/movie?${q}`);
     },
 
-    getExternalIds: (id: number | string, mediaType: 'movie' | 'tv') =>
+    getExternalIds: (id: number | string, mediaType: "movie" | "tv") =>
       fetchTmdb(`/${mediaType}/${id}/external_ids`),
 
-    getPersonDetails: (id: number) =>
-      fetchTmdb(`/person/${id}`),
+    getPersonDetails: (id: number) => fetchTmdb(`/person/${id}`),
 
     getPersonCredits: (id: number) =>
       fetchTmdb(`/person/${id}/combined_credits`),
@@ -91,16 +94,19 @@ export function createTmdbApi(apiBase: string) {
       page?: number;
     }) => {
       const q = new URLSearchParams();
-      q.set('page', String(params.page ?? 1));
-      q.set('sort_by', params.sortBy ?? 'popularity.desc');
-      if (params.genreIds?.length) q.set('with_genres', params.genreIds.join(','));
+      q.set("page", String(params.page ?? 1));
+      q.set("sort_by", params.sortBy ?? "popularity.desc");
+      if (params.genreIds?.length)
+        q.set("with_genres", params.genreIds.join(","));
       if (params.yearStart && params.yearEnd) {
-        q.set('first_air_date.gte', `${params.yearStart}-01-01`);
-        q.set('first_air_date.lte', `${params.yearEnd}-12-31`);
+        q.set("first_air_date.gte", `${params.yearStart}-01-01`);
+        q.set("first_air_date.lte", `${params.yearEnd}-12-31`);
       }
-      if (params.minRating !== undefined) q.set('vote_average.gte', String(params.minRating));
-      if (params.maxRating !== undefined) q.set('vote_average.lte', String(params.maxRating));
-      if (params.language) q.set('with_original_language', params.language);
+      if (params.minRating !== undefined)
+        q.set("vote_average.gte", String(params.minRating));
+      if (params.maxRating !== undefined)
+        q.set("vote_average.lte", String(params.maxRating));
+      if (params.language) q.set("with_original_language", params.language);
 
       return fetchTmdb(`/discover/tv?${q}`);
     },
@@ -109,5 +115,5 @@ export function createTmdbApi(apiBase: string) {
 
 /** Re-export the image URL builder for convenience */
 export { IMAGE_BASE_URL };
-export { getImageUrl } from '../utils/image';
-export { getTrailerKey } from '../utils/video';
+export { getImageUrl } from "../utils/image";
+export { getTrailerKey } from "../utils/video";

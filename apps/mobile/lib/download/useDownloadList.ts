@@ -5,11 +5,19 @@
  * Uses useSyncExternalStore for tear-free subscriptions.
  */
 
-import { useSyncExternalStore, useMemo } from 'react';
-import { useDownloadInfra } from './context';
-import type { DownloadTask, DownloadGrouped, ControlAction, ControlTarget } from './types';
+import { useSyncExternalStore, useMemo } from "react";
+import { useDownloadInfra } from "./context";
+import type {
+  DownloadTask,
+  DownloadGrouped,
+  ControlAction,
+  ControlTarget,
+} from "./types";
 
-export function useDownloadList(): DownloadGrouped & { loaded: boolean; control(action: ControlAction, target?: ControlTarget): Promise<void> } {
+export function useDownloadList(): DownloadGrouped & {
+  loaded: boolean;
+  control(action: ControlAction, target?: ControlTarget): Promise<void>;
+} {
   const { store, control } = useDownloadInfra();
 
   const tasks = useSyncExternalStore(
@@ -26,12 +34,13 @@ export function useDownloadList(): DownloadGrouped & { loaded: boolean; control(
     const grouped: DownloadGrouped = {
       all: tasks,
       active: tasks.filter(
-        (t) => t.status === 'pending' || t.status === 'downloading',
+        (t) => t.status === "pending" || t.status === "downloading",
       ),
-      paused: tasks.filter((t) => t.status === 'paused'),
-      completed: tasks.filter((t) => t.status === 'completed'),
-      failed: tasks.filter((t) => t.status === 'failed'),
-      cancelled: tasks.filter((t) => t.status === 'cancelled'),
+      paused: tasks.filter((t) => t.status === "paused"),
+      completed: tasks.filter((t) => t.status === "completed"),
+      failed: tasks.filter((t) => t.status === "failed"),
+      cancelled: tasks.filter((t) => t.status === "cancelled"),
+      retrying: tasks.filter((t) => t.status === "retrying"),
     };
 
     return {
@@ -44,10 +53,13 @@ export function useDownloadList(): DownloadGrouped & { loaded: boolean; control(
 
 /** Helper: format bytes to human-readable string */
 export function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
+  if (bytes === 0) return "0 B";
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(k)),
+    sizes.length - 1,
+  );
   const val = bytes / Math.pow(k, i);
   return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${sizes[i]}`;
 }
@@ -59,18 +71,22 @@ export function formatDate(ts: number): string {
   const diffMs = now.getTime() - d.getTime();
   const diffDays = Math.floor(diffMs / 86400000);
 
-  if (diffDays < 1) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 1) return "Today";
+  if (diffDays === 1) return "Yesterday";
   if (diffDays < 7) return `${diffDays}d ago`;
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 /** Helper: server display name */
 export function serverLabel(server: string): string {
   switch (server) {
-    case 'falix': return 'Falix';
-    case 'nxsha': return 'Server 1';
-    case 'alt-dl': return 'Alt DL';
-    default: return server;
+    case "falix":
+      return "Small File";
+    case "nxsha":
+      return "Best Quality";
+    case "alt-dl":
+      return "Standard";
+    default:
+      return server;
   }
 }

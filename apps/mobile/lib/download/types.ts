@@ -6,15 +6,16 @@
  */
 
 export type DownloadStatus =
-  | 'pending'       // Created, waiting for a queue slot
-  | 'downloading'   // Actively downloading bytes
-  | 'paused'        // Paused with resumeData saved for true resume
-  | 'completed'     // Finished successfully
-  | 'failed'        // Finished with error
-  | 'cancelled';    // User-cancelled, partial file cleaned
+  | "pending" // Created, waiting for a queue slot
+  | "downloading" // Actively downloading bytes
+  | "paused" // Paused with resumeData saved for true resume
+  | "completed" // Finished successfully
+  | "failed" // Finished with error
+  | "cancelled" // User-cancelled, partial file cleaned
+  | "retrying"; // In retry backoff — will auto-resume
 
-export type DownloadServer = 'falix' | 'nxsha' | 'alt-dl';
-export type MediaType = 'movie' | 'tv';
+export type DownloadServer = "falix" | "nxsha" | "alt-dl";
+export type MediaType = "movie" | "tv";
 
 /** What callers provide when enqueuing a download */
 export interface DownloadMeta {
@@ -29,6 +30,8 @@ export interface DownloadMeta {
   season?: number;
   episode?: number;
   extension?: string;
+  /** Speed limit in bytes per second (0 = unlimited) */
+  speedLimit?: number;
 }
 
 /** Full task record — persisted and observable */
@@ -39,14 +42,20 @@ export interface DownloadTask extends DownloadMeta {
   receivedBytes: number;
   status: DownloadStatus;
   error?: string;
-  /** Opaque token from expo-file-system for true byte-level resume */
+  /** Opaque token for true byte-level resume */
   resumeData?: string | null;
   createdAt: number;
   updatedAt: number;
+  /** Priority: 0=high, 1=medium, 2=low */
+  priority?: number;
+  /** Current retry count */
+  retryCount?: number;
+  /** Maximum retries allowed */
+  maxRetries?: number;
 }
 
 /** Control action for batch operations */
-export type ControlAction = 'pause' | 'resume' | 'cancel' | 'retry' | 'remove';
+export type ControlAction = "pause" | "resume" | "cancel" | "retry" | "remove";
 
 /** Target for batch control — single ID, array, or status filter */
 export type ControlTarget =
@@ -66,13 +75,15 @@ export interface StatusChange {
   taskId: string;
   status: DownloadStatus;
   error?: string;
+  /** Opaque resume data for paused status — must be persisted for true resume */
+  resumeData?: string | null;
 }
 
 /** Aggregate progress for batch operations (e.g. all episodes of a season) */
 export interface AggregateProgress {
   totalBytes: number;
   receivedBytes: number;
-  fraction: number;        // 0-1
+  fraction: number; // 0-1
   activeCount: number;
   totalCount: number;
   completedCount: number;
@@ -86,6 +97,7 @@ export interface DownloadGrouped {
   completed: DownloadTask[];
   failed: DownloadTask[];
   cancelled: DownloadTask[];
+  retrying: DownloadTask[];
 }
 
 /** Unsubscribe function returned by event subscriptions */
