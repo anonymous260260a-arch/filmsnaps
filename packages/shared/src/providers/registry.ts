@@ -1,4 +1,4 @@
-import type { ProviderDefinition } from '../types/provider';
+import type { ProviderDefinition } from "../types/provider";
 
 /**
  * All providers registered in one place.
@@ -12,185 +12,180 @@ import type { ProviderDefinition } from '../types/provider';
 export const PROVIDERS: ProviderDefinition[] = [
   // ── Server 1 (DISABLED — behind Cloudflare, proxy unreliable) ──
   {
-    id: 'nxsha',
-    name: 'Nxsha',
-    displayName: 'Server 1 [Multi lang, Fast]',
-    baseUrl: 'https://web.nxsha.app',
+    id: "nxsha",
+    name: "Nxsha",
+    displayName: "Source 1 [Multi lang, Fast]",
+    baseUrl: "https://web.nxsha.app",
     embed: {
-      movie: (id) => `/embed/movie/${id}?disable_dl_button=true&disable_app_ad=true&lang=hi`,
-      tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?disable_dl_button=true&disable_app_ad=true&lang=hi`,
+      movie: (id) =>
+        `/embed/movie/${id}?disable_dl_button=true&disable_app_ad=true&lang=hi`,
+      tv: (id, season, episode) =>
+        `/embed/tv/${id}/${season}/${episode}?disable_dl_button=true&disable_app_ad=true&lang=hi`,
     },
-    sandbox: 'allow-scripts allow-same-origin ',
-   // platforms: ['web'],
+    sandbox: "allow-scripts allow-same-origin ",
+    // platforms: ['web'],
     allowedOrigins: [
-      'https://web.nxsha.app',
+      "https://web.nxsha.app",
       // Common video CDNs nxsha may use for streaming
-      'https://nxcdn.app',
-      'https://cdn.nxsha.app',
+      "https://nxcdn.app",
+      "https://cdn.nxsha.app",
     ],
     coverOverlays: [
       // Cover any overlay ads that survive the proxy
-      { top: '0', left: '0', width: '100%', height: '60px' },
+      { top: "0", left: "0", width: "100%", height: "60px" },
     ],
     protection: {
       enabled: true,
       customBlockPatterns: [
-        '/pop.js',
-        '/popunder.js',
-        '/track.php',
-        '/ad.php',
-        '/banner.',
-        'adservexsha',
-        'nxsha-ads',
-        'popad.',
+        "/pop.js",
+        "/popunder.js",
+        "/track.php",
+        "/ad.php",
+        "/banner.",
+        "adservexsha",
+        "nxsha-ads",
+        "popad.",
       ],
     },
-
   },
   // ── Server 2 ────────────────────────────────────────────────
   {
-    id: 'peachify',
-    name: 'peachify',
-    displayName: 'Server 2 [Multi audio]',
-    baseUrl: 'https://peachify.top/embed',
+    id: "peachify",
+    name: "peachify",
+    displayName: "Source 2 [Multi audio]",
+    baseUrl: "https://peachify.top/embed",
     embed: {
       movie: (id) => `/movie/${id}`,
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
-    sandbox: 'allow-scripts allow-same-origin ',
+    sandbox: "allow-scripts allow-same-origin ",
     allowedOrigins: [
-      'https://peachify.top',
-      'https://stats.peachify.top',
-      'https://fonts.googleapis.com',
+      "https://peachify.top",
+      "https://stats.peachify.top",
+      "https://fonts.googleapis.com",
     ],
   },
   // ── Server 3 ────────────────────────────────────────────────
   {
-    id: 'screenscape',
-    name: 'ScreenScape',
-    displayName: 'Server 3 [Multi lang, Fast]',
-    baseUrl: 'https://screenscape.me/embed',
+    id: "screenscape",
+    name: "ScreenScape",
+    displayName: "Source 3 [Multi lang, Fast]",
+    baseUrl: "https://screenscape.me/embed",
     embed: {
       movie: (id) => `?tmdb=${id}&type=movie`,
-      tv: (id, season, episode) => `?tmdb=${id}&type=tv&s=${season}&e=${episode}`,
+      tv: (id, season, episode) =>
+        `?tmdb=${id}&type=tv&s=${season}&e=${episode}`,
     },
     allowedOrigins: [
-      'https://screenscape.me',
-      'https://www.googletagmanager.com',
+      "https://screenscape.me",
+      "https://www.googletagmanager.com",
     ],
-    sandbox: 'allow-scripts allow-same-origin ',
+    sandbox: "allow-scripts allow-same-origin ",
 
-    platforms: ['web'],
+    platforms: ["web"],
   },
   // ── Server 4 ──────────────────────────────────────────────────
   {
-    id: 'nhdapi',
-    name: 'NHD Api',
-    displayName: 'Server 4 [Multi lang, Fast]',
-    baseUrl: 'https://nhdapi.com',
+    id: "nhdapi",
+    name: "NHD Api",
+    displayName: "Source 4 [Multi lang, Fast]",
+    baseUrl: "https://nhdapi.com",
     embed: {
-      movie: (id) => `/embed/movie/${id}?lang=Hindi&autoplay=true&autonext=true&title=false&download=false&episodelist=false&hideautonext=true&hidetitle=true&hidechromecast=true&hidepip=true&hideepisodelist=true&hideupscaler=true&hidesecondarycolor=true&hideiconcolor=true&hideprimarycolor=true&appearance=off&primarycolor=6C63FF&secondarycolor=9F9BFF&iconcolor=FFFFFF`,
-      tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?lang=Hindi&autoplay=true&autonext=true&title=false&download=false&episodelist=false&hideautonext=true&hidetitle=true&hidechromecast=true&hidepip=true&hideepisodelist=true&hideupscaler=true&hidesecondarycolor=true&hideiconcolor=true&hideprimarycolor=true&appearance=off&primarycolor=6C63FF&secondarycolor=9F9BFF&iconcolor=FFFFFF`,
+      movie: (id) =>
+        `/embed/movie/${id}?lang=Hindi&autoplay=true&autonext=true&title=false&download=false&episodelist=false&hideautonext=true&hidetitle=true&hidechromecast=true&hidepip=true&hideepisodelist=true&hideupscaler=true&hidesecondarycolor=true&hideiconcolor=true&hideprimarycolor=true&appearance=off&primarycolor=6C63FF&secondarycolor=9F9BFF&iconcolor=FFFFFF`,
+      tv: (id, season, episode) =>
+        `/embed/tv/${id}/${season}/${episode}?lang=Hindi&autoplay=true&autonext=true&title=false&download=false&episodelist=false&hideautonext=true&hidetitle=true&hidechromecast=true&hidepip=true&hideepisodelist=true&hideupscaler=true&hidesecondarycolor=true&hideiconcolor=true&hideprimarycolor=true&appearance=off&primarycolor=6C63FF&secondarycolor=9F9BFF&iconcolor=FFFFFF`,
     },
-    allowedOrigins: ['https://nhdapi.com'],
-    sandbox: 'allow-scripts allow-same-origin ',
+    allowedOrigins: ["https://nhdapi.com"],
+    sandbox: "allow-scripts allow-same-origin ",
 
-    platforms: ['web'],
+    platforms: ["web"],
   },
   // ── Server 5 ──────────────────────────────────────────────────
   {
-    id: 'zxcstream',
-    name: 'ZxcStream',
-    displayName: 'Server 5 [Hindi]',
-    baseUrl: 'https://zxcstream.xyz',
+    id: "zxcstream",
+    name: "ZxcStream",
+    displayName: "Source 5 [Hindi]",
+    baseUrl: "https://zxcstream.xyz",
     embed: {
       movie: (id) => `/player/movie/${id}?dubLang=hi&autoplay=true`,
-      tv: (id, season, episode) => `/player/tv/${id}/${season}/${episode}?dubLang=hi&autoplay=true`,
+      tv: (id, season, episode) =>
+        `/player/tv/${id}/${season}/${episode}?dubLang=hi&autoplay=true`,
     },
-    allowedOrigins: ['https://zxcstream.xyz'],
-    sandbox: 'allow-scripts allow-same-origin ',
+    allowedOrigins: ["https://zxcstream.xyz"],
+    sandbox: "allow-scripts allow-same-origin ",
 
-    platforms: ['web'],
+    platforms: ["web"],
   },
   // ── Server 6 ──────────────────────────────────────────────────
   {
-    id: 'cinemaos',
-    name: 'CinemaOS',
-    displayName: 'Server 6',
-    baseUrl: 'https://cinemaos.live',
+    id: "cinemaos",
+    name: "CinemaOS",
+    displayName: "Source 6",
+    baseUrl: "https://cinemaos.live",
     embed: {
       movie: (id) => `/movie/watch/${id}`,
-      tv: (id, season, episode) => `/tv/watch/${id}?season=${season}&episode=${episode}`,
+      tv: (id, season, episode) =>
+        `/tv/watch/${id}?season=${season}&episode=${episode}`,
     },
-    allowedOrigins: ['https://cinemaos.live'],
-    sandbox: 'allow-scripts allow-same-origin ',
+    allowedOrigins: ["https://cinemaos.live"],
+    sandbox: "allow-scripts allow-same-origin ",
     coverOverlays: [
-      { top: '8px', left: '23%', width: '127px', height: '67px' },
+      { top: "8px", left: "23%", width: "127px", height: "67px" },
     ],
-    platforms: ['web'],
+    platforms: ["web"],
   },
-  // ── Falix [Direct, Fast] ────────────────────────────────────────
-  // DISABLED: All content is HEVC-encoded (x265 10bit).
-  // WebCodecs-based HEVC playback was attempted but failed on both
-  // Windows Brave and Android Chrome (see docs/hevc-playback-issue.md).
-  // Enable when a solution for HEVC playback is found.
+  // ── Falix [Direct, HEVC] ────────────────────────────────────────
+  // HEVC content played via native expo-video player (hardware decode).
+  // MKV files with x265 HEVC encoding, direct URL playback.
+  // Currently download-only — in-app playback not yet enabled.
   {
-    id: 'falix',
-    name: 'Falix',
-    displayName: 'Falix [Direct]',
+    id: "falix",
+    name: "Falix",
+    displayName: "Falix [HEVC]",
     enabled: true,
     forDownloadOnly: true,
     order: 7,
-    baseUrl: 'https://download-falix-falixmovies-backend-hf.hf.space',
+    baseUrl: "https://download-falix-falixmovies-backend-hf.hf.space",
     embed: {
       movie: (id) => `/api/id/${id}`,
       tv: (id) => `/api/id/${id}`,
     },
-    platforms: ['mobile'],
+    platforms: ["mobile"],
   },
   // ── Server 22 (disabled — was Server 5) ──────────────────────
   {
-    id: 'multiembed',
-    name: 'MultiEmbed',
-    displayName: 'Server 22',
+    id: "multiembed",
+    name: "MultiEmbed",
+    displayName: "Server 22",
     enabled: false,
-    baseUrl: 'https://multiembed.mov',
+    baseUrl: "https://multiembed.mov",
     embed: {
       movie: (id) => `/?video_id=${id}&tmdb=1`,
-      tv: (id, season, episode) => `/?video_id=${id}&tmdb=1&s=${season}&e=${episode}`,
+      tv: (id, season, episode) =>
+        `/?video_id=${id}&tmdb=1&s=${season}&e=${episode}`,
     },
   },
   // ── Server 21 (disabled — was Server 5) ────────────────────────
   {
-    id: 'vidbinge',
-    name: 'VidBinge',
-    displayName: 'Server 21',
+    id: "vidbinge",
+    name: "VidBinge",
+    displayName: "Server 21",
     enabled: false,
-    baseUrl: 'https://vidbinge.to',
+    baseUrl: "https://vidbinge.to",
     embed: {
       movie: (id) => `/movie/${id}`,
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
   },
-  // ── Server 20 (was Server 6) ─────────────────────────────────
-  {
-    id: 'vidking',
-    name: 'VidKing',
-    displayName: 'Server 20',
-    baseUrl: 'https://www.vidking.net',
-    embed: {
-      movie: (id) => `/embed/movie/${id}?color=ff0000`,
-      tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}?color=ff0000`,
-    },
-    allowedOrigins: ['https://www.vidking.net'],
-  },
+
   // ── Server 7 (disabled) ─────────────────────────────────────
   {
-    id: 'vidfast',
-    name: 'VidFast',
-    displayName: 'Server 7',
+    id: "vidfast",
+    name: "VidFast",
+    displayName: "Server 7",
     enabled: false,
-    baseUrl: 'https://vidfast.pro',
+    baseUrl: "https://vidfast.pro",
     embed: {
       movie: (id) => `/movie/${id}`,
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
@@ -198,66 +193,71 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   // ── VidSrc family (disabled) ────────────────────────────────
   {
-    id: 'vidsrc',
-    name: 'VidSrc 1',
-    displayName: 'Server 8',
+    id: "vidsrc",
+    name: "VidSrc 1",
+    displayName: "Server 8",
     enabled: false,
-    baseUrl: 'https://vidsrc.wtf',
+    baseUrl: "https://vidsrc.wtf",
     embed: {
       movie: (id) => `/api/1/movie/?id=${id}&color=e01621`,
-      tv: (id, season, episode) => `/api/1/tv/?id=${id}&season=${season}&episode=${episode}&color=e01621`,
+      tv: (id, season, episode) =>
+        `/api/1/tv/?id=${id}&season=${season}&episode=${episode}&color=e01621`,
     },
   },
   {
-    id: 'vidsrc2',
-    name: 'VidSrc 2',
-    displayName: 'Server 9',
+    id: "vidsrc2",
+    name: "VidSrc 2",
+    displayName: "Server 9",
     enabled: false,
-    baseUrl: 'https://vidsrc.wtf',
+    baseUrl: "https://vidsrc.wtf",
     embed: {
       movie: (id) => `/api/2/movie/?id=${id}&color=e01621`,
-      tv: (id, season, episode) => `/api/2/tv/?id=${id}&season=${season}&episode=${episode}&color=e01621`,
+      tv: (id, season, episode) =>
+        `/api/2/tv/?id=${id}&season=${season}&episode=${episode}&color=e01621`,
     },
   },
   {
-    id: 'vidsrc3',
-    name: 'VidSrc 3',
-    displayName: 'Server 10',
+    id: "vidsrc3",
+    name: "VidSrc 3",
+    displayName: "Server 10",
     enabled: false,
-    baseUrl: 'https://vidsrc.wtf',
+    baseUrl: "https://vidsrc.wtf",
     embed: {
       movie: (id) => `/api/3/movie/?id=${id}&color=e01621`,
-      tv: (id, season, episode) => `/api/3/tv/?id=${id}&season=${season}&episode=${episode}&color=e01621`,
+      tv: (id, season, episode) =>
+        `/api/3/tv/?id=${id}&season=${season}&episode=${episode}&color=e01621`,
     },
   },
   {
-    id: 'vidsrc4',
-    name: 'VidSrc 4',
-    displayName: 'Server 11',
+    id: "vidsrc4",
+    name: "VidSrc 4",
+    displayName: "Server 11",
     enabled: false,
-    baseUrl: 'https://vidsrc.wtf',
+    baseUrl: "https://vidsrc.wtf",
     embed: {
       movie: (id) => `/api/4/movie/?id=${id}&color=e01621`,
-      tv: (id, season, episode) => `/api/4/tv/?id=${id}&season=${season}&episode=${episode}&color=e01621`,
+      tv: (id, season, episode) =>
+        `/api/4/tv/?id=${id}&season=${season}&episode=${episode}&color=e01621`,
     },
   },
   {
-    id: 'vidsrc5',
-    name: 'VidSrc 5',
-    displayName: 'Server 12',
+    id: "vidsrc5",
+    name: "VidSrc 5",
+    displayName: "Server 12",
     enabled: false,
-    baseUrl: 'https://vidsrc.su',
+    baseUrl: "https://vidsrc.su",
     embed: {
       movie: (id) => `/movie/${id}&colour=00ff9d`,
-      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}&colour=00ff9d`,
+      tv: (id, season, episode) =>
+        `/tv/${id}/${season}/${episode}&colour=00ff9d`,
     },
   },
   {
-    id: 'vidsrc6',
-    name: 'VidSrc 6',
-    displayName: 'Server 13',
+    id: "vidsrc6",
+    name: "VidSrc 6",
+    displayName: "Server 13",
     enabled: false,
-    baseUrl: 'https://vidsrc-embed.ru',
+    baseUrl: "https://vidsrc-embed.ru",
     embed: {
       movie: (id) => `/embed/movie/${id}`,
       tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}`,
@@ -265,23 +265,25 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   // ── Server 14 ───────────────────────────────────────────────
   {
-    id: 'vidnest',
-    name: 'Vidnest',
-    displayName: 'Server 14',
-    baseUrl: 'https://vidnest.fun',
+    id: "vidnest",
+    name: "Vidnest",
+    displayName: "Source 14",
+    baseUrl: "https://vidnest.fun",
     embed: {
-      movie: (id, startAt) => `/movie/${id}${startAt ? `?startAt=${Math.floor(startAt)}` : ''}`,
-      tv: (id, season, episode, startAt) => `/tv/${id}/${season}/${episode}${startAt ? `?startAt=${Math.floor(startAt)}` : ''}`,
+      movie: (id, startAt) =>
+        `/movie/${id}${startAt ? `?startAt=${Math.floor(startAt)}` : ""}`,
+      tv: (id, season, episode, startAt) =>
+        `/tv/${id}/${season}/${episode}${startAt ? `?startAt=${Math.floor(startAt)}` : ""}`,
     },
-    allowedOrigins: ['https://vidnest.fun'],
+    allowedOrigins: ["https://vidnest.fun"],
   },
   // ── Server 15 (disabled) ────────────────────────────────────
   {
-    id: 'vidpro',
-    name: 'VidPro',
-    displayName: 'Server 15',
+    id: "vidpro",
+    name: "VidPro",
+    displayName: "Server 15",
     enabled: false,
-    baseUrl: 'https://vidlink.pro',
+    baseUrl: "https://vidlink.pro",
     embed: {
       movie: (id) => `/movie/${id}`,
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
@@ -289,34 +291,37 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   // ── Server 16 (disabled — always returns HTTP 403) ─────────
   {
-    id: 'vixsrc',
-    name: 'Vixsrc',
-    displayName: 'Server 16',
+    id: "vixsrc",
+    name: "Vixsrc",
+    displayName: "Server 16",
     enabled: false,
-    baseUrl: 'https://vixsrc.to',
+    baseUrl: "https://vixsrc.to",
     embed: {
-      movie: (id, startAt) => `/movie/${id}${startAt ? `?startAt=${Math.floor(startAt)}` : ''}`,
-      tv: (id, season, episode, startAt) => `/tv/${id}/${season}/${episode}${startAt ? `?startAt=${Math.floor(startAt)}` : ''}`,
+      movie: (id, startAt) =>
+        `/movie/${id}${startAt ? `?startAt=${Math.floor(startAt)}` : ""}`,
+      tv: (id, season, episode, startAt) =>
+        `/tv/${id}/${season}/${episode}${startAt ? `?startAt=${Math.floor(startAt)}` : ""}`,
     },
   },
   // ── Server 17 (disabled) ────────────────────────────────────
   {
-    id: 'vidup',
-    name: 'VidUp',
-    displayName: 'Server 17',
+    id: "vidup",
+    name: "VidUp",
+    displayName: "Server 17",
     enabled: false,
-    baseUrl: 'https://vidup.to',
+    baseUrl: "https://vidup.to",
     embed: {
       movie: (id) => `/movie/${id}?autoPlay=true`,
-      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}?autoPlay=true`,
+      tv: (id, season, episode) =>
+        `/tv/${id}/${season}/${episode}?autoPlay=true`,
     },
   },
   {
-    id: 'vidvault',
-    name: 'VidVault',
-    displayName: 'VidVault',
+    id: "vidvault",
+    name: "VidVault",
+    displayName: "VidVault",
     enabled: false,
-    baseUrl: 'https://vidvault.ru',
+    baseUrl: "https://vidvault.ru",
     embed: {
       movie: (id) => `/movie/${id}`,
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
@@ -324,11 +329,11 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   // ── Server 20 (disabled) ────────────────────────────────────
   {
-    id: 'videasy',
-    name: 'videasy',
-    displayName: 'Server 20',
+    id: "videasy",
+    name: "videasy",
+    displayName: "Server 20",
     enabled: false,
-    baseUrl: 'https://player.videasy.net',
+    baseUrl: "https://player.videasy.net",
     embed: {
       movie: (id) => `/movies/${id}`,
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
@@ -336,57 +341,74 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
   // ── Server 18 ───────────────────────────────────────────────
   {
-    id: 'chillflix',
-    name: 'ChillFlix',
-    displayName: 'Server 18 [Slow]',
-    baseUrl: 'https://www.chillflix.lol/embed',
+    id: "chillflix",
+    name: "ChillFlix",
+    displayName: "Source 18 [Slow]",
+    baseUrl: "https://www.chillflix.lol/embed",
     embed: {
-      movie: (id) => `/movie/${id}?autoplay=true&watchparty=false&title=false&parent_origin=${encodeURIComponent('https://www.chillflix.lol')}`,
-      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}?autoplay=true&watchparty=false&title=false&parent_origin=${encodeURIComponent('https://www.chillflix.lol')}`,
+      movie: (id) =>
+        `/movie/${id}?autoplay=true&watchparty=false&title=false&parent_origin=${encodeURIComponent("https://www.chillflix.lol")}`,
+      tv: (id, season, episode) =>
+        `/tv/${id}/${season}/${episode}?autoplay=true&watchparty=false&title=false&parent_origin=${encodeURIComponent("https://www.chillflix.lol")}`,
     },
     // Loaded directly (cross-origin, Cloudflare) — sandbox is the primary defense
-    sandbox: 'allow-scripts allow-same-origin ',
-    allowedOrigins: ['https://www.chillflix.lol'],
-    platforms: ['web'],
+    sandbox: "allow-scripts allow-same-origin ",
+    allowedOrigins: ["https://www.chillflix.lol"],
+    platforms: ["web"],
   },
-  // ── Server 19 ───────────────────────────────────────────────
+  // ── Server 19 (was Server 6) ─────────────────────────────────
   {
-    id: 'toustream',
-    name: 'TouStream',
-    displayName: 'Server 19',
-    baseUrl: 'https://toustream.xyz',
+    id: "vidking",
+    name: "VidKing",
+    displayName: "Source 19",
+    baseUrl: "https://www.vidking.net",
+    embed: {
+      movie: (id) => `/embed/movie/${id}?color=ff0000`,
+      tv: (id, season, episode) =>
+        `/embed/tv/${id}/${season}/${episode}?color=ff0000`,
+    },
+    allowedOrigins: ["https://www.vidking.net"],
+  },
+  // ── Server 20 ───────────────────────────────────────────────
+
+  {
+    id: "toustream",
+    name: "TouStream",
+    displayName: "Source 20",
+    baseUrl: "https://toustream.xyz",
     embed: {
       movie: (id) => `/tou/movies/${id}`,
       tv: (id, season, episode) => `/tou/tv/${id}/${season}/${episode}`,
     },
-    allowedOrigins: ['https://toustream.xyz'],
+    allowedOrigins: ["https://toustream.xyz"],
   },
   // ── StreamGuide ─────────────────────────────────────────────
   {
-    id: 'streamguide',
-    name: 'StreamGuide',
-    displayName: 'StreamGuide',
-    baseUrl: 'https://streamguide.cfd',
+    id: "streamguide",
+    name: "StreamGuide",
+    displayName: "StreamGuide",
+    baseUrl: "https://streamguide.cfd",
     embed: {
       movie: (id) => `/embed/?type=m&id=m-api-${id}&ep=m-api-${id}`,
-      tv: (id, season, episode) => `/embed/?type=t&id=t-api-${id}&ep=t-api-${id}-s${season}e${episode}`,
+      tv: (id, season, episode) =>
+        `/embed/?type=t&id=t-api-${id}&ep=t-api-${id}-s${season}e${episode}`,
     },
-    allowedOrigins: ['https://streamguide.cfd'],
+    allowedOrigins: ["https://streamguide.cfd"],
   },
   // ── VidSync ────────────────────────────────────────────────
   {
-    id: 'vidsync',
-    name: 'VidSync',
-    displayName: 'VidSync',
-    baseUrl: 'https://vidsync.live',
+    id: "vidsync",
+    name: "VidSync",
+    displayName: "VidSync",
+    baseUrl: "https://vidsync.live",
     embed: {
       movie: (id, startAt) =>
-        `/embed/movie/${id}?defaultServer=CINEDUB-2${startAt ? `&startTime=${Math.floor(startAt)}` : ''}`,
+        `/embed/movie/${id}?defaultServer=CINEDUB-2${startAt ? `&startTime=${Math.floor(startAt)}` : ""}`,
       tv: (id, season, episode, startAt) =>
-        `/embed/tv/${id}/${season}/${episode}?autoPlay=true&autoNext=true&defaultServer=CINEDUB-2${startAt ? `&startTime=${Math.floor(startAt)}` : ''}`,
+        `/embed/tv/${id}/${season}/${episode}?autoPlay=true&autoNext=true&defaultServer=CINEDUB-2${startAt ? `&startTime=${Math.floor(startAt)}` : ""}`,
     },
-    allowedOrigins: ['https://vidsync.live'],
-    platforms: ['web', 'mobile'],
+    allowedOrigins: ["https://vidsync.live"],
+    platforms: ["web", "mobile"],
   },
 ];
 
@@ -394,17 +416,21 @@ export const PROVIDERS: ProviderDefinition[] = [
  * Look up a provider by its id
  */
 export function getProvider(id: string): ProviderDefinition | undefined {
-  return PROVIDERS.find((p) => p.id === id.toLowerCase() && p.enabled !== false);
+  return PROVIDERS.find(
+    (p) => p.id === id.toLowerCase() && p.enabled !== false,
+  );
 }
 
 /**
  * Get only enabled providers (for UI dropdown, sorted by priority)
  * @param includeDownloadOnly - if true, includes providers marked as forDownloadOnly
  */
-export function getEnabledProviders(includeDownloadOnly = false): ProviderDefinition[] {
-  return PROVIDERS.filter((p) => p.enabled !== false && (includeDownloadOnly || !p.forDownloadOnly)).sort(
-    (a, b) => (a.order ?? 999) - (b.order ?? 999),
-  );
+export function getEnabledProviders(
+  includeDownloadOnly = false,
+): ProviderDefinition[] {
+  return PROVIDERS.filter(
+    (p) => p.enabled !== false && (includeDownloadOnly || !p.forDownloadOnly),
+  ).sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
 }
 
 /**

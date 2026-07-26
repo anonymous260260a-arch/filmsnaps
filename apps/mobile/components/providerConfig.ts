@@ -20,59 +20,43 @@ export const providerConfigs: Record<string, ProviderConfig> = {
   nxsha: {
     cssRules: [
       'a[href="https://nxsha.app"]{display:none!important}',
-      // Popup overlay patterns — class-based
-      'div[class*="overlay"]{display:none!important}',
-      'div[class*="popup"]{display:none!important}',
-      'div[class*="modal"]{display:none!important}',
+      // Only hide specific ad patterns, NOT generic modal/overlay classes
+      // (nxsha's own quality picker uses "modal" in class names)
       'div[class*="ad-"]{display:none!important}',
-      'div[id*="overlay"]{display:none!important}',
-      'div[id*="popup"]{display:none!important}',
-      'div[id*="modal"]{display:none!important}',
-      // Fixed-position fullscreen overlays (semi-transparent backgrounds)
-      'div[style*="position: fixed"][style*="background: rgba"]{display:none!important}',
-      'div[style*="position:fixed"][style*="background:rgba"]{display:none!important}',
-      'div[style*="position: fixed"][style*="z-index"]{display:none!important}',
-      'div[style*="position:fixed"][style*="z-index"]{display:none!important}',
-      // Blanket hide for elements with z-index >= 999 (common popup pattern)
-      'div[style*="z-index: 99"]{display:none!important}',
-      'div[style*="z-index:999"]{display:none!important}',
-      'div[style*="z-index: 999"]{display:none!important}',
+      'div[class*="ad_"]{display:none!important}',
+      'div[id*="ad-"]{display:none!important}',
+      'div[id*="ad_"]{display:none!important}',
+      'div[class*="advert"]{display:none!important}',
+      'div[class*="sponsor"]{display:none!important}',
+      // Fixed-position overlays with high z-index that are clearly ads
+      // (not player controls — nxsha's player overlays have z-index < 9999)
+      'div[style*="z-index: 2147483647"]{display:none!important}',
     ],
     hideSelectors: [
-      'div[class*="overlay"]',
-      'div[class*="popup"]',
-      'div[class*="modal"]',
       'div[class*="ad-"]',
       'div[class*="ad_"]',
       'div[class*="advert"]',
-      'div[id*="overlay"]',
-      'div[id*="popup"]',
-      'div[id*="modal"]',
+      'div[class*="sponsor"]',
       'div[id*="ad-"]',
+      'div[id*="ad_"]',
       'a[href*="go."]',
       'a[href*="click."]',
+      'a[href*="nxsha.app"]',
     ],
-    hideKeywords: [
-      'close ad',
-      'skip ad',
-      'advertisement',
-      'sponsored',
-    ],
+    hideKeywords: ["close ad", "skip ad", "advertisement", "sponsored"],
   },
   chillflix: {
     hideKeywords: [
-      'watch party',
-      'login',
-      'log in',
-      'sign in',
-      'create account',
-      'sign up',
+      "watch party",
+      "login",
+      "log in",
+      "sign in",
+      "create account",
+      "sign up",
     ],
   },
   screenscape: {
-    hideKeywords: [
-      'download our app',
-    ],
+    hideKeywords: ["download our app"],
     hideSelectors: [
       'a[href="https://screenscape.fun"]',
       'a[href*="download" i]',
@@ -98,16 +82,16 @@ export const providerConfigs: Record<string, ProviderConfig> = {
  * template literal.
  */
 export function generateProviderSnippet(config?: ProviderConfig): string {
-  if (!config) return '';
+  if (!config) return "";
   const parts: string[] = [];
 
   // ── CSS injection ──
   // Append to <html> if <head> isn't parsed yet (safe at document-start).
   // ref: "is it possible to add style tag before head tag" (uBlock Origin pattern)
   if (config.cssRules?.length) {
-    const css = config.cssRules.join(' ');
+    const css = config.cssRules.join(" ");
     parts.push(
-      `(function(){try{var s=document.createElement('style');s.textContent=${JSON.stringify(css)};(document.head||document.documentElement).appendChild(s);}catch(e){}})();`
+      `(function(){try{var s=document.createElement('style');s.textContent=${JSON.stringify(css)};(document.head||document.documentElement).appendChild(s);}catch(e){}})();`,
     );
   }
 
@@ -122,16 +106,16 @@ export function generateProviderSnippet(config?: ProviderConfig): string {
 
     parts.push(
       `(function(){var sels=${sels};var kws=${kws};function sweep(root){if(!root)root=document;` +
-      `if(sels.length){sels.forEach(function(sel){try{var nodes=root.querySelectorAll(sel);` +
-      `for(var i=0;i<nodes.length;i++){nodes[i].style.display='none';}}catch(e){}});}` +
-      `if(kws.length){try{var el=root.querySelectorAll('button,a,span[role="button"],div');` +
-      `for(var i=0;i<el.length;i++){var t=(el[i].textContent||'').toLowerCase().trim();` +
-      `if(!t)continue;for(var j=0;j<kws.length;j++){if(t.indexOf(kws[j])!==-1){` +
-      `el[i].style.display='none';break;}}}}catch(e){}}}` +
-      `sweep(document);try{var obs=new MutationObserver(function(){sweep(document);});` +
-      `obs.observe(document.documentElement,{childList:true,subtree:true});}catch(e){}})();`
+        `if(sels.length){sels.forEach(function(sel){try{var nodes=root.querySelectorAll(sel);` +
+        `for(var i=0;i<nodes.length;i++){nodes[i].style.display='none';}}catch(e){}});}` +
+        `if(kws.length){try{var el=root.querySelectorAll('button,a,span[role="button"],div');` +
+        `for(var i=0;i<el.length;i++){var t=(el[i].textContent||'').toLowerCase().trim();` +
+        `if(!t)continue;for(var j=0;j<kws.length;j++){if(t.indexOf(kws[j])!==-1){` +
+        `el[i].style.display='none';break;}}}}catch(e){}}}` +
+        `sweep(document);try{var obs=new MutationObserver(function(){sweep(document);});` +
+        `obs.observe(document.documentElement,{childList:true,subtree:true});}catch(e){}})();`,
     );
   }
 
-  return parts.join('\n');
+  return parts.join("\n");
 }

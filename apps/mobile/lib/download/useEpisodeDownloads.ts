@@ -3,35 +3,41 @@
  *
  * Tracks all downloads for a given show/season and provides aggregate
  * progress plus batch operations (startAll, pauseAll, cancelAll).
- * Like YouTube's "Download Season" feature.
+ * Uses the shared enqueue function for deduplication and the manager
+ * for pause/cancel/resume operations.
  */
 
-import { useCallback, useMemo } from 'react';
-import { useSyncExternalStore } from 'react';
-import { useDownloadInfra } from './context';
-import type { DownloadMeta, DownloadTask, AggregateProgress } from './types';
+import { useCallback, useMemo } from "react";
+import { useSyncExternalStore } from "react";
+import { useDownloadInfra } from "./context";
+import type { DownloadMeta, DownloadTask, AggregateProgress } from "./types";
 
 export interface UseEpisodeDownloadsReturn {
   episodes: DownloadTask[];
   aggregate: AggregateProgress;
-  startEpisode: (meta: DownloadMeta) => Promise<string>;
-  startAll: () => Promise<void>;
+  startEpisode: (meta: DownloadMeta) => string;
+  startAll: () => void;
   pauseAll: () => Promise<void>;
   cancelAll: () => Promise<void>;
-  resumeAll: () => Promise<void>;
+  resumeAll: () => void;
 }
 
 export function useEpisodeDownloads(
   tmdbId: string,
   season?: number,
 ): UseEpisodeDownloadsReturn {
-  const { store, engine } = useDownloadInfra();
+  const { store, manager, enqueue } = useDownloadInfra();
 
   const episodes = useSyncExternalStore(
     (cb) => store.subscribe(() => cb()),
-    () => store.getBySeason?.(tmdbId, season ?? 0)
-      ?? store.getAll().filter(
-          (t) => t.tmdbId === tmdbId && (season === undefined || t.season === season),
+    () =>
+      store.getBySeason?.(tmdbId, season ?? 0) ??
+      store
+        .getAll()
+        .filter(
+          (t) =>
+            t.tmdbId === tmdbId &&
+            (season === undefined || t.season === season),
         ),
   );
 
@@ -45,8 +51,8 @@ export function useEpisodeDownloads(
     for (const ep of episodes) {
       totalBytes += ep.totalBytes;
       receivedBytes += ep.receivedBytes;
-      if (ep.status === 'downloading') activeCount++;
-      if (ep.status === 'completed') completedCount++;
+      if (ep.status === "downloading") activeCount++;
+      if (ep.status === "completed") completedCount++;
     }
 
     return {
@@ -59,60 +65,68 @@ export function useEpisodeDownloads(
     };
   }, [episodes]);
 
-  const generateId = useCallback(() => {
-    return `dl_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-  }, []);
+  // Use shared enqueue for deduplication
+  const startEpisode = useCallback(
+    (meta: DownloadMeta): string => {
+      return enqueue(meta);
+    },
+    [enqueue],
+  );
 
-  const startEpisode = useCallback(async (meta: DownloadMeta): Promise<string> => {
-    const id = generateId();
-    const task: DownloadTask = {
-      ...meta,
-      id,
-      fileUri: null,
-      totalBytes: 0,
-      receivedBytes: 0,
-      status: 'pending',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-
-    await store.upsert(task);
-    engine.start(task);
-    return id;
-  }, [store, engine, generateId]);
-
-  const startAll = useCallback(async () => {
+  // Start all pending/failed/cancelled episodes
+  const startAll = useCallback(() => {
     for (const ep of episodes) {
-      if (ep.status === 'completed' || ep.status === 'downloading') continue;
-      const reset: DownloadTask = { ...ep, status: 'pending', error: undefined };
-      await store.upsert(reset);
-      engine.start(reset);
+      if (
+        ep.status === "completed" ||
+        ep.status === "downloading" ||
+        ep.status === "pending"
+      )
+        continue;
+      enqueue({
+        url: ep.url,
+        fileName: ep.fileName,
+        server: ep.server,
+        mediaType: ep.mediaType,
+        tmdbId: ep.tmdbId,
+        quality: ep.quality,
+        title: ep.title,
+        season: ep.season,
+        episode: ep.episode,
+        extension: ep.extension,
+      });
     }
-  }, [episodes, store, engine]);
+  }, [episodes, enqueue]);
 
+  // Pause all downloading episodes
   const pauseAll = useCallback(async () => {
     for (const ep of episodes) {
-      if (ep.status !== 'downloading') continue;
-      const resumeData = await engine.pause(ep.id);
-      if (resumeData) {
-        await store.upsert({ ...ep, status: 'paused', resumeData });
-      }
+      if (ep.status !== "downloading") continue;
+      await manager.pause(ep.id);
     }
-  }, [episodes, store, engine]);
+  }, [episodes, manager]);
 
+  // Cancel all active episodes
   const cancelAll = useCallback(async () => {
     for (const ep of episodes) {
-      await store.upsert({ ...ep, status: 'cancelled' });
-      await engine.cancel(ep.id);
+      if (
+        ep.status !== "downloading" &&
+        ep.status !== "pending" &&
+        ep.status !== "paused"
+      )
+        continue;
+      await manager.cancel(ep.id);
     }
-  }, [episodes, store, engine]);
+  }, [episodes, manager]);
 
-  const resumeAll = useCallback(async () => {
+  // Resume all paused episodes
+  const resumeAll = useCallback(() => {
     for (const ep of episodes) {
-      if (ep.status !== 'paused') continue;
-      engine.start(ep);
+      if (ep.status !== "paused") continue;
+      manager.resume(ep.id).catch((err) => {
+        console.error("[useEpisodeDownloads] resume failed:", err);
+      });
     }
-  }, [episodes, engine]);
+  }, [episodes, manager]);
 
   return {
     episodes,

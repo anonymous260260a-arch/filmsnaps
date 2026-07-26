@@ -9,12 +9,19 @@
  *   updateSetting('autoPlayNext', true)
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+} from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // ── Constants ──
 
-const STORAGE_KEY = '@filmsnaps/settings/v1';
+const STORAGE_KEY = "@filmsnaps/settings/v1";
 
 // ── Types ──
 
@@ -27,9 +34,10 @@ export interface AppSettings {
   // Download
   downloadQuality: string;
   downloadOverCellular: boolean;
+  downloadSpeedLimit: "full" | "balanced" | "slower";
 
   // Appearance
-  subtitleFontSize: 'small' | 'medium' | 'large';
+  subtitleFontSize: "small" | "medium" | "large";
   subtitleLanguage: string;
 
   // Advanced
@@ -40,6 +48,9 @@ export interface AppSettings {
 
   // Legal — whether the user has accepted the legal disclaimer
   legalAccepted: boolean;
+
+  // Onboarding
+  hasSeenWelcome: boolean;
 }
 
 type SettingKey = keyof AppSettings;
@@ -47,7 +58,10 @@ type SettingKey = keyof AppSettings;
 interface SettingsContextValue {
   settings: AppSettings;
   loaded: boolean;
-  updateSetting: <K extends SettingKey>(key: K, value: AppSettings[K]) => Promise<void>;
+  updateSetting: <K extends SettingKey>(
+    key: K,
+    value: AppSettings[K],
+  ) => Promise<void>;
   resetSettings: () => Promise<void>;
 }
 
@@ -57,24 +71,28 @@ const DEFAULT_SETTINGS: AppSettings = {
   // Playback
   serverOrder: [],
   autoPlayNext: false,
-  defaultQuality: 'Auto',
+  defaultQuality: "Auto",
 
   // Download
-  downloadQuality: '1080p',
+  downloadQuality: "1080p",
   downloadOverCellular: false,
+  downloadSpeedLimit: "full",
 
   // Appearance
-  subtitleFontSize: 'medium',
-  subtitleLanguage: 'English',
+  subtitleFontSize: "medium",
+  subtitleLanguage: "English",
 
   // Advanced
   customProviderUrls: {},
 
   // Server
-  defaultServer: '',
+  defaultServer: "",
 
   // Legal
   legalAccepted: false,
+
+  // Onboarding
+  hasSeenWelcome: false,
 };
 
 // ── Context ──
@@ -88,16 +106,28 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [loaded, setLoaded] = useState(false);
   const persistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load on mount
+  // Load on mount with 5-second timeout fallback (P0 bug fix)
   useEffect(() => {
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
+        const raw = await Promise.race([
+          AsyncStorage.getItem(STORAGE_KEY),
+          new Promise<null>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("Settings read timed out after 5s")),
+              5000,
+            ),
+          ),
+        ]);
         if (raw) {
           const stored = JSON.parse(raw);
           setSettings({ ...DEFAULT_SETTINGS, ...stored });
         }
-      } catch {}
+      } catch (e) {
+        console.warn("[Settings] Failed to load settings:", e);
+        // Safe fallback: defaults are used. If legalAccepted was true, user
+        // will see the LegalGate again — safe path (show gate rather than skip it).
+      }
       setLoaded(true);
     })();
   }, []);
@@ -112,13 +142,16 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     }, 300);
   }, []);
 
-  const updateSetting = useCallback(async <K extends SettingKey>(key: K, value: AppSettings[K]) => {
-    setSettings((prev) => {
-      const next = { ...prev, [key]: value };
-      persist(next);
-      return next;
-    });
-  }, [persist]);
+  const updateSetting = useCallback(
+    async <K extends SettingKey>(key: K, value: AppSettings[K]) => {
+      setSettings((prev) => {
+        const next = { ...prev, [key]: value };
+        persist(next);
+        return next;
+      });
+    },
+    [persist],
+  );
 
   const resetSettings = useCallback(async () => {
     setSettings(DEFAULT_SETTINGS);
@@ -128,7 +161,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <SettingsContext.Provider value={{ settings, loaded, updateSetting, resetSettings }}>
+    <SettingsContext.Provider
+      value={{ settings, loaded, updateSetting, resetSettings }}
+    >
       {children}
     </SettingsContext.Provider>
   );
@@ -139,7 +174,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 export function useSettings(): SettingsContextValue {
   const context = useContext(SettingsContext);
   if (!context) {
-    throw new Error('useSettings must be used within a SettingsProvider');
+    throw new Error("useSettings must be used within a SettingsProvider");
   }
   return context;
 }

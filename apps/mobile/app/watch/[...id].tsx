@@ -1,28 +1,77 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StatusBar } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { VideoWebView } from '../../components/VideoWebView';
+import React, { useRef, useEffect } from "react";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StatusBar,
+  BackHandler,
+  Platform,
+} from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import { VideoWebView } from "../../components/VideoWebView";
+import { HevcPlayer } from "../../components/HevcPlayer";
+import { isDirectVideoUrl } from "../../lib/hevc";
 
 export default function WatchScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ id: string[]; backdrop?: string; provider?: string }>();
+  const params = useLocalSearchParams<{
+    id: string[];
+    backdrop?: string;
+    provider?: string;
+    videoUrl?: string;
+    fileUri?: string;
+    title?: string;
+    startAt?: string;
+  }>();
 
   const segments = params.id ?? [];
-  const type = segments[0] as 'movie' | 'tv';
+  const type = segments[0] as "movie" | "tv";
   const id = segments[1];
   const season = segments[2] ? Number(segments[2]) : undefined;
   const episode = segments[3] ? Number(segments[3]) : undefined;
 
   const provider =
-    typeof params.provider === 'string' ? params.provider : undefined;
+    typeof params.provider === "string" ? params.provider : undefined;
   const backdropUrl = params.backdrop || undefined;
+  const videoUrl = params.videoUrl || undefined;
+  const fileUri = params.fileUri || undefined;
+  const title = params.title || undefined;
+  const startAt = params.startAt ? Number(params.startAt) : 0;
+
+  // Determine if this is a direct video playback (HEVC/Falix)
+  const isDirectPlayback =
+    provider === "falix" || isDirectVideoUrl(videoUrl || "") || !!fileUri;
+
+  // ── Android two-step back guard ──
+  const lastBackPressRef = useRef(0);
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const onBackPress = () => {
+      const now = Date.now();
+      if (now - lastBackPressRef.current < 3000) {
+        // Two back presses within 3s — close player
+        router.back();
+        return true;
+      }
+      lastBackPressRef.current = now;
+      return true; // consume the event on first press too
+    };
+    const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
+    return () => sub.remove();
+  }, [router]);
+
+  // Get the actual video URL (either remote or local file)
+  const directVideoUrl = fileUri || videoUrl;
 
   if (!id || !type) {
     return (
-      <View className="flex-1 items-center justify-center bg-void px-6" style={{ backgroundColor: '#070708' }}>
+      <View
+        className="flex-1 items-center justify-center bg-void px-6"
+        style={{ backgroundColor: "#070708" }}
+      >
         <StatusBar barStyle="light-content" />
         <View className="w-16 h-16 rounded-full bg-elevated items-center justify-center mb-5">
           <Ionicons name="alert-circle-outline" size={36} color="#52525B" />
@@ -44,10 +93,28 @@ export default function WatchScreen() {
     );
   }
 
-  console.warn(`[WatchScreen] rendering type=${type} id=${id} season=${season} ep=${episode} provider=${provider}`);
+  // Route to HEVC player for direct video playback (Falix, local files)
+  if (isDirectPlayback && directVideoUrl) {
+    return (
+      <View className="flex-1 bg-black" style={{ backgroundColor: "#000" }}>
+        <StatusBar barStyle="light-content" hidden />
+        <HevcPlayer
+          videoUrl={directVideoUrl}
+          tmdbId={id}
+          mediaType={type}
+          season={season}
+          episode={episode}
+          startAt={startAt}
+          title={title}
+          onClose={() => router.back()}
+        />
+      </View>
+    );
+  }
 
+  // Default: WebView player for streaming providers
   return (
-    <View className="flex-1 bg-black" style={{ backgroundColor: '#000' }}>
+    <View className="flex-1 bg-black" style={{ backgroundColor: "#000" }}>
       <StatusBar barStyle="light-content" hidden />
       <VideoWebView
         type={type}

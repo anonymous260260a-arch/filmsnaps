@@ -1,26 +1,60 @@
-import React, { useState, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useCallback, useMemo } from "react";
 import {
-  View, Text, TouchableOpacity, ActivityIndicator, StatusBar, Alert,
-} from 'react-native';
-import { WebView } from 'react-native-webview';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { useDownloadInfra } from '../../lib/download';
+  View,
+  Text,
+  TouchableOpacity,
+  ActivityIndicator,
+  StatusBar,
+  Alert,
+} from "react-native";
+import { WebView } from "react-native-webview";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import { useDownloadInfra } from "../../lib/download";
 
 // ── Safe video extensions ──
-const VIDEO_EXTS = ['.mp4', '.mkv', '.webm', '.avi', '.mov', '.m3u8', '.ts', '.flv', '.wmv', '.m4v', '.3gp'];
+const VIDEO_EXTS = [
+  ".mp4",
+  ".mkv",
+  ".webm",
+  ".avi",
+  ".mov",
+  ".m3u8",
+  ".ts",
+  ".flv",
+  ".wmv",
+  ".m4v",
+  ".3gp",
+];
 // Potentially video but disguised — allow with rename
-const AMBIGUOUS_EXTS = ['.bin', '.part', '.download', '.stream', '.blob'];
+const AMBIGUOUS_EXTS = [".bin", ".part", ".download", ".stream", ".blob"];
 // Block these unconditionally
-const BLOCKED_EXTS = ['.apk', '.exe', '.bat', '.cmd', '.com', '.msi', '.dll', '.scr', '.vbs', '.jar', '.sh', '.deb', '.rpm', '.iso'];
+const BLOCKED_EXTS = [
+  ".apk",
+  ".exe",
+  ".bat",
+  ".cmd",
+  ".com",
+  ".msi",
+  ".dll",
+  ".scr",
+  ".vbs",
+  ".jar",
+  ".sh",
+  ".deb",
+  ".rpm",
+  ".iso",
+];
 
 function getFileExt(url: string): string | null {
   try {
     const path = new URL(url).pathname.toLowerCase();
     const match = path.match(/\.[a-z0-9]+(?:\?|$)/);
     return match ? match[0] : null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 // ── Comprehensive ad/popup blocker (matching watch page) ──
@@ -150,13 +184,18 @@ export default function Download2Screen() {
 
   const params = useMemo(() => {
     const segs = rawParams.id ?? [];
-    return { type: segs[0] as 'movie' | 'tv', id: segs[1], season: segs[2] ? Number(segs[2]) : undefined, episode: segs[3] ? Number(segs[3]) : undefined };
+    return {
+      type: segs[0] as "movie" | "tv",
+      id: segs[1],
+      season: segs[2] ? Number(segs[2]) : undefined,
+      episode: segs[3] ? Number(segs[3]) : undefined,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [(rawParams.id ?? []).join(',')]);
+  }, [(rawParams.id ?? []).join(",")]);
 
   const downloadUrl = useMemo(() => {
-    if (!params.id || !params.type) return '';
-    if (params.type === 'tv' && params.season && params.episode) {
+    if (!params.id || !params.type) return "";
+    if (params.type === "tv" && params.season && params.episode) {
       return `https://02moviedownloader.site/api/download/tv/${params.id}/${params.season}/${params.episode}`;
     }
     return `https://02moviedownloader.site/api/download/movie/${params.id}`;
@@ -172,7 +211,7 @@ export default function Download2Screen() {
     enqueue({
       url: binUrl,
       fileName: filename,
-      server: 'alt-dl',
+      server: "alt-dl",
       mediaType: params.type,
       tmdbId: params.id,
       title: `FilmSnaps ${params.type} ${params.id}`,
@@ -182,74 +221,98 @@ export default function Download2Screen() {
   }, [binUrl, params.type, params.id, enqueue]);
 
   // ── Navigation handler with file-type checks ──
-  const handleNavigation = useCallback((request: any): boolean => {
-    if (!request.url) return true;
-    if (request.url.startsWith('intent://') || request.url.startsWith('android-app://')) return false;
+  const handleNavigation = useCallback(
+    (request: any): boolean => {
+      if (!request.url) return true;
+      if (
+        request.url.startsWith("intent://") ||
+        request.url.startsWith("android-app://")
+      )
+        return false;
 
-    // Check file extension
-    const ext = getFileExt(request.url);
+      // Check file extension
+      const ext = getFileExt(request.url);
 
-    // Block dangerous files
-    if (ext && BLOCKED_EXTS.includes(ext)) {
-      Alert.alert('🚫 Blocked', `This file type (${ext}) is not allowed.`);
-      return false;
-    }
-
-    // Detect video files -> prompt download
-    if (ext && VIDEO_EXTS.includes(ext)) {
-      const filename = `filmsnaps-${params.type}-${params.id}${ext}`;
-      Alert.alert(
-        '🎬 Video Detected',
-        'Download this video file?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Save Video', onPress: () => {
-            enqueue({
-              url: request.url,
-              fileName: filename,
-              server: 'alt-dl',
-              mediaType: params.type,
-              tmdbId: params.id,
-              title: `FilmSnaps ${params.type} ${params.id}`,
-              extension: ext.replace('.', ''),
-            });
-          }},
-        ]
-      );
-      return false;
-    }
-
-    // Detect .bin / ambiguous video files → capture for rename
-    if (ext && AMBIGUOUS_EXTS.includes(ext)) {
-      setBinUrl(request.url);
-      Alert.alert(
-        '📁 .bin Detected',
-        'This is likely a video file with a .bin extension.\n\nSave it as .mp4 instead?',
-        [
-          { text: 'Let WebView handle it', style: 'cancel' },
-          { text: 'Save as .mp4', onPress: () => setBinUrl(request.url) },
-        ]
-      );
-      return true; // Let it play in WebView regardless
-    }
-
-    // Block known ad domains
-    try {
-      const host = new URL(request.url).hostname.toLowerCase();
-      const ads = [
-        'doubleclick.net', 'googleadservices', 'googlesyndication', 'pagead2',
-        'adnxs.com', 'popads.', 'popcash.', 'popunder.', 'adsterra',
-        'propellerads', 'exoclick', 'juicyads', 'plugrush',
-        'hakumnata.com', 'tags.crwdcntrl', 'crwdcntrl', 'mgid.com',
-        'tawk.to', 'adservex', 'onclickads', 'peachify',
-        'trafficwave', 'trafficboss', 'clk.sh',
-      ];
-      for (const a of ads) {
-        if (host.indexOf(a) !== -1) return false;
+      // Block dangerous files
+      if (ext && BLOCKED_EXTS.includes(ext)) {
+        Alert.alert("🚫 Blocked", `This file type (${ext}) is not allowed.`);
+        return false;
       }
-    } catch {}
-    return true;
-  }, [enqueue, params]);
+
+      // Detect video files -> prompt download
+      if (ext && VIDEO_EXTS.includes(ext)) {
+        const filename = `filmsnaps-${params.type}-${params.id}${ext}`;
+        Alert.alert("🎬 Video Detected", "Download this video file?", [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Save Video",
+            onPress: () => {
+              enqueue({
+                url: request.url,
+                fileName: filename,
+                server: "alt-dl",
+                mediaType: params.type,
+                tmdbId: params.id,
+                title: `FilmSnaps ${params.type} ${params.id}`,
+                extension: ext.replace(".", ""),
+              });
+            },
+          },
+        ]);
+        return false;
+      }
+
+      // Detect .bin / ambiguous video files → capture for rename
+      if (ext && AMBIGUOUS_EXTS.includes(ext)) {
+        setBinUrl(request.url);
+        Alert.alert(
+          "📁 .bin Detected",
+          "This is likely a video file with a .bin extension.\n\nSave it as .mp4 instead?",
+          [
+            { text: "Let WebView handle it", style: "cancel" },
+            { text: "Save as .mp4", onPress: () => setBinUrl(request.url) },
+          ],
+        );
+        return true; // Let it play in WebView regardless
+      }
+
+      // Block known ad domains
+      try {
+        const host = new URL(request.url).hostname.toLowerCase();
+        const ads = [
+          "doubleclick.net",
+          "googleadservices",
+          "googlesyndication",
+          "pagead2",
+          "adnxs.com",
+          "popads.",
+          "popcash.",
+          "popunder.",
+          "adsterra",
+          "propellerads",
+          "exoclick",
+          "juicyads",
+          "plugrush",
+          "hakumnata.com",
+          "tags.crwdcntrl",
+          "crwdcntrl",
+          "mgid.com",
+          "tawk.to",
+          "adservex",
+          "onclickads",
+          "peachify",
+          "trafficwave",
+          "trafficboss",
+          "clk.sh",
+        ];
+        for (const a of ads) {
+          if (host.indexOf(a) !== -1) return false;
+        }
+      } catch {}
+      return true;
+    },
+    [enqueue, params],
+  );
 
   if (!params.id || !params.type || !downloadUrl) {
     return (
@@ -257,7 +320,11 @@ export default function Download2Screen() {
         <StatusBar barStyle="light-content" />
         <Ionicons name="download-outline" size={48} color="#52525b" />
         <Text className="text-zinc-400 mt-3">Download unavailable</Text>
-        <TouchableOpacity onPress={() => router.back()} className="bg-amber-500 rounded-xl py-3 px-8 mt-4" activeOpacity={0.8}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          className="bg-amber-500 rounded-xl py-3 px-8 mt-4"
+          activeOpacity={0.8}
+        >
           <Text className="text-black font-bold text-base">Go Back</Text>
         </TouchableOpacity>
       </View>
@@ -267,17 +334,50 @@ export default function Download2Screen() {
   return (
     <View className="flex-1 bg-black">
       <StatusBar barStyle="light-content" />
-      <View style={{ paddingTop: insets.top }} className="absolute top-0 left-0 right-0 z-30">
+      <View
+        style={{ paddingTop: insets.top }}
+        className="absolute top-0 left-0 right-0 z-30"
+      >
         <View className="flex-row items-center justify-between px-4 py-2">
           <View className="flex-row items-center">
-            <TouchableOpacity onPress={() => router.back()} className="w-9 h-9 rounded-full bg-black/40 items-center justify-center" activeOpacity={0.7} accessibilityLabel="Close download" accessibilityRole="button">
+            <TouchableOpacity
+              onPress={() => router.back()}
+              className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
+              activeOpacity={0.7}
+              accessibilityLabel="Close download"
+              accessibilityRole="button"
+            >
               <Ionicons name="close" size={20} color="#fff" />
             </TouchableOpacity>
             <Text className="text-white font-bold text-sm ml-3">Download</Text>
           </View>
-          <TouchableOpacity onPress={() => webViewRef.current?.reload()} className="w-9 h-9 rounded-full bg-black/40 items-center justify-center" activeOpacity={0.7} accessibilityLabel="Reload page" accessibilityRole="button">
-            <Ionicons name="refresh" size={16} color="#fff" />
-          </TouchableOpacity>
+          <View className="flex-row items-center" style={{ gap: 6 }}>
+            <TouchableOpacity
+              onPress={() => router.push("/downloads")}
+              className="h-9 rounded-full flex-row items-center px-3"
+              style={{ backgroundColor: "rgba(212,162,55,0.12)" }}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name="download-outline"
+                size={14}
+                color="#D4A237"
+                style={{ marginRight: 4 }}
+              />
+              <Text className="text-amber-400 text-[11px] font-bold">
+                Downloads
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => webViewRef.current?.reload()}
+              className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
+              activeOpacity={0.7}
+              accessibilityLabel="Reload page"
+              accessibilityRole="button"
+            >
+              <Ionicons name="refresh" size={16} color="#fff" />
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -290,12 +390,19 @@ export default function Download2Screen() {
 
       {/* .bin → MP4 save bar */}
       {binUrl && !loading && (
-        <View style={{ paddingBottom: insets.bottom + 12 }} className="absolute bottom-0 left-0 right-0 z-30 items-center">
+        <View
+          style={{ paddingBottom: insets.bottom + 12 }}
+          className="absolute bottom-0 left-0 right-0 z-30 items-center"
+        >
           <View className="bg-zinc-900/95 rounded-xl border border-blue-500/30 mx-4 p-3 w-[92%]">
             <Text className="text-blue-400 text-xs font-bold mb-2">
               📁 .bin video detected — save as MP4?
             </Text>
-            <Text className="text-zinc-500 text-[10px] mb-2" numberOfLines={1} selectable>
+            <Text
+              className="text-zinc-500 text-[10px] mb-2"
+              numberOfLines={1}
+              selectable
+            >
               {binUrl.substring(0, 120)}...
             </Text>
             <TouchableOpacity
@@ -316,7 +423,7 @@ export default function Download2Screen() {
         <WebView
           ref={webViewRef}
           source={{ uri: downloadUrl }}
-          style={{ flex: 1, backgroundColor: '#000' }}
+          style={{ flex: 1, backgroundColor: "#000" }}
           allowsFullscreenVideo={true}
           allowsInlineMediaPlayback={true}
           mediaPlaybackRequiresUserAction={false}

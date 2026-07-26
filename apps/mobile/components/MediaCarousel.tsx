@@ -1,8 +1,15 @@
-﻿import React from 'react';
-import { View, Text, FlatList, useWindowDimensions, TouchableOpacity } from 'react-native';
-import { typography } from '../lib/typography';
-import type { Movie } from '@filmsnaps/shared';
-import { MediaCard } from './MediaCard';
+﻿import React from "react";
+import {
+  View,
+  Text,
+  FlatList,
+  useWindowDimensions,
+  TouchableOpacity,
+} from "react-native";
+import { ForwardIcon } from "./Icons";
+import { typography } from "../lib/typography";
+import type { Movie } from "@filmsnaps/shared";
+import { MediaCard } from "./MediaCard";
 
 const ITEM_WIDTH = (width: number) => (width - 48) / 3;
 
@@ -17,7 +24,12 @@ interface MediaCarouselProps {
  * Horizontal carousel with Playfair Display section heading
  * and gold "See All" link.
  */
-export function MediaCarousel({ title, data, onItemPress, onSeeAll }: MediaCarouselProps) {
+export function MediaCarousel({
+  title,
+  data,
+  onItemPress,
+  onSeeAll,
+}: MediaCarouselProps) {
   const { width: SCREEN_WIDTH } = useWindowDimensions();
 
   if (!data?.length) return null;
@@ -29,15 +41,18 @@ export function MediaCarousel({ title, data, onItemPress, onSeeAll }: MediaCarou
         <Text style={typography.heading}>{title}</Text>
         {onSeeAll && (
           <TouchableOpacity onPress={onSeeAll} activeOpacity={0.7}>
-            <Text
-              style={{
-                fontFamily: 'Inter_500Medium',
-                fontSize: 12,
-                color: '#D4A237',
-              }}
-            >
-              See All â†’
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Text
+                style={{
+                  fontFamily: "Inter_500Medium",
+                  fontSize: 12,
+                  color: "#D4A237",
+                }}
+              >
+                See All
+              </Text>
+              <ForwardIcon width={14} height={14} color="#D4A237" />
+            </View>
           </TouchableOpacity>
         )}
       </View>
