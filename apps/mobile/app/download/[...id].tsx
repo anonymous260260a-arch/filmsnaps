@@ -18,11 +18,13 @@ import {
   Platform,
 } from "react-native";
 import { WebView } from "react-native-webview";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { getProvider } from "@filmsnaps/shared";
 import { useDownloadInfra } from "../../lib/download";
+import { colors } from "../../theme/colors";
 
 // ── Enhanced injected script ──
 // Three layers:
@@ -440,7 +442,7 @@ true;
 const API_BASE = process.env.EXPO_PUBLIC_WEB_URL || "http://localhost:3000";
 
 export default function DownloadScreen() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const rawParams = useLocalSearchParams<{ id: string[] }>();
   const webViewRef = useRef<WebView>(null);
@@ -743,7 +745,7 @@ export default function DownloadScreen() {
         showStatus("✅ Added to queue — check Downloads page!");
 
         // Navigate to downloads page so user can see progress
-        setTimeout(() => router.push("/downloads"), 1500);
+        setTimeout(() => nav.push("/downloads"), 1500);
       } catch (e: any) {
         showStatus("❌ Enqueue failed");
         addLog("Enqueue error: " + e.message);
@@ -756,7 +758,7 @@ export default function DownloadScreen() {
       params.season,
       params.episode,
       enqueue,
-      router,
+      nav,
       addLog,
       showStatus,
     ],
@@ -896,7 +898,7 @@ export default function DownloadScreen() {
       <View className="flex-1 items-center justify-center bg-zinc-950 px-8">
         <StatusBar barStyle="light-content" />
         <View className="w-16 h-16 rounded-full bg-red-500/10 items-center justify-center mb-5">
-          <Ionicons name="alert-circle" size={32} color="#ef4444" />
+          <Ionicons name="alert-circle" size={32} color={colors.error} />
         </View>
         <Text className="text-zinc-300 text-lg font-semibold mb-2">
           Failed to Load
@@ -914,11 +916,11 @@ export default function DownloadScreen() {
             className="bg-amber-500 rounded-xl py-3 px-6 flex-row items-center"
             activeOpacity={0.8}
           >
-            <Ionicons name="refresh" size={16} color="#000" />
+            <Ionicons name="refresh" size={16} color={colors.voidBlack} />
             <Text className="text-black font-bold text-sm ml-2">Retry</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => router.back()}
+            onPress={() => nav.goBack({ fallback: "/(tabs)" })}
             className="border border-zinc-700 rounded-xl py-3 px-6 flex-row items-center"
             activeOpacity={0.8}
           >
@@ -934,7 +936,11 @@ export default function DownloadScreen() {
       <View className="flex-1 items-center justify-center bg-zinc-950 px-8">
         <StatusBar barStyle="light-content" />
         <View className="w-16 h-16 rounded-full bg-zinc-800 items-center justify-center mb-5">
-          <Ionicons name="download-outline" size={32} color="#52525b" />
+          <Ionicons
+            name="download-outline"
+            size={32}
+            color={colors.textTertiary}
+          />
         </View>
         <Text className="text-zinc-300 text-lg font-semibold mb-2">
           Download Unavailable
@@ -943,7 +949,7 @@ export default function DownloadScreen() {
           Could not load the download page.
         </Text>
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => nav.goBack({ fallback: "/(tabs)" })}
           className="bg-amber-500 rounded-xl py-3 px-8"
           activeOpacity={0.8}
         >
@@ -966,13 +972,13 @@ export default function DownloadScreen() {
         <View className="flex-row items-center justify-between px-4 py-2">
           <View className="flex-row items-center">
             <TouchableOpacity
-              onPress={() => router.back()}
+              onPress={() => nav.goBack({ fallback: "/(tabs)" })}
               className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
               activeOpacity={0.7}
               accessibilityLabel="Close download"
               accessibilityRole="button"
             >
-              <Ionicons name="close" size={20} color="#fff" />
+              <Ionicons name="close" size={20} color={colors.textPrimary} />
             </TouchableOpacity>
             <View className="ml-3">
               <Text className="text-white font-bold text-sm">Download</Text>
@@ -985,7 +991,7 @@ export default function DownloadScreen() {
           </View>
           <View className="flex-row" style={{ gap: 6 }}>
             <TouchableOpacity
-              onPress={() => router.push("/downloads")}
+              onPress={() => nav.push("/downloads")}
               className="h-9 rounded-full flex-row items-center px-3"
               style={{ backgroundColor: "rgba(212,162,55,0.12)" }}
               activeOpacity={0.7}
@@ -993,7 +999,7 @@ export default function DownloadScreen() {
               <Ionicons
                 name="download-outline"
                 size={14}
-                color="#D4A237"
+                color={colors.gold}
                 style={{ marginRight: 4 }}
               />
               <Text className="text-amber-400 text-[11px] font-bold">
@@ -1011,7 +1017,7 @@ export default function DownloadScreen() {
               <Ionicons
                 name="bug"
                 size={16}
-                color={showDebug ? "#f59e0b" : "#71717a"}
+                color={showDebug ? colors.amber : colors.zinc500}
               />
             </TouchableOpacity>
             <TouchableOpacity
@@ -1019,7 +1025,7 @@ export default function DownloadScreen() {
               className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
               activeOpacity={0.7}
             >
-              <Ionicons name="refresh" size={16} color="#fff" />
+              <Ionicons name="refresh" size={16} color={colors.textPrimary} />
             </TouchableOpacity>
           </View>
         </View>
@@ -1044,7 +1050,7 @@ export default function DownloadScreen() {
       {loading && (
         <View className="absolute inset-0 z-20 items-center justify-center bg-black/80">
           <View className="items-center">
-            <ActivityIndicator size="large" color="#f59e0b" />
+            <ActivityIndicator size="large" color={colors.amber} />
             <Text className="text-zinc-500 text-sm mt-4">
               Loading VidVault page...
             </Text>
@@ -1084,7 +1090,11 @@ export default function DownloadScreen() {
                     className="bg-amber-500 rounded-full px-3 py-1.5 mr-2 flex-row items-center"
                     activeOpacity={0.8}
                   >
-                    <Ionicons name="download" size={12} color="#000" />
+                    <Ionicons
+                      name="download"
+                      size={12}
+                      color={colors.voidBlack}
+                    />
                     <Text className="text-black text-[10px] font-bold ml-1">
                       URL {i + 1}
                     </Text>
@@ -1105,7 +1115,11 @@ export default function DownloadScreen() {
                   className="flex-1 bg-amber-500 rounded-full py-2 flex-row items-center justify-center"
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="open-outline" size={14} color="#000" />
+                  <Ionicons
+                    name="open-outline"
+                    size={14}
+                    color={colors.voidBlack}
+                  />
                   <Text className="text-black text-xs font-bold ml-1">
                     Download via Browser
                   </Text>
@@ -1122,7 +1136,7 @@ export default function DownloadScreen() {
                   className="flex-1 bg-zinc-800 rounded-full py-2 flex-row items-center justify-center"
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="globe" size={14} color="#f59e0b" />
+                  <Ionicons name="globe" size={14} color={colors.amber} />
                   <Text className="text-amber-400 text-xs font-bold ml-1">
                     Download via WebView
                   </Text>
@@ -1137,7 +1151,11 @@ export default function DownloadScreen() {
                   className="bg-emerald-600 rounded-full py-2.5 flex-row items-center justify-center"
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="download" size={16} color="#fff" />
+                  <Ionicons
+                    name="download"
+                    size={16}
+                    color={colors.textPrimary}
+                  />
                   <Text className="text-white text-xs font-bold ml-1.5">
                     📲 Download via Engine
                   </Text>
@@ -1152,7 +1170,7 @@ export default function DownloadScreen() {
             className="bg-amber-500 rounded-full py-3 px-8 flex-row items-center"
             activeOpacity={0.8}
           >
-            <Ionicons name="globe" size={16} color="#000" />
+            <Ionicons name="globe" size={16} color={colors.voidBlack} />
             <Text className="text-black font-bold text-sm ml-2">
               Check VidVault API
             </Text>
@@ -1164,7 +1182,7 @@ export default function DownloadScreen() {
             className="bg-zinc-800/90 rounded-full py-2.5 px-6 flex-row items-center"
             activeOpacity={0.8}
           >
-            <Ionicons name="search" size={14} color="#a1a1aa" />
+            <Ionicons name="search" size={14} color={colors.textSecondary} />
             <Text className="text-zinc-400 text-xs font-medium ml-1.5">
               Dump Page State
             </Text>
@@ -1214,7 +1232,7 @@ export default function DownloadScreen() {
         <WebView
           ref={webViewRef}
           source={{ uri: downloadUrl }}
-          style={{ flex: 1, backgroundColor: "#000" }}
+          style={{ flex: 1, backgroundColor: colors.playerBg }}
           userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
           allowsFullscreenVideo={true}
           allowsInlineMediaPlayback={true}

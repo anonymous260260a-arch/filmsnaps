@@ -1,6 +1,7 @@
 import React from "react";
 import { View } from "react-native";
 import { Image, ImageContentFit } from "expo-image";
+import { colors } from "../theme/colors";
 
 /**
  * Cross-fading image wrapper with disk cache and blurhash placeholder.
@@ -18,7 +19,7 @@ export function ProgressiveImage({
   uri,
   style,
   resizeMode = "cover",
-  placeholderColor = "#070708",
+  placeholderColor = colors.bg,
 }: {
   uri: string;
   style?: any;

@@ -9,10 +9,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackIcon } from "../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
 import { TouchableOpacity } from "react-native";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
+import { colors } from "../theme/colors";
 
 export default function GuideScreen() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
   const { section } = useLocalSearchParams<{ section?: string }>();
@@ -39,22 +41,22 @@ export default function GuideScreen() {
   return (
     <View
       className="flex-1"
-      style={{ backgroundColor: "#070708", paddingTop: insets.top }}
+      style={{ backgroundColor: colors.bg, paddingTop: insets.top }}
     >
       {/* Header */}
       <View className="px-5 pt-4 pb-2 flex-row items-center">
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => nav.goBack({ fallback: "/(tabs)" })}
           className="w-9 h-9 rounded-full bg-zinc-800/60 items-center justify-center mr-3"
           activeOpacity={0.7}
         >
-          <BackIcon width={20} height={20} color="#F4F4F5" />
+          <BackIcon width={20} height={20} color={colors.textPrimary} />
         </TouchableOpacity>
         <Text
           style={{
             fontFamily: "PlayfairDisplay_700Bold",
             fontSize: 22,
-            color: "#F4F4F5",
+            color: colors.textPrimary,
           }}
         >
           How to Use
@@ -69,7 +71,7 @@ export default function GuideScreen() {
         {/* Gold accent */}
         <View
           className="w-16 h-0.5 mb-6"
-          style={{ backgroundColor: "#D4A237" }}
+          style={{ backgroundColor: colors.gold }}
         />
 
         {/* ── Getting Started ── */}
@@ -265,10 +267,9 @@ function GuideSection({
       nativeID={sectionId}
       className="mb-6"
       style={{
-        backgroundColor: "#0E0E11",
-        borderRadius: 12,
+        backgroundColor: colors.bgSurface,
         borderWidth: 0.5,
-        borderColor: "#1f1f1f",
+        borderColor: colors.border,
       }}
       onLayout={
         sectionId && onLayout
@@ -280,11 +281,14 @@ function GuideSection({
       <View className="flex-row items-center px-4 pt-4 pb-3">
         <View
           className="w-8 h-8 rounded-lg items-center justify-center mr-2.5"
-          style={{ backgroundColor: "#D4A23720" }}
+          style={{ backgroundColor: colors.goldButtonText }}
         >
-          <Ionicons name={icon} size={16} color="#D4A237" />
+          <Ionicons name={icon} size={16} color={colors.gold} />
         </View>
-        <Text className="text-sm font-bold" style={{ color: "#F4F4F5" }}>
+        <Text
+          className="text-sm font-bold"
+          style={{ color: colors.textPrimary }}
+        >
           {title}
         </Text>
       </View>
@@ -300,13 +304,16 @@ function GuideStep({ number, text }: { number: number; text: string }) {
     <View className="flex-row items-start mb-2">
       <View
         className="w-5 h-5 rounded-full items-center justify-center mr-2.5 mt-0.5"
-        style={{ backgroundColor: "#D4A237" }}
+        style={{ backgroundColor: colors.gold }}
       >
-        <Text className="text-[10px] font-bold" style={{ color: "#070708" }}>
+        <Text className="text-[10px] font-bold" style={{ color: colors.bg }}>
           {number}
         </Text>
       </View>
-      <Text className="text-sm leading-5 flex-1" style={{ color: "#D4D4D8" }}>
+      <Text
+        className="text-sm leading-5 flex-1"
+        style={{ color: colors.textSecondary }}
+      >
         {text}
       </Text>
     </View>
@@ -318,9 +325,12 @@ function GuideSubStep({ number, text }: { number: number; text: string }) {
     <View className="flex-row items-start mb-1.5">
       <Text
         className="text-[10px] font-bold mr-2 mt-0.5"
-        style={{ color: "#D4A237" }}
+        style={{ color: colors.gold }}
       >{`0${number}`}</Text>
-      <Text className="text-sm leading-5 flex-1" style={{ color: "#D4D4D8" }}>
+      <Text
+        className="text-sm leading-5 flex-1"
+        style={{ color: colors.textSecondary }}
+      >
         {text}
       </Text>
     </View>
@@ -329,7 +339,10 @@ function GuideSubStep({ number, text }: { number: number; text: string }) {
 
 function GuideParagraph({ children }: { children: React.ReactNode }) {
   return (
-    <Text className="text-sm leading-5 mb-3" style={{ color: "#D4D4D8" }}>
+    <Text
+      className="text-sm leading-5 mb-3"
+      style={{ color: colors.textSecondary }}
+    >
       {children}
     </Text>
   );
@@ -351,7 +364,7 @@ function GuideLink({ text, url }: { text: string; url?: string }) {
   return (
     <Text
       className="text-sm"
-      style={{ color: "#D4A237", textDecorationLine: "underline" }}
+      style={{ color: colors.gold, textDecorationLine: "underline" }}
       onPress={handlePress}
     >
       {text}
@@ -365,10 +378,13 @@ function GuideNote({ text }: { text: string }) {
       <Ionicons
         name="information-circle-outline"
         size={14}
-        color="#52525b"
+        color={colors.textTertiary}
         style={{ marginRight: 6, marginTop: 2 }}
       />
-      <Text className="text-xs leading-4 flex-1" style={{ color: "#52525b" }}>
+      <Text
+        className="text-xs leading-4 flex-1"
+        style={{ color: colors.textTertiary }}
+      >
         {text}
       </Text>
     </View>
@@ -378,10 +394,13 @@ function GuideNote({ text }: { text: string }) {
 function Tip({ text }: { text: string }) {
   return (
     <View className="flex-row items-start mb-2">
-      <Text className="text-xs mr-2 mt-0.5" style={{ color: "#D4A237" }}>
+      <Text className="text-xs mr-2 mt-0.5" style={{ color: colors.gold }}>
         ✦
       </Text>
-      <Text className="text-sm leading-5 flex-1" style={{ color: "#D4D4D8" }}>
+      <Text
+        className="text-sm leading-5 flex-1"
+        style={{ color: colors.textSecondary }}
+      >
         {text}
       </Text>
     </View>

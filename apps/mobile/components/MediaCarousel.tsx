@@ -1,13 +1,8 @@
 ﻿import React from "react";
-import {
-  View,
-  Text,
-  FlatList,
-  useWindowDimensions,
-  TouchableOpacity,
-} from "react-native";
-import { ForwardIcon } from "./Icons";
-import { typography } from "../lib/typography";
+import { View, Text, FlatList, useWindowDimensions } from "react-native";
+import { typography } from "../theme/typography";
+import { colors } from "../theme/colors";
+import { SeeAllButton } from "./SeeAllButton";
 import type { Movie } from "@filmsnaps/shared";
 import { MediaCard } from "./MediaCard";
 
@@ -39,22 +34,7 @@ export function MediaCarousel({
       {/* Section header â€” Playfair heading + gold "See All" */}
       <View className="flex-row items-center justify-between px-4 mb-3">
         <Text style={typography.heading}>{title}</Text>
-        {onSeeAll && (
-          <TouchableOpacity onPress={onSeeAll} activeOpacity={0.7}>
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Text
-                style={{
-                  fontFamily: "Inter_500Medium",
-                  fontSize: 12,
-                  color: "#D4A237",
-                }}
-              >
-                See All
-              </Text>
-              <ForwardIcon width={14} height={14} color="#D4A237" />
-            </View>
-          </TouchableOpacity>
-        )}
+        {onSeeAll && <SeeAllButton onPress={onSeeAll} />}
       </View>
 
       <FlatList

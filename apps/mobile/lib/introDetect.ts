@@ -5,7 +5,7 @@
  * Used for "Skip Intro" and "Skip Recap" buttons in the player overlay.
  */
 
-const INTRODB_API_BASE = 'https://api.introdb.app';
+const INTRODB_API_BASE = "https://api.introdb.app";
 
 export interface IntroSegment {
   start_sec: number;
@@ -67,17 +67,28 @@ export async function fetchIntroSegments(
 
     if (!res.ok) {
       if (res.status === 404) return null; // No data for this episode
-      console.warn('[IntroDetect] HTTP ' + res.status + ' for ' + imdbId + ' S' + season + 'E' + episode);
+      console.warn(
+        "[IntroDetect] HTTP " +
+          res.status +
+          " for " +
+          imdbId +
+          " S" +
+          season +
+          "E" +
+          episode,
+      );
       return null;
     }
 
     const data: IntroDbResponse = await res.json();
     return data;
   } catch (e: any) {
-    if (e?.name === 'AbortError') {
-      console.warn('[IntroDetect] Timeout for ' + imdbId + ' S' + season + 'E' + episode);
+    if (e?.name === "AbortError") {
+      console.warn(
+        "[IntroDetect] Timeout for " + imdbId + " S" + season + "E" + episode,
+      );
     } else {
-      console.warn('[IntroDetect] Error: ' + (e?.message ?? String(e)));
+      console.warn("[IntroDetect] Error: " + (e?.message ?? String(e)));
     }
     return null;
   }
@@ -86,9 +97,14 @@ export async function fetchIntroSegments(
 /**
  * Check whether a segment is usable (meets confidence threshold).
  */
-export function isSegmentUsable(segment: IntroSegment | null | undefined): segment is IntroSegment {
+export function isSegmentUsable(
+  segment: IntroSegment | null | undefined,
+): segment is IntroSegment {
   if (!segment) return false;
-  return segment.confidence >= CONFIDENCE_THRESHOLD && segment.end_sec > segment.start_sec;
+  return (
+    segment.confidence >= CONFIDENCE_THRESHOLD &&
+    segment.end_sec > segment.start_sec
+  );
 }
 
 /**
@@ -104,26 +120,25 @@ export function getActiveSkipSegment(
   // Check recap first (usually comes before intro)
   if (isSegmentUsable(segments.recap)) {
     const r = segments.recap;
-    if (currentTime >= r.start_sec - LEAD_IN_SECONDS && currentTime < r.end_sec + LEAD_OUT_SECONDS) {
-      return { segment: r, label: 'Skip Recap' };
+    if (
+      currentTime >= r.start_sec - LEAD_IN_SECONDS &&
+      currentTime < r.end_sec + LEAD_OUT_SECONDS
+    ) {
+      return { segment: r, label: "Skip Recap" };
     }
   }
 
   // Check intro
   if (isSegmentUsable(segments.intro)) {
     const i = segments.intro;
-    if (currentTime >= i.start_sec - LEAD_IN_SECONDS && currentTime < i.end_sec + LEAD_OUT_SECONDS) {
-      return { segment: i, label: 'Skip Intro' };
+    if (
+      currentTime >= i.start_sec - LEAD_IN_SECONDS &&
+      currentTime < i.end_sec + LEAD_OUT_SECONDS
+    ) {
+      return { segment: i, label: "Skip Intro" };
     }
   }
 
-  // Check outro (near the end)
-  if (isSegmentUsable(segments.outro)) {
-    const o = segments.outro;
-    if (currentTime >= o.start_sec - LEAD_IN_SECONDS && currentTime < o.end_sec + LEAD_OUT_SECONDS) {
-      return { segment: o, label: 'Skip Outro' };
-    }
-  }
-
+  // Outro is intentionally excluded — replaced by the Next Episode button
   return null;
 }

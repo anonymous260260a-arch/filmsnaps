@@ -32,6 +32,28 @@ export interface IDownloaderAdapter {
   download(options: DownloadOptions): Promise<DownloadInstance>;
 
   /**
+   * Resume an existing download via the native module.
+   * Uses stored resume data (iOS URLSession) or Range header (Android DownloadManager).
+   */
+  resumeDownload(
+    taskId: string,
+    url: string,
+    fileName: string,
+    offsetBytes: number,
+    options: Pick<DownloadOptions, "onProgress" | "onDone" | "onError">,
+  ): Promise<DownloadInstance>;
+
+  /**
+   * Check if a task is currently tracked by this adapter (active and not settled).
+   */
+  hasActiveTask(taskId: string): boolean;
+
+  /**
+   * Get the file path where a completed download will be stored.
+   */
+  getDestinationPath(fileName: string): string;
+
+  /**
    * Check if the adapter supports background downloads
    */
   supportsBackground(): boolean;

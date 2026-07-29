@@ -21,10 +21,12 @@ import {
   FlatList,
   LayoutAnimation,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useDownloadInfra, useDownloadList } from "../../../lib/download";
+import { colors } from "../../../theme/colors";
 
 // ── API Base ──
 const FALIX_API_BASE = "https://download-falix-falixmovies-backend-hf.hf.space";
@@ -104,8 +106,62 @@ const sortByQuality = (a: FalixTelegramFile, b: FalixTelegramFile) => {
   return aq - bq;
 };
 
+// ── Parse size string to bytes ──
+const parseSizeToBytes = (sizeStr: string): number => {
+  if (!sizeStr) return 0;
+  const match = sizeStr.match(/([\d.]+)\s*(B|KB|MB|GB|TB)/i);
+  if (!match) return 0;
+  const value = parseFloat(match[1]);
+  const unit = match[2].toUpperCase();
+  const multipliers: Record<string, number> = {
+    B: 1,
+    KB: 1024,
+    MB: 1024 ** 2,
+    GB: 1024 ** 3,
+    TB: 1024 ** 4,
+  };
+  return value * (multipliers[unit] || 0);
+};
+
+// ── Format bytes to readable string ──
+const formatBytes = (bytes: number): string => {
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const value = bytes / 1024 ** i;
+  return `${value.toFixed(i > 1 ? 2 : 0)} ${units[i]}`;
+};
+
+// ── Quality Tier Type ──
+type QualityTier = "low" | "mid" | "high";
+
+const QUALITY_TIER_LABELS: Record<QualityTier, string> = {
+  low: "Lowest",
+  mid: "Medium",
+  high: "Highest",
+};
+
+const QUALITY_TIER_DESCRIPTIONS: Record<QualityTier, string> = {
+  low: "Smallest file size",
+  mid: "Balanced quality & size",
+  high: "Best available quality",
+};
+
+// ── Get file by quality tier from sorted list ──
+const getFileByTier = (
+  sortedFiles: FalixTelegramFile[],
+  tier: QualityTier,
+): FalixTelegramFile | null => {
+  if (sortedFiles.length === 0) return null;
+  if (tier === "low") return sortedFiles[sortedFiles.length - 1]; // last = lowest
+  if (tier === "high") return sortedFiles[0]; // first = highest
+  // mid: pick the middle one
+  const midIndex = Math.floor(sortedFiles.length / 2);
+  return sortedFiles[midIndex];
+};
+
 export default function FalixDownloadScreen() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const rawParams = useLocalSearchParams<{ id: string[] }>();
 
@@ -126,6 +182,8 @@ export default function FalixDownloadScreen() {
   const [expandedEpisodes, setExpandedEpisodes] = useState<
     Record<number, boolean>
   >({});
+  const [bulkQualityTier, setBulkQualityTier] = useState<QualityTier>("mid");
+  const [showBulkPanel, setShowBulkPanel] = useState(false);
   const { enqueue } = useDownloadInfra();
   const { all: downloads } = useDownloadList();
 
@@ -142,7 +200,6 @@ export default function FalixDownloadScreen() {
         const json = await res.json();
         if (cancelled) return;
         setData(json);
-        // Default season for TV
         if (json.type === "tv" && json.seasons?.length > 0) {
           setSelectedSeason(json.seasons[0].season_number);
         }
@@ -191,6 +248,88 @@ export default function FalixDownloadScreen() {
     Linking.openURL(url).catch(() => Alert.alert("Could not open URL"));
   };
 
+  // ── Get current season episodes ──
+  const currentEpisodes = useMemo(() => {
+    if (!data || data.type !== "tv") return [];
+    const season = data.seasons?.find(
+      (s) => s.season_number === selectedSeason,
+    );
+    return season?.episodes || [];
+  }, [data, selectedSeason]);
+
+  // ── Bulk download calculation ──
+  const bulkDownloadInfo = useMemo(() => {
+    if (!data || data.type !== "tv") return null;
+
+    const episodes = currentEpisodes;
+    let totalBytes = 0;
+    let validCount = 0;
+    const fileSelections: Array<{
+      episode: (typeof episodes)[0];
+      file: FalixTelegramFile;
+    }> = [];
+
+    for (const ep of episodes) {
+      const sorted = [...(ep.telegram || [])].sort(sortByQuality);
+      const file = getFileByTier(sorted, bulkQualityTier);
+      if (file) {
+        totalBytes += parseSizeToBytes(file.size);
+        validCount++;
+        fileSelections.push({ episode: ep, file });
+      }
+    }
+
+    return {
+      totalBytes,
+      totalFormatted: formatBytes(totalBytes),
+      validCount,
+      totalEpisodes: episodes.length,
+      fileSelections,
+    };
+  }, [data, currentEpisodes, bulkQualityTier]);
+
+  // ── Execute bulk download ──
+  const handleBulkDownload = useCallback(() => {
+    if (!bulkDownloadInfo || bulkDownloadInfo.fileSelections.length === 0)
+      return;
+
+    Alert.alert(
+      "Download All Episodes",
+      `Download ${bulkDownloadInfo.validCount} episodes (${QUALITY_TIER_LABELS[bulkQualityTier]} quality) — Total: ${bulkDownloadInfo.totalFormatted}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Download All",
+          onPress: () => {
+            for (const { episode, file } of bulkDownloadInfo.fileSelections) {
+              const url = buildDownloadUrl(file.id, file.name);
+              const filename = `${data?.title || "video"}-S${String(selectedSeason).padStart(2, "0")}E${String(episode.episode_number).padStart(2, "0")}-${file.quality}.${file.name.split(".").pop() || "mkv"}`;
+
+              enqueue({
+                url,
+                fileName: filename,
+                server: "falix",
+                mediaType: "tv",
+                tmdbId: params.id,
+                quality: file.quality,
+                title: data?.title,
+                season: selectedSeason,
+                episode: episode.episode_number,
+              });
+            }
+          },
+        },
+      ],
+    );
+  }, [
+    bulkDownloadInfo,
+    bulkQualityTier,
+    data,
+    selectedSeason,
+    params.id,
+    enqueue,
+  ]);
+
   // ── Render episode list ──
   const renderEpisode = useCallback(
     ({ item }: { item: any }) => {
@@ -202,7 +341,14 @@ export default function FalixDownloadScreen() {
       return (
         <View
           key={episodeNum}
-          className="bg-zinc-900/50 rounded-xl border border-zinc-700/50 mb-2 overflow-hidden"
+          style={{
+            backgroundColor: "rgba(24, 24, 27, 0.6)",
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: "rgba(63, 63, 70, 0.5)",
+            marginBottom: 10,
+            overflow: "hidden",
+          }}
         >
           {/* Episode header */}
           <TouchableOpacity
@@ -214,42 +360,71 @@ export default function FalixDownloadScreen() {
               }));
             }}
             activeOpacity={0.9}
-            className="flex-row items-center justify-between p-4"
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: 14,
+            }}
           >
-            <View className="flex-row items-center" style={{ gap: 12 }}>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 12,
+                flex: 1,
+              }}
+            >
               {item.episode_backdrop && (
                 <Image
                   source={{ uri: item.episode_backdrop }}
-                  style={{ width: 64, height: 36, borderRadius: 6 }}
+                  style={{ width: 72, height: 42, borderRadius: 8 }}
                   resizeMode="cover"
                 />
               )}
-              <View>
-                <Text className="text-white font-semibold text-sm">
-                  E{String(episodeNum).padStart(2, "0")}
-                </Text>
+              <View style={{ flex: 1 }}>
                 <Text
-                  className="text-zinc-400 text-xs mt-0.5"
-                  numberOfLines={1}
+                  style={{
+                    color: "#ffffff",
+                    fontWeight: "700",
+                    fontSize: 14,
+                    marginBottom: 3,
+                  }}
                 >
-                  {item.title}
+                  Episode {episodeNum}
+                </Text>
+                {/* Full title shown — no truncation */}
+                <Text
+                  style={{
+                    color: "#a1a1aa",
+                    fontSize: 13,
+                    lineHeight: 18,
+                  }}
+                >
+                  {item.title || "Untitled Episode"}
                 </Text>
               </View>
             </View>
-            <View className="flex-row items-center" style={{ gap: 8 }}>
+            <View style={{ marginLeft: 8 }}>
               <Ionicons
                 name={isExpanded ? "chevron-up" : "chevron-down"}
                 size={20}
-                color="#71717a"
+                color={colors.zinc500}
               />
             </View>
           </TouchableOpacity>
 
           {/* Expanded download options */}
           {isExpanded && sortedFiles.length > 0 && (
-            <View className="px-4 pb-4 border-t border-zinc-700/30">
+            <View
+              style={{
+                paddingHorizontal: 14,
+                paddingBottom: 14,
+                borderTopWidth: 1,
+                borderTopColor: "rgba(63, 63, 70, 0.3)",
+              }}
+            >
               {sortedFiles.map((file, i) => {
-                const filename = `${data?.title || "video"}-${file.quality}.${file.name.split(".").pop() || "mkv"}`;
                 const storeTask = downloads.find(
                   (t) =>
                     t.title === data?.title &&
@@ -264,75 +439,141 @@ export default function FalixDownloadScreen() {
                   : 0;
 
                 return (
-                  <TouchableOpacity
+                  <View
                     key={i}
-                    onPress={() =>
-                      !isDownloading &&
-                      downloadFile(file.id, file.name, file.quality)
-                    }
-                    disabled={isDownloading}
-                    activeOpacity={0.7}
-                    className="flex-row items-center justify-between py-2 px-3 rounded-lg mb-1.5 bg-zinc-800/50"
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      paddingVertical: 12,
+                      paddingHorizontal: 12,
+                      borderRadius: 10,
+                      marginBottom: 8,
+                      backgroundColor: "rgba(39, 39, 42, 0.5)",
+                    }}
                   >
-                    <View className="flex-row items-center" style={{ gap: 10 }}>
-                      <View className="bg-primary/20 px-2 py-1 rounded-full">
-                        <Text className="text-primary text-[10px] font-bold">
-                          {file.quality.toUpperCase()}
-                        </Text>
-                      </View>
-                      <View>
-                        <Text
-                          className="text-zinc-300 text-xs font-medium"
-                          numberOfLines={1}
+                    <View style={{ flex: 1, marginRight: 10 }}>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          marginBottom: 5,
+                        }}
+                      >
+                        <View
+                          style={{
+                            backgroundColor: "rgba(212, 162, 55, 0.15)",
+                            paddingHorizontal: 8,
+                            paddingVertical: 3,
+                            borderRadius: 20,
+                          }}
                         >
-                          {file.name}
-                        </Text>
-                        <Text className="text-zinc-500 text-[10px] mt-0.5">
+                          <Text
+                            style={{
+                              color: colors.gold,
+                              fontSize: 10,
+                              fontWeight: "800",
+                              letterSpacing: 0.5,
+                            }}
+                          >
+                            {file.quality.toUpperCase()}
+                          </Text>
+                        </View>
+                        <Text
+                          style={{
+                            color: "#71717a",
+                            fontSize: 11,
+                            marginLeft: 8,
+                          }}
+                        >
                           {file.size}
                         </Text>
                       </View>
+                      {/* Full file name — no truncation */}
+                      <Text
+                        style={{
+                          color: "#d4d4d8",
+                          fontSize: 12,
+                          lineHeight: 17,
+                          fontWeight: "500",
+                        }}
+                      >
+                        {file.name}
+                      </Text>
                     </View>
-                    <View className="flex-row items-center" style={{ gap: 6 }}>
+
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 8,
+                      }}
+                    >
                       {isDownloading && progress > 0 && (
-                        <View style={{ width: 60, height: 4 }}>
+                        <View
+                          style={{
+                            width: 50,
+                            height: 4,
+                            backgroundColor: "rgba(63,63,70,0.5)",
+                            borderRadius: 2,
+                          }}
+                        >
                           <View
                             style={{
                               width: `${progress * 100}%`,
                               height: "100%",
-                              backgroundColor: "#D4A237",
+                              backgroundColor: colors.gold,
                               borderRadius: 2,
                             }}
                           />
                         </View>
                       )}
                       {isDownloading ? (
-                        <ActivityIndicator size="small" color="#D4A237" />
+                        <ActivityIndicator size="small" color={colors.gold} />
                       ) : (
-                        <View className="flex-row" style={{ gap: 6 }}>
+                        <View style={{ flexDirection: "row", gap: 6 }}>
                           <TouchableOpacity
                             onPress={() => openInBrowser(file.id, file.name)}
-                            className="w-8 h-8 rounded-full bg-zinc-700 items-center justify-center"
+                            style={{
+                              width: 34,
+                              height: 34,
+                              borderRadius: 17,
+                              backgroundColor: "rgba(63, 63, 70, 0.8)",
+                              alignItems: "center",
+                              justifyContent: "center",
+                            }}
                             activeOpacity={0.7}
                           >
                             <Ionicons
                               name="open-outline"
-                              size={14}
-                              color="#a1a1aa"
+                              size={15}
+                              color={colors.textSecondary}
                             />
                           </TouchableOpacity>
                           <TouchableOpacity
                             onPress={() =>
                               downloadFile(file.id, file.name, file.quality)
                             }
-                            className="w-8 h-8 rounded-full bg-primary items-center justify-center"
+                            style={{
+                              width: 34,
+                              height: 34,
+                              borderRadius: 17,
+                              backgroundColor: colors.gold,
+                              alignItems: "center",
+                              justifyContent: "center",
+                            }}
                             activeOpacity={0.7}
                           >
-                            <Ionicons name="download" size={14} color="#000" />
+                            <Ionicons
+                              name="download"
+                              size={15}
+                              color={colors.voidBlack}
+                            />
                           </TouchableOpacity>
                         </View>
                       )}
                     </View>
-                  </TouchableOpacity>
+                  </View>
                 );
               })}
             </View>
@@ -349,18 +590,17 @@ export default function FalixDownloadScreen() {
     const seasons = data.seasons || [];
 
     return (
-      <View className="mb-4">
+      <View style={{ marginBottom: 16 }}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
+          contentContainerStyle={{ paddingHorizontal: 0, gap: 8 }}
         >
           {seasons.map((s) => (
             <TouchableOpacity
               key={s.season_number}
               onPress={() => {
                 setSelectedSeason(s.season_number);
-                // Auto-expand first episode of new season
                 if (s.episodes?.length > 0) {
                   LayoutAnimation.easeInEaseOut();
                   setExpandedEpisodes((prev) => ({
@@ -370,18 +610,28 @@ export default function FalixDownloadScreen() {
                 }
               }}
               activeOpacity={0.7}
-              className={`px-4 py-2 rounded-full ${
-                selectedSeason === s.season_number
-                  ? "bg-primary border border-amber-500/30"
-                  : "bg-zinc-800 border border-zinc-700/50"
-              }`}
+              style={{
+                paddingHorizontal: 18,
+                paddingVertical: 10,
+                borderRadius: 24,
+                backgroundColor:
+                  selectedSeason === s.season_number
+                    ? colors.gold
+                    : "rgba(39, 39, 42, 0.8)",
+                borderWidth: 1,
+                borderColor:
+                  selectedSeason === s.season_number
+                    ? "rgba(212, 162, 55, 0.4)"
+                    : "rgba(63, 63, 70, 0.5)",
+              }}
             >
               <Text
-                className={`font-bold ${
-                  selectedSeason === s.season_number
-                    ? "text-black"
-                    : "text-zinc-300"
-                }`}
+                style={{
+                  fontWeight: "700",
+                  fontSize: 13,
+                  color:
+                    selectedSeason === s.season_number ? "#000000" : "#d4d4d8",
+                }}
               >
                 Season {s.season_number}
               </Text>
@@ -392,22 +642,305 @@ export default function FalixDownloadScreen() {
     );
   }, [data, selectedSeason]);
 
-  // ── Get current season episodes ──
-  const currentEpisodes = useMemo(() => {
-    if (!data || data.type !== "tv") return [];
-    const season = data.seasons?.find(
-      (s) => s.season_number === selectedSeason,
+  // ── Bulk Download Panel ──
+  const renderBulkDownloadPanel = useCallback(() => {
+    if (!data || data.type !== "tv" || currentEpisodes.length === 0)
+      return null;
+
+    return (
+      <View
+        style={{
+          backgroundColor: "rgba(24, 24, 27, 0.85)",
+          borderRadius: 16,
+          borderWidth: 1,
+          borderColor: "rgba(212, 162, 55, 0.25)",
+          marginBottom: 20,
+          overflow: "hidden",
+        }}
+      >
+        {/* Panel Header */}
+        <TouchableOpacity
+          onPress={() => {
+            LayoutAnimation.easeInEaseOut();
+            setShowBulkPanel((prev) => !prev);
+          }}
+          activeOpacity={0.9}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: 16,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <View
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                backgroundColor: "rgba(212, 162, 55, 0.15)",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Ionicons name="layers-outline" size={18} color={colors.gold} />
+            </View>
+            <View>
+              <Text
+                style={{ color: "#ffffff", fontWeight: "700", fontSize: 15 }}
+              >
+                Download All Episodes
+              </Text>
+              <Text style={{ color: "#a1a1aa", fontSize: 12, marginTop: 2 }}>
+                Season {selectedSeason} • {currentEpisodes.length} episodes
+              </Text>
+            </View>
+          </View>
+          <Ionicons
+            name={showBulkPanel ? "chevron-up" : "chevron-down"}
+            size={20}
+            color={colors.zinc500}
+          />
+        </TouchableOpacity>
+
+        {/* Expanded Panel Content */}
+        {showBulkPanel && (
+          <View style={{ paddingHorizontal: 16, paddingBottom: 16 }}>
+            {/* Quality Tier Selector */}
+            <Text
+              style={{
+                color: "#a1a1aa",
+                fontSize: 11,
+                fontWeight: "700",
+                textTransform: "uppercase",
+                letterSpacing: 1,
+                marginBottom: 10,
+              }}
+            >
+              Choose Quality for All
+            </Text>
+
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
+              {(["low", "mid", "high"] as QualityTier[]).map((tier) => {
+                const isActive = bulkQualityTier === tier;
+                return (
+                  <TouchableOpacity
+                    key={tier}
+                    onPress={() => setBulkQualityTier(tier)}
+                    activeOpacity={0.7}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 12,
+                      paddingHorizontal: 8,
+                      borderRadius: 12,
+                      backgroundColor: isActive
+                        ? "rgba(212, 162, 55, 0.15)"
+                        : "rgba(39, 39, 42, 0.6)",
+                      borderWidth: 1.5,
+                      borderColor: isActive
+                        ? colors.gold
+                        : "rgba(63, 63, 70, 0.5)",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Ionicons
+                      name={
+                        tier === "low"
+                          ? "arrow-down-circle-outline"
+                          : tier === "mid"
+                            ? "remove-circle-outline"
+                            : "arrow-up-circle-outline"
+                      }
+                      size={20}
+                      color={isActive ? colors.gold : "#71717a"}
+                      style={{ marginBottom: 6 }}
+                    />
+                    <Text
+                      style={{
+                        color: isActive ? colors.gold : "#d4d4d8",
+                        fontWeight: "700",
+                        fontSize: 13,
+                        marginBottom: 2,
+                      }}
+                    >
+                      {QUALITY_TIER_LABELS[tier]}
+                    </Text>
+                    <Text
+                      style={{
+                        color: "#71717a",
+                        fontSize: 10,
+                        textAlign: "center",
+                      }}
+                    >
+                      {QUALITY_TIER_DESCRIPTIONS[tier]}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Total Size Display */}
+            {bulkDownloadInfo && (
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  backgroundColor: "rgba(39, 39, 42, 0.5)",
+                  borderRadius: 12,
+                  padding: 14,
+                  marginBottom: 14,
+                }}
+              >
+                <View>
+                  <Text
+                    style={{ color: "#a1a1aa", fontSize: 11, marginBottom: 3 }}
+                  >
+                    Estimated Total Size
+                  </Text>
+                  <Text
+                    style={{
+                      color: "#ffffff",
+                      fontWeight: "800",
+                      fontSize: 20,
+                    }}
+                  >
+                    {bulkDownloadInfo.totalFormatted}
+                  </Text>
+                </View>
+                <View style={{ alignItems: "flex-end" }}>
+                  <Text
+                    style={{ color: "#a1a1aa", fontSize: 11, marginBottom: 3 }}
+                  >
+                    Episodes
+                  </Text>
+                  <Text
+                    style={{
+                      color: colors.gold,
+                      fontWeight: "700",
+                      fontSize: 16,
+                    }}
+                  >
+                    {bulkDownloadInfo.validCount}/
+                    {bulkDownloadInfo.totalEpisodes}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Per-episode preview */}
+            {bulkDownloadInfo && bulkDownloadInfo.fileSelections.length > 0 && (
+              <View style={{ marginBottom: 14 }}>
+                <Text
+                  style={{
+                    color: "#71717a",
+                    fontSize: 11,
+                    fontWeight: "600",
+                    marginBottom: 8,
+                  }}
+                >
+                  Preview ({bulkDownloadInfo.fileSelections.length} files)
+                </Text>
+                <ScrollView
+                  style={{ maxHeight: 140 }}
+                  showsVerticalScrollIndicator={true}
+                >
+                  {bulkDownloadInfo.fileSelections.map(
+                    ({ episode, file }, idx) => (
+                      <View
+                        key={idx}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          paddingVertical: 7,
+                          borderBottomWidth:
+                            idx < bulkDownloadInfo.fileSelections.length - 1
+                              ? 0.5
+                              : 0,
+                          borderBottomColor: "rgba(63,63,70,0.3)",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: "#d4d4d8",
+                            fontSize: 12,
+                            flex: 1,
+                            marginRight: 8,
+                          }}
+                          numberOfLines={2}
+                        >
+                          E{String(episode.episode_number).padStart(2, "0")} —{" "}
+                          {file.name}
+                        </Text>
+                        <Text
+                          style={{
+                            color: "#71717a",
+                            fontSize: 11,
+                            fontWeight: "600",
+                          }}
+                        >
+                          {file.size}
+                        </Text>
+                      </View>
+                    ),
+                  )}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* Download All Button */}
+            <TouchableOpacity
+              onPress={handleBulkDownload}
+              activeOpacity={0.8}
+              disabled={!bulkDownloadInfo || bulkDownloadInfo.validCount === 0}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: colors.gold,
+                borderRadius: 14,
+                paddingVertical: 15,
+                gap: 8,
+                opacity:
+                  bulkDownloadInfo && bulkDownloadInfo.validCount > 0 ? 1 : 0.4,
+              }}
+            >
+              <Ionicons name="download-outline" size={18} color="#000000" />
+              <Text
+                style={{ color: "#000000", fontWeight: "800", fontSize: 15 }}
+              >
+                Download All ({bulkDownloadInfo?.totalFormatted || "0 B"})
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
     );
-    return season?.episodes || [];
-  }, [data, selectedSeason]);
+  }, [
+    data,
+    currentEpisodes,
+    selectedSeason,
+    showBulkPanel,
+    bulkQualityTier,
+    bulkDownloadInfo,
+    handleBulkDownload,
+  ]);
 
   // ── Loading / Error / Empty ──
   if (loading) {
     return (
-      <View className="flex-1 items-center justify-center bg-black">
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: colors.voidBlack,
+        }}
+      >
         <StatusBar barStyle="light-content" />
-        <ActivityIndicator size="large" color="#D4A237" />
-        <Text className="text-zinc-400 text-sm mt-4">
+        <ActivityIndicator size="large" color={colors.gold} />
+        <Text style={{ color: "#a1a1aa", fontSize: 14, marginTop: 16 }}>
           Loading download info...
         </Text>
       </View>
@@ -416,23 +949,67 @@ export default function FalixDownloadScreen() {
 
   if (error) {
     return (
-      <View className="flex-1 items-center justify-center bg-black px-6">
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: colors.voidBlack,
+          paddingHorizontal: 24,
+        }}
+      >
         <StatusBar barStyle="light-content" />
-        <View className="w-16 h-16 rounded-full bg-red-500/10 items-center justify-center mb-5">
-          <Ionicons name="alert-circle-outline" size={36} color="#ef4444" />
+        <View
+          style={{
+            width: 64,
+            height: 64,
+            borderRadius: 32,
+            backgroundColor: "rgba(239, 68, 68, 0.1)",
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 20,
+          }}
+        >
+          <Ionicons
+            name="alert-circle-outline"
+            size={36}
+            color={colors.error}
+          />
         </View>
-        <Text className="text-zinc-300 text-lg font-semibold mb-2">
+        <Text
+          style={{
+            color: "#d4d4d8",
+            fontSize: 18,
+            fontWeight: "600",
+            marginBottom: 8,
+          }}
+        >
           Failed to Load
         </Text>
-        <Text className="text-zinc-500 text-sm text-center mb-6 leading-5">
+        <Text
+          style={{
+            color: "#71717a",
+            fontSize: 14,
+            textAlign: "center",
+            marginBottom: 24,
+            lineHeight: 20,
+          }}
+        >
           {error}
         </Text>
         <TouchableOpacity
-          onPress={() => router.back()}
-          className="bg-primary rounded-xl py-3 px-8"
+          onPress={() => nav.goBack({ fallback: "/(tabs)" })}
+          style={{
+            backgroundColor: colors.gold,
+            borderRadius: 12,
+            paddingVertical: 14,
+            paddingHorizontal: 32,
+          }}
           activeOpacity={0.8}
         >
-          <Text className="text-void font-bold text-base">Go Back</Text>
+          <Text style={{ color: "#000000", fontWeight: "700", fontSize: 15 }}>
+            Go Back
+          </Text>
         </TouchableOpacity>
       </View>
     );
@@ -440,9 +1017,16 @@ export default function FalixDownloadScreen() {
 
   if (!data) {
     return (
-      <View className="flex-1 items-center justify-center bg-black">
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: colors.voidBlack,
+        }}
+      >
         <StatusBar barStyle="light-content" />
-        <Text className="text-zinc-500">No data available</Text>
+        <Text style={{ color: "#71717a" }}>No data available</Text>
       </View>
     );
   }
@@ -450,10 +1034,7 @@ export default function FalixDownloadScreen() {
   const isTV = data.type === "tv";
 
   return (
-    <SafeAreaView
-      className="flex-1 bg-black"
-      style={{ backgroundColor: "#000" }}
-    >
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.voidBlack }}>
       <StatusBar barStyle="light-content" />
 
       {/* Backdrop */}
@@ -465,114 +1046,217 @@ export default function FalixDownloadScreen() {
           blurRadius={Platform.OS === "android" ? 10 : 20}
         />
       )}
+      {/* Dark overlay for readability */}
+      <View
+        style={[
+          StyleSheet.absoluteFill,
+          { backgroundColor: "rgba(0,0,0,0.7)" },
+        ]}
+      />
 
       <ScrollView
-        className="flex-1"
+        style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: 140 }}
       >
         {/* Header */}
-        <View className="px-4 pt-6 pb-4">
-          <View className="flex-row items-center justify-between mb-3">
+        <View
+          style={{ paddingHorizontal: 16, paddingTop: 24, paddingBottom: 16 }}
+        >
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 16,
+            }}
+          >
             <TouchableOpacity
-              onPress={() => router.back()}
-              className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
+              onPress={() => nav.goBack({ fallback: "/(tabs)" })}
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 19,
+                backgroundColor: "rgba(0,0,0,0.5)",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
               activeOpacity={0.7}
               accessibilityLabel="Close"
               accessibilityRole="button"
             >
-              <Ionicons name="close" size={22} color="#fff" />
+              <Ionicons name="close" size={22} color={colors.textPrimary} />
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => router.push("/downloads")}
-              className="h-9 rounded-full flex-row items-center px-3"
-              style={{ backgroundColor: "rgba(212,162,55,0.12)" }}
+              onPress={() => nav.push("/downloads")}
+              style={{
+                height: 38,
+                borderRadius: 19,
+                flexDirection: "row",
+                alignItems: "center",
+                paddingHorizontal: 14,
+                backgroundColor: "rgba(212,162,55,0.12)",
+              }}
               activeOpacity={0.7}
             >
               <Ionicons
                 name="download-outline"
-                size={14}
-                color="#D4A237"
-                style={{ marginRight: 4 }}
+                size={15}
+                color={colors.gold}
+                style={{ marginRight: 5 }}
               />
-              <Text className="text-amber-400 text-[11px] font-bold">
+              <Text
+                style={{ color: colors.gold, fontSize: 12, fontWeight: "700" }}
+              >
                 Downloads
               </Text>
             </TouchableOpacity>
           </View>
-          <View className="flex-row items-start" style={{ gap: 14 }}>
+
+          {/* Poster + Info */}
+          <View
+            style={{ flexDirection: "row", alignItems: "flex-start", gap: 16 }}
+          >
             <Image
               source={{ uri: data.poster }}
               style={{
-                width: 110,
-                height: 165,
-                borderRadius: 12,
+                width: 115,
+                height: 172,
+                borderRadius: 14,
                 borderWidth: 1,
-                borderColor: "#27272a",
+                borderColor: "rgba(63, 63, 70, 0.6)",
               }}
               resizeMode="cover"
             />
-            <View className="flex-1 pt-2">
+            <View style={{ flex: 1, paddingTop: 4 }}>
+              {/* Full title — no truncation */}
               <Text
-                className="text-white font-bold text-xl"
-                style={{ fontFamily: "PlayfairDisplay_700Bold" }}
-                numberOfLines={2}
+                style={{
+                  color: "#ffffff",
+                  fontWeight: "700",
+                  fontSize: 20,
+                  lineHeight: 26,
+                  fontFamily: "PlayfairDisplay_700Bold",
+                }}
               >
                 {data.title}
               </Text>
-              <View className="flex-row items-center mt-2" style={{ gap: 10 }}>
-                <View className="flex-row items-center bg-zinc-800/50 px-2 py-1 rounded-full">
-                  <Ionicons name="star" size={12} color="#D4A237" />
-                  <Text className="text-amber-400 text-xs font-bold ml-1">
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginTop: 10,
+                  flexWrap: "wrap",
+                  gap: 8,
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    backgroundColor: "rgba(39, 39, 42, 0.6)",
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                    borderRadius: 20,
+                  }}
+                >
+                  <Ionicons name="star" size={12} color={colors.gold} />
+                  <Text
+                    style={{
+                      color: colors.gold,
+                      fontSize: 12,
+                      fontWeight: "700",
+                      marginLeft: 4,
+                    }}
+                  >
                     {data.rating?.toFixed(1) || "—"}
                   </Text>
                 </View>
-                <Text className="text-zinc-500 text-xs">
+                <Text style={{ color: "#71717a", fontSize: 12 }}>
                   {data.release_year}
                 </Text>
-                <Text className="text-zinc-600 text-xs">•</Text>
-                <Text className="text-zinc-500 text-xs">{data.rip}</Text>
-                {"runtime" in data && data.runtime && (
+                <Text style={{ color: "#52525b", fontSize: 12 }}>•</Text>
+                <Text style={{ color: "#71717a", fontSize: 12 }}>
+                  {data.rip}
+                </Text>
+                {"runtime" in data && data.runtime > 0 && (
                   <>
-                    <Text className="text-zinc-600 text-xs">•</Text>
-                    <Text className="text-zinc-500 text-xs">
+                    <Text style={{ color: "#52525b", fontSize: 12 }}>•</Text>
+                    <Text style={{ color: "#71717a", fontSize: 12 }}>
                       {data.runtime}m
                     </Text>
                   </>
                 )}
               </View>
-              <View className="flex-row flex-wrap mt-3" style={{ gap: 6 }}>
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  marginTop: 12,
+                  gap: 6,
+                }}
+              >
                 {data.genres?.slice(0, 4).map((g, i) => (
                   <View
                     key={i}
-                    className="bg-zinc-800/50 border border-zinc-700/50 px-2.5 py-1 rounded-full"
+                    style={{
+                      backgroundColor: "rgba(39, 39, 42, 0.6)",
+                      borderWidth: 1,
+                      borderColor: "rgba(63, 63, 70, 0.5)",
+                      paddingHorizontal: 10,
+                      paddingVertical: 4,
+                      borderRadius: 20,
+                    }}
                   >
-                    <Text className="text-zinc-300 text-[10px] font-semibold">
+                    <Text
+                      style={{
+                        color: "#d4d4d8",
+                        fontSize: 11,
+                        fontWeight: "600",
+                      }}
+                    >
                       {g}
                     </Text>
                   </View>
                 ))}
               </View>
-              {!isTV && data.telegram && (
-                <View className="flex-row mt-3" style={{ gap: 8 }}>
-                  <TouchableOpacity
-                    onPress={() =>
-                      downloadFile(
-                        data.telegram[0]?.id || "",
-                        data.telegram[0]?.name || "",
-                        "best",
-                      )
-                    }
-                    disabled={!data.telegram?.length}
-                    className="bg-primary rounded-xl py-2 px-5 flex-row items-center"
-                    activeOpacity={0.8}
+
+              {/* Movie quick download */}
+              {!isTV && data.telegram && data.telegram.length > 0 && (
+                <TouchableOpacity
+                  onPress={() =>
+                    downloadFile(
+                      data.telegram[0]?.id || "",
+                      data.telegram[0]?.name || "",
+                      "best",
+                    )
+                  }
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    backgroundColor: colors.gold,
+                    borderRadius: 12,
+                    paddingVertical: 10,
+                    paddingHorizontal: 18,
+                    marginTop: 14,
+                    alignSelf: "flex-start",
+                    gap: 6,
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="download" size={16} color="#000000" />
+                  <Text
+                    style={{
+                      color: "#000000",
+                      fontWeight: "700",
+                      fontSize: 13,
+                    }}
                   >
-                    <Ionicons name="download" size={16} color="#000" />
-                    <Text className="text-void font-bold text-sm ml-2">
-                      Best Quality
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                    Best Quality
+                  </Text>
+                </TouchableOpacity>
               )}
             </View>
           </View>
@@ -580,26 +1264,43 @@ export default function FalixDownloadScreen() {
 
         {/* Description */}
         {data.description && (
-          <View className="px-4 mb-4">
+          <View style={{ paddingHorizontal: 16, marginBottom: 20 }}>
             <Text
-              className="text-white font-bold text-sm mb-2"
-              style={{ fontFamily: "PlayfairDisplay_700Bold" }}
+              style={{
+                color: "#ffffff",
+                fontWeight: "700",
+                fontSize: 15,
+                marginBottom: 8,
+                fontFamily: "PlayfairDisplay_700Bold",
+              }}
             >
               About
             </Text>
-            <Text className="text-zinc-400 text-sm leading-relaxed">
+            <Text style={{ color: "#a1a1aa", fontSize: 14, lineHeight: 22 }}>
               {data.description}
             </Text>
           </View>
         )}
 
+        {/* TV: Bulk Download Panel */}
+        {isTV && (
+          <View style={{ paddingHorizontal: 16, marginBottom: 8 }}>
+            {renderBulkDownloadPanel()}
+          </View>
+        )}
+
         {/* TV: Season tabs + Episodes */}
         {isTV && (
-          <View className="px-4 mb-4">
+          <View style={{ paddingHorizontal: 16, marginBottom: 16 }}>
             {renderSeasonTabs()}
             <Text
-              className="text-white font-bold text-sm mb-3"
-              style={{ fontFamily: "PlayfairDisplay_700Bold" }}
+              style={{
+                color: "#ffffff",
+                fontWeight: "700",
+                fontSize: 15,
+                marginBottom: 14,
+                fontFamily: "PlayfairDisplay_700Bold",
+              }}
             >
               Season {selectedSeason} Episodes
             </Text>
@@ -607,10 +1308,13 @@ export default function FalixDownloadScreen() {
               data={currentEpisodes}
               renderItem={renderEpisode}
               keyExtractor={(item) => String(item.episode_number)}
+              scrollEnabled={false}
               ListEmptyComponent={
-                <View className="items-center py-8">
-                  <Ionicons name="tv-outline" size={24} color="#52525b" />
-                  <Text className="text-zinc-500 text-xs mt-2">
+                <View style={{ alignItems: "center", paddingVertical: 32 }}>
+                  <Ionicons name="tv-outline" size={28} color="#52525b" />
+                  <Text
+                    style={{ color: "#71717a", fontSize: 13, marginTop: 8 }}
+                  >
                     No episodes found
                   </Text>
                 </View>
@@ -621,10 +1325,15 @@ export default function FalixDownloadScreen() {
 
         {/* Movie: Direct downloads */}
         {!isTV && data.telegram && data.telegram.length > 0 && (
-          <View className="px-4 mb-6">
+          <View style={{ paddingHorizontal: 16, marginBottom: 24 }}>
             <Text
-              className="text-white font-bold text-sm mb-3"
-              style={{ fontFamily: "PlayfairDisplay_700Bold" }}
+              style={{
+                color: "#ffffff",
+                fontWeight: "700",
+                fontSize: 15,
+                marginBottom: 14,
+                fontFamily: "PlayfairDisplay_700Bold",
+              }}
             >
               Download Options
             </Text>
@@ -643,94 +1352,144 @@ export default function FalixDownloadScreen() {
                 : 0;
 
               return (
-                <TouchableOpacity
+                <View
                   key={i}
-                  onPress={() =>
-                    !isDownloading &&
-                    downloadFile(file.id, file.name, file.quality)
-                  }
-                  disabled={isDownloading}
-                  activeOpacity={0.7}
-                  className="flex-row items-center justify-between py-3 px-4 rounded-xl mb-2 bg-zinc-900/50 border border-zinc-700/50"
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    paddingVertical: 14,
+                    paddingHorizontal: 16,
+                    borderRadius: 14,
+                    marginBottom: 10,
+                    backgroundColor: "rgba(24, 24, 27, 0.6)",
+                    borderWidth: 1,
+                    borderColor: "rgba(63, 63, 70, 0.5)",
+                  }}
                 >
-                  <View className="flex-row items-center" style={{ gap: 12 }}>
-                    <View className="bg-primary/20 px-3 py-1.5 rounded-full">
-                      <Text className="text-primary text-xs font-bold">
-                        {file.quality.toUpperCase()}
-                      </Text>
-                    </View>
-                    <View>
-                      <Text
-                        className="text-zinc-300 text-sm font-medium"
-                        numberOfLines={1}
+                  <View style={{ flex: 1, marginRight: 12 }}>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        marginBottom: 6,
+                      }}
+                    >
+                      <View
+                        style={{
+                          backgroundColor: "rgba(212, 162, 55, 0.15)",
+                          paddingHorizontal: 10,
+                          paddingVertical: 4,
+                          borderRadius: 20,
+                        }}
                       >
-                        {file.name}
-                      </Text>
-                      <Text className="text-zinc-500 text-xs mt-0.5">
+                        <Text
+                          style={{
+                            color: colors.gold,
+                            fontSize: 11,
+                            fontWeight: "800",
+                            letterSpacing: 0.5,
+                          }}
+                        >
+                          {file.quality.toUpperCase()}
+                        </Text>
+                      </View>
+                      <Text
+                        style={{
+                          color: "#71717a",
+                          fontSize: 12,
+                          marginLeft: 10,
+                        }}
+                      >
                         {file.size}
                       </Text>
                     </View>
+                    {/* Full file name — no truncation */}
+                    <Text
+                      style={{
+                        color: "#d4d4d8",
+                        fontSize: 13,
+                        lineHeight: 19,
+                        fontWeight: "500",
+                      }}
+                    >
+                      {file.name}
+                    </Text>
                   </View>
-                  <View className="flex-row items-center" style={{ gap: 8 }}>
+
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
                     {isDownloading && progress > 0 && (
-                      <View style={{ width: 60, height: 4 }}>
+                      <View
+                        style={{
+                          width: 50,
+                          height: 4,
+                          backgroundColor: "rgba(63,63,70,0.5)",
+                          borderRadius: 2,
+                        }}
+                      >
                         <View
                           style={{
                             width: `${progress * 100}%`,
                             height: "100%",
-                            backgroundColor: "#D4A237",
+                            backgroundColor: colors.gold,
                             borderRadius: 2,
                           }}
                         />
                       </View>
                     )}
                     {isDownloading ? (
-                      <ActivityIndicator size="small" color="#D4A237" />
+                      <ActivityIndicator size="small" color={colors.gold} />
                     ) : (
-                      <View className="flex-row" style={{ gap: 6 }}>
+                      <View style={{ flexDirection: "row", gap: 6 }}>
                         <TouchableOpacity
                           onPress={() => openInBrowser(file.id, file.name)}
-                          className="w-9 h-9 rounded-full bg-zinc-700 items-center justify-center"
+                          style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: 18,
+                            backgroundColor: "rgba(63, 63, 70, 0.8)",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
                           activeOpacity={0.7}
                         >
                           <Ionicons
                             name="open-outline"
                             size={16}
-                            color="#a1a1aa"
+                            color={colors.textSecondary}
                           />
                         </TouchableOpacity>
                         <TouchableOpacity
                           onPress={() =>
                             downloadFile(file.id, file.name, file.quality)
                           }
-                          className="w-9 h-9 rounded-full bg-primary items-center justify-center"
+                          style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: 18,
+                            backgroundColor: colors.gold,
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
                           activeOpacity={0.7}
                         >
-                          <Ionicons name="download" size={16} color="#000" />
+                          <Ionicons name="download" size={16} color="#000000" />
                         </TouchableOpacity>
                       </View>
                     )}
                   </View>
-                </TouchableOpacity>
+                </View>
               );
             })}
           </View>
         )}
       </ScrollView>
-
-      {/* Bottom floating action for TV */}
-      {isTV && (
-        <View
-          className="absolute bottom-0 left-0 right-0 z-30 px-4 pb-4"
-          style={{ paddingBottom: insets.bottom + 16 }}
-        >
-          <View className="bg-zinc-900/90 rounded-xl border border-zinc-700/50 p-3">
-            <Text className="text-zinc-400 text-xs font-bold mb-2 text-center">
-              Tap a season above, then tap an episode to expand download options
-            </Text>
-          </View>
-        </View>
-      )}
     </SafeAreaView>
   );
 }

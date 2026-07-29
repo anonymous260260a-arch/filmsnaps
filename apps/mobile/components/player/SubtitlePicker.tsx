@@ -12,6 +12,7 @@ import {
   StyleSheet,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { colors } from "../../theme/colors";
 import type { VideoPlayer, SubtitleTrack } from "expo-video";
 
 interface SubtitlePickerProps {
@@ -50,7 +51,7 @@ export function SubtitlePicker({
           <View style={styles.header}>
             <Text style={styles.headerTitle}>Subtitles</Text>
             <TouchableOpacity onPress={onClose} activeOpacity={0.7}>
-              <Ionicons name="close" size={24} color="#A1A1AA" />
+              <Ionicons name="close" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
@@ -68,7 +69,7 @@ export function SubtitlePicker({
               <Text style={styles.trackName}>Disable subtitles</Text>
             </View>
             {selectedTrack === null && (
-              <Ionicons name="checkmark" size={20} color="#D4A237" />
+              <Ionicons name="checkmark" size={20} color={colors.gold} />
             )}
           </TouchableOpacity>
 
@@ -97,7 +98,7 @@ export function SubtitlePicker({
                   </Text>
                 </View>
                 {selectedTrack?.language === item.language && (
-                  <Ionicons name="checkmark" size={20} color="#D4A237" />
+                  <Ionicons name="checkmark" size={20} color={colors.gold} />
                 )}
               </TouchableOpacity>
             )}
@@ -107,7 +108,7 @@ export function SubtitlePicker({
           {/* No tracks message */}
           {tracks.length === 0 && (
             <View style={styles.emptyState}>
-              <Ionicons name="text" size={48} color="#3F3F46" />
+              <Ionicons name="text" size={48} color={colors.emptyIcon} />
               <Text style={styles.emptyText}>No subtitles available</Text>
             </View>
           )}
@@ -124,7 +125,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   sheet: {
-    backgroundColor: "#16161A",
+    backgroundColor: colors.bgElevated,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     maxHeight: "60%",
@@ -137,10 +138,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#27272A",
+    borderBottomColor: colors.zinc800,
   },
   headerTitle: {
-    color: "#F4F4F5",
+    color: colors.textPrimary,
     fontSize: 18,
     fontWeight: "700",
   },
@@ -152,24 +153,24 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   trackItemSelected: {
-    backgroundColor: "rgba(212,162,55,0.1)",
+    backgroundColor: colors.goldBadge,
   },
   trackInfo: {
     flex: 1,
   },
   trackLanguage: {
-    color: "#F4F4F5",
+    color: colors.textPrimary,
     fontSize: 16,
     fontWeight: "600",
   },
   trackName: {
-    color: "#A1A1AA",
+    color: colors.textSecondary,
     fontSize: 13,
     marginTop: 2,
   },
   separator: {
     height: 1,
-    backgroundColor: "#27272A",
+    backgroundColor: colors.zinc800,
     marginHorizontal: 20,
   },
   emptyState: {
@@ -177,7 +178,7 @@ const styles = StyleSheet.create({
     paddingVertical: 40,
   },
   emptyText: {
-    color: "#71717A",
+    color: colors.zinc500,
     fontSize: 14,
     marginTop: 12,
   },

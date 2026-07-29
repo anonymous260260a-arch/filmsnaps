@@ -7,134 +7,96 @@
  * for pause/cancel/resume operations.
  */
 
-import { useCallback, useMemo } from "react";
-import { useSyncExternalStore } from "react";
+import { useMemo, useCallback } from "react";
 import { useDownloadInfra } from "./context";
-import type { DownloadMeta, DownloadTask, AggregateProgress } from "./types";
+import type { DownloadTask, AggregateProgress } from "./types";
 
 export interface UseEpisodeDownloadsReturn {
   episodes: DownloadTask[];
-  aggregate: AggregateProgress;
-  startEpisode: (meta: DownloadMeta) => string;
-  startAll: () => void;
+  progress: AggregateProgress;
+  allCompleted: boolean;
+  anyActive: boolean;
+  anyPaused: boolean;
+  anyFailed: boolean;
+  // Batch actions
   pauseAll: () => Promise<void>;
+  resumeAll: () => Promise<void>;
   cancelAll: () => Promise<void>;
-  resumeAll: () => void;
+  retryFailed: () => Promise<void>;
+  removeAll: () => Promise<void>;
 }
 
 export function useEpisodeDownloads(
   tmdbId: string,
-  season?: number,
+  season: number,
 ): UseEpisodeDownloadsReturn {
-  const { store, manager, enqueue } = useDownloadInfra();
+  const { store, manager, control } = useDownloadInfra();
 
-  const episodes = useSyncExternalStore(
-    (cb) => store.subscribe(() => cb()),
-    () =>
-      store.getBySeason?.(tmdbId, season ?? 0) ??
-      store
-        .getAll()
-        .filter(
-          (t) =>
-            t.tmdbId === tmdbId &&
-            (season === undefined || t.season === season),
-        ),
-  );
+  const episodes = useMemo(() => {
+    return store.getBySeason(tmdbId, season).sort((a, b) => {
+      return (a.episode ?? 0) - (b.episode ?? 0);
+    });
+  }, [store, tmdbId, season]);
 
-  const aggregate = useMemo<AggregateProgress>(() => {
-    let totalBytes = 0;
-    let receivedBytes = 0;
-    let activeCount = 0;
-    let completedCount = 0;
-    const totalCount = episodes.length;
-
-    for (const ep of episodes) {
-      totalBytes += ep.totalBytes;
-      receivedBytes += ep.receivedBytes;
-      if (ep.status === "downloading") activeCount++;
-      if (ep.status === "completed") completedCount++;
-    }
+  const progress = useMemo<AggregateProgress>(() => {
+    const totalBytes = episodes.reduce(
+      (sum, e) => sum + (e.totalBytes || 0),
+      0,
+    );
+    const receivedBytes = episodes.reduce(
+      (sum, e) => sum + (e.receivedBytes || 0),
+      0,
+    );
+    const activeCount = episodes.filter(
+      (e) => e.status === "downloading" || e.status === "retrying",
+    ).length;
+    const completedCount = episodes.filter(
+      (e) => e.status === "completed",
+    ).length;
 
     return {
       totalBytes,
       receivedBytes,
       fraction: totalBytes > 0 ? receivedBytes / totalBytes : 0,
       activeCount,
-      totalCount,
+      totalCount: episodes.length,
       completedCount,
     };
   }, [episodes]);
 
-  // Use shared enqueue for deduplication
-  const startEpisode = useCallback(
-    (meta: DownloadMeta): string => {
-      return enqueue(meta);
-    },
-    [enqueue],
+  const allCompleted =
+    episodes.length > 0 && episodes.every((e) => e.status === "completed");
+  const anyActive = episodes.some(
+    (e) => e.status === "downloading" || e.status === "retrying",
   );
+  const anyPaused = episodes.some((e) => e.status === "paused");
+  const anyFailed = episodes.some((e) => e.status === "failed");
 
-  // Start all pending/failed/cancelled episodes
-  const startAll = useCallback(() => {
-    for (const ep of episodes) {
-      if (
-        ep.status === "completed" ||
-        ep.status === "downloading" ||
-        ep.status === "pending"
-      )
-        continue;
-      enqueue({
-        url: ep.url,
-        fileName: ep.fileName,
-        server: ep.server,
-        mediaType: ep.mediaType,
-        tmdbId: ep.tmdbId,
-        quality: ep.quality,
-        title: ep.title,
-        season: ep.season,
-        episode: ep.episode,
-        extension: ep.extension,
-      });
-    }
-  }, [episodes, enqueue]);
+  const ids = useMemo(() => episodes.map((e) => e.id), [episodes]);
 
-  // Pause all downloading episodes
-  const pauseAll = useCallback(async () => {
-    for (const ep of episodes) {
-      if (ep.status !== "downloading") continue;
-      await manager.pause(ep.id);
-    }
-  }, [episodes, manager]);
+  const pauseAll = useCallback(() => control("pause", ids), [control, ids]);
+  const resumeAll = useCallback(() => control("resume", ids), [control, ids]);
+  const cancelAll = useCallback(() => control("cancel", ids), [control, ids]);
+  const removeAll = useCallback(() => control("remove", ids), [control, ids]);
 
-  // Cancel all active episodes
-  const cancelAll = useCallback(async () => {
-    for (const ep of episodes) {
-      if (
-        ep.status !== "downloading" &&
-        ep.status !== "pending" &&
-        ep.status !== "paused"
-      )
-        continue;
-      await manager.cancel(ep.id);
-    }
-  }, [episodes, manager]);
-
-  // Resume all paused episodes
-  const resumeAll = useCallback(() => {
-    for (const ep of episodes) {
-      if (ep.status !== "paused") continue;
-      manager.resume(ep.id).catch((err) => {
-        console.error("[useEpisodeDownloads] resume failed:", err);
-      });
+  const retryFailed = useCallback(async () => {
+    const failed = episodes.filter((e) => e.status === "failed");
+    for (const ep of failed) {
+      await manager.retry(ep.id);
     }
   }, [episodes, manager]);
 
   return {
     episodes,
-    aggregate,
-    startEpisode,
-    startAll,
+    progress,
+    allCompleted,
+    anyActive,
+    anyPaused,
+    anyFailed,
     pauseAll,
-    cancelAll,
     resumeAll,
+    cancelAll,
+    retryFailed,
+    removeAll,
   };
 }

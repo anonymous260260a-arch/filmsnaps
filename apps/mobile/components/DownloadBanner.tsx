@@ -28,9 +28,10 @@ import {
 } from "react-native";
 import { ForwardIcon } from "../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useDownloadList } from "../lib/download";
+import { colors } from "../theme/colors";
 
 /** Format bytes into human-readable KiB/MiB */
 function formatBytes(bytes: number): string {
@@ -46,7 +47,7 @@ type BannerState =
   | { type: "DEGRADED"; failedCount: number };
 
 export default function DownloadBanner() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const { active, completed, failed } = useDownloadList();
 
@@ -198,8 +199,8 @@ export default function DownloadBanner() {
   }, [!!state, state?.type]);
 
   const handleTap = useCallback(() => {
-    router.push("/downloads");
-  }, [router]);
+    nav.push("/downloads");
+  }, [nav]);
 
   if (!state) return null;
 
@@ -234,7 +235,7 @@ function renderContent(state: BannerState, pulseAnim: Animated.Value) {
         <View style={styles.content}>
           <View style={styles.leftSection}>
             <Animated.View style={[styles.iconBg, { opacity: pulseAnim }]}>
-              <Ionicons name="download" size={14} color="#070708" />
+              <Ionicons name="download" size={14} color={colors.bg} />
             </Animated.View>
             <Text style={styles.count}>{state.count}</Text>
           </View>
@@ -244,7 +245,7 @@ function renderContent(state: BannerState, pulseAnim: Animated.Value) {
           {state.speed > 0 && (
             <Text style={styles.speed}>{formatBytes(state.speed)}</Text>
           )}
-          <ForwardIcon width={14} height={14} color="#D4A237" />
+          <ForwardIcon width={14} height={14} color={colors.gold} />
         </View>
       );
     }
@@ -255,18 +256,18 @@ function renderContent(state: BannerState, pulseAnim: Animated.Value) {
           <View
             style={[styles.iconBg, { backgroundColor: "rgba(34,197,94,0.2)" }]}
           >
-            <Ionicons name="checkmark" size={14} color="#22c55e" />
+            <Ionicons name="checkmark" size={14} color={colors.successGreen} />
           </View>
           <Text
             style={[
               styles.label,
-              { color: "#22c55e", fontFamily: "Inter_600SemiBold" },
+              { color: colors.successGreen, fontFamily: "Inter_600SemiBold" },
             ]}
             numberOfLines={1}
           >
             {state.message}
           </Text>
-          <ForwardIcon width={14} height={14} color="#D4A237" />
+          <ForwardIcon width={14} height={14} color={colors.gold} />
         </View>
       );
     }
@@ -274,21 +275,19 @@ function renderContent(state: BannerState, pulseAnim: Animated.Value) {
     case "COMPLETE": {
       return (
         <View style={styles.content}>
-          <View
-            style={[styles.iconBg, { backgroundColor: "rgba(212,162,55,0.2)" }]}
-          >
-            <Ionicons name="checkmark-circle" size={16} color="#D4A237" />
+          <View style={[styles.iconBg, { backgroundColor: colors.goldBadge }]}>
+            <Ionicons name="checkmark-circle" size={16} color={colors.gold} />
           </View>
           <Text
             style={[
               styles.label,
-              { color: "#D4A237", fontFamily: "Inter_600SemiBold" },
+              { color: colors.gold, fontFamily: "Inter_600SemiBold" },
             ]}
             numberOfLines={1}
           >
             ✓ Download complete
           </Text>
-          <ForwardIcon width={14} height={14} color="#D4A237" />
+          <ForwardIcon width={14} height={14} color={colors.gold} />
         </View>
       );
     }
@@ -299,13 +298,16 @@ function renderContent(state: BannerState, pulseAnim: Animated.Value) {
           <View
             style={[styles.iconBg, { backgroundColor: "rgba(245,158,11,0.2)" }]}
           >
-            <Ionicons name="warning" size={14} color="#f59e0b" />
+            <Ionicons name="warning" size={14} color={colors.amber} />
           </View>
-          <Text style={[styles.label, { color: "#f59e0b" }]} numberOfLines={1}>
+          <Text
+            style={[styles.label, { color: colors.amber }]}
+            numberOfLines={1}
+          >
             ⚠ {state.failedCount} download{state.failedCount > 1 ? "s" : ""}{" "}
             needs attention
           </Text>
-          <Ionicons name="chevron-forward" size={14} color="#f59e0b" />
+          <Ionicons name="chevron-forward" size={14} color={colors.amber} />
         </View>
       );
     }
@@ -335,12 +337,12 @@ const styles = StyleSheet.create({
   },
   banner: {
     width: "100%",
-    backgroundColor: "#16161A",
+    backgroundColor: colors.bgElevated,
     borderRadius: 14,
     borderWidth: 0.5,
-    borderColor: "#2a2a2e",
+    borderColor: colors.bgTop,
     overflow: "hidden",
-    shadowColor: "#000",
+    shadowColor: colors.voidBlack,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 12,
@@ -361,14 +363,14 @@ const styles = StyleSheet.create({
     width: 26,
     height: 26,
     borderRadius: 13,
-    backgroundColor: "#D4A237",
+    backgroundColor: colors.gold,
     alignItems: "center",
     justifyContent: "center",
   },
   count: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: "#D4A237",
+    color: colors.gold,
     marginLeft: 5,
     minWidth: 16,
   },
@@ -376,22 +378,22 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     fontFamily: "Inter_500Medium",
-    color: "#a1a1aa",
+    color: colors.textSecondary,
     marginRight: 6,
   },
   speed: {
     fontSize: 11,
     fontFamily: "Inter_500Medium",
-    color: "#52525b",
+    color: colors.textTertiary,
     marginRight: 8,
   },
   progressTrack: {
     height: 2,
-    backgroundColor: "#222226",
+    backgroundColor: colors.progressTrack,
   },
   progressFill: {
     height: "100%",
-    backgroundColor: "#D4A237",
+    backgroundColor: colors.gold,
     borderRadius: 1,
   },
 });

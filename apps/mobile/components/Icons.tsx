@@ -5,12 +5,13 @@
  */
 import React from "react";
 import Svg, { Path, SvgProps } from "react-native-svg";
+import { colors } from "../theme/colors";
 
 // ── Back Arrow (left) ──
 
 export function BackIcon(props: SvgProps) {
   const size = props.width ?? props.height ?? 24;
-  const color = props.color ?? "#F4F4F5";
+  const color = props.color ?? colors.textPrimary;
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" {...props}>
       <Path
@@ -27,7 +28,7 @@ export function BackIcon(props: SvgProps) {
 
 export function ShareIcon(props: SvgProps) {
   const size = props.width ?? props.height ?? 24;
-  const color = props.color ?? "#D4A237";
+  const color = props.color ?? colors.gold;
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" {...props}>
       <Path
@@ -44,7 +45,7 @@ export function ShareIcon(props: SvgProps) {
 
 export function ForwardIcon(props: SvgProps) {
   const size = props.width ?? props.height ?? 24;
-  const color = props.color ?? "#D4A237";
+  const color = props.color ?? colors.gold;
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" {...props}>
       <Path

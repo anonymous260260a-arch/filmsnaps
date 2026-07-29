@@ -77,3 +77,4 @@ build_commands.txt
 # planning / design docs (not part of the app source)
 docs/
 filmsnaps_design_system.html
+apps/feedback/.wrangler

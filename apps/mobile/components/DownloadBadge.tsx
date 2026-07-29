@@ -5,14 +5,15 @@
  * Disappears when no downloads are active.
  */
 
-import React, { useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, Animated } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { useDownloadList } from '../lib/download';
+import React, { useEffect, useRef } from "react";
+import { View, Text, TouchableOpacity, Animated } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { useSafeNavigation } from "@/lib/navigation";
+import { colors } from "../theme/colors";
+import { useDownloadList } from "../lib/download";
 
 export default function DownloadBadge() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const { active } = useDownloadList();
   const count = active.length;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -47,21 +48,21 @@ export default function DownloadBadge() {
   return (
     <Animated.View
       style={{
-        position: 'absolute',
+        position: "absolute",
         bottom: 0,
-        alignSelf: 'center',
+        alignSelf: "center",
         opacity,
         transform: [{ scale }],
         zIndex: 50,
       }}
     >
       <TouchableOpacity
-        onPress={() => router.push('/downloads')}
+        onPress={() => nav.push("/downloads")}
         activeOpacity={0.8}
         className="flex-row items-center px-3 py-1.5 rounded-full mb-1"
-        style={{ backgroundColor: '#D4A237' }}
+        style={{ backgroundColor: colors.gold }}
       >
-        <Ionicons name="download" size={12} color="#000" />
+        <Ionicons name="download" size={12} color={colors.voidBlack} />
         <Text className="text-black text-[11px] font-bold ml-1">{count}</Text>
       </TouchableOpacity>
     </Animated.View>

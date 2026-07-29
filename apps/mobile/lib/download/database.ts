@@ -7,6 +7,7 @@
 
 import * as SQLite from "expo-sqlite";
 import type { DownloadTask, DownloadStatus } from "./types";
+import { logger } from "./logger";
 
 // ── Database Instance ──
 
@@ -16,7 +17,6 @@ let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (db) return db;
   if (dbPromise) return dbPromise;
-
   dbPromise = (async () => {
     try {
       const database = await SQLite.openDatabaseAsync("filmsnaps_downloads.db");
@@ -24,107 +24,101 @@ async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
       db = database;
       return database;
     } catch (e) {
-      dbPromise = null; // Reset so next call retries
+      dbPromise = null;
       throw e;
     }
   })();
-
   return dbPromise;
 }
-
-// ── Schema ──
-
-const CREATE_TABLE = `
-  CREATE TABLE IF NOT EXISTS downloads (
-    id TEXT PRIMARY KEY,
-    media_id TEXT NOT NULL,
-    media_type TEXT NOT NULL DEFAULT 'movie',
-    title TEXT NOT NULL,
-    url TEXT NOT NULL,
-    file_path TEXT,
-    file_size INTEGER DEFAULT 0,
-    downloaded_bytes INTEGER DEFAULT 0,
-    progress REAL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'queued',
-    priority INTEGER DEFAULT 1,
-    speed_limit INTEGER DEFAULT 0,
-    retry_count INTEGER DEFAULT 0,
-    max_retries INTEGER DEFAULT 3,
-    error_message TEXT,
-    error_type TEXT,
-    server TEXT NOT NULL,
-    quality TEXT,
-    season INTEGER,
-    episode INTEGER,
-    extension TEXT DEFAULT 'mp4',
-    resume_data TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    file_name TEXT,
-    poster_path TEXT
-  );
-`;
-
-const CREATE_INDEXES = `
-  CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);
-  CREATE INDEX IF NOT EXISTS idx_downloads_media_id ON downloads(media_id);
-  CREATE INDEX IF NOT EXISTS idx_downloads_priority ON downloads(priority);
-  CREATE INDEX IF NOT EXISTS idx_downloads_created_at ON downloads(created_at);
-`;
 
 async function initializeDatabase(
   database: SQLite.SQLiteDatabase,
 ): Promise<void> {
-  await database.execAsync(CREATE_TABLE);
-  await database.execAsync(CREATE_INDEXES);
-
-  // Check and run migrations if columns are missing
-  try {
-    const tableInfo = await database.getAllAsync<{ name: string }>(
-      "PRAGMA table_info(downloads)",
+  await database.execAsync(`
+    CREATE TABLE IF NOT EXISTS downloads (
+      id TEXT PRIMARY KEY,
+      media_id TEXT,
+      media_type TEXT NOT NULL DEFAULT 'movie',
+      title TEXT NOT NULL DEFAULT '',
+      url TEXT NOT NULL,
+      file_path TEXT,
+      file_size INTEGER DEFAULT 0,
+      downloaded_bytes INTEGER DEFAULT 0,
+      progress REAL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      priority INTEGER DEFAULT 1,
+      speed_limit INTEGER DEFAULT 0,
+      retry_count INTEGER DEFAULT 0,
+      max_retries INTEGER DEFAULT 3,
+      error_message TEXT,
+      error_type TEXT,
+      server TEXT NOT NULL DEFAULT 'falix',
+      quality TEXT,
+      season INTEGER,
+      episode INTEGER,
+      extension TEXT DEFAULT 'mp4',
+      resume_data TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      file_name TEXT,
+      poster_path TEXT,
+      native_task_id TEXT,
+      expected_hash TEXT,
+      started_on_wifi INTEGER DEFAULT 0
     );
-    const columns = tableInfo.map((info) => info.name);
+  `);
 
-    if (!columns.includes("file_name")) {
-      await database.execAsync(
-        "ALTER TABLE downloads ADD COLUMN file_name TEXT;",
-      );
-      console.log(
-        "[Database] Migrated downloads table: added file_name column",
-      );
+  // ─── SCHEMA MIGRATION: Add new columns if they don't exist ───
+  const columns = await database.getAllAsync<{ name: string }>(
+    "PRAGMA table_info(downloads)",
+  );
+  const columnNames = new Set(columns.map((c) => c.name));
+
+  const migrations: Array<{ column: string; sql: string }> = [
+    {
+      column: "native_task_id",
+      sql: "ALTER TABLE downloads ADD COLUMN native_task_id TEXT",
+    },
+    {
+      column: "expected_hash",
+      sql: "ALTER TABLE downloads ADD COLUMN expected_hash TEXT",
+    },
+    {
+      column: "started_on_wifi",
+      sql: "ALTER TABLE downloads ADD COLUMN started_on_wifi INTEGER DEFAULT 0",
+    },
+  ];
+
+  for (const migration of migrations) {
+    if (!columnNames.has(migration.column)) {
+      await database.execAsync(migration.sql);
     }
-    if (!columns.includes("poster_path")) {
-      await database.execAsync(
-        "ALTER TABLE downloads ADD COLUMN poster_path TEXT;",
-      );
-      console.log(
-        "[Database] Migrated downloads table: added poster_path column",
-      );
-    }
-  } catch (e) {
-    console.error("[Database] Migration failed:", e);
   }
+
+  // Index for common queries
+  await database.execAsync(`
+    CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);
+    CREATE INDEX IF NOT EXISTS idx_downloads_media ON downloads(media_id);
+  `);
 }
 
-// ── Row Type ──
+// ─── Row Mapping ───
 
 interface DownloadRow {
   id: string;
-  media_id: string;
+  media_id: string | null;
   media_type: string;
   title: string;
   url: string;
   file_path: string | null;
   file_size: number;
   downloaded_bytes: number;
-  progress: number;
   status: string;
   priority: number;
   speed_limit: number;
   retry_count: number;
   max_retries: number;
   error_message: string | null;
-  error_type: string | null;
   server: string;
   quality: string | null;
   season: number | null;
@@ -135,338 +129,237 @@ interface DownloadRow {
   updated_at: number;
   file_name: string | null;
   poster_path: string | null;
+  native_task_id: string | null;
+  expected_hash: string | null;
+  started_on_wifi: number;
 }
-
-// ── Conversion ──
 
 function rowToTask(row: DownloadRow): DownloadTask {
   return {
     id: row.id,
-    tmdbId: row.media_id,
-    mediaType: row.media_type as "movie" | "tv",
-    title: row.title,
+    tmdbId: row.media_id ?? undefined,
+    mediaType: (row.media_type as "movie" | "tv") ?? "movie",
+    title: row.title ?? undefined,
     url: row.url,
-    fileName: row.file_name || row.title || "download",
     fileUri: row.file_path,
-    // FIX: Coerce byte columns to number — SQLite can return TEXT if column was migrated
     totalBytes: Number(row.file_size) || 0,
     receivedBytes: Number(row.downloaded_bytes) || 0,
     status: row.status as DownloadStatus,
+    priority: row.priority ?? 1,
+    speedLimit: row.speed_limit ?? 0,
+    retryCount: row.retry_count ?? 0,
+    maxRetries: row.max_retries ?? 3,
     error: row.error_message ?? undefined,
-    server: row.server as any,
+    server: row.server as DownloadTask["server"],
     quality: row.quality ?? undefined,
     season: row.season ?? undefined,
     episode: row.episode ?? undefined,
-    extension: row.extension,
-    // FIX: Force resumeData to be a clean string or null — never a number
+    extension: row.extension ?? "mp4",
     resumeData: row.resume_data != null ? String(row.resume_data) : null,
-    retryCount: row.retry_count,
-    maxRetries: row.max_retries,
-    speedLimit: row.speed_limit,
-    priority: row.priority,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    fileName: row.file_name ?? row.title ?? "download",
     posterPath: row.poster_path ?? undefined,
+    nativeTaskId: row.native_task_id ?? null,
+    expectedHash: row.expected_hash ?? null,
+    startedOnWifi: row.started_on_wifi === 1,
   };
 }
 
-function taskToRow(task: DownloadTask): DownloadRow {
-  return {
-    id: task.id,
-    media_id: task.tmdbId ?? "",
-    media_type: task.mediaType ?? "movie",
-    title: task.title ?? "Untitled",
-    url: task.url,
-    file_path: task.fileUri,
-    file_size: task.totalBytes,
-    downloaded_bytes: task.receivedBytes,
-    progress: task.totalBytes > 0 ? task.receivedBytes / task.totalBytes : 0,
-    status: task.status,
-    priority: task.priority ?? 1,
-    speed_limit: task.speedLimit ?? 0,
-    retry_count: task.retryCount ?? 0,
-    max_retries: task.maxRetries ?? 3,
-    error_message: task.error ?? null,
-    error_type: null,
-    server: task.server ?? "nxsha",
-    quality: task.quality ?? null,
-    season: task.season ?? null,
-    episode: task.episode ?? null,
-    extension: task.extension ?? "mp4",
-    resume_data: task.resumeData ?? null,
-    created_at: task.createdAt,
-    updated_at: task.updatedAt,
-    file_name: task.fileName,
-    poster_path: task.posterPath ?? null,
-  };
-}
-
-// ── Public API ──
+// ─── Public API ───
 
 export const DownloadDatabase = {
-  /**
-   * Insert a new download task
-   */
   async insert(task: DownloadTask): Promise<void> {
-    const db = await getDatabase();
-    const row = taskToRow(task);
-    await db.runAsync(
+    logger.debug(
+      "DB insert:",
+      task.id,
+      task.status,
+      "receivedBytes=",
+      task.receivedBytes,
+      "totalBytes=",
+      task.totalBytes,
+    );
+    const database = await getDatabase();
+    await database.runAsync(
       `INSERT OR REPLACE INTO downloads (
         id, media_id, media_type, title, url, file_path, file_size,
-        downloaded_bytes, progress, status, priority, speed_limit,
-        retry_count, max_retries, error_message, error_type, server,
-        quality, season, episode, extension, resume_data, created_at, updated_at,
-        file_name, poster_path
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        downloaded_bytes, status, priority, speed_limit, retry_count,
+        max_retries, error_message, server, quality, season, episode,
+        extension, resume_data, created_at, updated_at, file_name,
+        poster_path, native_task_id, expected_hash, started_on_wifi
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        row.id,
-        row.media_id,
-        row.media_type,
-        row.title,
-        row.url,
-        row.file_path,
-        row.file_size,
-        row.downloaded_bytes,
-        row.progress,
-        row.status,
-        row.priority,
-        row.speed_limit,
-        row.retry_count,
-        row.max_retries,
-        row.error_message,
-        row.error_type,
-        row.server,
-        row.quality,
-        row.season,
-        row.episode,
-        row.extension,
-        row.resume_data,
-        row.created_at,
-        row.updated_at,
-        row.file_name,
-        row.poster_path,
+        task.id,
+        task.tmdbId ?? null,
+        task.mediaType ?? "movie",
+        task.title ?? "",
+        task.url,
+        task.fileUri ?? null,
+        task.totalBytes ?? 0,
+        task.receivedBytes ?? 0,
+        task.status,
+        task.priority ?? 1,
+        task.speedLimit ?? 0,
+        task.retryCount ?? 0,
+        task.maxRetries ?? 3,
+        task.error ?? null,
+        task.server,
+        task.quality ?? null,
+        task.season ?? null,
+        task.episode ?? null,
+        task.extension ?? "mp4",
+        task.resumeData ?? null,
+        task.createdAt,
+        task.updatedAt,
+        task.fileName ?? null,
+        task.posterPath ?? null,
+        task.nativeTaskId ?? null,
+        task.expectedHash ?? null,
+        task.startedOnWifi ? 1 : 0,
       ],
     );
   },
 
-  /**
-   * Update a download task
-   */
-  async update(task: Partial<DownloadTask> & { id: string }): Promise<void> {
-    const db = await getDatabase();
-    const fields: string[] = [];
+  async update(fields: Partial<DownloadTask> & { id: string }): Promise<void> {
+    // Bug G fix: only log fields that are actually being updated,
+    // so we never print status=undefined during progress-only updates.
+    const logParts = Object.entries(fields)
+      .filter(([key, value]) => key !== "id" && value !== undefined)
+      .map(([key, value]) => `${key}=${value}`)
+      .join(" ");
+    logger.debug("DB update:", fields.id, logParts);
+    const database = await getDatabase();
+    const sets: string[] = [];
     const values: any[] = [];
 
-    if (task.status !== undefined) {
-      fields.push("status = ?");
-      values.push(task.status);
-    }
-    if (task.fileUri !== undefined) {
-      fields.push("file_path = ?");
-      values.push(task.fileUri);
-    }
-    if (task.totalBytes !== undefined) {
-      fields.push("file_size = ?");
-      values.push(task.totalBytes);
-    }
-    if (task.receivedBytes !== undefined) {
-      fields.push("downloaded_bytes = ?");
-      values.push(task.receivedBytes);
-    }
-    if (task.error !== undefined) {
-      fields.push("error_message = ?");
-      values.push(task.error);
-    }
-    // FIX: Always coerce to string or null — prevents INTEGER storage in TEXT column
-    if (task.resumeData !== undefined) {
-      fields.push("resume_data = ?");
-      values.push(task.resumeData != null ? String(task.resumeData) : null);
-    }
-    if (task.retryCount !== undefined) {
-      fields.push("retry_count = ?");
-      values.push(task.retryCount);
-    }
-    if (task.maxRetries !== undefined) {
-      fields.push("max_retries = ?");
-      values.push(task.maxRetries);
-    }
-    if (task.priority !== undefined) {
-      fields.push("priority = ?");
-      values.push(task.priority);
-    }
-    if (task.speedLimit !== undefined) {
-      fields.push("speed_limit = ?");
-      values.push(task.speedLimit);
-    }
-    if (task.fileName !== undefined) {
-      fields.push("file_name = ?");
-      values.push(task.fileName);
-    }
-    if (task.posterPath !== undefined) {
-      fields.push("poster_path = ?");
-      values.push(task.posterPath);
-    }
-    if (task.title !== undefined) {
-      fields.push("title = ?");
-      values.push(task.title);
-    }
-    if (task.extension !== undefined) {
-      fields.push("extension = ?");
-      values.push(task.extension);
-    }
-    if (task.quality !== undefined) {
-      fields.push("quality = ?");
-      values.push(task.quality);
-    }
-    if (task.server !== undefined) {
-      fields.push("server = ?");
-      values.push(task.server);
+    const fieldMap: Record<string, [string, (v: any) => any]> = {
+      status: ["status", (v) => v],
+      fileUri: ["file_path", (v) => v],
+      totalBytes: ["file_size", (v) => v],
+      receivedBytes: ["downloaded_bytes", (v) => v],
+      error: ["error_message", (v) => v],
+      resumeData: ["resume_data", (v) => (v != null ? String(v) : null)],
+      retryCount: ["retry_count", (v) => v],
+      priority: ["priority", (v) => v],
+      nativeTaskId: ["native_task_id", (v) => v],
+      expectedHash: ["expected_hash", (v) => v],
+      startedOnWifi: ["started_on_wifi", (v) => (v ? 1 : 0)],
+      updatedAt: ["updated_at", (v) => v],
+      fileName: ["file_name", (v) => v],
+      posterPath: ["poster_path", (v) => v],
+    };
+
+    for (const [key, [column, transform]] of Object.entries(fieldMap)) {
+      if (key in fields && (fields as any)[key] !== undefined) {
+        sets.push(`${column} = ?`);
+        values.push(transform((fields as any)[key]));
+      }
     }
 
-    if (
-      task.totalBytes !== undefined &&
-      task.receivedBytes !== undefined &&
-      task.totalBytes > 0
-    ) {
-      fields.push("progress = ?");
-      values.push(task.receivedBytes / task.totalBytes);
-    }
+    if (sets.length === 0) return;
+    values.push(fields.id);
 
-    fields.push("updated_at = ?");
-    values.push(Date.now());
-
-    values.push(task.id);
-
-    await db.runAsync(
-      `UPDATE downloads SET ${fields.join(", ")} WHERE id = ?`,
+    await database.runAsync(
+      `UPDATE downloads SET ${sets.join(", ")} WHERE id = ?`,
       values,
     );
   },
 
-  /**
-   * Get a download task by ID
-   */
   async getById(id: string): Promise<DownloadTask | null> {
-    const db = await getDatabase();
-    const row = await db.getFirstAsync<DownloadRow>(
+    const database = await getDatabase();
+    const row = await database.getFirstAsync<DownloadRow>(
       "SELECT * FROM downloads WHERE id = ?",
       [id],
     );
+    if (!row) logger.debug("DB getById: id=", id, "— not found");
     return row ? rowToTask(row) : null;
   },
 
-  /**
-   * Get all downloads
-   */
   async getAll(): Promise<DownloadTask[]> {
-    const db = await getDatabase();
-    const rows = await db.getAllAsync<DownloadRow>(
+    logger.debug("DB getAll: starting");
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<DownloadRow>(
       "SELECT * FROM downloads ORDER BY created_at DESC",
     );
+    logger.debug("DB getAll: returned", rows.length, "rows");
     return rows.map(rowToTask);
   },
 
-  /**
-   * Get downloads by status
-   */
   async getByStatus(status: DownloadStatus): Promise<DownloadTask[]> {
-    const db = await getDatabase();
-    const rows = await db.getAllAsync<DownloadRow>(
-      "SELECT * FROM downloads WHERE status = ? ORDER BY priority ASC, created_at ASC",
+    logger.debug("DB getByStatus:", status);
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<DownloadRow>(
+      "SELECT * FROM downloads WHERE status = ? ORDER BY created_at DESC",
       [status],
     );
+    logger.debug("DB getByStatus:", status, "returned", rows.length, "rows");
     return rows.map(rowToTask);
   },
 
-  /**
-   * Get downloads by media ID
-   */
   async getByMediaId(mediaId: string): Promise<DownloadTask[]> {
-    const db = await getDatabase();
-    const rows = await db.getAllAsync<DownloadRow>(
+    logger.debug("DB getByMediaId:", mediaId);
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<DownloadRow>(
       "SELECT * FROM downloads WHERE media_id = ? ORDER BY created_at DESC",
       [mediaId],
     );
     return rows.map(rowToTask);
   },
 
-  /**
-   * Get downloads by season
-   */
   async getBySeason(mediaId: string, season: number): Promise<DownloadTask[]> {
-    const db = await getDatabase();
-    const rows = await db.getAllAsync<DownloadRow>(
+    logger.debug("DB getBySeason:", mediaId, season);
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<DownloadRow>(
       "SELECT * FROM downloads WHERE media_id = ? AND season = ? ORDER BY episode ASC",
       [mediaId, season],
     );
     return rows.map(rowToTask);
   },
 
-  /**
-   * Delete a download task
-   */
   async delete(id: string): Promise<void> {
-    const db = await getDatabase();
-    await db.runAsync("DELETE FROM downloads WHERE id = ?", [id]);
+    logger.debug("DB delete:", id);
+    const database = await getDatabase();
+    await database.runAsync("DELETE FROM downloads WHERE id = ?", [id]);
   },
 
-  /**
-   * Delete all completed downloads
-   */
   async deleteCompleted(): Promise<void> {
-    const db = await getDatabase();
-    await db.runAsync("DELETE FROM downloads WHERE status = 'completed'");
+    logger.debug("DB deleteCompleted");
+    const database = await getDatabase();
+    await database.runAsync("DELETE FROM downloads WHERE status = 'completed'");
   },
 
-  /**
-   * Delete all cancelled downloads
-   */
   async deleteCancelled(): Promise<void> {
-    const db = await getDatabase();
-    await db.runAsync("DELETE FROM downloads WHERE status = 'cancelled'");
+    logger.debug("DB deleteCancelled");
+    const database = await getDatabase();
+    await database.runAsync("DELETE FROM downloads WHERE status = 'cancelled'");
   },
 
-  /**
-   * Get download count by status
-   */
   async getCountByStatus(status: DownloadStatus): Promise<number> {
-    const db = await getDatabase();
-    const result = await db.getFirstAsync<{ count: number }>(
+    const database = await getDatabase();
+    const result = await database.getFirstAsync<{ count: number }>(
       "SELECT COUNT(*) as count FROM downloads WHERE status = ?",
       [status],
     );
-    return result?.count ?? 0;
+    const count = result?.count ?? 0;
+    logger.debug("DB getCountByStatus:", status, count);
+    return count;
   },
 
-  /**
-   * Get total storage used by downloads
-   */
   async getStorageUsed(): Promise<number> {
-    const db = await getDatabase();
-    const result = await db.getFirstAsync<{ total: number }>(
+    const database = await getDatabase();
+    const result = await database.getFirstAsync<{ total: number }>(
       "SELECT COALESCE(SUM(file_size), 0) as total FROM downloads WHERE status = 'completed'",
     );
-    return result?.total ?? 0;
+    const total = result?.total ?? 0;
+    logger.debug("DB getStorageUsed:", total);
+    return total;
   },
 
-  /**
-   * Mark stale active tasks as paused (for app restart recovery)
-   */
-  async recoverStaleTasks(): Promise<number> {
-    const db = await getDatabase();
-    const result = await db.runAsync(
-      "UPDATE downloads SET status = 'paused', error_message = 'App was closed. Tap resume to continue.' WHERE status IN ('downloading', 'pending')",
-    );
-    return result.changes;
-  },
-
-  /**
-   * Close the database connection
-   */
   async close(): Promise<void> {
     if (db) {
       await db.closeAsync();
       db = null;
+      dbPromise = null;
     }
   },
 };

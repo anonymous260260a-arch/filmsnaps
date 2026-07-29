@@ -1,6 +1,6 @@
 {
-  "latestVersion": "1.0.5",
-  "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.5/filmsnaps-v1.0.5.apk",
-  "releaseNotes": "How Content Works page with collapsible sections + FAQ · CoachMarks first-run guide removed · Library page NetInfo crash fixed · ForwardIcon arrow added to See All buttons · Library tab icon fixed · Native module changes — new EAS build required (runtime 57.0.0)",
+  "latestVersion": "1.0.6",
+  "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.6/filmsnaps-v1.0.6.apk",
+  "releaseNotes": "New Feedback Portal with Cloudflare D1 production backend · Download engine fixes (pause/resume reliability, live byte tracking) · How Content Works transparency page · Theme color token migration · Security hardening with 14-layer abuse prevention and Turnstile · Offline queue support — new EAS build required (runtime 58.0.0)",
   "versionsUrl": "https://filmsnap-pro.netlify.app/versions"
 }

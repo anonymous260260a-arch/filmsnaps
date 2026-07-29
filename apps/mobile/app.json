@@ -2,7 +2,7 @@
   "expo": {
     "name": "FilmSnaps",
     "slug": "filmsnaps",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "filmsnaps",
@@ -14,7 +14,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.filmsnaps.mobile"
+      "bundleIdentifier": "app.filmsnaps.mobile",
+      "infoPlist": {
+        "UIBackgroundModes": ["fetch", "processing"]
+      }
     },
     "android": {
       "backgroundColor": "#080808",
@@ -26,7 +29,14 @@
       "navigationBar": {
         "visible": "sticky-immersive",
         "backgroundColor": "#18181b"
-      }
+      },
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.WAKE_LOCK"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -46,15 +56,16 @@
       "expo-task-manager",
       "expo-background-fetch",
       "expo-sqlite",
-      "@config-plugins/react-native-blob-util",
-      "./plugins/with-background-actions"
+      "expo-notifications",
+      "./plugins/with-filmsnaps-downloader"
     ],
     "extra": {
       "router": {},
       "eas": {
         "projectId": "708a926e-0243-4a25-ae80-1780906c8c04"
-      }
+      },
+      "feedbackUrl": "https://filmsnaps-feedback.anonymous260260a.workers.dev"
     },
-    "runtimeVersion": "57.0.0"
+    "runtimeVersion": "58.0.0"
   }
 }

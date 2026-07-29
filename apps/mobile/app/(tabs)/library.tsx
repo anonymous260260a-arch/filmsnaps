@@ -25,7 +25,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ForwardIcon } from "../../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import { useDownloadList } from "../../lib/download";
 import { getAllBookmarks } from "../../lib/bookmarks";
 import { getAggregatedHistory } from "../../lib/watchHistory";
@@ -40,6 +40,7 @@ import type { WatchProgress } from "../../lib/watchHistory";
 import type { Bookmark } from "../../lib/bookmarks";
 import NetInfo from "@react-native-community/netinfo";
 import type { DownloadTask } from "../../lib/download";
+import { colors } from "../../theme/colors";
 
 const ITEM_WIDTH_COEFF = (width: number) => (width - 48) / 3;
 const CARD_GAP = 10;
@@ -83,12 +84,12 @@ function SectionHeader({
               style={{
                 fontFamily: "Inter_500Medium",
                 fontSize: 12,
-                color: "#D4A237",
+                color: colors.gold,
               }}
             >
               See All
             </Text>
-            <ForwardIcon width={14} height={14} color="#D4A237" />
+            <ForwardIcon width={14} height={14} color={colors.gold} />
           </View>
         </TouchableOpacity>
       )}
@@ -111,7 +112,7 @@ function EmptyLibrary() {
 // ── Main Screen ──
 
 export default function LibraryScreen() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const { width: SCREEN_WIDTH } = useWindowDimensions();
   const cardWidth = ITEM_WIDTH_COEFF(SCREEN_WIDTH);
@@ -261,29 +262,29 @@ export default function LibraryScreen() {
       const mediaType = item.media_type || "movie";
       const id = item.id;
       if (mediaType === "tv") {
-        router.push(`/tv/${id}`);
+        nav.push(`/tv/${id}`);
       } else {
-        router.push(`/movie/${id}`);
+        nav.push(`/movie/${id}`);
       }
     },
-    [router],
+    [nav],
   );
 
   const handleHistoryPress = useCallback(
     (p: WatchProgress) => {
       if (p.mediaType === "tv") {
-        router.push(`/watch/tv/${p.tmdbId}/${p.season ?? 1}/${p.episode ?? 1}`);
+        nav.push(`/watch/tv/${p.tmdbId}/${p.season ?? 1}/${p.episode ?? 1}`);
       } else {
-        router.push(`/watch/movie/${p.tmdbId}`);
+        nav.push(`/watch/movie/${p.tmdbId}`);
       }
     },
-    [router],
+    [nav],
   );
 
   return (
     <View
       className="flex-1 bg-void"
-      style={{ paddingTop: insets.top, backgroundColor: "#070708" }}
+      style={{ paddingTop: insets.top, backgroundColor: colors.bg }}
     >
       {/* Header */}
       <View className="px-5 pt-4 pb-3 flex-row items-center justify-between">
@@ -291,19 +292,23 @@ export default function LibraryScreen() {
           style={{
             fontFamily: "PlayfairDisplay_700Bold",
             fontSize: 22,
-            color: "#F4F4F5",
+            color: colors.textPrimary,
           }}
         >
           Library
         </Text>
         <TouchableOpacity
-          onPress={() => router.push("/settings")}
+          onPress={() => nav.push("/settings")}
           activeOpacity={0.7}
           accessibilityLabel="Settings"
           className="w-9 h-9 rounded-full items-center justify-center"
-          style={{ backgroundColor: "#1C1C20" }}
+          style={{ backgroundColor: colors.skeletonBg }}
         >
-          <Ionicons name="settings-outline" size={18} color="#A1A1AA" />
+          <Ionicons
+            name="settings-outline"
+            size={18}
+            color={colors.textSecondary}
+          />
         </TouchableOpacity>
       </View>
 
@@ -314,13 +319,13 @@ export default function LibraryScreen() {
           style={{
             backgroundColor: "rgba(212,162,55,0.1)",
             borderWidth: 0.5,
-            borderColor: "rgba(212,162,55,0.2)",
+            borderColor: colors.goldBadge,
           }}
         >
           <Ionicons
             name="cloud-offline-outline"
             size={14}
-            color="#D4A237"
+            color={colors.gold}
             style={{ marginRight: 6 }}
           />
           <Text className="text-zinc-400 text-xs flex-1">
@@ -337,8 +342,8 @@ export default function LibraryScreen() {
             <RefreshControl
               refreshing={isRefreshing}
               onRefresh={onRefresh}
-              tintColor="#D4A237"
-              colors={["#D4A237"]}
+              tintColor={colors.gold}
+              colors={[colors.gold]}
             />
           }
           className="flex-1"
@@ -352,7 +357,7 @@ export default function LibraryScreen() {
             <View className="mb-6">
               <SectionHeader
                 title="Continue Watching"
-                onSeeAll={() => router.push("/history")}
+                onSeeAll={() => nav.push("/history")}
               />
               <FlatList
                 horizontal
@@ -388,12 +393,12 @@ export default function LibraryScreen() {
                         ) : (
                           <View
                             className="flex-1 items-center justify-center"
-                            style={{ backgroundColor: "#1f1f1f" }}
+                            style={{ backgroundColor: colors.bgTop }}
                           >
                             <Ionicons
                               name={p.mediaType === "tv" ? "tv" : "film"}
                               size={24}
-                              color="#3f3f3f"
+                              color={colors.iconMuted}
                             />
                           </View>
                         )}
@@ -414,8 +419,8 @@ export default function LibraryScreen() {
                               width: `${Math.round((p.completed ? 1 : p.percent) * 100)}%`,
                               height: "100%",
                               backgroundColor: item.fullyWatched
-                                ? "#22c55e"
-                                : "#D4A237",
+                                ? colors.successGreen
+                                : colors.gold,
                             }}
                           />
                         </View>
@@ -429,7 +434,7 @@ export default function LibraryScreen() {
                                 position: "absolute",
                                 top: 4,
                                 left: 4,
-                                backgroundColor: "rgba(0,0,0,0.75)",
+                                backgroundColor: colors.black75,
                                 borderRadius: 3,
                                 paddingHorizontal: 4,
                                 paddingVertical: 1,
@@ -448,7 +453,7 @@ export default function LibraryScreen() {
                               position: "absolute",
                               bottom: 6,
                               left: 4,
-                              backgroundColor: "rgba(212,162,55,0.2)",
+                              backgroundColor: colors.goldBadge,
                               borderRadius: 3,
                               paddingHorizontal: 4,
                               paddingVertical: 1,
@@ -471,7 +476,7 @@ export default function LibraryScreen() {
                               position: "absolute",
                               top: 4,
                               right: 4,
-                              backgroundColor: "rgba(34,197,94,0.85)",
+                              backgroundColor: colors.greenBadge,
                               borderRadius: 10,
                               width: 18,
                               height: 18,
@@ -502,7 +507,7 @@ export default function LibraryScreen() {
               title="Downloads"
               onSeeAll={
                 downloadPreviews.length > 0
-                  ? () => router.push("/downloads")
+                  ? () => nav.push("/downloads")
                   : undefined
               }
             />
@@ -519,7 +524,7 @@ export default function LibraryScreen() {
                   return (
                     <TouchableOpacity
                       key={task.id}
-                      onPress={() => router.push("/downloads")}
+                      onPress={() => nav.push("/downloads")}
                       activeOpacity={0.7}
                       style={{ width: cardWidth }}
                     >
@@ -542,12 +547,12 @@ export default function LibraryScreen() {
                         ) : (
                           <View
                             className="flex-1 items-center justify-center"
-                            style={{ backgroundColor: "#1f1f1f" }}
+                            style={{ backgroundColor: colors.bgTop }}
                           >
                             <Ionicons
                               name="download-outline"
                               size={24}
-                              color="#D4A237"
+                              color={colors.gold}
                             />
                           </View>
                         )}
@@ -559,7 +564,7 @@ export default function LibraryScreen() {
                               position: "absolute",
                               top: 4,
                               left: 4,
-                              backgroundColor: "rgba(212,162,55,0.85)",
+                              backgroundColor: colors.goldBadgeSolid,
                               borderRadius: 3,
                               paddingHorizontal: 4,
                               paddingVertical: 1,
@@ -600,19 +605,23 @@ export default function LibraryScreen() {
               </View>
             ) : (
               <TouchableOpacity
-                onPress={() => router.push("/downloads")}
+                onPress={() => nav.push("/downloads")}
                 activeOpacity={0.7}
                 className="mx-4"
               >
                 <View
                   className="rounded-xl items-center justify-center py-8 px-4"
                   style={{
-                    backgroundColor: "#0E0E11",
+                    backgroundColor: colors.bgSurface,
                     borderWidth: 0.5,
-                    borderColor: "#1f1f1f",
+                    borderColor: colors.bgTop,
                   }}
                 >
-                  <Ionicons name="download-outline" size={32} color="#3f3f3f" />
+                  <Ionicons
+                    name="download-outline"
+                    size={32}
+                    color={colors.iconMuted}
+                  />
                   <Text
                     className="text-zinc-500 text-sm mt-3 text-center"
                     style={{ fontFamily: "Inter_500Medium" }}
@@ -633,7 +642,7 @@ export default function LibraryScreen() {
             <View className="mb-6">
               <SectionHeader
                 title="Saved"
-                onSeeAll={() => router.push("/saved")}
+                onSeeAll={() => nav.push("/saved")}
               />
               <View className="flex-row px-4" style={{ gap: CARD_GAP }}>
                 {bookmarks.slice(0, 3).map((b) => {
@@ -644,9 +653,9 @@ export default function LibraryScreen() {
                       key={b.tmdbId}
                       onPress={() => {
                         if (b.mediaType === "tv") {
-                          router.push(`/tv/${b.tmdbId}`);
+                          nav.push(`/tv/${b.tmdbId}`);
                         } else {
-                          router.push(`/movie/${b.tmdbId}`);
+                          nav.push(`/movie/${b.tmdbId}`);
                         }
                       }}
                       activeOpacity={0.7}
@@ -665,12 +674,12 @@ export default function LibraryScreen() {
                         ) : (
                           <View
                             className="flex-1 items-center justify-center"
-                            style={{ backgroundColor: "#1f1f1f" }}
+                            style={{ backgroundColor: colors.bgTop }}
                           >
                             <Ionicons
                               name="bookmark-outline"
                               size={24}
-                              color="#22c55e"
+                              color={colors.successGreen}
                             />
                           </View>
                         )}
@@ -693,14 +702,14 @@ export default function LibraryScreen() {
             <View className="mb-6">
               <SectionHeader
                 title="History"
-                onSeeAll={() => router.push("/history")}
+                onSeeAll={() => nav.push("/history")}
               />
               <View
                 className="mx-4 rounded-xl overflow-hidden"
                 style={{
-                  backgroundColor: "#0E0E11",
+                  backgroundColor: colors.bgSurface,
                   borderWidth: 0.5,
-                  borderColor: "#1f1f1f",
+                  borderColor: colors.bgTop,
                 }}
               >
                 {historyEntries
@@ -719,7 +728,7 @@ export default function LibraryScreen() {
                         onPress={() => handleHistoryPress(p)}
                         activeOpacity={0.7}
                         className="flex-row items-center px-4 py-3"
-                        style={{ backgroundColor: "#141414" }}
+                        style={{ backgroundColor: colors.bgCard }}
                       >
                         {poster ? (
                           <ProgressiveImage
@@ -730,12 +739,12 @@ export default function LibraryScreen() {
                         ) : (
                           <View
                             className="w-10 h-[60px] rounded items-center justify-center"
-                            style={{ backgroundColor: "#1f1f1f" }}
+                            style={{ backgroundColor: colors.bgTop }}
                           >
                             <Ionicons
                               name={p.mediaType === "tv" ? "tv" : "film"}
                               size={18}
-                              color="#3f3f3f"
+                              color={colors.iconMuted}
                             />
                           </View>
                         )}
@@ -758,11 +767,15 @@ export default function LibraryScreen() {
                           <Ionicons
                             name="checkmark-circle"
                             size={16}
-                            color="#22c55e"
+                            color={colors.successGreen}
                             style={{ marginLeft: 8 }}
                           />
                         )}
-                        <ForwardIcon width={14} height={14} color="#3f3f3f" />
+                        <ForwardIcon
+                          width={14}
+                          height={14}
+                          color={colors.iconMuted}
+                        />
                       </TouchableOpacity>
                     );
                   })
@@ -772,7 +785,7 @@ export default function LibraryScreen() {
                         <View
                           key={`div-${i}`}
                           className="h-[1px] mx-4"
-                          style={{ backgroundColor: "#1a1a1e" }}
+                          style={{ backgroundColor: colors.bgActiveDrag }}
                         />,
                       );
                     }

@@ -16,77 +16,56 @@ import type {
 
 export function useDownloadList(): DownloadGrouped & {
   loaded: boolean;
-  control(action: ControlAction, target?: ControlTarget): Promise<void>;
+  control: (action: ControlAction, target: ControlTarget) => Promise<void>;
 } {
-  const { store, control } = useDownloadInfra();
+  const { store, control, loaded } = useDownloadInfra();
 
   const tasks = useSyncExternalStore(
     (cb) => store.subscribe(() => cb()),
     () => store.getAll(),
   );
 
-  const loaded = useSyncExternalStore(
-    (cb) => store.subscribeLoaded(() => cb()),
-    () => store.isLoaded(),
-  );
-
-  return useMemo(() => {
-    const grouped: DownloadGrouped = {
+  const grouped = useMemo<DownloadGrouped>(() => {
+    return {
       all: tasks,
-      active: tasks.filter(
-        (t) => t.status === "pending" || t.status === "downloading",
-      ),
+      active: tasks.filter((t) => t.status === "downloading"),
       paused: tasks.filter((t) => t.status === "paused"),
       completed: tasks.filter((t) => t.status === "completed"),
       failed: tasks.filter((t) => t.status === "failed"),
       cancelled: tasks.filter((t) => t.status === "cancelled"),
       retrying: tasks.filter((t) => t.status === "retrying"),
     };
+  }, [tasks]);
 
-    return {
-      ...grouped,
-      loaded,
-      control,
-    };
-  }, [tasks, loaded, control]);
+  return { ...grouped, loaded, control };
 }
 
 /** Helper: format bytes to human-readable string */
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
+  const units = ["B", "KB", "MB", "GB"];
   const i = Math.min(
-    Math.floor(Math.log(bytes) / Math.log(k)),
-    sizes.length - 1,
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+    units.length - 1,
   );
-  const val = bytes / Math.pow(k, i);
-  return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${sizes[i]}`;
+  return `${(bytes / 1024 ** i).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
 /** Helper: format date relative to now */
-export function formatDate(ts: number): string {
-  const d = new Date(ts);
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffDays < 1) return "Today";
-  if (diffDays === 1) return "Yesterday";
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+export function formatDate(timestamp: number): string {
+  return new Date(timestamp).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 /** Helper: server display name */
 export function serverLabel(server: string): string {
-  switch (server) {
-    case "falix":
-      return "Small File";
-    case "nxsha":
-      return "Best Quality";
-    case "alt-dl":
-      return "Standard";
-    default:
-      return server;
-  }
+  const labels: Record<string, string> = {
+    falix: "Falix",
+    nxsha: "Nxsha",
+    "alt-dl": "Alt DL",
+  };
+  return labels[server] ?? server;
 }

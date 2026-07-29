@@ -13,11 +13,13 @@ import { BackIcon } from "../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, useFocusEffect } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import { tmdbApi } from "../lib/api";
 import { MediaCard } from "../components/MediaCard";
 import { EmptyState } from "../components/EmptyState";
 import { getAllBookmarks, clearAllBookmarks } from "../lib/bookmarks";
 import type { Bookmark } from "../lib/bookmarks";
+import { colors } from "../theme/colors";
 
 const NUM_COLUMNS = 3;
 const GAP = 8;
@@ -30,7 +32,7 @@ function SavedSkeleton() {
   const cardHeight = cardWidth * 1.5;
   return (
     <View
-      style={{ flex: 1, backgroundColor: "#070708", paddingTop: insets.top }}
+      style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}
     >
       <View
         style={{
@@ -46,7 +48,7 @@ function SavedSkeleton() {
             width: 70,
             height: 22,
             borderRadius: 4,
-            backgroundColor: "#1C1C20",
+            backgroundColor: colors.skeletonBg,
           }}
         />
         <View
@@ -54,7 +56,7 @@ function SavedSkeleton() {
             width: 48,
             height: 20,
             borderRadius: 4,
-            backgroundColor: "#1C1C20",
+            backgroundColor: colors.skeletonBg,
           }}
         />
       </View>
@@ -68,7 +70,7 @@ function SavedSkeleton() {
                 width: cardWidth,
                 height: cardHeight,
                 borderRadius: 12,
-                backgroundColor: "#1C1C20",
+                backgroundColor: colors.skeletonBg,
               }}
             />
             <View
@@ -76,7 +78,7 @@ function SavedSkeleton() {
                 width: "80%",
                 height: 10,
                 borderRadius: 4,
-                backgroundColor: "#1C1C20",
+                backgroundColor: colors.skeletonBg,
                 marginTop: 6,
               }}
             />
@@ -89,6 +91,7 @@ function SavedSkeleton() {
 
 export default function SavedScreen() {
   const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const { width: SCREEN_WIDTH } = useWindowDimensions();
   const queryClient = useQueryClient();
@@ -122,7 +125,7 @@ export default function SavedScreen() {
           staleTime: 1000 * 60 * 60,
         });
         router.prefetch(`/tv/${id}`);
-        router.push(`/tv/${id}`);
+        nav.push(`/tv/${id}`);
       } else {
         queryClient.prefetchQuery({
           queryKey: ["movie", id],
@@ -130,10 +133,10 @@ export default function SavedScreen() {
           staleTime: 1000 * 60 * 60,
         });
         router.prefetch(`/movie/${id}`);
-        router.push(`/movie/${id}`);
+        nav.push(`/movie/${id}`);
       }
     },
-    [router, queryClient],
+    [router, nav, queryClient],
   );
 
   const handleClearAll = useCallback(async () => {
@@ -153,23 +156,23 @@ export default function SavedScreen() {
   return (
     <View
       className="flex-1 bg-void"
-      style={{ backgroundColor: "#070708", paddingTop: insets.top }}
+      style={{ backgroundColor: colors.bg, paddingTop: insets.top }}
     >
       {/* Header */}
       <View className="px-5 pt-4 pb-2 flex-row items-center justify-between">
         <View className="flex-row items-center">
           <TouchableOpacity
-            onPress={() => router.back()}
+            onPress={() => nav.goBack({ fallback: "/(tabs)" })}
             className="w-9 h-9 rounded-full bg-zinc-800/60 items-center justify-center mr-3"
             activeOpacity={0.7}
           >
-            <BackIcon width={20} height={20} color="#F4F4F5" />
+            <BackIcon width={20} height={20} color={colors.textPrimary} />
           </TouchableOpacity>
           <Text
             style={{
               fontFamily: "PlayfairDisplay_700Bold",
               fontSize: 22,
-              color: "#F4F4F5",
+              color: colors.textPrimary,
             }}
           >
             Saved
@@ -183,7 +186,7 @@ export default function SavedScreen() {
           title="Nothing saved yet"
           message="Films you save will show up here for quick access."
           actionLabel="Discover Films"
-          onAction={() => router.push("/")}
+          onAction={() => nav.push("/")}
         />
       ) : (
         <FlatList
@@ -213,7 +216,7 @@ export default function SavedScreen() {
               className="self-center mt-6 mb-8"
             >
               <View className="flex-row items-center">
-                <Ionicons name="trash-outline" size={14} color="#ef4444" />
+                <Ionicons name="trash-outline" size={14} color={colors.error} />
                 <Text className="text-red-400 text-xs ml-1.5">Clear All</Text>
               </View>
             </TouchableOpacity>

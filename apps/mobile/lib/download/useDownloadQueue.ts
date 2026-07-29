@@ -2,48 +2,62 @@
  * Hook: useDownloadQueue — Concurrency-limited download queue monitor.
  *
  * The DownloadManager handles all queue processing internally (via processQueue).
- * This hook exists for backward compatibility — it monitors the queue state
- * and ensures the manager is initialized.
- *
- * Usage: mount in root layout so it's alive for the app lifetime.
+ * This hook monitors the queue state and provides batch operations.
  */
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore, useCallback, useRef } from "react";
 import { useDownloadInfra } from "./context";
 
 export interface QueueConfig {
-  maxConcurrent?: number; // default 3
+  maxConcurrent?: number;
 }
 
 export interface QueueState {
+  queueLength: number;
   activeCount: number;
-  queuedCount: number;
+  isProcessing: boolean;
 }
 
-export function useDownloadQueue(config?: QueueConfig): QueueState {
+export function useDownloadQueue(): QueueState & {
+  pauseAll: () => Promise<void>;
+  resumeAll: () => Promise<void>;
+  cancelAll: () => Promise<void>;
+} {
   const { manager } = useDownloadInfra();
-  const [state, setState] = useState<QueueState>({
+
+  // Cache snapshot to avoid infinite loop from new object each call
+  const lastRef = useRef<QueueState>({
+    queueLength: 0,
     activeCount: 0,
-    queuedCount: 0,
+    isProcessing: false,
   });
 
-  useEffect(() => {
-    // Subscribe to queue changes
-    const unsub = manager.onQueueChange(() => {
-      setState({
-        activeCount: manager.activeCount,
-        queuedCount: manager.queuedCount,
-      });
-    });
-
-    // Initial state
-    setState({
-      activeCount: manager.activeCount,
-      queuedCount: manager.queuedCount,
-    });
-
-    return unsub;
+  const getSnapshot = useCallback((): QueueState => {
+    const next: QueueState = {
+      queueLength: manager.getQueueLength(),
+      activeCount: manager.getActiveCount(),
+      isProcessing: manager.getActiveCount() > 0,
+    };
+    const last = lastRef.current;
+    if (
+      next.queueLength === last.queueLength &&
+      next.activeCount === last.activeCount &&
+      next.isProcessing === last.isProcessing
+    ) {
+      return last;
+    }
+    lastRef.current = next;
+    return next;
   }, [manager]);
 
-  return state;
+  const state = useSyncExternalStore(
+    (cb) => manager.onQueueChange(() => cb()),
+    getSnapshot,
+  );
+
+  const pauseAll = useCallback(() => manager.pauseAll(), [manager]);
+  const resumeAll = useCallback(() => manager.resumeAll(), [manager]);
+  const cancelAll = useCallback(() => manager.cancelAll(), [manager]);
+
+  return { ...state, pauseAll, resumeAll, cancelAll };
 }

@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React from "react";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -10,9 +10,18 @@ interface ErrorBoundaryProps {
   children: React.ReactNode;
   fallback?: React.ReactNode;
   onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
+  /**
+   * Called when the error is a GO_BACK navigation error.
+   * The root layout provides this to navigate home instead of
+   * showing a crash screen.
+   */
+  onGoBackError?: () => void;
 }
 
-export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+export class ErrorBoundary extends React.Component<
+  ErrorBoundaryProps,
+  ErrorBoundaryState
+> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null };
@@ -23,8 +32,17 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('[ErrorBoundary] Caught error:', error.message);
+    console.error("[ErrorBoundary] Caught error:", error.message);
     this.props.onError?.(error, errorInfo);
+
+    // If it's a GO_BACK navigation error, delegate to the handler
+    // instead of showing error UI. This prevents the app from showing
+    // a crash screen when the user taps back on a screen with no back stack.
+    if (error.message?.includes?.("GO_BACK") && this.props.onGoBackError) {
+      this.props.onGoBackError();
+      // Also clear the error state after navigation
+      this.setState({ hasError: false, error: null });
+    }
   }
 
   handleRetry = () => {
@@ -41,7 +59,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
         <View style={styles.container}>
           <Text style={styles.title}>Something went wrong</Text>
           <Text style={styles.message}>
-            {this.state.error?.message || 'An unexpected error occurred'}
+            {this.state.error?.message || "An unexpected error occurred"}
           </Text>
           <TouchableOpacity style={styles.button} onPress={this.handleRetry}>
             <Text style={styles.buttonText}>Try Again</Text>
@@ -57,33 +75,33 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#070708',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#070708",
+    justifyContent: "center",
+    alignItems: "center",
     padding: 24,
   },
   title: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#F4F4F5',
+    fontWeight: "700",
+    color: "#F4F4F5",
     marginBottom: 8,
   },
   message: {
     fontSize: 14,
-    color: '#A1A1AA',
-    textAlign: 'center',
+    color: "#A1A1AA",
+    textAlign: "center",
     marginBottom: 24,
     lineHeight: 20,
   },
   button: {
-    backgroundColor: '#D4A237',
+    backgroundColor: "#D4A237",
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
   },
   buttonText: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#070708',
+    fontWeight: "600",
+    color: "#070708",
   },
 });

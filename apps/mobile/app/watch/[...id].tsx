@@ -7,7 +7,9 @@ import {
   BackHandler,
   Platform,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
+import { colors } from "../../theme/colors";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { VideoWebView } from "../../components/VideoWebView";
@@ -15,7 +17,7 @@ import { HevcPlayer } from "../../components/HevcPlayer";
 import { isDirectVideoUrl } from "../../lib/hevc";
 
 export default function WatchScreen() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     id: string[];
@@ -53,7 +55,7 @@ export default function WatchScreen() {
       const now = Date.now();
       if (now - lastBackPressRef.current < 3000) {
         // Two back presses within 3s — close player
-        router.back();
+        nav.goBack({ fallback: "/(tabs)" });
         return true;
       }
       lastBackPressRef.current = now;
@@ -61,7 +63,7 @@ export default function WatchScreen() {
     };
     const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
     return () => sub.remove();
-  }, [router]);
+  }, [nav]);
 
   // Get the actual video URL (either remote or local file)
   const directVideoUrl = fileUri || videoUrl;
@@ -70,11 +72,15 @@ export default function WatchScreen() {
     return (
       <View
         className="flex-1 items-center justify-center bg-void px-6"
-        style={{ backgroundColor: "#070708" }}
+        style={{ backgroundColor: colors.bg }}
       >
         <StatusBar barStyle="light-content" />
         <View className="w-16 h-16 rounded-full bg-elevated items-center justify-center mb-5">
-          <Ionicons name="alert-circle-outline" size={36} color="#52525B" />
+          <Ionicons
+            name="alert-circle-outline"
+            size={36}
+            color={colors.textTertiary}
+          />
         </View>
         <Text className="text-text-primary text-lg font-semibold mb-2">
           Invalid video URL
@@ -83,7 +89,7 @@ export default function WatchScreen() {
           This link doesn't point to a valid movie or TV show.
         </Text>
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => nav.goBack({ fallback: "/(tabs)" })}
           className="bg-primary rounded-xl py-3 px-8"
           activeOpacity={0.8}
         >
@@ -96,7 +102,10 @@ export default function WatchScreen() {
   // Route to HEVC player for direct video playback (Falix, local files)
   if (isDirectPlayback && directVideoUrl) {
     return (
-      <View className="flex-1 bg-black" style={{ backgroundColor: "#000" }}>
+      <View
+        className="flex-1 bg-black"
+        style={{ backgroundColor: colors.playerBg }}
+      >
         <StatusBar barStyle="light-content" hidden />
         <HevcPlayer
           videoUrl={directVideoUrl}
@@ -106,7 +115,7 @@ export default function WatchScreen() {
           episode={episode}
           startAt={startAt}
           title={title}
-          onClose={() => router.back()}
+          onClose={() => nav.goBack({ fallback: "/(tabs)" })}
         />
       </View>
     );
@@ -114,7 +123,10 @@ export default function WatchScreen() {
 
   // Default: WebView player for streaming providers
   return (
-    <View className="flex-1 bg-black" style={{ backgroundColor: "#000" }}>
+    <View
+      className="flex-1 bg-black"
+      style={{ backgroundColor: colors.playerBg }}
+    >
       <StatusBar barStyle="light-content" hidden />
       <VideoWebView
         type={type}
@@ -123,7 +135,7 @@ export default function WatchScreen() {
         episode={episode}
         initialProvider={provider}
         backdropUrl={backdropUrl}
-        onClose={() => router.back()}
+        onClose={() => nav.goBack({ fallback: "/(tabs)" })}
       />
     </View>
   );

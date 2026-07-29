@@ -4,19 +4,30 @@
  * Features: close/back, season/episode badge, source switcher, fullscreen toggle,
  * source info pill at bottom, stage-based loading with blurred backdrop,
  * resume chip, tap-to-reveal in fullscreen, pause-detect keep-visible.
+ *
+ * The server pill at the bottom uses RNGH Gesture API + Reanimated for
+ * polished tap/swipe-up interaction with spring-based press feedback.
  */
 
-import React, { useRef, useCallback, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
-  Animated,
   ActivityIndicator,
   Dimensions,
+  Animated as RNAnimated,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { colors } from "../../theme/colors";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  runOnJS,
+} from "react-native-reanimated";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 
 interface LoadState {
   type: "LOADING" | "SLOW" | "PLAYING" | "STALLED" | "FAILED";
@@ -32,7 +43,7 @@ interface PlayerControlOverlayProps {
   resumeChipText?: string | null;
   overlayVisible: boolean;
   showOverlay: () => void;
-  overlayOpacity: Animated.Value;
+  overlayOpacity: RNAnimated.Value;
   onClose: () => void;
   onToggleFullscreen: () => void;
   onServerPickerOpen: () => void;
@@ -84,20 +95,20 @@ export function PlayerControlOverlay({
   };
 
   // ── Resume chip animation ──
-  const resumeOpacity = useRef(new Animated.Value(0)).current;
+  const resumeOpacity = useRef(new RNAnimated.Value(0)).current;
   const [displayResume, setDisplayResume] = useState(false);
 
   useEffect(() => {
     if (resumeChipText) {
       setDisplayResume(true);
       resumeOpacity.setValue(0);
-      Animated.timing(resumeOpacity, {
+      RNAnimated.timing(resumeOpacity, {
         toValue: 1,
         duration: 200,
         useNativeDriver: true,
       }).start();
     } else {
-      Animated.timing(resumeOpacity, {
+      RNAnimated.timing(resumeOpacity, {
         toValue: 0,
         duration: 200,
         useNativeDriver: true,
@@ -107,11 +118,58 @@ export function PlayerControlOverlay({
     }
   }, [resumeChipText, resumeOpacity]);
 
+  // ── RNGH Gesture: tap OR swipe-up on server pill opens picker ──
+  // Uses Reanimated shared values for smooth UI-thread animations
+  const pillScale = useSharedValue(1);
+  const pillTranslateY = useSharedValue(0);
+
+  const pillAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { scale: pillScale.value },
+      { translateY: pillTranslateY.value },
+    ],
+  }));
+
+  // Tap gesture — fires on any tap (no delay, no heuristics)
+  const tapGesture = Gesture.Tap()
+    .onBegin(() => {
+      pillScale.value = withSpring(0.93, { damping: 15, stiffness: 300 });
+    })
+    .onFinalize(() => {
+      pillScale.value = withSpring(1, { damping: 15, stiffness: 300 });
+    })
+    .onEnd(() => {
+      runOnJS(onServerPickerOpen)();
+    });
+
+  // Swipe-up gesture — activates when finger moves 20px+ upward
+  // The pill tracks the finger position for a direct-manipulation feel
+  const swipeUpGesture = Gesture.Pan()
+    .activeOffsetY([-999, -20])
+    .onBegin(() => {
+      pillScale.value = withSpring(0.93, { damping: 15, stiffness: 300 });
+    })
+    .onUpdate((e) => {
+      // Clamp so the pill doesn't fly off-screen
+      pillTranslateY.value = Math.max(e.translationY, -60);
+    })
+    .onFinalize(() => {
+      pillScale.value = withSpring(1, { damping: 15, stiffness: 300 });
+      pillTranslateY.value = withSpring(0, { damping: 15, stiffness: 250 });
+    })
+    .onEnd(() => {
+      runOnJS(onServerPickerOpen)();
+    });
+
+  // Race — both gestures start; first to activate wins, other is cancelled.
+  // Swipe wins on upward drag >20px; tap wins on press without drag.
+  const composedGesture = Gesture.Race(swipeUpGesture, tapGesture);
+
   return (
     <>
       {/* ── Resume chip (top-center) ── */}
       {displayResume && resumeChipText && (
-        <Animated.View
+        <RNAnimated.View
           className="absolute z-40 self-center"
           style={{
             top: insets.top + 8,
@@ -124,11 +182,11 @@ export function PlayerControlOverlay({
               {resumeChipText}
             </Text>
           </View>
-        </Animated.View>
+        </RNAnimated.View>
       )}
 
       {/* ── Animated overlay bar (fades in/out) ── */}
-      <Animated.View
+      <RNAnimated.View
         className="absolute top-0 left-0 right-0 z-30"
         style={{ opacity: overlayOpacity, paddingTop: insets.top + 4 }}
         pointerEvents={overlayVisible ? "box-none" : "none"}
@@ -163,7 +221,7 @@ export function PlayerControlOverlay({
                 <Ionicons
                   name="chevron-down"
                   size={12}
-                  color="#a1a1aa"
+                  color={colors.textSecondary}
                   style={{ marginLeft: 4 }}
                 />
               </View>
@@ -180,7 +238,7 @@ export function PlayerControlOverlay({
               className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
               activeOpacity={0.7}
             >
-              <Ionicons name="server" size={16} color="#D4A237" />
+              <Ionicons name="server" size={16} color={colors.gold} />
             </TouchableOpacity>
             {providerId !== "nxsha" && providerId !== "chillflix" && (
               <TouchableOpacity
@@ -197,43 +255,43 @@ export function PlayerControlOverlay({
             )}
           </View>
         </View>
-      </Animated.View>
+      </RNAnimated.View>
 
-      {/* ── Source pill (bottom) — also fades with overlay ── */}
-      <Animated.View
+      {/* ── Source pill (bottom) — GestureDetector for tap + swipe-up ── */}
+      <RNAnimated.View
         className="absolute bottom-0 left-0 right-0 z-30 px-4"
         style={{ opacity: overlayOpacity, paddingBottom: insets.bottom + 12 }}
         pointerEvents={overlayVisible ? "box-none" : "none"}
       >
-        <TouchableOpacity
-          onPress={onServerPickerOpen}
-          activeOpacity={0.8}
-          className="self-center bg-black/60 backdrop-blur-md rounded-full px-4 py-2.5 flex-row items-center border border-zinc-700/40"
-          style={{ pointerEvents: "auto" }}
-        >
-          <Ionicons name="server" size={13} color="#D4A237" />
-          <Text
-            className="text-white text-xs font-semibold ml-2 mr-1"
-            numberOfLines={1}
+        <GestureDetector gesture={composedGesture}>
+          <Animated.View
+            className="self-center bg-black/60 backdrop-blur-md rounded-full px-4 py-2.5 flex-row items-center border border-zinc-700/40"
+            style={pillAnimatedStyle}
           >
-            {providerDisplayName}
-          </Text>
-          {auditMode && (
-            <View className="bg-amber-500/20 rounded px-1.5 py-0.5 mr-1">
-              <Text className="text-amber-400 text-[9px] font-bold tracking-wider">
-                AUDIT
-              </Text>
-            </View>
-          )}
-          <Ionicons name="chevron-up" size={14} color="#71717a" />
-        </TouchableOpacity>
-      </Animated.View>
+            <Ionicons name="server" size={13} color={colors.gold} />
+            <Text
+              className="text-white text-xs font-semibold ml-2 mr-1"
+              numberOfLines={1}
+            >
+              {providerDisplayName}
+            </Text>
+            {auditMode && (
+              <View className="bg-amber-500/20 rounded px-1.5 py-0.5 mr-1">
+                <Text className="text-amber-400 text-[9px] font-bold tracking-wider">
+                  AUDIT
+                </Text>
+              </View>
+            )}
+            <Ionicons name="chevron-up" size={14} color={colors.zinc500} />
+          </Animated.View>
+        </GestureDetector>
+      </RNAnimated.View>
 
       {/* ── Loading overlay (only in LOADING or SLOW states) ── */}
       {isLoadingState && (
         <View className="absolute inset-0 z-20 items-center justify-center bg-black/80">
           <View className="items-center">
-            <ActivityIndicator size="large" color="#D4A237" />
+            <ActivityIndicator size="large" color={colors.gold} />
             <Text className="text-zinc-500 text-sm mt-4">{getStageCopy()}</Text>
 
             {/* SLOW state: show alt-source action row */}
@@ -244,7 +302,7 @@ export function PlayerControlOverlay({
                   activeOpacity={0.8}
                   className="bg-zinc-800 rounded-xl py-3 px-6 flex-row items-center"
                 >
-                  <Ionicons name="server" size={16} color="#d4d4d8" />
+                  <Ionicons name="server" size={16} color={colors.zinc300} />
                   <Text className="text-zinc-300 font-bold text-sm ml-2">
                     Choose a source
                   </Text>
@@ -259,7 +317,7 @@ export function PlayerControlOverlay({
       {loadState.type === "STALLED" && (
         <View className="absolute top-16 left-0 right-0 z-20 items-center pointer-events-none">
           <View className="bg-black/70 rounded-full px-4 py-2 flex-row items-center border border-red-500/20">
-            <ActivityIndicator size="small" color="#ef4444" />
+            <ActivityIndicator size="small" color={colors.error} />
             <Text className="text-red-400 text-xs font-semibold ml-2">
               Source not responding
             </Text>

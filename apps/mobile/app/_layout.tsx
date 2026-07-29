@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, ActivityIndicator, Modal } from "react-native";
+import { View, ActivityIndicator, Modal, BackHandler } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Stack } from "expo-router";
+import { safeGoBack, resetNavigationInterlock } from "../lib/navigation";
+import { initLongTaskMonitor } from "../lib/performance/long-task-monitor";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -16,6 +19,7 @@ import {
 import { UpdateOverlay } from "../components/UpdateOverlay";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { DownloadInfraProvider, useDownloadQueue } from "../lib/download";
+import { migrateDownloads, isMigrationDone } from "../lib/download/migration";
 import { SettingsProvider, useSettings } from "../lib/settings";
 import { persistQueryClient } from "@tanstack/react-query-persist-client";
 import {
@@ -24,6 +28,7 @@ import {
 } from "../lib/queryPersister";
 import { DownloadToastView } from "../components/DownloadToast";
 import LegalGate from "../components/LegalGate";
+import { colors } from "../theme/colors";
 import "./globals.css";
 
 const queryClient = new QueryClient({
@@ -90,8 +95,17 @@ export default function RootLayout() {
       setCacheRestored(true);
     });
 
-    // NOTE: Background downloads are handled automatically by DownloadManager's
-    // Foreground Service (react-native-background-actions) — no manual registration needed.
+    // Run download migration once (non-blocking)
+    (async () => {
+      const done = await isMigrationDone();
+      if (!done) {
+        console.log("[App] Running download migration...");
+        const result = await migrateDownloads();
+        console.log(
+          `[App] Migration complete: ${result.migrated} migrated, ${result.cleaned} cleaned`,
+        );
+      }
+    })();
   }, []);
 
   // Gate 1: Wait for disk cache to hydrate before mounting any query consumers.
@@ -101,9 +115,9 @@ export default function RootLayout() {
     return (
       <View
         className="flex-1 items-center justify-center"
-        style={{ backgroundColor: "#070708" }}
+        style={{ backgroundColor: colors.bg }}
       >
-        <ActivityIndicator size="large" color="#D4A237" />
+        <ActivityIndicator size="large" color={colors.gold} />
       </View>
     );
   }
@@ -113,15 +127,15 @@ export default function RootLayout() {
     return (
       <View
         className="flex-1 items-center justify-center"
-        style={{ backgroundColor: "#070708" }}
+        style={{ backgroundColor: colors.bg }}
       >
-        <ActivityIndicator size="large" color="#D4A237" />
+        <ActivityIndicator size="large" color={colors.gold} />
       </View>
     );
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#070708" }}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <ErrorBoundary>
         <SafeAreaProvider>
           <QueryClientProvider client={queryClient}>
@@ -133,7 +147,7 @@ export default function RootLayout() {
           </QueryClientProvider>
         </SafeAreaProvider>
       </ErrorBoundary>
-    </View>
+    </GestureHandlerRootView>
   );
 }
 
@@ -150,15 +164,46 @@ function AppContent() {
   // Download queue runs for the lifetime of the app (not just while
   // the Downloads page is visible) so in-flight downloads continue
   // processing when the user navigates elsewhere.
-  useDownloadQueue({ maxConcurrent: 3 });
+  useDownloadQueue();
+
+  // ── Android hardware back button ──
+  // Catches the system back gesture/button on every screen and routes
+  // through safeGoBack, which handles empty back stacks gracefully.
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        safeGoBack({ fallback: "/(tabs)", dismissModalsFirst: true });
+        return true; // prevent default (which would crash on empty back stack)
+      },
+    );
+    return () => subscription.remove();
+  }, []);
+
+  // ── Long-task monitor (production only) ──
+  // Detects JS thread starvation and logs it. In production this feeds
+  // analytics; in dev it's a console warning.
+  useEffect(() => {
+    if (__DEV__) return;
+    return initLongTaskMonitor((duration, name) => {
+      console.warn(`[Perf] Long JS task: ${duration.toFixed(0)}ms — ${name}`);
+    });
+  }, []);
+
+  // Reset the navigation interlock on every screen focus.
+  // Prevents stale interlock state from a previous navigation that
+  // never completed (e.g., error boundary recovery).
+  useEffect(() => {
+    resetNavigationInterlock();
+  });
 
   if (!settingsLoaded) {
     return (
       <View
         className="flex-1 items-center justify-center"
-        style={{ backgroundColor: "#070708" }}
+        style={{ backgroundColor: colors.bg }}
       >
-        <ActivityIndicator size="large" color="#D4A237" />
+        <ActivityIndicator size="large" color={colors.gold} />
       </View>
     );
   }
@@ -169,19 +214,19 @@ function AppContent() {
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: "#070708" },
+          contentStyle: { backgroundColor: colors.bg },
         }}
       >
         <Stack.Screen
           name="(tabs)"
-          options={{ contentStyle: { backgroundColor: "#070708" } }}
+          options={{ contentStyle: { backgroundColor: colors.bg } }}
         />
         <Stack.Screen
           name="movie/[id]"
           options={{
             headerShown: false,
             animation: "slide_from_right",
-            contentStyle: { backgroundColor: "#070708" },
+            contentStyle: { backgroundColor: colors.bg },
           }}
         />
         <Stack.Screen
@@ -189,7 +234,7 @@ function AppContent() {
           options={{
             headerShown: false,
             animation: "slide_from_right",
-            contentStyle: { backgroundColor: "#070708" },
+            contentStyle: { backgroundColor: colors.bg },
           }}
         />
         <Stack.Screen
@@ -199,7 +244,7 @@ function AppContent() {
             animation: "slide_from_bottom",
             presentation: "fullScreenModal",
             gestureEnabled: false,
-            contentStyle: { backgroundColor: "#000" },
+            contentStyle: { backgroundColor: colors.playerBg },
           }}
         />
         {/* Download management pages */}
@@ -208,7 +253,7 @@ function AppContent() {
           options={{
             headerShown: false,
             animation: "slide_from_right",
-            contentStyle: { backgroundColor: "#070708" },
+            contentStyle: { backgroundColor: colors.bg },
           }}
         />
         <Stack.Screen
@@ -216,7 +261,7 @@ function AppContent() {
           options={{
             headerShown: false,
             animation: "slide_from_right",
-            contentStyle: { backgroundColor: "#070708" },
+            contentStyle: { backgroundColor: colors.bg },
           }}
         />
         <Stack.Screen
@@ -224,7 +269,7 @@ function AppContent() {
           options={{
             headerShown: false,
             animation: "slide_from_right",
-            contentStyle: { backgroundColor: "#070708" },
+            contentStyle: { backgroundColor: colors.bg },
           }}
         />
         {/* download/[...id] - kept in codebase, only registered in dev builds */}
@@ -236,7 +281,7 @@ function AppContent() {
               animation: "slide_from_bottom",
               presentation: "fullScreenModal",
               gestureEnabled: false,
-              contentStyle: { backgroundColor: "#000" },
+              contentStyle: { backgroundColor: colors.playerBg },
             }}
           />
         )}
@@ -247,7 +292,7 @@ function AppContent() {
             animation: "slide_from_bottom",
             presentation: "fullScreenModal",
             gestureEnabled: false,
-            contentStyle: { backgroundColor: "#000" },
+            contentStyle: { backgroundColor: colors.playerBg },
           }}
         />
         <Stack.Screen
@@ -257,7 +302,7 @@ function AppContent() {
             animation: "slide_from_bottom",
             presentation: "fullScreenModal",
             gestureEnabled: false,
-            contentStyle: { backgroundColor: "#000" },
+            contentStyle: { backgroundColor: colors.playerBg },
           }}
         />
         <Stack.Screen
@@ -267,7 +312,7 @@ function AppContent() {
             animation: "slide_from_bottom",
             presentation: "fullScreenModal",
             gestureEnabled: false,
-            contentStyle: { backgroundColor: "#000" },
+            contentStyle: { backgroundColor: colors.playerBg },
           }}
         />
         <Stack.Screen
@@ -275,7 +320,7 @@ function AppContent() {
           options={{
             headerShown: false,
             animation: "slide_from_right",
-            contentStyle: { backgroundColor: "#070708" },
+            contentStyle: { backgroundColor: colors.bg },
           }}
         />
         <Stack.Screen
@@ -283,7 +328,7 @@ function AppContent() {
           options={{
             headerShown: false,
             animation: "slide_from_right",
-            contentStyle: { backgroundColor: "#070708" },
+            contentStyle: { backgroundColor: colors.bg },
           }}
         />
         <Stack.Screen
@@ -292,7 +337,7 @@ function AppContent() {
             headerShown: false,
             animation: "slide_from_bottom",
             presentation: "fullScreenModal",
-            contentStyle: { backgroundColor: "#070708" },
+            contentStyle: { backgroundColor: colors.bg },
           }}
         />
         <Stack.Screen
@@ -300,7 +345,7 @@ function AppContent() {
           options={{
             headerShown: false,
             animation: "slide_from_right",
-            contentStyle: { backgroundColor: "#070708" },
+            contentStyle: { backgroundColor: colors.bg },
           }}
         />
         {/* experimental/[...id] - Nuvio provider test page (dev only) */}
@@ -310,7 +355,7 @@ function AppContent() {
             options={{
               headerShown: false,
               animation: "slide_from_right",
-              contentStyle: { backgroundColor: "#070708" },
+              contentStyle: { backgroundColor: colors.bg },
             }}
           />
         )}
@@ -319,7 +364,31 @@ function AppContent() {
           options={{
             headerShown: false,
             animation: "slide_from_right",
-            contentStyle: { backgroundColor: "#070708" },
+            contentStyle: { backgroundColor: colors.bg },
+          }}
+        />
+        <Stack.Screen
+          name="announcement/[id]"
+          options={{
+            headerShown: false,
+            animation: "slide_from_right",
+            contentStyle: { backgroundColor: colors.bg },
+          }}
+        />
+        <Stack.Screen
+          name="announcements"
+          options={{
+            headerShown: false,
+            animation: "slide_from_right",
+            contentStyle: { backgroundColor: colors.bg },
+          }}
+        />
+        <Stack.Screen
+          name="feedback"
+          options={{
+            headerShown: false,
+            animation: "slide_from_right",
+            contentStyle: { backgroundColor: colors.bg },
           }}
         />
       </Stack>

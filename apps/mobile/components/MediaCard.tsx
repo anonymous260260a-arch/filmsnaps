@@ -5,9 +5,13 @@ import {
   TouchableOpacity,
   useWindowDimensions,
   Animated,
+  StyleSheet,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { getImageUrl } from "@filmsnaps/shared";
+import { colors } from "../theme/colors";
 import { ProgressiveImage } from "./ProgressiveImage";
+import { useMediaDownloadState } from "../lib/download/context";
 import type { Movie } from "@filmsnaps/shared";
 
 interface MediaCardProps {
@@ -60,6 +64,12 @@ export function MediaCard({
   const title = item.title || item.name || "Untitled";
   const accessibilityLabel = `${title}${item.vote_average ? `, rated ${item.vote_average.toFixed(1)} out of 10` : ""}`;
 
+  // Download state badge
+  const downloadState = useMediaDownloadState(
+    (item.media_type as "movie" | "tv") || "movie",
+    String(item.id),
+  );
+
   return (
     <TouchableOpacity
       onPress={() => onPress(item)}
@@ -98,6 +108,22 @@ export function MediaCard({
               </Text>
             </View>
           )}
+
+          {/* Download state badge — top-right corner */}
+          {downloadState.state === "completed" && (
+            <View style={styles.offlineBadge}>
+              <Ionicons
+                name="cloud-offline"
+                size={10}
+                color={colors.successGreen}
+              />
+            </View>
+          )}
+          {downloadState.state === "downloading" && (
+            <View style={styles.downloadingBadge}>
+              <Ionicons name="cloud-download" size={10} color={colors.gold} />
+            </View>
+          )}
         </View>
 
         {/* Title row with inline rating — no overlay on poster */}
@@ -106,7 +132,7 @@ export function MediaCard({
         >
           <Text
             style={{
-              color: "#A1A1AA",
+              color: colors.textSecondary,
               fontSize: 12,
               fontFamily: "Inter_500Medium",
               flex: 1,
@@ -116,7 +142,7 @@ export function MediaCard({
             {item.title || item.name}
           </Text>
           {item.vote_average != null && item.vote_average > 0 && (
-            <Text style={{ color: "#D4A237", fontSize: 10, marginLeft: 4 }}>
+            <Text style={{ color: colors.gold, fontSize: 10, marginLeft: 4 }}>
               {"★"} {item.vote_average.toFixed(1)}
             </Text>
           )}
@@ -125,3 +151,32 @@ export function MediaCard({
     </TouchableOpacity>
   );
 }
+
+const styles = StyleSheet.create({
+  offlineBadge: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(34, 197, 94, 0.5)",
+  },
+  downloadingBadge: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(212, 162, 55, 0.5)",
+  },
+});

@@ -2,10 +2,18 @@
  * TrailerModal — fullscreen YouTube trailer modal on mobile.
  */
 
-import React, { useCallback, useRef } from 'react';
-import { View, Text, TouchableOpacity, Modal, Dimensions, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { WebView } from 'react-native-webview';
+import React, { useCallback, useRef } from "react";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  Modal,
+  Dimensions,
+  Platform,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { WebView } from "react-native-webview";
+import { colors } from "../theme/colors";
 
 interface TrailerModalProps {
   videoKey: string | null | undefined;
@@ -14,7 +22,8 @@ interface TrailerModalProps {
 }
 
 export function TrailerModal({ videoKey, open, onClose }: TrailerModalProps) {
-  const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+  const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } =
+    Dimensions.get("window");
 
   if (!videoKey) return null;
 
@@ -36,13 +45,13 @@ export function TrailerModal({ videoKey, open, onClose }: TrailerModalProps) {
           accessibilityLabel="Close trailer"
           accessibilityRole="button"
         >
-          <Ionicons name="close" size={22} color="#fff" />
+          <Ionicons name="close" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
 
         {/* Title */}
         <Text
           className="text-text-primary text-lg font-bold mb-6"
-          style={{ fontFamily: 'PlayfairDisplay_700Bold' }}
+          style={{ fontFamily: "PlayfairDisplay_700Bold" }}
         >
           Trailer
         </Text>
@@ -51,7 +60,7 @@ export function TrailerModal({ videoKey, open, onClose }: TrailerModalProps) {
         <View className="w-full" style={{ aspectRatio: 16 / 9 }}>
           <WebView
             source={{ uri: embedUrl }}
-            style={{ backgroundColor: '#000' }}
+            style={{ backgroundColor: colors.playerBg }}
             allowsFullscreenVideo
             javaScriptEnabled
             domStorageEnabled

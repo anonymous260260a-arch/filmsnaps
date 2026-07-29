@@ -1,1369 +1,1188 @@
-/**
- * Download Manager — Core service orchestrating downloads.
- *
- * Manages the download lifecycle: queue, priority, retry, speed limiting.
- * Communicates with the adapter for actual downloads and the database for persistence.
- * Tracks download speed and estimated remaining time in real time.
- *
- * Changes from original:
- * - Uses react-native-blob-util DownloadDir instead of expo-file-system documentDirectory
- * - Adds speed tracking (bytes/sec from progress deltas)
- * - Adds error categorization
- * - Supports resume via Range header through adapter headers
- * - LIVE byte counters for atomic pause (no stale DB read)
- * - sanitizeResumeData() to prevent corrupted values
- */
+// apps/mobile/lib/download/manager.ts
+// KEY CHANGES:
+// - processQueue uses shared-promise pattern (no re-entrancy)
+// - resume() reuses existing native task handle
+// - initialize() is explicit (not fire-and-forget constructor)
+// - Completion guard prevents double-fire
+//
+// BUG FIXES applied (from EXPERT_BUGFIX_3.md):
+//   A: getInfoAsync from modern API throws → use fsCompat
+//   B: double extension (.mkv.mp4) → use buildFileName
+//   C: path mismatch → handleNativeDone uses native filePath
+//   E: pause writes 0 bytes → stat file on disk
+//   F: emitStatus missing fileUri → include it in startDownload
+//   Q6: cancel race → DB mark first, handleNativeDone checks status
 
 import { DownloadDatabase } from "./database";
-import { DownloadNotifications } from "./notifications";
-import type { IDownloaderAdapter, DownloadInstance } from "./adapter";
+import { NativeDownloaderAdapter } from "./nativeAdapter";
+import { NetworkAwarePolicy } from "./networkPolicy";
+import { StorageManager } from "./storageManager";
+import type { DownloadInstance } from "./adapter";
+import { logger } from "./logger";
+import type { DownloadStore } from "./store";
 import type {
   DownloadTask,
-  DownloadStatus,
   DownloadProgress,
   StatusChange,
-  Unsubscribe,
+  DownloadConfig,
 } from "./types";
+import { DEFAULT_CONFIG } from "./types";
+import {
+  getInfoAsync,
+  deleteFile,
+  ensureDirectory,
+  getNativeDownloadDir,
+} from "./fsCompat";
+import { buildFileName, sanitizeForNative } from "./fileNameUtils";
 
-// ── Lazy-loaded BackgroundService (react-native-background-actions) ──
-let BackgroundService: any = null;
-try {
-  BackgroundService = require("react-native-background-actions").default;
-} catch (e) {}
+// ─── Constants ───
+const RETRY_DELAYS = [5_000, 15_000, 60_000];
+const DB_WRITE_INTERVAL = 3_000;
+const PROGRESS_EMIT_INTERVAL = 400;
 
-let _RNFB: any = null;
-function getRNFB(): any {
-  if (_RNFB) return _RNFB;
-  try {
-    _RNFB = require("react-native-blob-util").default;
-  } catch (e) {
-    console.warn("[Manager] react-native-blob-util not available:", e);
+// ─── Speed Tracker ───
+class SpeedTracker {
+  private samples: Array<{ time: number; bytes: number }> = [];
+  private windowMs = 5_000;
+
+  update(bytes: number): void {
+    const now = Date.now();
+    this.samples.push({ time: now, bytes });
+    const cutoff = now - this.windowMs;
+    while (this.samples.length > 0 && this.samples[0].time < cutoff) {
+      this.samples.shift();
+    }
   }
-  return _RNFB;
+
+  getSpeed(): number {
+    if (this.samples.length < 2) return 0;
+    const first = this.samples[0];
+    const last = this.samples[this.samples.length - 1];
+    const elapsedSec = (last.time - first.time) / 1000;
+    if (elapsedSec <= 0.1) return 0;
+    return Math.max(0, Math.round((last.bytes - first.bytes) / elapsedSec));
+  }
+
+  getEta(remainingBytes: number): number {
+    const speed = this.getSpeed();
+    if (speed <= 0) return 0;
+    return Math.round(remainingBytes / speed);
+  }
+
+  reset(): void {
+    this.samples = [];
+  }
 }
 
-// ── Constants ──
+// ─── Event Types ───
+type ProgressListener = (p: DownloadProgress) => void;
+type StatusListener = (s: StatusChange) => void;
+type QueueListener = (queueLength: number, activeCount: number) => void;
 
-const MAX_CONCURRENT = 3;
-const MAX_RETRIES = 3;
-const RETRY_DELAYS = [5000, 15000, 60000];
-const SPEED_SAMPLE_WINDOW = 5000;
-const FOREGROUND_SERVICE_CHECK_INTERVAL = 2000;
-
-// ── Error Categories ──
-
-// ═══════════════════════════════════════════════════════════════
-// SerialQueue — per-task ordered write queue.
-// Guarantees DB writes for the same task never interleave,
-// preventing lost-update races for pause/resume/progress writes.
-// ═══════════════════════════════════════════════════════════════
-class SerialQueue {
-  private chains = new Map<string, Promise<void>>();
-  enqueue(taskId: string, fn: () => Promise<void>): Promise<void> {
-    const prev = this.chains.get(taskId) ?? Promise.resolve();
-    const next = prev.then(fn, fn); // `fn, fn` = reject handler re-runs on error
-    this.chains.set(
-      taskId,
-      next.catch(() => {}),
-    );
-    return next;
-  }
-}
-
-/**
- * CRITICAL: Coerce a raw value to a safe number.
- * RNFB on Android passes bridge values as strings — without coercion,
- * `+` concatenates and `<` does lexicographic comparison.
- */
-function toSafeNumber(value: unknown, fallback: number = 0): number {
-  if (typeof value === "number")
-    return Number.isFinite(value) ? value : fallback;
-  if (typeof value === "string") {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : fallback;
-  }
-  return fallback;
-}
-
-export enum DownloadErrorCode {
-  NETWORK_ERROR = "NETWORK_ERROR",
-  STORAGE_FULL = "STORAGE_FULL",
-  PERMISSION_DENIED = "PERMISSION_DENIED",
-  INVALID_URL = "INVALID_URL",
-  SERVER_ERROR = "SERVER_ERROR",
-  FILE_CORRUPTED = "FILE_CORRUPTED",
-  TIMEOUT = "TIMEOUT",
-  UNKNOWN = "UNKNOWN",
-}
-
-export interface DownloadError {
-  code: DownloadErrorCode;
-  message: string;
-  retryable: boolean;
-}
-
-export function categorizeError(err: any): DownloadError {
-  const msg = (
-    err?.message ||
-    err?.toString() ||
-    "Unknown error"
-  ).toLowerCase();
-
-  if (
-    msg.includes("storage") ||
-    msg.includes("disk") ||
-    msg.includes("space") ||
-    msg.includes("enospc")
-  ) {
-    return {
-      code: DownloadErrorCode.STORAGE_FULL,
-      message: "Storage is full",
-      retryable: false,
-    };
-  }
-  if (
-    msg.includes("permission") ||
-    msg.includes("denied") ||
-    msg.includes("access")
-  ) {
-    return {
-      code: DownloadErrorCode.PERMISSION_DENIED,
-      message: "Permission denied",
-      retryable: false,
-    };
-  }
-  if (
-    msg.includes("invalid url") ||
-    msg.includes("malformed") ||
-    msg.includes("bad url")
-  ) {
-    return {
-      code: DownloadErrorCode.INVALID_URL,
-      message: "Invalid URL",
-      retryable: false,
-    };
-  }
-  if (
-    msg.includes("corrupt") ||
-    msg.includes("integrity") ||
-    msg.includes("checksum")
-  ) {
-    return {
-      code: DownloadErrorCode.FILE_CORRUPTED,
-      message: "File corrupted",
-      retryable: false,
-    };
-  }
-  if (msg.includes("timeout") || msg.includes("timed out")) {
-    return {
-      code: DownloadErrorCode.TIMEOUT,
-      message: "Request timed out",
-      retryable: true,
-    };
-  }
-  if (
-    msg.includes("network") ||
-    msg.includes("dns") ||
-    msg.includes("econnreset") ||
-    msg.includes("econnrefused") ||
-    msg.includes("enotfound")
-  ) {
-    return {
-      code: DownloadErrorCode.NETWORK_ERROR,
-      message: "Network error",
-      retryable: true,
-    };
-  }
-  if (
-    msg.includes("500") ||
-    msg.includes("502") ||
-    msg.includes("503") ||
-    msg.includes("server")
-  ) {
-    return {
-      code: DownloadErrorCode.SERVER_ERROR,
-      message: "Server error",
-      retryable: true,
-    };
-  }
-
-  return {
-    code: DownloadErrorCode.UNKNOWN,
-    message: err?.message || "Unknown error",
-    retryable: true,
-  };
-}
-
-// ── Speed / ETA Tracking ──
-
-interface SpeedSample {
-  time: number;
-  receivedBytes: number;
-}
-
-interface SpeedTracker {
-  samples: SpeedSample[];
-  currentSpeed: number;
-  eta: number;
-  /** EMA-smoothed speed (bytes/sec) */
-  smoothedSpeed: number;
-}
-
-function createSpeedTracker(): SpeedTracker {
-  return { samples: [], currentSpeed: 0, eta: 0, smoothedSpeed: 0 };
-}
-
-/** EMA alpha constant (0.3 = smooths jitter, reacts within ~3 samples) */
-const SPEED_EMA_ALPHA = 0.3;
-/** Minimum samples (15s of data) before showing ETA */
-const ETA_MIN_SAMPLES = 3;
-
-function updateSpeed(
-  tracker: SpeedTracker,
-  receivedBytes: number,
-  totalBytes: number,
-): { speed: number; eta: number } {
-  const now = Date.now();
-  tracker.samples.push({ time: now, receivedBytes });
-
-  const cutoff = now - SPEED_SAMPLE_WINDOW;
-  tracker.samples = tracker.samples.filter((s) => s.time >= cutoff);
-
-  if (tracker.samples.length < 2) {
-    return { speed: 0, eta: 0 };
-  }
-
-  const first = tracker.samples[0];
-  const last = tracker.samples[tracker.samples.length - 1];
-  const timeDelta = (last.time - first.time) / 1000;
-  const byteDelta = last.receivedBytes - first.receivedBytes;
-
-  if (timeDelta <= 0 || byteDelta <= 0) {
-    return { speed: tracker.smoothedSpeed, eta: tracker.eta };
-  }
-
-  const rawSpeed = byteDelta / timeDelta;
-  tracker.currentSpeed = rawSpeed;
-
-  // EMA smoothing
-  if (tracker.smoothedSpeed === 0) {
-    tracker.smoothedSpeed = rawSpeed;
-  } else {
-    tracker.smoothedSpeed =
-      SPEED_EMA_ALPHA * rawSpeed +
-      (1 - SPEED_EMA_ALPHA) * tracker.smoothedSpeed;
-  }
-
-  const speed = tracker.smoothedSpeed;
-
-  if (
-    speed > 0 &&
-    totalBytes > 0 &&
-    tracker.samples.length >= ETA_MIN_SAMPLES
-  ) {
-    const remaining = totalBytes - receivedBytes;
-    const etaSec = remaining / speed;
-    // Round generously: <1m, ~2m, ~10m, >1h
-    tracker.eta =
-      etaSec < 60
-        ? Math.round(etaSec / 10) * 10 + 10
-        : etaSec < 600
-          ? Math.round(etaSec / 30) * 30
-          : etaSec < 3600
-            ? Math.round(etaSec / 60) * 60
-            : Math.round(etaSec / 300) * 300;
-  } else {
-    tracker.eta = 0;
-  }
-
-  return { speed, eta: tracker.eta };
-}
-
-/**
- * FIX: Validate and normalize resumeData to prevent corrupted values.
- * Always returns a clean numeric string or null.
- */
-function sanitizeResumeData(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  // Coerce to string first (handles number, string, etc.)
-  const str = String(value);
-  // Must be purely numeric (no concatenation artifacts, no decimals, no negatives)
-  if (!/^\d+$/.test(str)) return null;
-  const num = parseInt(str, 10);
-  if (isNaN(num) || num <= 0) return null;
-  // Sanity check: no file should be > 50GB
-  if (num > 50 * 1024 * 1024 * 1024) return null;
-  return String(num);
-}
-
-// ── Download Manager Config ──
-
-export interface DownloadManagerConfig {
-  maxConcurrent?: number;
-  maxRetries?: number;
-  enableNotifications?: boolean;
-}
-
-// ── Download Manager ──
-
+// ─── Manager ───
 export class DownloadManager {
-  private adapter: IDownloaderAdapter;
-  private activeInstances = new Map<string, DownloadInstance>();
-  private activeTasks = new Map<string, DownloadTask>();
-  private activeSpeedTrackers = new Map<string, SpeedTracker>();
-  /**
-   * FIX: Live byte counters — updated synchronously on every progress tick.
-   * pause() reads from here instead of stale DB.
-   */
-  private liveReceivedBytes = new Map<string, number>();
-  private liveTotalBytes = new Map<string, number>();
+  private adapter: NativeDownloaderAdapter;
+  private networkPolicy: NetworkAwarePolicy;
+  private storage: StorageManager;
+  private config: DownloadConfig;
 
   private queue: string[] = [];
-  /**
-   * FIX: Per-task pause mutex. Prevents concurrent pause() calls from racing.
-   * A taskId is added when pause starts and removed when it completes.
-   */
-  private pausingTasks = new Set<string>();
-  private config: Required<DownloadManagerConfig>;
-  private progressListeners = new Set<
-    (p: DownloadProgress & { speed?: number; eta?: number }) => void
-  >();
-  private statusListeners = new Set<(s: StatusChange) => void>();
-  private queueListeners = new Set<() => void>();
-  private notificationsEnabled: boolean;
-  private processingQueue = false;
-  private fsIconFailure = false;
-  /** Per-task serial DB write queue */
-  private dbQueue = new SerialQueue();
+  private activeInstances = new Map<string, DownloadInstance>();
+  private speedTrackers = new Map<string, SpeedTracker>();
+  private liveReceived = new Map<string, number>();
+  private liveTotal = new Map<string, number>();
 
-  constructor(adapter: IDownloaderAdapter, config?: DownloadManagerConfig) {
-    this.adapter = adapter;
-    this.config = {
-      maxConcurrent: config?.maxConcurrent ?? MAX_CONCURRENT,
-      maxRetries: config?.maxRetries ?? MAX_RETRIES,
-      enableNotifications: config?.enableNotifications ?? false,
-    };
-    this.notificationsEnabled = config?.enableNotifications ?? false;
-  }
+  // ─── Expert: per-task re-entrant pause lock ───
+  private pauseInFlight = new Set<string>();
 
-  get maxConcurrent(): number {
-    return this.config.maxConcurrent;
-  }
-  get activeCount(): number {
-    return this.activeInstances.size;
-  }
-  get queuedCount(): number {
-    return this.queue.length;
-  }
+  // ─── Expert: store reference injected by context.tsx so initialize() can push
+  //     DB corrections into the store via upsertMany(). Set via setStore(). ───
+  private store: DownloadStore | null = null;
 
-  async initialize(): Promise<void> {
-    const recovered = await DownloadDatabase.recoverStaleTasks();
-    if (recovered > 0) {
-      console.log(`[Manager] Recovered ${recovered} stale tasks`);
-    }
-  }
+  // ─── Shared-promise queue lock ───
+  private processQueuePromise: Promise<void> | null = null;
 
-  // ─── ADD ───
-  async add(task: DownloadTask): Promise<string> {
-    const existing = await DownloadDatabase.getByMediaId(task.tmdbId ?? "");
-    const duplicate = existing.find(
-      (t) =>
-        t.url === task.url &&
-        t.status !== "completed" &&
-        t.status !== "cancelled",
-    );
-    if (duplicate) {
-      console.log(`[Manager] Duplicate download: ${duplicate.id}`);
-      return duplicate.id;
-    }
+  private initialized = false;
+  private pausedForNetwork = new Set<string>();
 
-    await DownloadDatabase.insert(task);
+  // ─── FIX 5: Debounce timer for network policy spam ───
+  private networkDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    if (!this.queue.includes(task.id)) {
-      this.queue.push(task.id);
-    }
-    this.notifyQueue();
+  private progressListeners = new Set<ProgressListener>();
+  private statusListeners = new Set<StatusListener>();
+  private queueListeners = new Set<QueueListener>();
 
-    if (this.notificationsEnabled) {
-      DownloadNotifications.showStarted(task.title || "Download").catch(
-        () => {},
-      );
-    }
+  constructor(config?: Partial<DownloadConfig>) {
+    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.adapter = new NativeDownloaderAdapter();
+    this.networkPolicy = new NetworkAwarePolicy(this.config.networkPolicy);
+    this.storage = new StorageManager();
 
-    this.processQueue();
-
-    return task.id;
-  }
-
-  // ─── PAUSE (FAST — NO FILE MERGE) ───
-  async pause(taskId: string): Promise<void> {
-    // Mutex: only one pause per task at a time
-    if (this.pausingTasks.has(taskId)) {
-      console.log(`[PAUSE] Already pausing ${taskId} — skipping`);
-      return;
-    }
-    this.pausingTasks.add(taskId);
-
-    try {
-      const instance = this.activeInstances.get(taskId);
-
-      // Coerce EVERYTHING — RNFB bridge values arrive as strings on Android
-      const liveReceived = toSafeNumber(this.liveReceivedBytes.get(taskId), 0);
-      const liveTotal = toSafeNumber(this.liveTotalBytes.get(taskId), 0);
-      // Capture task BEFORE deletion — needed by statDownloadedBytes
-      const pausingTask = this.activeTasks.get(taskId);
-
-      // Step 1: Stop the native download
-      if (instance) {
-        try {
-          await instance.pause();
-        } catch {}
-        this.activeInstances.delete(taskId);
-        this.activeTasks.delete(taskId);
-        this.activeSpeedTrackers.delete(taskId);
+    // Network change handler (FIX 5: debounced to avoid 5x spam on startup)
+    this.networkPolicy.onChange((canDownload, isWifi) => {
+      if (this.networkDebounceTimer) {
+        clearTimeout(this.networkDebounceTimer);
       }
-
-      // Step 2: Source of truth = bytes physically on disk (what Range resumes from).
-      // Never sum live + disk — the in-memory counter can run ahead of flushed bytes.
-      // Fall back to live counter only if stat fails.
-      const onDisk = pausingTask
-        ? await this.statDownloadedBytes(pausingTask)
-        : 0;
-      const resumeBytes = onDisk > 0 ? onDisk : liveReceived;
-      const resumeData = sanitizeResumeData(resumeBytes);
-
-      console.log(
-        `[PAUSE] taskId=${taskId}, liveReceived=${liveReceived} (${typeof liveReceived}), diskBytes=${onDisk}, resumeBytes=${resumeBytes}, resumeData=${resumeData}`,
-      );
-
-      // Step 3: Save state via serial queue (prevents lost-update races)
-      await this.dbQueue.enqueue(taskId, () =>
-        DownloadDatabase.update({
-          id: taskId,
-          status: "paused",
-          receivedBytes: resumeBytes,
-          totalBytes: liveTotal,
-          resumeData,
-        }),
-      );
-
-      // Step 4: Emit status (triggers React re-render)
-      this.emitStatus(taskId, "paused", undefined, resumeData);
-
-      // Step 5: Clean up live trackers
-      this.liveReceivedBytes.delete(taskId);
-      this.liveTotalBytes.delete(taskId);
-
-      this.queue = this.queue.filter((id) => id !== taskId);
-      this.notifyQueue();
-      this.processQueue();
-
-      // ═══════════════════════════════════════════════════════════════
-      // NO FILE MERGE HERE. The .resume file stays on disk.
-      // Merge happens lazily in startDownload() when the user resumes.
-      // This keeps pause() under 100ms.
-      // ═══════════════════════════════════════════════════════════════
-    } finally {
-      this.pausingTasks.delete(taskId);
-    }
-  }
-
-  // ─── RESUME (FAST — NO FILE MERGE) ───
-  async resume(taskId: string): Promise<void> {
-    const task = await DownloadDatabase.getById(taskId);
-    if (!task) {
-      console.warn(`[RESUME] Task ${taskId} not found`);
-      return;
-    }
-
-    if (
-      task.status !== "paused" &&
-      task.status !== "failed" &&
-      task.status !== "retrying"
-    ) {
-      console.warn(
-        `[RESUME] Task ${taskId} status='${task.status}', cannot resume`,
-      );
-      return;
-    }
-
-    // Sanitize resumeData
-    let validatedResumeData = sanitizeResumeData(task.resumeData);
-
-    if (validatedResumeData) {
-      const resumeOffset = parseInt(validatedResumeData, 10);
-      const filePath = this.buildFilePath(task);
-
-      try {
-        const rnfb = getRNFB();
-        if (rnfb) {
-          // Validate: sum of original + .resume must be >= resumeOffset
-          let totalOnDisk = 0;
-
-          const origExists = await rnfb.fs.exists(filePath);
-          if (origExists) {
-            const origStat = await rnfb.fs.stat(filePath);
-            totalOnDisk += Number(origStat.size) || 0;
-          }
-
-          const resumePath = `${filePath}.resume`;
-          const resumeExists = await rnfb.fs.exists(resumePath);
-          if (resumeExists) {
-            const resumeStat = await rnfb.fs.stat(resumePath);
-            totalOnDisk += Number(resumeStat.size) || 0;
-          }
-
-          if (totalOnDisk === 0) {
-            console.warn(`[RESUME] No files on disk for ${taskId}, resetting`);
-            validatedResumeData = null;
-          } else if (totalOnDisk < resumeOffset) {
-            console.warn(
-              `[RESUME] Disk ${totalOnDisk} < resumeOffset ${resumeOffset}, resetting`,
-            );
-            validatedResumeData = null;
-          } else if (totalOnDisk > resumeOffset) {
-            // Disk has more data than resumeData indicates — use actual disk size
-            console.log(
-              `[RESUME] Disk ${totalOnDisk} > resumeOffset ${resumeOffset}, using disk size`,
-            );
-            validatedResumeData = String(totalOnDisk);
-          }
-          // If equal, use as-is
-        }
-      } catch (e) {
-        console.warn(`[RESUME] Validation error:`, e);
-        validatedResumeData = null;
-      }
-    }
-
-    console.log(
-      `[RESUME] taskId=${taskId}, validatedResumeData=${validatedResumeData}`,
-    );
-
-    await this.dbQueue.enqueue(taskId, () =>
-      DownloadDatabase.update({
-        id: taskId,
-        status: "pending",
-        error: undefined,
-        resumeData: validatedResumeData,
-        ...(validatedResumeData === null
-          ? { receivedBytes: 0, totalBytes: 0 }
-          : {}),
-      }),
-    );
-
-    if (!this.queue.includes(taskId)) {
-      this.queue.push(taskId);
-    }
-    this.notifyQueue();
-    this.processQueue();
-  }
-
-  // ─── CANCEL ───
-  async cancel(taskId: string): Promise<void> {
-    const instance = this.activeInstances.get(taskId);
-    if (instance) {
-      try {
-        await instance.cancel();
-      } catch {}
-      this.activeInstances.delete(taskId);
-      this.activeTasks.delete(taskId);
-      this.activeSpeedTrackers.delete(taskId);
-    }
-    this.liveReceivedBytes.delete(taskId);
-    this.liveTotalBytes.delete(taskId);
-
-    const task = await DownloadDatabase.getById(taskId);
-    if (task?.fileUri) {
-      try {
-        const rnfb = getRNFB();
-        if (rnfb && (await rnfb.fs.exists(task.fileUri))) {
-          await rnfb.fs.unlink(task.fileUri);
-        }
-      } catch {}
-    }
-    if (task?.resumeData) {
-      const tempPath = task.fileUri ? `${task.fileUri}.resume` : null;
-      if (tempPath) {
-        try {
-          const rnfb = getRNFB();
-          if (rnfb && (await rnfb.fs.exists(tempPath))) {
-            await rnfb.fs.unlink(tempPath);
-          }
-        } catch {}
-      }
-    }
-
-    await this.dbQueue.enqueue(taskId, () =>
-      DownloadDatabase.update({
-        id: taskId,
-        status: "cancelled",
-        resumeData: null,
-      }),
-    );
-    this.emitStatus(taskId, "cancelled");
-
-    this.queue = this.queue.filter((id) => id !== taskId);
-    this.notifyQueue();
-    this.processQueue();
-  }
-
-  // ─── REMOVE ───
-  async remove(taskId: string): Promise<void> {
-    const task = await DownloadDatabase.getById(taskId);
-    await this.cancel(taskId);
-    await DownloadDatabase.delete(taskId);
-
-    if (task?.fileUri) {
-      try {
-        const rnfb = getRNFB();
-        if (rnfb && (await rnfb.fs.exists(task.fileUri))) {
-          await rnfb.fs.unlink(task.fileUri);
-        }
-      } catch {}
-    }
-  }
-
-  // ─── RETRY ───
-  async retry(taskId: string): Promise<void> {
-    const task = await DownloadDatabase.getById(taskId);
-    if (!task) return;
-
-    await this.dbQueue.enqueue(taskId, () =>
-      DownloadDatabase.update({
-        id: taskId,
-        status: "pending",
-        receivedBytes: 0,
-        totalBytes: 0,
-        error: undefined,
-        retryCount: 0,
-        resumeData: null,
-      }),
-    );
-
-    if (!this.queue.includes(taskId)) {
-      this.queue.push(taskId);
-    }
-    this.notifyQueue();
-    this.processQueue();
-  }
-
-  // ─── GET PROGRESS ───
-  async getProgress(
-    taskId: string,
-  ): Promise<(DownloadProgress & { speed?: number; eta?: number }) | null> {
-    // FIX: Prefer live in-memory data over stale DB
-    const liveReceived = this.liveReceivedBytes.get(taskId);
-    const liveTotal = this.liveTotalBytes.get(taskId);
-    const tracker = this.activeSpeedTrackers.get(taskId);
-
-    if (liveReceived !== undefined && liveTotal !== undefined) {
-      return {
-        taskId,
-        receivedBytes: liveReceived,
-        totalBytes: liveTotal,
-        speed: tracker?.currentSpeed ?? 0,
-        eta: tracker?.eta ?? 0,
-      };
-    }
-
-    const task = await DownloadDatabase.getById(taskId);
-    if (!task) return null;
-    return {
-      taskId: task.id,
-      receivedBytes: task.receivedBytes,
-      totalBytes: task.totalBytes,
-      speed: tracker?.currentSpeed ?? 0,
-      eta: tracker?.eta ?? 0,
-    };
-  }
-
-  async getAll(): Promise<DownloadTask[]> {
-    return DownloadDatabase.getAll();
-  }
-  async getByStatus(status: DownloadStatus): Promise<DownloadTask[]> {
-    return DownloadDatabase.getByStatus(status);
-  }
-
-  /** Returns the 1-indexed position of a task in the queue, or null if not queued */
-  getQueuePosition(taskId: string): { position: number; total: number } | null {
-    const idx = this.queue.indexOf(taskId);
-    if (idx === -1) return null;
-    return { position: idx + 1, total: this.queue.length };
-  }
-
-  async getStorageInfo(): Promise<{ available: number; used: number }> {
-    const used = await DownloadDatabase.getStorageUsed();
-    const available = await this.adapter.getAvailableStorage();
-    return { available, used };
-  }
-
-  async clearCompleted(): Promise<void> {
-    const completed = await DownloadDatabase.getByStatus("completed");
-    for (const task of completed) {
-      if (task.fileUri) {
-        try {
-          const rnfb = getRNFB();
-          if (rnfb && (await rnfb.fs.exists(task.fileUri))) {
-            await rnfb.fs.unlink(task.fileUri);
-          }
-        } catch {}
-      }
-    }
-    await DownloadDatabase.deleteCompleted();
-  }
-
-  async clearCancelled(): Promise<void> {
-    const cancelled = await DownloadDatabase.getByStatus("cancelled");
-    for (const task of cancelled) {
-      if (task.fileUri) {
-        try {
-          const rnfb = getRNFB();
-          if (rnfb && (await rnfb.fs.exists(task.fileUri))) {
-            await rnfb.fs.unlink(task.fileUri);
-          }
-        } catch {}
-      }
-    }
-    await DownloadDatabase.deleteCancelled();
-  }
-
-  // ─── PROCESS QUEUE ───
-  private async processQueue(): Promise<void> {
-    if (this.processingQueue) return;
-    this.processingQueue = true;
-
-    try {
-      const hasPendingWork = this.queue.length > 0;
-      const hasActiveWork = this.activeInstances.size > 0;
-
-      if (
-        (hasPendingWork || hasActiveWork) &&
-        BackgroundService &&
-        !BackgroundService.isRunning() &&
-        !this.fsIconFailure
-      ) {
-        try {
-          await BackgroundService.start(
-            async () => {
-              while (this.activeInstances.size > 0 || this.queue.length > 0) {
-                await new Promise((resolve) =>
-                  setTimeout(resolve, FOREGROUND_SERVICE_CHECK_INTERVAL),
-                );
-              }
-            },
-            {
-              taskName: "Filmsnaps Download",
-              taskTitle: "Downloading Media",
-              taskDesc: "Filmsnaps is downloading your movies and shows",
-              taskIcon: { name: "ic_launcher_foreground", type: "mipmap" },
-              color: "#09090b",
-              linkingUri: "filmsnaps://",
-              progressBar: { max: 100, value: 0 },
-            },
-          );
-        } catch (err: any) {
-          if (err?.message?.includes("icon")) {
-            try {
-              await BackgroundService.start(
-                async () => {
-                  while (
-                    this.activeInstances.size > 0 ||
-                    this.queue.length > 0
-                  ) {
-                    await new Promise((resolve) =>
-                      setTimeout(resolve, FOREGROUND_SERVICE_CHECK_INTERVAL),
-                    );
-                  }
-                },
-                {
-                  taskName: "Filmsnaps Download",
-                  taskTitle: "Downloading Media",
-                  taskDesc: "Filmsnaps is downloading your movies and shows",
-                  color: "#09090b",
-                  linkingUri: "filmsnaps://",
-                  progressBar: { max: 100, value: 0 },
-                },
-              );
-            } catch (err2: any) {
-              this.fsIconFailure = true;
-            }
-          }
-        }
-      }
-
-      while (
-        this.queue.length > 0 &&
-        this.activeInstances.size < this.maxConcurrent
-      ) {
-        const taskId = this.queue.shift();
-        if (!taskId) break;
-
-        if (this.activeInstances.has(taskId) || this.activeTasks.has(taskId))
-          continue;
-
-        // FIX: Always re-read from DB for freshest state
-        const task = await DownloadDatabase.getById(taskId);
-        if (!task || task.status === "completed" || task.status === "cancelled")
-          continue;
-
-        this.activeTasks.set(taskId, task);
-        await this.startDownload(task).catch((err) => {
-          console.error(`[Manager] Error starting task ${taskId}:`, err);
-          this.activeTasks.delete(taskId);
-        });
-      }
-      this.notifyQueue();
-    } finally {
-      this.processingQueue = false;
-    }
-  }
-
-  // ─── START DOWNLOAD (WITH LAZY MERGE) ───
-  private async startDownload(task: DownloadTask): Promise<void> {
-    const freshTask = await DownloadDatabase.getById(task.id);
-    const effectiveTask = freshTask ?? task;
-
-    await this.dbQueue.enqueue(effectiveTask.id, () =>
-      DownloadDatabase.update({ id: effectiveTask.id, status: "downloading" }),
-    );
-    this.emitStatus(effectiveTask.id, "downloading");
-    await this.ensureDownloadDir();
-
-    const filePath = this.buildFilePath(effectiveTask);
-
-    // Build headers
-    const headers: Record<string, string> = {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    };
-
-    let resumeOffset = 0;
-    const rawResumeData = sanitizeResumeData(effectiveTask.resumeData);
-    if (rawResumeData) {
-      resumeOffset = parseInt(rawResumeData, 10);
-      headers["Range"] = `bytes=${resumeOffset}-`;
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // LAZY MERGE: If a .resume file exists from a previous cycle,
-    // merge it into the original file NOW (before starting download).
-    // Uses 4MB chunks — completes in ~100-200ms for 100MB.
-    // This is acceptable here because the user just tapped "resume"
-    // and expects a brief "starting download" delay.
-    // ═══════════════════════════════════════════════════════════════
-    if (resumeOffset > 0) {
-      try {
-        const rnfb = getRNFB();
-        if (rnfb) {
-          const resumePath = `${filePath}.resume`;
-          const resumeExists = await rnfb.fs.exists(resumePath);
-
-          if (resumeExists) {
-            const resumeStat = await rnfb.fs.stat(resumePath);
-            const resumeSize = Number(resumeStat.size) || 0;
-
-            if (resumeSize > 0) {
-              const origExists = await rnfb.fs.exists(filePath);
-              if (origExists) {
-                console.log(
-                  `[START] Merging .resume (${(resumeSize / 1048576).toFixed(1)}MB) into original before download`,
-                );
-                await this.appendFileStreamFast(resumePath, filePath);
-                try {
-                  await rnfb.fs.unlink(resumePath);
-                } catch {}
-              } else {
-                // No original — rename .resume to original
-                await rnfb.fs.mv(resumePath, filePath);
-              }
-
-              // Re-read file size after merge to get accurate offset
-              const mergedStat = await rnfb.fs.stat(filePath);
-              const mergedSize = Number(mergedStat.size) || 0;
-              if (mergedSize > resumeOffset) {
-                resumeOffset = mergedSize;
-                headers["Range"] = `bytes=${resumeOffset}-`;
-              }
-              console.log(
-                `[START] Merge complete. File size: ${(mergedSize / 1048576).toFixed(1)}MB, resuming from ${resumeOffset}`,
-              );
-            } else {
-              // Empty .resume — delete it
-              try {
-                await rnfb.fs.unlink(resumePath);
-              } catch {}
-            }
-          }
-
-          // Validate original file exists and is large enough
-          const origExists = await rnfb.fs.exists(filePath);
-          if (!origExists) {
-            console.warn(
-              `[START] Original file missing after merge, resetting`,
-            );
-            delete headers["Range"];
-            resumeOffset = 0;
-          } else {
-            const origStat = await rnfb.fs.stat(filePath);
-            const origSize = Number(origStat.size) || 0;
-            if (origSize < resumeOffset) {
-              console.warn(
-                `[START] File ${origSize} < offset ${resumeOffset}, resetting`,
-              );
-              delete headers["Range"];
-              resumeOffset = 0;
-            } else if (origSize > resumeOffset) {
-              resumeOffset = origSize;
-              headers["Range"] = `bytes=${resumeOffset}-`;
-            }
-          }
-        }
-      } catch (e) {
-        console.warn(`[START] Merge/validation error:`, e);
-        delete headers["Range"];
-        resumeOffset = 0;
-      }
-    }
-
-    const isResume = resumeOffset > 0;
-    const actualPath = isResume ? `${filePath}.resume` : filePath;
-
-    let lastSaveTime = 0;
-    let maxReceivedSeen = resumeOffset;
-
-    const speedTracker = createSpeedTracker();
-    this.activeSpeedTrackers.set(effectiveTask.id, speedTracker);
-    this.liveReceivedBytes.set(effectiveTask.id, resumeOffset);
-    this.liveTotalBytes.set(effectiveTask.id, effectiveTask.totalBytes || 0);
-
-    try {
-      console.log(
-        `[START] File: ${effectiveTask.fileName}, Resume: ${isResume}, Offset: ${resumeOffset}, Path: ${actualPath}, speedLimit: ${effectiveTask.speedLimit ?? 0} → ${(effectiveTask.speedLimit ?? 0) > 0 ? "CHUNKED" : "full-speed"}`,
-      );
-
-      const instance = await this.adapter.download({
-        url: effectiveTask.url,
-        filePath: actualPath,
-        headers,
-        speedLimit: effectiveTask.speedLimit ?? 0,
-        externalId: effectiveTask.id,
-        onProgress: (rawReceived: number, rawTotal: number) => {
-          const received = Number(rawReceived) || 0;
-          const total = Number(rawTotal) || 0;
-
-          const adjustedReceived = isResume
-            ? resumeOffset + received
-            : received;
-          const adjustedTotal =
-            total > 0 ? (isResume ? resumeOffset + total : total) : 0;
-
-          if (Number(adjustedReceived) <= Number(maxReceivedSeen)) return;
-          maxReceivedSeen = adjustedReceived;
-
-          this.liveReceivedBytes.set(effectiveTask.id, maxReceivedSeen);
-          if (adjustedTotal > 0) {
-            this.liveTotalBytes.set(effectiveTask.id, adjustedTotal);
-          }
-
-          const { speed, eta } = updateSpeed(
-            speedTracker,
-            maxReceivedSeen,
-            adjustedTotal,
-          );
-          this.emitProgress(
-            effectiveTask.id,
-            maxReceivedSeen,
-            adjustedTotal,
-            speed,
-            eta,
-          );
-
-          const now = Date.now();
-          if (now - lastSaveTime > 2000 || maxReceivedSeen === adjustedTotal) {
-            lastSaveTime = now;
-            this.dbQueue
-              .enqueue(effectiveTask.id, () =>
-                DownloadDatabase.update({
-                  id: effectiveTask.id,
-                  receivedBytes: maxReceivedSeen,
-                  totalBytes: adjustedTotal,
-                  resumeData: sanitizeResumeData(maxReceivedSeen),
-                }),
-              )
-              .catch(() => {});
-          }
-        },
-        onDone: async (finalPath: string) => {
-          this.activeInstances.delete(effectiveTask.id);
-          this.activeTasks.delete(effectiveTask.id);
-          this.activeSpeedTrackers.delete(effectiveTask.id);
-          this.liveReceivedBytes.delete(effectiveTask.id);
-          this.liveTotalBytes.delete(effectiveTask.id);
-
-          let resolvedPath = finalPath;
-
-          // Merge .resume into original on completion
-          if (isResume && filePath !== finalPath) {
-            const rnfb = getRNFB();
-            const origExists = rnfb && (await rnfb.fs.exists(filePath));
-            if (origExists) {
-              try {
-                await this.appendFileStreamFast(finalPath, filePath);
-                try {
-                  if (rnfb) await rnfb.fs.unlink(finalPath);
-                } catch {}
-                resolvedPath = filePath;
-              } catch (e) {
-                console.warn(`[DONE] Merge failed:`, e);
-                resolvedPath = finalPath;
-              }
-            } else {
-              try {
-                if (rnfb) await rnfb.fs.mv(finalPath, filePath);
-                resolvedPath = filePath;
-              } catch {
-                resolvedPath = finalPath;
-              }
-            }
-          }
-
-          try {
-            const rnfb = getRNFB();
-            if (!rnfb) throw new Error("react-native-blob-util not available");
-            const stat = await rnfb.fs.stat(resolvedPath);
-            const fileSize = Number(stat.size) || 0;
-            if (fileSize < 10240) {
-              throw new Error(
-                "Server returned invalid response (file too small)",
-              );
-            }
-            await this.dbQueue.enqueue(effectiveTask.id, () =>
-              DownloadDatabase.update({
-                id: effectiveTask.id,
-                status: "completed",
-                fileUri: resolvedPath,
-                receivedBytes: fileSize,
-                totalBytes: fileSize,
-                resumeData: null,
-              }),
-            );
-            this.emitStatus(effectiveTask.id, "completed");
-            if (this.notificationsEnabled) {
-              DownloadNotifications.showCompleted(
-                effectiveTask.title || "Download",
-                resolvedPath,
-              ).catch(() => {});
-            }
-          } catch (e: any) {
-            const cat = categorizeError(e);
-            await this.dbQueue.enqueue(effectiveTask.id, () =>
-              DownloadDatabase.update({
-                id: effectiveTask.id,
-                status: "failed",
-                error: cat.message,
-              }),
-            );
-            this.emitStatus(effectiveTask.id, "failed", cat.message);
-            if (this.notificationsEnabled) {
-              DownloadNotifications.showFailed(
-                effectiveTask.title || "Download",
-                cat.message,
-              ).catch(() => {});
-            }
-          }
-
+      this.networkDebounceTimer = setTimeout(() => {
+        this.networkDebounceTimer = null;
+        if (!canDownload) {
+          this.pauseAllForNetwork();
+        } else {
+          this.resumeNetworkPaused();
           this.processQueue();
-        },
-        onError: async (error: Error) => {
-          this.activeInstances.delete(effectiveTask.id);
-          this.activeTasks.delete(effectiveTask.id);
-          this.activeSpeedTrackers.delete(effectiveTask.id);
-          this.liveReceivedBytes.delete(effectiveTask.id);
-          this.liveTotalBytes.delete(effectiveTask.id);
-          console.error(
-            `[Manager] onError for ${effectiveTask.id}:`,
-            error?.message || error,
-          );
-          await this.handleError(effectiveTask, error);
-          this.processQueue();
-        },
-      });
-
-      this.activeInstances.set(effectiveTask.id, instance);
-      this.activeTasks.set(effectiveTask.id, effectiveTask);
-    } catch (error: any) {
-      this.activeInstances.delete(effectiveTask.id);
-      this.activeTasks.delete(effectiveTask.id);
-      this.activeSpeedTrackers.delete(effectiveTask.id);
-      this.liveReceivedBytes.delete(effectiveTask.id);
-      this.liveTotalBytes.delete(effectiveTask.id);
-      await this.handleError(effectiveTask, error);
-    }
-  }
-
-  // ── Error Handling w/ Retry ──
-
-  private async handleError(task: DownloadTask, error: Error): Promise<void> {
-    const cat = categorizeError(error);
-    const retryCount = task.retryCount ?? 0;
-
-    if (cat.retryable && retryCount < this.config.maxRetries) {
-      const delay = RETRY_DELAYS[retryCount] || 60000;
-      const nextRetry = retryCount + 1;
-
-      await this.dbQueue.enqueue(task.id, () =>
-        DownloadDatabase.update({
-          id: task.id,
-          status: "retrying",
-          retryCount: nextRetry,
-          error: `Retry ${nextRetry}/${this.config.maxRetries}: ${cat.message}`,
-        }),
-      );
-      this.emitStatus(
-        task.id,
-        "retrying",
-        `Retry ${nextRetry}/${this.config.maxRetries}: ${cat.message}`,
-      );
-
-      setTimeout(() => {
-        this.resume(task.id).catch(() => {});
-      }, delay);
-    } else {
-      await this.dbQueue.enqueue(task.id, () =>
-        DownloadDatabase.update({
-          id: task.id,
-          status: "failed",
-          error: cat.message,
-        }),
-      );
-      this.emitStatus(task.id, "failed", cat.message);
-      if (this.notificationsEnabled) {
-        DownloadNotifications.showFailed(
-          task.title || "Download",
-          cat.message,
-        ).catch(() => {});
-      }
-    }
-  }
-
-  // ── File Path ──
-
-  /**
-   * Stat bytes physically on disk (source of truth for resume).
-   * Never adds liveReceived — the in-memory counter can run ahead of flushed data.
-   */
-  private async statDownloadedBytes(task: DownloadTask): Promise<number> {
-    let bytes = 0;
-    const rnfb = getRNFB();
-    if (!rnfb) return 0;
-    try {
-      for (const p of [
-        `${this.buildFilePath(task)}.resume`,
-        this.buildFilePath(task),
-      ]) {
-        const exists = await rnfb.fs.exists(p);
-        if (exists) {
-          const stat = await rnfb.fs.stat(p);
-          bytes += toSafeNumber(stat.size, 0);
         }
-      }
-      return bytes;
-    } catch {
-      return 0;
-    }
-  }
-
-  private getDownloadsDir(): string {
-    const rnfb = getRNFB();
-    if (!rnfb) throw new Error("react-native-blob-util not available");
-    const baseDir =
-      rnfb.fs.dirs.DownloadDir ||
-      rnfb.fs.dirs.DocumentDir ||
-      rnfb.fs.dirs.CacheDir;
-    return `${baseDir}/Filmsnaps`;
-  }
-
-  private buildFilePath(task: DownloadTask): string {
-    const downloadsDir = this.getDownloadsDir();
-    let fileName = task.fileName || "download";
-    const ext = task.extension || "mp4";
-
-    if (!fileName.toLowerCase().endsWith(`.${ext.toLowerCase()}`)) {
-      fileName = `${fileName}.${ext}`;
-    }
-
-    const safeName = fileName.replace(/[<>:"/\\|?*]/g, "_");
-    return `${downloadsDir}/${safeName}`;
-  }
-
-  private async ensureDownloadDir(): Promise<void> {
-    try {
-      const downloadsDir = this.getDownloadsDir();
-      const rnfb = getRNFB();
-      if (rnfb) {
-        const exists = await rnfb.fs.exists(downloadsDir);
-        if (!exists) {
-          await rnfb.fs.mkdir(downloadsDir);
-        }
-      }
-    } catch {}
-  }
-
-  // ═══════════════════════════════════════════════════════════════
-  // FAST FILE APPEND: 4MB chunks instead of 256KB.
-  // Reduces bridge round-trips from ~400 to ~25 for a 100MB file.
-  // ═══════════════════════════════════════════════════════════════
-  private async appendFileStreamFast(
-    sourcePath: string,
-    targetPath: string,
-  ): Promise<void> {
-    const rnfb = getRNFB();
-    if (!rnfb) throw new Error("react-native-blob-util not available");
-
-    const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB per chunk
-
-    const readStream = await rnfb.fs.readStream(
-      sourcePath,
-      "base64",
-      CHUNK_SIZE,
-    );
-    const writeStream = await rnfb.fs.writeStream(targetPath, "base64", true); // append mode
-
-    return new Promise<void>((resolve, reject) => {
-      let done = false;
-      let writeError: Error | null = null;
-
-      readStream.onData((chunk: string | number[]) => {
-        if (done) return;
-        try {
-          if (typeof chunk === "string") {
-            writeStream.write(chunk);
-          } else {
-            // For number arrays, convert in sub-chunks to avoid stack overflow
-            const subSize = 65536;
-            for (let i = 0; i < chunk.length; i += subSize) {
-              const sub = chunk.slice(i, i + subSize);
-              writeStream.write(String.fromCharCode(...sub));
-            }
-          }
-        } catch (err: any) {
-          writeError = err;
-          done = true;
-        }
-      });
-
-      readStream.onEnd(() => {
-        done = true;
-        writeStream.close().then(resolve).catch(resolve);
-      });
-
-      readStream.onError((err: any) => {
-        done = true;
-        const finalErr = writeError || err;
-        writeStream
-          .close()
-          .then(() => reject(finalErr))
-          .catch(() => reject(finalErr));
-      });
-
-      readStream.open();
+      }, 1000);
     });
   }
 
-  // Keep the old method name as an alias for any other callers
-  private async appendFileStream(
-    sourcePath: string,
-    targetPath: string,
-  ): Promise<void> {
-    return this.appendFileStreamFast(sourcePath, targetPath);
+  /** Inject the store reference so initialize() can push DB corrections into the store.
+   *  Must be called before initialize(). Called by context.tsx in the provider setup. */
+  setStore(store: DownloadStore): void {
+    this.store = store;
   }
 
-  // ── Event System ──
+  // ═══════════════════════════════════════════════════════════
+  // INITIALIZATION (explicit, awaited by context)
+  // ═══════════════════════════════════════════════════════════
 
-  onProgress(
-    cb: (p: DownloadProgress & { speed?: number; eta?: number }) => void,
-  ): Unsubscribe {
-    this.progressListeners.add(cb);
-    return () => this.progressListeners.delete(cb);
+  /**
+   * Expert follow-up: reconcile DB state against the *live* ForegroundService before
+   * deciding what's actually stale, then push every correction into the store via
+   * store.upsertMany() — this is the actual fix for "stale store after hot reload."
+   *
+   * Must be called once before any downloads start.
+   * The context provider awaits this in useEffect.
+   */
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+    this.initialized = true;
+
+    logger.debug("Manager initialize start");
+
+    try {
+      const liveTaskIds = new Set(await this.adapter.getActiveTaskIds());
+      const dbTasks = await DownloadDatabase.getAll();
+
+      const corrections: DownloadTask[] = [];
+
+      for (const task of dbTasks) {
+        if (task.status !== "downloading") continue;
+
+        if (liveTaskIds.has(task.id)) {
+          // Genuinely still running (service survived; e.g. JS reload without force-stop).
+          // Re-attach so the manager can receive further events for it, but do NOT touch
+          // its status — it's correct as-is.
+          this.reattachToLiveTask(task.id);
+          continue;
+        }
+
+        // DB says "downloading" but the service has no such task — it died (force-stop,
+        // crash, OS kill). This is the actually-stale case.
+        const offset = await this.statPartialFileBytes(task);
+        const corrected: DownloadTask = {
+          ...task,
+          status: "paused",
+          receivedBytes: offset > 0 ? offset : task.receivedBytes,
+        };
+        corrections.push(corrected);
+        await DownloadDatabase.update({
+          id: task.id,
+          status: "paused",
+          receivedBytes: offset > 0 ? offset : task.receivedBytes,
+          resumeData: offset > 0 ? String(offset) : null,
+          updatedAt: Date.now(),
+        });
+      }
+
+      // Also verify anything the DB thinks is "completed" actually still has its file
+      for (const task of dbTasks) {
+        if (task.status !== "completed" || !task.fileUri) continue;
+        const info = await getInfoAsync(task.fileUri);
+        if (!info.exists) {
+          const corrected: DownloadTask = {
+            ...task,
+            status: "failed",
+            error: "File missing on disk",
+          };
+          corrections.push(corrected);
+          await DownloadDatabase.update({
+            id: task.id,
+            status: "failed",
+            updatedAt: Date.now(),
+          });
+        }
+      }
+
+      if (corrections.length > 0 && this.store) {
+        this.store.upsertMany(corrections);
+      }
+
+      // Requeue anything genuinely pending.
+      const pending = dbTasks
+        .filter((t) => t.status === "pending")
+        .map((t) => t.id);
+      this.queue.push(...pending);
+      logger.debug("Manager initialize done", {
+        active: this.activeInstances.size,
+        queue: this.queue.length,
+        corrections: corrections.length,
+      });
+      this.notifyQueue();
+      this.processQueue();
+    } catch (err) {
+      logger.error("Manager initialization failed:", err);
+    }
   }
 
-  onStatus(cb: (s: StatusChange) => void): Unsubscribe {
-    this.statusListeners.add(cb);
-    return () => this.statusListeners.delete(cb);
+  // ═══════════════════════════════════════════════════════════
+  // PUBLIC API
+  // ═══════════════════════════════════════════════════════════
+
+  // ─── Q6 FIX: stale-task dedup ──────────────────────────────
+  async add(task: DownloadTask): Promise<string> {
+    logger.debug("Manager add", {
+      id: task.id,
+      title: task.title,
+      status: task.status,
+    });
+
+    // Q6 fix: Only dedup against ACTIVE tasks.
+    // A cancelled/failed/completed task with same URL should create a fresh entry.
+    const existing = await DownloadDatabase.getAll();
+    const activeStatuses = ["pending", "downloading", "paused", "retrying"];
+    const dup = existing.find(
+      (t) => t.url === task.url && activeStatuses.includes(t.status),
+    );
+    if (dup) {
+      logger.debug(
+        "Manager add: task already in DB, queuing",
+        dup.id,
+        dup.status,
+      );
+      // ── FIX 1: If the duplicate is pending, ensure it gets queued ──
+      // The context inserts the task into DB before calling add(),
+      // so add() finds its own just-created record as a "duplicate".
+      // Without processQueue() here, the task sits in pending forever.
+      if (dup.status === "pending") {
+        if (!this.queue.includes(dup.id)) {
+          this.queue.push(dup.id);
+        }
+        this.notifyQueue();
+        this.processQueue();
+      }
+      return dup.id;
+    }
+
+    // If a terminal-state task exists with same URL, remove it first (Q6)
+    const stale = existing.find((t) => t.url === task.url);
+    if (stale) {
+      logger.debug(
+        "Manager add: found stale task, removing and re-creating",
+        stale.id,
+        stale.status,
+      );
+      await DownloadDatabase.delete(stale.id);
+    }
+
+    // Storage check
+    const spaceCheck = await this.storage.canFit(task.totalBytes || 0);
+    if (!spaceCheck.ok) {
+      logger.debug("Manager add: insufficient space, freeing storage");
+      const freed = await this.storage.evictOldest(
+        task.totalBytes || 500 * 1024 * 1024,
+      );
+      if (freed < (task.totalBytes || 500 * 1024 * 1024)) {
+        logger.error(
+          "Manager add: evicted",
+          freed,
+          "bytes but still insufficient for",
+          task.totalBytes,
+        );
+        throw new Error("Insufficient storage space for this download.");
+      }
+      logger.debug("Manager add: evicted", freed, "bytes, now proceeding");
+    }
+
+    // Ensure download directory exists
+    ensureDirectory(getNativeDownloadDir());
+
+    // Bug B+F fix: store the correct file path at insert time
+    // Bug 3 fix: pass uniqueSuffix to prevent file name collisions
+    const uniqueSuffix =
+      task.season != null && task.episode != null
+        ? `S${String(task.season).padStart(2, "0")}E${String(task.episode).padStart(2, "0")}`
+        : task.id.slice(0, 20);
+    const fileName = sanitizeForNative(
+      buildFileName(task.fileName, task.extension, uniqueSuffix),
+    );
+    const filePath = this.adapter.getDestinationPath(fileName);
+
+    await DownloadDatabase.insert({
+      ...task,
+      fileUri: filePath,
+    });
+    this.queue.push(task.id);
+    logger.debug("Manager add: enqueued", {
+      queue: this.queue.length,
+      active: this.activeInstances.size,
+    });
+    this.notifyQueue();
+    this.processQueue();
+    return task.id;
   }
 
-  onQueueChange(cb: () => void): Unsubscribe {
-    this.queueListeners.add(cb);
-    return () => this.queueListeners.delete(cb);
+  // ─── PAUSE (expert: self-correction when no active instance) ──
+  async pause(taskId: string): Promise<void> {
+    if (this.pauseInFlight.has(taskId)) return;
+
+    const instance = this.activeInstances.get(taskId);
+
+    if (!instance) {
+      // Expert follow-up: No live download to pause. If the store still shows
+      // 'downloading', correct it now instead of silently no-op'ing.
+      const current = this.store?.getById(taskId);
+      if (current && current.status === "downloading") {
+        const corrected: DownloadTask = {
+          ...current,
+          status: "paused",
+          updatedAt: Date.now(),
+        };
+        this.store?.upsert(corrected);
+        await DownloadDatabase.update({
+          id: taskId,
+          status: "paused",
+          updatedAt: Date.now(),
+        });
+      }
+      return;
+    }
+
+    this.pauseInFlight.add(taskId);
+    try {
+      await instance.pause(); // now resolves only after a genuine onDownloadPaused event
+
+      let receivedBytes = this.liveReceived.get(taskId) ?? 0;
+      if (receivedBytes === 0) {
+        // Fallback: stat the partial file directly rather than trusting a zeroed
+        // in-memory counter (defensive; the service-reported value should already be
+        // correct and authoritative).
+        const task = await DownloadDatabase.getById(taskId);
+        if (task?.fileUri) {
+          const info = await getInfoAsync(task.fileUri);
+          if (info.exists && info.size) receivedBytes = info.size;
+        }
+      }
+
+      const total = this.liveTotal.get(taskId) ?? 0;
+      this.activeInstances.delete(taskId);
+      await DownloadDatabase.update({
+        id: taskId,
+        status: "paused",
+        receivedBytes,
+        totalBytes: total > 0 ? total : undefined,
+        resumeData: receivedBytes > 0 ? String(receivedBytes) : null,
+        updatedAt: Date.now(),
+      });
+      this.emitStatus({
+        taskId,
+        status: "paused",
+        receivedBytes,
+        totalBytes: total > 0 ? total : undefined,
+      });
+      this.notifyQueue();
+      this.processQueue();
+    } finally {
+      this.pauseInFlight.delete(taskId);
+    }
   }
 
-  private emitProgress(
-    taskId: string,
-    received: number,
-    total: number,
-    speed?: number,
-    eta?: number,
-  ) {
-    const event = {
+  async resume(taskId: string): Promise<void> {
+    const task = await DownloadDatabase.getById(taskId);
+    logger.debug("Manager resume", {
       taskId,
-      receivedBytes: received,
-      totalBytes: total,
-      speed,
-      eta,
-    };
-    for (const cb of this.progressListeners) {
-      try {
-        cb(event);
-      } catch {}
+      found: !!task,
+      status: task?.status,
+      receivedBytes: task?.receivedBytes,
+    });
+    if (!task) return;
+    if (!["paused", "failed"].includes(task.status)) return;
+
+    if (!this.networkPolicy.canDownload()) {
+      logger.debug("Manager resume: network unavailable, setting to pending");
+      await DownloadDatabase.update({
+        id: taskId,
+        status: "pending",
+        updatedAt: Date.now(),
+      });
+      this.queue.push(taskId);
+      this.notifyQueue();
+      return;
+    }
+
+    // Bug B fix: use buildFileName
+    // Bug 3 fix: pass uniqueSuffix to prevent file name collisions
+    const uniqueSuffix =
+      task.season != null && task.episode != null
+        ? `S${String(task.season).padStart(2, "0")}E${String(task.episode).padStart(2, "0")}`
+        : task.id.slice(0, 20);
+    const fileName = sanitizeForNative(
+      buildFileName(task.fileName, task.extension, uniqueSuffix),
+    );
+    const offsetBytes = task.receivedBytes || 0;
+    const totalBytes = task.totalBytes || 0;
+    logger.debug("Manager resume: calling adapter.resumeDownload", {
+      offsetBytes,
+      fileName,
+    });
+
+    try {
+      const tracker = new SpeedTracker();
+      this.speedTrackers.set(taskId, tracker);
+      this.liveReceived.set(taskId, offsetBytes);
+      this.liveTotal.set(taskId, totalBytes);
+
+      let lastDbWrite = 0;
+      let lastEmit = 0;
+
+      // ── FIX: Capture the real DownloadInstance from adapter.resumeDownload
+      // which has proper pause/cancel methods (markTaskDead + NativeDownloadBridge.cancel + deleteFile).
+      const realInstance = await this.adapter.resumeDownload(
+        taskId,
+        task.url,
+        fileName,
+        offsetBytes,
+        {
+          onProgress: (received, total) => {
+            // ── Bug 2: Guard — ignore progress if task no longer active (cancelled) ──
+            if (!this.activeInstances.has(taskId)) return;
+
+            // ── FIX: received is already ABSOLUTE (offset added by adapter) ──
+            // Do NOT add offsetBytes again. Do NOT clamp total < 0 to received
+            // (adapter resolves this via lastKnownTotal).
+            this.liveReceived.set(taskId, received);
+            if (total > 0) this.liveTotal.set(taskId, total);
+            tracker.update(received);
+
+            const now = Date.now();
+            if (now - lastEmit >= PROGRESS_EMIT_INTERVAL) {
+              lastEmit = now;
+              this.emitProgress({
+                taskId,
+                receivedBytes: received,
+                totalBytes:
+                  total > 0 ? total : (this.liveTotal.get(taskId) ?? 0),
+                speed: tracker.getSpeed(),
+                eta: tracker.getEta(
+                  Math.max(0, (this.liveTotal.get(taskId) ?? total) - received),
+                ),
+              });
+            }
+            if (now - lastDbWrite >= DB_WRITE_INTERVAL) {
+              lastDbWrite = now;
+              DownloadDatabase.update({
+                id: taskId,
+                receivedBytes: received,
+                totalBytes: total > 0 ? total : undefined,
+                updatedAt: now,
+              }).catch(() => {});
+            }
+          },
+          onDone: (filePath) => this.handleNativeDone(taskId, filePath),
+          onError: (error) => this.handleNativeError(task, error),
+        },
+      );
+
+      // ── Register the real DownloadInstance returned by the adapter.
+      // Its pause() delegates to pauseAndAwaitConfirmation() and its cancel()
+      // handles markTaskDead + NativeDownloadBridge.cancel + deleteFile.
+      this.activeInstances.set(taskId, realInstance);
+      logger.debug(
+        "Manager resume: native adapter returned instance, setting status=downloading",
+      );
+      await DownloadDatabase.update({
+        id: taskId,
+        status: "downloading",
+        error: undefined,
+        updatedAt: Date.now(),
+      });
+      // Bug F fix: include fileUri in emitStatus
+      const expectedFileUri = this.adapter.getDestinationPath(fileName);
+      this.emitStatus({
+        taskId,
+        status: "downloading",
+        fileUri: expectedFileUri,
+        receivedBytes: this.liveReceived.get(taskId) ?? 0,
+        totalBytes: this.liveTotal.get(taskId) ?? 0,
+      });
+    } catch (err) {
+      // Native resume failed — fall back to fresh download via queue
+      logger.warn(
+        "Manager resume: native failed for",
+        taskId,
+        "falling back to fresh download:",
+        err,
+      );
+      await DownloadDatabase.update({
+        id: taskId,
+        status: "pending",
+        resumeData: null,
+        receivedBytes: 0,
+        error: undefined,
+        updatedAt: Date.now(),
+      });
+      this.queue.push(taskId);
+      this.notifyQueue();
+      this.processQueue();
     }
   }
 
-  // FIX: emitStatus now accepts resumeData
-  private emitStatus(
+  // ─── CANCEL (Q6 fix: mark DB FIRST, then native cancel) ────
+  async cancel(taskId: string): Promise<void> {
+    logger.debug("Manager cancel", taskId, {
+      active: this.activeInstances.has(taskId),
+    });
+
+    // Q6 fix: Mark cancelled in DB FIRST — creates a tombstone that
+    // handleNativeDone will check if a late native completion fires.
+    const cancellingTask = await DownloadDatabase.getById(taskId);
+    await DownloadDatabase.update({
+      id: taskId,
+      status: "cancelled",
+      resumeData: null,
+      receivedBytes: 0,
+      updatedAt: Date.now(),
+    });
+
+    // Emit status immediately so UI reflects the cancellation
+    this.emitStatus({
+      taskId,
+      status: "cancelled",
+      fileUri: cancellingTask?.fileUri ?? null,
+      receivedBytes: this.liveReceived.get(taskId) ?? 0,
+    });
+
+    // Cancel the native task FIRST (instance exists before cleanup)
+    const instance = this.activeInstances.get(taskId);
+    if (instance) {
+      await instance.cancel(); // adapter's createInstance.cancel() handles markTaskDead internally
+    }
+
+    // Clean up tracking maps AFTER native cancel
+    this.cleanup(taskId);
+
+    // Delete file (try both paths)
+    const task = await DownloadDatabase.getById(taskId);
+    if (task) {
+      if (task.fileUri) {
+        deleteFile(task.fileUri);
+      }
+      const cancelUniqueSuffix =
+        task.season != null && task.episode != null
+          ? `S${String(task.season).padStart(2, "0")}E${String(task.episode).padStart(2, "0")}`
+          : task.id.slice(0, 20);
+      const fileName = sanitizeForNative(
+        buildFileName(task.fileName, task.extension, cancelUniqueSuffix),
+      );
+      const filePath = this.adapter.getDestinationPath(fileName);
+      if (filePath !== task.fileUri) {
+        deleteFile(filePath);
+      }
+    }
+
+    this.notifyQueue();
+    this.processQueue();
+    logger.debug("Manager cancel done", taskId);
+  }
+
+  async retry(taskId: string): Promise<void> {
+    logger.debug("Manager retry", taskId);
+    // Clear any stale native handle
+    this.activeInstances.delete(taskId);
+
+    await DownloadDatabase.update({
+      id: taskId,
+      status: "pending",
+      retryCount: 0,
+      error: undefined,
+      resumeData: null,
+      updatedAt: Date.now(),
+    });
+
+    this.queue.push(taskId);
+    logger.debug("Manager retry: enqueued", { queue: this.queue.length });
+    this.notifyQueue();
+    this.processQueue();
+  }
+
+  async remove(taskId: string): Promise<void> {
+    logger.debug("Manager remove", taskId);
+    // Clean up active instance (skip cancel status — we're removing entirely)
+    const instance = this.activeInstances.get(taskId);
+    if (instance) {
+      await instance.cancel().catch(() => {});
+      this.activeInstances.delete(taskId);
+    }
+
+    this.cleanup(taskId);
+    await DownloadDatabase.delete(taskId);
+    this.emitStatus({ taskId, status: "cancelled", removed: true });
+    this.notifyQueue();
+    this.processQueue();
+    logger.debug("Manager remove done", taskId);
+  }
+
+  async pauseAll(): Promise<void> {
+    const downloadingTasks = await DownloadDatabase.getByStatus("downloading");
+    const targets = downloadingTasks.map((t) => t.id);
+    await Promise.all(targets.map((id) => this.pause(id)));
+  }
+
+  async resumeAll(): Promise<void> {
+    const tasks = await DownloadDatabase.getByStatus("paused");
+    for (const task of tasks) await this.resume(task.id);
+  }
+
+  async cancelAll(): Promise<void> {
+    const active = await DownloadDatabase.getByStatus("downloading");
+    const pending = await DownloadDatabase.getByStatus("pending");
+    for (const task of [...active, ...pending]) await this.cancel(task.id);
+  }
+
+  // ─── Getters ───
+  getQueueLength(): number {
+    return this.queue.length;
+  }
+  getActiveCount(): number {
+    return this.activeInstances.size;
+  }
+  getNetworkPolicy(): NetworkAwarePolicy {
+    return this.networkPolicy;
+  }
+  getStorageManager(): StorageManager {
+    return this.storage;
+  }
+  isInitialized(): boolean {
+    return this.initialized;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // SUBSCRIPTIONS
+  // ═══════════════════════════════════════════════════════════
+
+  onProgress(fn: ProgressListener): () => void {
+    this.progressListeners.add(fn);
+    return () => this.progressListeners.delete(fn);
+  }
+
+  onStatus(fn: StatusListener): () => void {
+    this.statusListeners.add(fn);
+    return () => this.statusListeners.delete(fn);
+  }
+
+  onQueueChange(fn: QueueListener): () => void {
+    this.queueListeners.add(fn);
+    return () => this.queueListeners.delete(fn);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // QUEUE PROCESSING (shared-promise pattern)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Process the queue. Concurrent calls piggyback on the in-flight promise.
+   */
+  private processQueue(): void {
+    if (this.processQueuePromise) {
+      // Already processing — the in-flight loop will pick up new items
+      return;
+    }
+
+    this.processQueuePromise = this._drainQueue();
+    this.processQueuePromise.finally(() => {
+      this.processQueuePromise = null;
+      // Check if new items arrived while we were finishing
+      if (
+        this.queue.length > 0 &&
+        this.activeInstances.size < this.config.maxConcurrent
+      ) {
+        this.processQueue();
+      }
+    });
+  }
+
+  private async _drainQueue(): Promise<void> {
+    while (
+      this.queue.length > 0 &&
+      this.activeInstances.size < this.config.maxConcurrent
+    ) {
+      if (!this.networkPolicy.canDownload()) break;
+
+      // Yield to the event loop between starting each download
+      await new Promise<void>((r) =>
+        setImmediate ? setImmediate(r) : setTimeout(r, 0),
+      );
+
+      const taskId = this.queue.shift()!;
+
+      // Skip if already active (duplicate guard)
+      if (this.activeInstances.has(taskId)) continue;
+
+      const task = await DownloadDatabase.getById(taskId).catch(() => null);
+      if (!task) continue;
+      if (["completed", "cancelled"].includes(task.status)) continue;
+
+      try {
+        await this.startDownload(task);
+      } catch (err) {
+        logger.error(
+          "Manager _drainQueue: startDownload failed for",
+          taskId,
+          err,
+        );
+        await this.failTask(task, err);
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // START DOWNLOAD
+  // ═══════════════════════════════════════════════════════════
+
+  private async startDownload(task: DownloadTask): Promise<void> {
+    const taskId = task.id;
+    logger.debug("Manager startDownload", {
+      taskId,
+      url: task.url?.slice(0, 60),
+      fileName: task.fileName,
+    });
+
+    // Final duplicate guard
+    if (this.activeInstances.has(taskId)) {
+      logger.debug("Manager startDownload: already active, skipping", taskId);
+      return;
+    }
+
+    // Bug B fix: use buildFileName
+    // Bug 3 fix: pass uniqueSuffix to prevent file name collisions
+    const uniqueSuffix =
+      task.season != null && task.episode != null
+        ? `S${String(task.season).padStart(2, "0")}E${String(task.episode).padStart(2, "0")}`
+        : task.id.slice(0, 20);
+    const fileName = sanitizeForNative(
+      buildFileName(task.fileName, task.extension, uniqueSuffix),
+    );
+    const filePath = this.adapter.getDestinationPath(fileName);
+
+    // Ensure download directory exists
+    ensureDirectory(getNativeDownloadDir());
+
+    // Update DB with fileUri (Bug F fix: persist fileUri at start time)
+    await DownloadDatabase.update({
+      id: taskId,
+      status: "downloading",
+      fileUri: filePath,
+      startedOnWifi: this.networkPolicy.isWifi(),
+      updatedAt: Date.now(),
+    });
+
+    // Initialize trackers
+    const tracker = new SpeedTracker();
+    this.speedTrackers.set(taskId, tracker);
+    this.liveReceived.set(taskId, 0);
+    this.liveTotal.set(taskId, 0);
+
+    // Throttled writers
+    let lastDbWrite = 0;
+    let lastEmit = 0;
+
+    // Start native download via adapter
+    const instance = await this.adapter.download({
+      url: task.url,
+      filePath,
+      headers: {},
+      speedLimit: 0,
+      externalId: taskId,
+
+      onProgress: (received: number, total: number) => {
+        // ── Bug 2: Guard — ignore progress if task no longer active (cancelled) ──
+        if (!this.activeInstances.has(taskId)) return;
+
+        // ── FIX: received is already ABSOLUTE (offset added by adapter).
+        // Do NOT clamp total < 0 to received — adapter resolves via lastKnownTotal.
+        this.liveReceived.set(taskId, received);
+        if (total > 0) this.liveTotal.set(taskId, total);
+        tracker.update(received);
+
+        const resolvedTotal =
+          total > 0 ? total : (this.liveTotal.get(taskId) ?? 0);
+
+        const now = Date.now();
+        if (now - lastEmit >= PROGRESS_EMIT_INTERVAL) {
+          lastEmit = now;
+          const speed = tracker.getSpeed();
+          const remaining = Math.max(0, resolvedTotal - received);
+          this.emitProgress({
+            taskId,
+            receivedBytes: received,
+            totalBytes: resolvedTotal,
+            speed,
+            eta: tracker.getEta(remaining),
+          });
+        }
+
+        if (now - lastDbWrite >= DB_WRITE_INTERVAL) {
+          lastDbWrite = now;
+          DownloadDatabase.update({
+            id: taskId,
+            receivedBytes: received,
+            totalBytes: total > 0 ? total : undefined,
+            updatedAt: now,
+          }).catch(() => {});
+        }
+      },
+
+      onDone: (finalPath: string) => {
+        this.handleNativeDone(taskId, finalPath);
+      },
+
+      onError: (error: Error) => {
+        this.handleNativeError(task, error);
+      },
+    });
+
+    this.activeInstances.set(taskId, instance);
+
+    // Bug F fix: include fileUri in emitStatus so the store gets the correct path
+    this.emitStatus({
+      taskId,
+      status: "downloading",
+      fileUri: filePath,
+      receivedBytes: this.liveReceived.get(taskId) ?? 0,
+      totalBytes: this.liveTotal.get(taskId) ?? 0,
+    });
+    logger.debug("Manager startDownload: status=downloading emitted", {
+      taskId,
+      fileUri: filePath,
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // COMPLETION / ERROR HANDLERS (shared between fresh + recovered)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * handleNativeDone — Complete rewrite for Bugs A, C, Q6.
+   *
+   * Bug A: Use fsCompat.getInfoAsync (never throws).
+   * Bug C: Use the native filePath from the completion event (source of truth).
+   * Q6:   Check DB status first — reject if cancelled/failed.
+   */
+  private async handleNativeDone(
     taskId: string,
-    status: DownloadStatus,
-    error?: string,
-    resumeData?: string | null,
-  ) {
-    const event: StatusChange = { taskId, status, error, resumeData };
-    for (const cb of this.statusListeners) {
-      try {
-        cb(event);
-      } catch {}
+    filePath: string,
+  ): Promise<void> {
+    logger.debug("Manager handleNativeDone", { taskId, filePath });
+
+    try {
+      // ── Q6 FIX: Check current DB status first ──
+      // If the task was cancelled/removed while the native download
+      // was still in-flight, reject this late completion.
+      const task = await DownloadDatabase.getById(taskId);
+
+      if (!task) {
+        logger.warn(
+          "Manager handleNativeDone: task not found in DB, ignoring late completion",
+          taskId,
+        );
+        deleteFile(filePath);
+        return;
+      }
+
+      if (task.status === "cancelled" || task.status === "failed") {
+        logger.warn(
+          "Manager handleNativeDone: task is",
+          task.status,
+          "ignoring late completion",
+          taskId,
+        );
+        deleteFile(filePath);
+        return;
+      }
+
+      // Normalize the native file path
+      const resolvedPath = filePath.startsWith("file://")
+        ? filePath
+        : `file://${filePath}`;
+
+      // ── Bug A fix: verify file using fsCompat (never throws) ──
+      const info = await getInfoAsync(resolvedPath);
+
+      if (!info.exists) {
+        logger.error(
+          "Manager handleNativeDone: file NOT found at native path",
+          resolvedPath,
+        );
+
+        // Bug C fallback: try the adapter's calculated path as last resort
+        if (task) {
+          const calcUniqueSuffix =
+            task.season != null && task.episode != null
+              ? `S${String(task.season).padStart(2, "0")}E${String(task.episode).padStart(2, "0")}`
+              : task.id.slice(0, 20);
+          const calculatedName = sanitizeForNative(
+            buildFileName(task.fileName, task.extension, calcUniqueSuffix),
+          );
+          const calculatedPath =
+            this.adapter.getDestinationPath(calculatedName);
+
+          if (calculatedPath !== resolvedPath) {
+            const altInfo = await getInfoAsync(calculatedPath);
+            if (altInfo.exists && altInfo.size > 0) {
+              logger.debug(
+                "Manager handleNativeDone: found at calculated path",
+                calculatedPath,
+              );
+              await this.completeTask(
+                taskId,
+                calculatedPath,
+                altInfo.size,
+                task.totalBytes ?? altInfo.size,
+              );
+              return;
+            }
+          }
+        }
+
+        await this.failTask(
+          task,
+          `File not found after native completion: ${resolvedPath}`,
+        );
+        return;
+      }
+
+      // Verify file size — guard against 0-byte file
+      const actualSize = info.size;
+      if (actualSize === 0 && task) {
+        await this.failTask(task, "Downloaded file is empty after completion");
+        return;
+      }
+
+      await this.completeTask(
+        taskId,
+        resolvedPath,
+        actualSize,
+        task?.totalBytes ?? actualSize,
+      );
+    } catch (error) {
+      logger.error("Manager handleNativeDone: unexpected error:", error);
+      const task = await DownloadDatabase.getById(taskId);
+      if (task) await this.failTask(task, error);
+    } finally {
+      this.activeInstances.delete(taskId);
+      this.cleanup(taskId);
+      this.notifyQueue();
+      this.processQueue();
     }
   }
 
-  private notifyQueue() {
-    for (const cb of this.queueListeners) {
-      try {
-        cb();
-      } catch {}
+  /**
+   * Shared completion logic. Updates DB, emits status, cleans up maps.
+   */
+  private async completeTask(
+    taskId: string,
+    filePath: string,
+    fileSize: number,
+    totalBytes: number,
+  ): Promise<void> {
+    logger.debug("Manager completeTask", { taskId, filePath, size: fileSize });
+
+    await DownloadDatabase.update({
+      id: taskId,
+      status: "completed",
+      fileUri: filePath,
+      receivedBytes: fileSize,
+      totalBytes: totalBytes > 0 ? totalBytes : fileSize,
+      resumeData: null,
+      updatedAt: Date.now(),
+    });
+
+    this.emitStatus({
+      taskId,
+      status: "completed",
+      fileUri: filePath,
+      receivedBytes: fileSize,
+      totalBytes: totalBytes > 0 ? totalBytes : fileSize,
+    });
+
+    // Clean up tracking
+    this.liveReceived.delete(taskId);
+    this.liveTotal.delete(taskId);
+    this.activeInstances.delete(taskId);
+
+    // Process next item in queue
+    this.processQueue();
+  }
+
+  private async handleNativeError(
+    task: DownloadTask,
+    error: Error,
+  ): Promise<void> {
+    logger.debug("Manager handleNativeError", {
+      taskId: task.id,
+      error: error.message,
+      retryCount: task.retryCount,
+    });
+    this.activeInstances.delete(task.id);
+
+    if (!this.config.autoRetry) {
+      logger.debug(
+        "Manager handleNativeError: autoRetry disabled, failing task",
+      );
+      await this.failTask(task, error);
+      this.cleanup(task.id);
+      this.notifyQueue();
+      this.processQueue();
+      return;
     }
+
+    const retryCount = (task.retryCount ?? 0) + 1;
+    if (retryCount <= this.config.maxRetries) {
+      const delay =
+        RETRY_DELAYS[Math.min(retryCount - 1, RETRY_DELAYS.length - 1)];
+
+      logger.debug("Manager handleNativeError: scheduling retry", {
+        retryCount,
+        maxRetries: this.config.maxRetries,
+        delay,
+      });
+      await DownloadDatabase.update({
+        id: task.id,
+        status: "retrying",
+        retryCount,
+        error: error.message,
+        updatedAt: Date.now(),
+      });
+      this.emitStatus({
+        taskId: task.id,
+        status: "retrying",
+        error: error.message,
+        receivedBytes: this.liveReceived.get(task.id) ?? 0,
+        totalBytes: this.liveTotal.get(task.id) ?? 0,
+      });
+
+      setTimeout(() => {
+        logger.debug(
+          "Manager handleNativeError: retry timeout fired for",
+          task.id,
+        );
+        this.queue.push(task.id);
+        this.notifyQueue();
+        this.processQueue();
+      }, delay);
+    } else {
+      logger.debug(
+        "Manager handleNativeError: max retries exceeded, failing task",
+      );
+      await this.failTask(task, error);
+    }
+
+    this.cleanup(task.id);
+    this.notifyQueue();
+    this.processQueue();
+  }
+
+  private async failTask(task: DownloadTask, err: unknown): Promise<void> {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.debug("Manager failTask", { taskId: task.id, error: msg });
+    await DownloadDatabase.update({
+      id: task.id,
+      status: "failed",
+      error: msg,
+      updatedAt: Date.now(),
+    }).catch(() => {});
+    this.emitStatus({
+      taskId: task.id,
+      status: "failed",
+      error: msg,
+      receivedBytes: this.liveReceived.get(task.id) ?? 0,
+      totalBytes: this.liveTotal.get(task.id) ?? 0,
+    });
+    logger.debug("Manager failTask done", task.id);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // NETWORK PAUSE/RESUME
+  // ═══════════════════════════════════════════════════════════
+
+  private async pauseAllForNetwork(): Promise<void> {
+    if (this.config.networkPolicy === "any") return;
+    logger.debug(
+      "Manager pauseAllForNetwork: pausing",
+      this.activeInstances.size,
+      "active tasks",
+    );
+    for (const [taskId] of this.activeInstances) {
+      this.pausedForNetwork.add(taskId);
+      await this.pause(taskId);
+    }
+    logger.debug("Manager pauseAllForNetwork done", {
+      pausedForNetwork: this.pausedForNetwork.size,
+    });
+  }
+
+  private async resumeNetworkPaused(): Promise<void> {
+    logger.debug(
+      "Manager resumeNetworkPaused: resuming",
+      this.pausedForNetwork.size,
+      "tasks",
+    );
+    for (const taskId of this.pausedForNetwork) {
+      await this.resume(taskId);
+    }
+    this.pausedForNetwork.clear();
+    logger.debug("Manager resumeNetworkPaused done");
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // CLEANUP + EMITTERS
+  // ═══════════════════════════════════════════════════════════
+
+  private cleanup(taskId: string): void {
+    this.activeInstances.delete(taskId);
+    this.speedTrackers.delete(taskId);
+    this.liveReceived.delete(taskId);
+    this.liveTotal.delete(taskId);
+    this.pausedForNetwork.delete(taskId);
+    this.notifyQueue();
+  }
+
+  private emitProgress(p: DownloadProgress): void {
+    for (const fn of this.progressListeners) fn(p);
+  }
+
+  private emitStatus(s: StatusChange): void {
+    for (const fn of this.statusListeners) fn(s);
+  }
+
+  private notifyQueue(): void {
+    for (const fn of this.queueListeners)
+      fn(this.queue.length, this.activeInstances.size);
   }
 
   async destroy(): Promise<void> {
+    logger.debug(
+      "Manager destroy: cleaning up",
+      this.activeInstances.size,
+      "active instances, queue=",
+      this.queue.length,
+    );
     for (const [, instance] of this.activeInstances) {
-      try {
-        await instance.pause();
-      } catch {}
+      await instance.cancel().catch(() => {});
     }
     this.activeInstances.clear();
-    this.activeTasks.clear();
-    this.activeSpeedTrackers.clear();
-    this.liveReceivedBytes.clear();
-    this.liveTotalBytes.clear();
     this.queue = [];
-    this.progressListeners.clear();
-    this.statusListeners.clear();
-    this.queueListeners.clear();
-
-    if (BackgroundService?.isRunning()) {
-      try {
-        await BackgroundService.stop();
-      } catch {}
-    }
-
+    this.networkPolicy.destroy();
     await this.adapter.destroy();
+    logger.debug("Manager destroy done");
   }
 }

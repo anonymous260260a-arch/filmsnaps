@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 import {
   View,
   Text,
@@ -6,8 +6,9 @@ import {
   Modal,
   ActivityIndicator,
   StyleSheet,
-} from 'react-native';
-import { useUpdateCheck } from '../hooks/useUpdateCheck';
+} from "react-native";
+import { colors } from "../theme/colors";
+import { useUpdateCheck } from "../hooks/useUpdateCheck";
 
 /**
  * In-app update overlay.
@@ -32,21 +33,19 @@ export function UpdateOverlay() {
       {isDownloading && (
         <View style={styles.bar}>
           <View style={styles.row}>
-            <ActivityIndicator size="small" color="#a78bfa" />
+            <ActivityIndicator size="small" color={colors.secondary} />
             <Text style={styles.barText}>Downloading update...</Text>
           </View>
           {progress > 0 && (
             <View style={styles.progressTrack}>
-              <View
-                style={[styles.progressFill, { width: `${progress}%` }]}
-              />
+              <View style={[styles.progressFill, { width: `${progress}%` }]} />
             </View>
           )}
         </View>
       )}
 
       {/* ── Error indicator ── */}
-      {phase === 'error' && errorMessage && (
+      {phase === "error" && errorMessage && (
         <View style={[styles.bar, styles.errorBar]}>
           <Text style={styles.errorText} numberOfLines={1}>
             Update error: {errorMessage}
@@ -66,8 +65,8 @@ export function UpdateOverlay() {
             <Text style={styles.emoji}>✨</Text>
             <Text style={styles.title}>Update Ready</Text>
             <Text style={styles.body}>
-              A new version has been downloaded. Restart the app to
-              apply it instantly.
+              A new version has been downloaded. Restart the app to apply it
+              instantly.
             </Text>
             <Text style={styles.hint}>
               No APK download needed — this is a seamless JS update.
@@ -85,94 +84,94 @@ export function UpdateOverlay() {
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: colors.black75,
+    justifyContent: "center",
+    alignItems: "center",
     padding: 24,
   },
   dialog: {
-    backgroundColor: '#18181b',
+    backgroundColor: colors.zincBgFull,
     borderRadius: 20,
     padding: 28,
-    width: '100%',
+    width: "100%",
     maxWidth: 340,
     borderWidth: 1,
-    borderColor: '#27272a',
-    alignItems: 'center',
+    borderColor: colors.zinc800,
+    alignItems: "center",
   },
   emoji: {
     fontSize: 44,
     marginBottom: 12,
   },
   title: {
-    color: '#ffffff',
+    color: colors.textPrimary,
     fontSize: 22,
-    fontWeight: '700',
+    fontWeight: "700",
     marginBottom: 8,
   },
   body: {
-    color: '#d4d4d8',
+    color: colors.zinc300,
     fontSize: 14,
-    textAlign: 'center',
+    textAlign: "center",
     lineHeight: 20,
     marginBottom: 8,
   },
   hint: {
-    color: '#71717a',
+    color: colors.zinc500,
     fontSize: 12,
-    textAlign: 'center',
+    textAlign: "center",
     marginBottom: 24,
   },
   restartBtn: {
-    width: '100%',
+    width: "100%",
     paddingVertical: 14,
     borderRadius: 12,
-    backgroundColor: '#7c3aed',
-    alignItems: 'center',
+    backgroundColor: colors.secondary,
+    alignItems: "center",
   },
   restartBtnText: {
-    color: '#ffffff',
+    color: colors.textPrimary,
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   bar: {
-    position: 'absolute',
+    position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#070708',
+    backgroundColor: colors.bg,
     borderTopWidth: 1,
-    borderTopColor: '#27272a',
+    borderTopColor: colors.zinc800,
     padding: 12,
     paddingBottom: 28,
     zIndex: 1000,
   },
   row: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
     marginBottom: 6,
   },
   barText: {
-    color: '#a1a1aa',
+    color: colors.textSecondary,
     fontSize: 13,
   },
   progressTrack: {
     height: 3,
-    backgroundColor: '#27272a',
+    backgroundColor: colors.zinc800,
     borderRadius: 2,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   progressFill: {
-    height: '100%',
-    backgroundColor: '#7c3aed',
+    height: "100%",
+    backgroundColor: colors.secondary,
     borderRadius: 2,
   },
   errorBar: {
-    borderTopColor: '#7f1d1d',
+    borderTopColor: colors.red900,
   },
   errorText: {
-    color: '#fca5a5',
+    color: colors.red400,
     fontSize: 13,
   },
 });

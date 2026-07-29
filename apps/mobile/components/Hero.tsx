@@ -10,7 +10,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { getImageUrl } from "@filmsnaps/shared";
 import { ProgressiveImage } from "./ProgressiveImage";
-import { typography } from "../lib/typography";
+import { typography } from "../theme/typography";
+import { colors } from "../theme/colors";
 import { FilmGrain } from "./FilmGrain";
 import type { Movie } from "@filmsnaps/shared";
 
@@ -54,7 +55,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
             width: SCREEN_WIDTH,
             height: HERO_HEIGHT,
             position: "absolute",
-            backgroundColor: "#070708",
+            backgroundColor: colors.bg,
           }}
         />
       )}
@@ -70,7 +71,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
           left: 0,
           bottom: 0,
           width: 4,
-          backgroundColor: "#070708",
+          backgroundColor: colors.bg,
           zIndex: 1,
         }}
       />
@@ -81,7 +82,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
           right: 0,
           bottom: 0,
           width: 4,
-          backgroundColor: "#070708",
+          backgroundColor: colors.bg,
           zIndex: 1,
         }}
       />
@@ -95,10 +96,10 @@ export function Hero({ item, onWatchPress }: HeroProps) {
       */}
       <LinearGradient
         colors={[
-          "rgba(7,7,8,0)",
-          "rgba(7,7,8,0)",
-          "rgba(7,7,8,0.55)",
-          "rgba(7,7,8,0.93)",
+          colors.heroGradientTransparent,
+          colors.heroGradientTransparent,
+          colors.heroGradientMid,
+          colors.heroGradientSolid,
         ]}
         locations={[0, 0.4, 0.72, 1]}
         start={{ x: 0, y: 0 }}
@@ -133,9 +134,9 @@ export function Hero({ item, onWatchPress }: HeroProps) {
               alignSelf: "flex-start",
               flexDirection: "row",
               alignItems: "center",
-              backgroundColor: "rgba(232,160,32,0.15)",
+              backgroundColor: colors.goldRatingBg,
               borderWidth: 0.5,
-              borderColor: "rgba(232,160,32,0.3)",
+              borderColor: colors.goldRatingBorder,
               borderRadius: 4,
               paddingHorizontal: 8,
               paddingVertical: 3,
@@ -145,10 +146,12 @@ export function Hero({ item, onWatchPress }: HeroProps) {
             <Ionicons
               name="star"
               size={14}
-              color="#D4A237"
+              color={colors.gold}
               style={{ marginRight: 4 }}
             />
-            <Text style={{ color: "#D4A237", fontSize: 11, fontWeight: "700" }}>
+            <Text
+              style={{ color: colors.gold, fontSize: 11, fontWeight: "700" }}
+            >
               {rating.toFixed(1)}
             </Text>
           </View>
@@ -171,7 +174,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
           }}
         >
           {year ? (
-            <Text style={[typography.caption, { color: "#A1A1AA" }]}>
+            <Text style={[typography.caption, { color: colors.textSecondary }]}>
               {year}
             </Text>
           ) : null}
@@ -181,13 +184,13 @@ export function Hero({ item, onWatchPress }: HeroProps) {
                 width: 2,
                 height: 2,
                 borderRadius: 1,
-                backgroundColor: "#52525B",
+                backgroundColor: colors.textTertiary,
                 marginHorizontal: 8,
               }}
             />
           )}
           <Text
-            style={[typography.caption, { color: "#A1A1AA" }]}
+            style={[typography.caption, { color: colors.textSecondary }]}
             numberOfLines={1}
           >
             {rating.toFixed(1)}
@@ -197,12 +200,12 @@ export function Hero({ item, onWatchPress }: HeroProps) {
               width: 2,
               height: 2,
               borderRadius: 1,
-              backgroundColor: "#52525B",
+              backgroundColor: colors.textTertiary,
               marginHorizontal: 8,
             }}
           />
           <Text
-            style={[typography.caption, { color: "#A1A1AA" }]}
+            style={[typography.caption, { color: colors.textSecondary }]}
             numberOfLines={1}
           >
             Movie
@@ -213,7 +216,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
         {overview ? (
           <View style={{ marginBottom: 20 }}>
             <Text
-              style={[typography.body, { color: "#A1A1AA" }]}
+              style={[typography.body, { color: colors.textSecondary }]}
               numberOfLines={overviewExpanded ? undefined : 2}
             >
               {overview}
@@ -226,7 +229,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
               >
                 <Text
                   style={{
-                    color: "#D4A237",
+                    color: colors.gold,
                     fontSize: 11,
                     fontFamily: "Inter_500Medium",
                   }}
@@ -246,7 +249,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
           accessibilityLabel={`Watch ${title}`}
           accessibilityHint="Opens the video player"
           style={{
-            backgroundColor: "#D4A237",
+            backgroundColor: colors.gold,
             borderRadius: 10,
             paddingVertical: 14,
             flexDirection: "row",
@@ -254,7 +257,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
             justifyContent: "center",
             ...Platform.select({
               ios: {
-                shadowColor: "#D4A237",
+                shadowColor: colors.gold,
                 shadowOffset: { width: 0, height: 6 },
                 shadowOpacity: 0.35,
                 shadowRadius: 12,
@@ -266,14 +269,14 @@ export function Hero({ item, onWatchPress }: HeroProps) {
           <Ionicons
             name="play"
             size={16}
-            color="#070708"
+            color={colors.bg}
             style={{ marginRight: 8 }}
           />
           <Text
             style={{
               fontFamily: "Inter_600SemiBold",
               fontSize: 14,
-              color: "#070708",
+              color: colors.bg,
             }}
           >
             Watch Now

@@ -25,12 +25,13 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ForwardIcon } from "../../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import { useSettings } from "../../lib/settings";
 import { useDownloadList } from "../../lib/download";
 import { getEnabledProviders } from "@filmsnaps/shared";
 import { getInfoAsync, documentDirectory } from "expo-file-system/legacy";
 import Constants from "expo-constants";
+import { colors } from "../../theme/colors";
 
 // ── Helpers ──
 
@@ -63,9 +64,9 @@ function SectionCard({
       <View
         className="mx-4 rounded-xl overflow-hidden"
         style={{
-          backgroundColor: "#0E0E11",
+          backgroundColor: colors.bgSurface,
           borderWidth: 0.5,
-          borderColor: "#1f1f1f",
+          borderColor: colors.bgTop,
         }}
       >
         {children}
@@ -97,14 +98,18 @@ function SettingsRow({
       onPress={onPress}
       activeOpacity={onPress ? 0.7 : 1}
       className="flex-row items-center px-5 py-3.5"
-      style={{ backgroundColor: "#141414" }}
+      style={{ backgroundColor: colors.bgCard }}
     >
       {icon && (
         <View
           className="w-9 h-9 rounded-xl items-center justify-center mr-3"
-          style={{ backgroundColor: color ? `${color}18` : "#1f1f1f" }}
+          style={{ backgroundColor: color ? `${color}18` : colors.bgTop }}
         >
-          <Ionicons name={icon} size={18} color={color || "#A1A1AA"} />
+          <Ionicons
+            name={icon}
+            size={18}
+            color={color || colors.textSecondary}
+          />
         </View>
       )}
       <View className="flex-1">
@@ -127,7 +132,10 @@ function SettingsRow({
 
 function Divider() {
   return (
-    <View className="h-[1px] mx-5" style={{ backgroundColor: "#1a1a1e" }} />
+    <View
+      className="h-[1px] mx-5"
+      style={{ backgroundColor: colors.bgActiveDrag }}
+    />
   );
 }
 
@@ -161,7 +169,7 @@ function CollapsibleSection({
         <Ionicons
           name={open ? "chevron-up" : "chevron-down"}
           size={14}
-          color="#52525b"
+          color={colors.iconSecondary}
           style={{ marginLeft: 8 }}
         />
       </TouchableOpacity>
@@ -169,9 +177,9 @@ function CollapsibleSection({
         <View
           className="mx-4 rounded-xl overflow-hidden"
           style={{
-            backgroundColor: "#0E0E11",
+            backgroundColor: colors.bgSurface,
             borderWidth: 0.5,
-            borderColor: "#1f1f1f",
+            borderColor: colors.bgTop,
           }}
         >
           {children}
@@ -184,7 +192,7 @@ function CollapsibleSection({
 // ── Main Screen ──
 
 export default function SettingsScreen() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const { settings, updateSetting } = useSettings();
   const { all: downloads, active } = useDownloadList();
@@ -263,7 +271,7 @@ export default function SettingsScreen() {
   return (
     <View
       className="flex-1"
-      style={{ backgroundColor: "#070708", paddingTop: insets.top }}
+      style={{ backgroundColor: colors.bg, paddingTop: insets.top }}
     >
       {/* Header */}
       <View className="px-5 pt-4 pb-3">
@@ -271,7 +279,7 @@ export default function SettingsScreen() {
           style={{
             fontFamily: "PlayfairDisplay_700Bold",
             fontSize: 22,
-            color: "#F4F4F5",
+            color: colors.textPrimary,
           }}
         >
           Settings
@@ -292,7 +300,7 @@ export default function SettingsScreen() {
                 ? "Auto (recommended)"
                 : settings.defaultQuality
             }
-            color="#D4A237"
+            color={colors.gold}
             onPress={() => {
               Alert.alert("Default Quality", "Preferred streaming quality", [
                 {
@@ -314,14 +322,27 @@ export default function SettingsScreen() {
                 { text: "Cancel", style: "cancel" },
               ]);
             }}
-            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
+          />
+          <Divider />
+          <SettingsRow
+            icon="layers-outline"
+            label="Home Layout"
+            subtitle="Arrange home page sections"
+            color={colors.gold}
+            onPress={() => nav.push("/home-layout")}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
           />
           <Divider />
           <SettingsRow
             icon="language-outline"
             label="Subtitle Language"
             subtitle={settings.subtitleLanguage || "English"}
-            color="#D4A237"
+            color={colors.gold}
             onPress={() => {
               Alert.alert("Subtitle Language", "Preferred subtitle language", [
                 {
@@ -356,7 +377,9 @@ export default function SettingsScreen() {
                 { text: "Cancel", style: "cancel" },
               ]);
             }}
-            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
           />
           <Divider />
           <SettingsRow
@@ -369,7 +392,7 @@ export default function SettingsScreen() {
                   ? "Large"
                   : "Medium"
             }
-            color="#D4A237"
+            color={colors.gold}
             onPress={() => {
               Alert.alert("Subtitle Size", "Adjust subtitle text size", [
                 {
@@ -387,7 +410,9 @@ export default function SettingsScreen() {
                 { text: "Cancel", style: "cancel" },
               ]);
             }}
-            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
           />
           <Divider />
           <SettingsRow
@@ -398,13 +423,42 @@ export default function SettingsScreen() {
                 ? "On — automatically play next episode"
                 : "Off"
             }
-            color="#D4A237"
+            color={colors.gold}
             right={
               <Switch
                 value={settings.autoPlayNext}
                 onValueChange={(v) => updateSetting("autoPlayNext", v)}
-                trackColor={{ false: "#27272A", true: "rgba(212,162,55,0.4)" }}
-                thumbColor={settings.autoPlayNext ? "#D4A237" : "#52525B"}
+                trackColor={{
+                  false: colors.zinc800,
+                  true: "rgba(212,162,55,0.4)",
+                }}
+                thumbColor={
+                  settings.autoPlayNext ? colors.gold : colors.textTertiary
+                }
+              />
+            }
+          />
+          <Divider />
+          <SettingsRow
+            icon="information-circle-outline"
+            label="Show Source Tips"
+            subtitle={
+              settings.showServerNotes
+                ? "On — usage tips shown below player"
+                : "Off"
+            }
+            color={colors.info}
+            right={
+              <Switch
+                value={settings.showServerNotes}
+                onValueChange={(v) => updateSetting("showServerNotes", v)}
+                trackColor={{
+                  false: colors.zinc800,
+                  true: "rgba(59,130,246,0.4)",
+                }}
+                thumbColor={
+                  settings.showServerNotes ? colors.info : colors.textTertiary
+                }
               />
             }
           />
@@ -420,13 +474,13 @@ export default function SettingsScreen() {
                 ? `${formatBytes(cacheSize)} currently cached`
                 : "Tap to clear temporary data"
             }
-            color="#ef4444"
+            color={colors.error}
             onPress={handleClearCache}
             right={
               calculatingStorage ? (
-                <ActivityIndicator size="small" color="#52525b" />
+                <ActivityIndicator size="small" color={colors.textTertiary} />
               ) : (
-                <ForwardIcon width={16} height={16} color="#3f3f3f" />
+                <ForwardIcon width={16} height={16} color={colors.iconMuted} />
               )
             }
           />
@@ -439,9 +493,11 @@ export default function SettingsScreen() {
                 ? `${formatBytes(totalDownloadSize)} used`
                 : "No completed downloads"
             }
-            color="#D4A237"
-            onPress={() => router.push("/downloads")}
-            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+            color={colors.gold}
+            onPress={() => nav.push("/downloads")}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
           />
           <Divider />
           <SettingsRow
@@ -452,14 +508,19 @@ export default function SettingsScreen() {
                 ? "Allowed on mobile data"
                 : "Wi-Fi only"
             }
-            color="#D4A237"
+            color={colors.gold}
             right={
               <Switch
                 value={settings.downloadOverCellular}
                 onValueChange={(v) => updateSetting("downloadOverCellular", v)}
-                trackColor={{ false: "#27272A", true: "rgba(212,162,55,0.4)" }}
+                trackColor={{
+                  false: colors.zinc800,
+                  true: "rgba(212,162,55,0.4)",
+                }}
                 thumbColor={
-                  settings.downloadOverCellular ? "#D4A237" : "#52525B"
+                  settings.downloadOverCellular
+                    ? colors.gold
+                    : colors.textTertiary
                 }
               />
             }
@@ -477,7 +538,7 @@ export default function SettingsScreen() {
                     ? "4K — largest files"
                     : "1080p — balanced"
             }
-            color="#D4A237"
+            color={colors.gold}
             onPress={() => {
               Alert.alert(
                 "Download Quality",
@@ -503,7 +564,9 @@ export default function SettingsScreen() {
                 ],
               );
             }}
-            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
           />
           <Divider />
           <SettingsRow
@@ -516,7 +579,7 @@ export default function SettingsScreen() {
                   ? "Balanced (~500 KB/s)"
                   : "Slower (~100 KB/s)"
             }
-            color="#D4A237"
+            color={colors.gold}
             onPress={() => {
               Alert.alert(
                 "Download Speed",
@@ -540,7 +603,9 @@ export default function SettingsScreen() {
                 ],
               );
             }}
-            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
           />
         </SectionCard>
 
@@ -561,18 +626,19 @@ export default function SettingsScreen() {
             onPress={() => updateSetting("defaultServer", "")}
             activeOpacity={0.7}
             className="flex-row items-center px-5 py-3"
-            style={{ backgroundColor: "#141414" }}
+            style={{ backgroundColor: colors.bgCard }}
           >
             <View
               className="w-5 h-5 rounded-full border-2 items-center justify-center mr-3"
               style={{
-                borderColor: selectedServer === "" ? "#D4A237" : "#333",
+                borderColor:
+                  selectedServer === "" ? colors.gold : colors.borderMuted,
               }}
             >
               {selectedServer === "" && (
                 <View
                   className="w-3 h-3 rounded-full"
-                  style={{ backgroundColor: "#D4A237" }}
+                  style={{ backgroundColor: colors.gold }}
                 />
               )}
             </View>
@@ -580,7 +646,8 @@ export default function SettingsScreen() {
               <Text
                 className="text-sm"
                 style={{
-                  color: selectedServer === "" ? "#D4A237" : "#A1A1AA",
+                  color:
+                    selectedServer === "" ? colors.gold : colors.textSecondary,
                   fontFamily: "Inter_600SemiBold",
                 }}
               >
@@ -603,16 +670,20 @@ export default function SettingsScreen() {
                   }
                   activeOpacity={0.7}
                   className="flex-row items-center px-5 py-3"
-                  style={{ backgroundColor: "#141414" }}
+                  style={{ backgroundColor: colors.bgCard }}
                 >
                   <View
                     className="w-5 h-5 rounded-full border-2 items-center justify-center mr-3"
-                    style={{ borderColor: isSelected ? "#D4A237" : "#333" }}
+                    style={{
+                      borderColor: isSelected
+                        ? colors.gold
+                        : colors.borderMuted,
+                    }}
                   >
                     {isSelected && (
                       <View
                         className="w-3 h-3 rounded-full"
-                        style={{ backgroundColor: "#D4A237" }}
+                        style={{ backgroundColor: colors.gold }}
                       />
                     )}
                   </View>
@@ -620,7 +691,7 @@ export default function SettingsScreen() {
                     <Text
                       className="text-sm"
                       style={{
-                        color: isSelected ? "#D4A237" : "#A1A1AA",
+                        color: isSelected ? colors.gold : colors.textSecondary,
                         fontFamily: "Inter_500Medium",
                       }}
                     >
@@ -640,47 +711,79 @@ export default function SettingsScreen() {
         {/* ── 4. Support ── */}
         <SectionCard title="Support">
           <SettingsRow
+            icon="megaphone-outline"
+            label="Announcements"
+            subtitle="News, features, and service updates"
+            color={colors.gold}
+            onPress={() => nav.push("/announcements")}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
+          />
+          <Divider />
+          <SettingsRow
             icon="help-circle-outline"
             label="How to Use"
             subtitle="Guide to watching, downloading, and more"
-            color="#D4A237"
-            onPress={() => router.push("/guide")}
-            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+            color={colors.gold}
+            onPress={() => nav.push("/guide")}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
           />
           <Divider />
           <SettingsRow
             icon="information-circle-outline"
             label="How Content Works"
             subtitle="Content sourcing, ad blocking technology & transparency"
-            color="#5b9cf6"
-            onPress={() => router.push("/how-it-works")}
-            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+            color={colors.info}
+            onPress={() => nav.push("/how-it-works")}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
+          />
+          <Divider />
+          <SettingsRow
+            icon="bug-outline"
+            label="Feedback"
+            subtitle="Report bugs, request features, view roadmap"
+            color={colors.gold}
+            onPress={() => nav.push("/feedback")}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
           />
           <Divider />
           <SettingsRow
             icon="share-outline"
             label="Share App"
             subtitle="Tell your friends about FilmSnaps"
-            color="#5b9cf6"
+            color={colors.info}
             onPress={handleShareApp}
-            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
           />
           <SettingsRow
             icon="shield-outline"
             label="Privacy Policy"
             subtitle="How we handle your data"
-            color="#22c55e"
-            onPress={() => router.push("/privacy")}
-            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+            color={colors.successGreen}
+            onPress={() => nav.push("/privacy")}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
           />
           <Divider />
           <SettingsRow
             icon="document-text-outline"
             label="Legal & DMCA"
             subtitle="Disclaimer, copyright, and terms"
-            color="#a1a1aa"
-            onPress={() => router.push("/legal")}
-            right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+            color={colors.textSecondary}
+            onPress={() => nav.push("/legal")}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
           />
 
           {__DEV__ && (
@@ -690,9 +793,15 @@ export default function SettingsScreen() {
                 icon="flask-outline"
                 label="Experimental Providers"
                 subtitle="Test Nuvio provider extraction (dev only)"
-                color="#D4A237"
-                onPress={() => router.push("/experimental")}
-                right={<ForwardIcon width={16} height={16} color="#3f3f3f" />}
+                color={colors.gold}
+                onPress={() => nav.push("/experimental")}
+                right={
+                  <ForwardIcon
+                    width={16}
+                    height={16}
+                    color={colors.iconMuted}
+                  />
+                }
               />
             </>
           )}

@@ -30,6 +30,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { colors } from "../theme/colors";
 
 // ─── Types ───
 
@@ -126,22 +127,22 @@ const TOAST_CONFIG: Record<
 > = {
   success: {
     icon: "checkmark-circle",
-    color: "#22c55e",
+    color: colors.successGreen,
     bg: "rgba(34,197,94,0.12)",
   },
   error: {
     icon: "alert-circle",
-    color: "#ef4444",
+    color: colors.error,
     bg: "rgba(239,68,68,0.12)",
   },
   info: {
     icon: "information-circle",
-    color: "#D4A237",
+    color: colors.gold,
     bg: "rgba(212,162,55,0.12)",
   },
   warning: {
     icon: "warning",
-    color: "#f59e0b",
+    color: colors.amber,
     bg: "rgba(245,158,11,0.12)",
   },
 };
@@ -269,7 +270,7 @@ export function DownloadToastView() {
           <Ionicons
             name="close"
             size={14}
-            color="#52525b"
+            color={colors.textTertiary}
             style={{ marginLeft: 6 }}
           />
         )}
@@ -297,7 +298,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     maxWidth: "92%",
     // Subtle shadow for depth
-    shadowColor: "#000",
+    shadowColor: colors.voidBlack,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -315,7 +316,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     fontFamily: "Inter_500Medium",
-    color: "#F4F4F5",
+    color: colors.textPrimary,
     lineHeight: 18,
   },
   actionBtn: {

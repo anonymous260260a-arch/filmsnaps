@@ -1,366 +1,220 @@
 /**
- * DownloadSheet — bottom sheet modal for selecting a download source.
+ * DownloadSheet — Server list bottom sheet.
  *
- * Follows the same Modal + animationType="slide" pattern as ServerPickerSheet.
- * Shows 3 source options with descriptive labels and quality hints.
- * Supports direct enqueue for pre-resolved URLs.
+ * Shows available download servers. Tapping a server immediately navigates
+ * to the download page — no extra confirm button.
+ *
+ * Internal server names (nxsha/falix) are shown with friendly labels.
  */
 
-import React, { useState } from "react";
+import React from "react";
 import {
   View,
   Text,
   TouchableOpacity,
   Modal,
-  ScrollView,
-  useWindowDimensions,
+  StyleSheet,
+  SafeAreaView,
+  Pressable,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { useDownloadInfra } from "../lib/download/context";
-import { prefetchArtwork } from "../lib/prefetchArtwork";
-import type { DownloadServer } from "../lib/download/types";
+import { colors } from "../theme/colors";
 
-interface SourceOption {
-  id: DownloadServer;
+interface ServerOption {
+  key: string;
   label: string;
   subtitle: string;
-  description: string;
-  recommended?: boolean;
   icon: keyof typeof Ionicons.glyphMap;
 }
+
+const SERVERS: ServerOption[] = [
+  {
+    key: "nxsha",
+    label: "Server 1",
+    subtitle: "HD quality · Fast",
+    icon: "cloud-download-outline",
+  },
+  {
+    key: "falix",
+    label: "Server 3",
+    subtitle: "Smaller file · Good for storage",
+    icon: "phone-portrait-outline",
+  },
+];
 
 interface DownloadSheetProps {
   visible: boolean;
   onClose: () => void;
-  mediaType: "movie" | "tv";
+  title: string;
   tmdbId: string;
-  /** TV-specific: season/episode for per-episode download */
+  mediaType: "movie" | "tv";
   season?: number;
   episode?: number;
-  title?: string;
-  /** If provided, enqueue directly instead of navigating */
-  sourceUrls?: Partial<Record<DownloadServer, string>>;
-  /** Custom filename for direct enqueue */
-  fileName?: string;
-  /** Poster/backdrop paths for offline prefetch */
-  posterPath?: string | null;
-  backdropPath?: string | null;
+  /** Called when user taps a server — should navigate to the download page */
+  onSelectServer: (server: string) => void;
 }
-
-const SOURCES: SourceOption[] = [
-  {
-    id: "nxsha",
-    label: "Best Quality",
-    subtitle: "1080p · Multi language",
-    description: "Larger file size, best viewing experience",
-    recommended: true,
-    icon: "download-outline",
-  },
-  {
-    id: "falix",
-    label: "Small File",
-    subtitle: "Compressed · ~50% smaller",
-    description: "Smaller file size, great for mobile storage",
-    icon: "cloud-download-outline",
-  },
-  {
-    id: "alt-dl",
-    label: "Standard",
-    subtitle: "720p · Compatible",
-    description: "Balanced quality and file size",
-    icon: "cloud-download-outline",
-  },
-];
 
 export function DownloadSheet({
   visible,
   onClose,
-  mediaType,
+  title,
   tmdbId,
+  mediaType,
   season,
   episode,
-  title,
-  sourceUrls,
-  fileName,
-  posterPath,
-  backdropPath,
+  onSelectServer,
 }: DownloadSheetProps) {
-  const insets = useSafeAreaInsets();
-  const { height: SCREEN_HEIGHT } = useWindowDimensions();
-  const router = useRouter();
-  const { enqueue } = useDownloadInfra();
-  const [selectedSource, setSelectedSource] = useState<DownloadServer>("nxsha");
-
-  const handleStartDownload = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  const handleSelect = (server: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onClose();
-
-    // Prefetch poster/backdrop for offline viewing in Library/Downloads
-    prefetchArtwork({
-      poster_path: posterPath,
-      backdrop_path: backdropPath,
-    });
-
-    // If sourceUrls are provided, enqueue directly (no WebView capture needed)
-    if (sourceUrls?.[selectedSource]) {
-      const url = sourceUrls[selectedSource]!;
-      const ext = url.split(".").pop()?.split("?")[0] || "mp4";
-      const id = enqueue({
-        url,
-        fileName: fileName || `${tmdbId}_${selectedSource}`,
-        server: selectedSource,
-        mediaType,
-        tmdbId,
-        quality:
-          selectedSource === "nxsha"
-            ? "1080p"
-            : selectedSource === "alt-dl"
-              ? "720p"
-              : undefined,
-        season,
-        episode,
-        extension: ext,
-        title: title
-          ? `${title}${season != null && episode != null ? ` S${season}:E${episode}` : ""}`
-          : undefined,
-      });
-      return;
-    }
-
-    // Otherwise, navigate to the WebView capture screen
-    let route: string;
-    if (selectedSource === "nxsha") {
-      route = `/download/nxsha/${mediaType}/${tmdbId}`;
-    } else if (selectedSource === "falix") {
-      route = `/download/falix/${mediaType}/${tmdbId}`;
-    } else {
-      route = `/download2/${mediaType}/${tmdbId}`;
-    }
-
-    // Add season/episode for TV
-    if (mediaType === "tv" && season != null && episode != null) {
-      route += `/${season}/${episode}`;
-    }
-
-    router.push(route as any);
+    onSelectServer(server);
   };
 
   return (
     <Modal
       visible={visible}
-      transparent
       animationType="slide"
+      transparent
       onRequestClose={onClose}
+      statusBarTranslucent
     >
-      <View className="flex-1 justify-end bg-black/60">
-        <TouchableOpacity
-          className="flex-1"
-          activeOpacity={1}
-          onPress={onClose}
-        />
+      <Pressable style={styles.overlay} onPress={onClose}>
+        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+          <SafeAreaView>
+            {/* Drag handle */}
+            <View style={styles.dragHandle} />
 
-        <View
-          className="bg-zinc-900 rounded-t-3xl"
-          style={{
-            maxHeight: SCREEN_HEIGHT * 0.6,
-            paddingBottom: insets.bottom + 16,
-          }}
-        >
-          {/* Drag handle */}
-          <View className="items-center pt-3 pb-2">
-            <View className="w-10 h-1 rounded-full bg-zinc-600" />
-          </View>
-
-          {/* Header */}
-          <View className="flex-row items-center justify-between px-6 py-3 border-b border-zinc-800">
-            <Text
-              className="text-white text-base font-bold"
-              style={{ fontFamily: "Inter_600SemiBold", fontSize: 16 }}
-              numberOfLines={1}
-            >
-              Download{title ? ` · ${title}` : ""}
-            </Text>
-            <View className="flex-row items-center" style={{ gap: 12 }}>
-              <TouchableOpacity
-                onPress={() => router.push("/guide?section=downloading")}
-                activeOpacity={0.7}
-                accessibilityLabel="Help with downloads"
-                accessibilityRole="button"
-              >
-                <Ionicons
-                  name="help-circle-outline"
-                  size={20}
-                  color="#71717a"
-                />
-              </TouchableOpacity>
+            {/* Header */}
+            <View style={styles.header}>
+              <View>
+                <Text style={styles.headerTitle}>Download</Text>
+                <Text style={styles.headerSubtitle} numberOfLines={1}>
+                  {title}
+                  {season != null && episode != null
+                    ? ` · S${season}E${episode}`
+                    : ""}
+                </Text>
+              </View>
               <TouchableOpacity
                 onPress={onClose}
-                activeOpacity={0.7}
-                accessibilityLabel="Close download options"
+                style={styles.closeBtn}
+                accessibilityLabel="Close"
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <Ionicons name="close" size={22} color="#71717a" />
+                <Ionicons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
-          </View>
 
-          {/* Source options */}
-          <ScrollView
-            className="px-4 pt-3"
-            showsVerticalScrollIndicator={false}
-          >
-            {SOURCES.map((source) => {
-              const isSelected = source.id === selectedSource;
-              return (
+            {/* Server list */}
+            <View style={styles.list}>
+              {SERVERS.map((server) => (
                 <TouchableOpacity
-                  key={source.id}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setSelectedSource(source.id);
-                  }}
+                  key={server.key}
+                  onPress={() => handleSelect(server.key)}
                   activeOpacity={0.7}
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    paddingHorizontal: 16,
-                    paddingVertical: 14,
-                    borderRadius: 12,
-                    marginBottom: 6,
-                    backgroundColor: isSelected
-                      ? "rgba(212,162,55,0.1)"
-                      : "rgba(39,39,42,0.4)",
-                    borderWidth: isSelected ? 0.5 : 0,
-                    borderColor: isSelected
-                      ? "rgba(212,162,55,0.35)"
-                      : "transparent",
-                  }}
+                  style={styles.serverRow}
                 >
-                  {/* Icon */}
-                  <View
-                    style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: 20,
-                      backgroundColor: isSelected ? "#D4A237" : "#27272A",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      marginRight: 14,
-                    }}
-                  >
+                  <View style={styles.serverIcon}>
                     <Ionicons
-                      name={isSelected ? "checkmark" : (source.icon as any)}
-                      size={18}
-                      color={isSelected ? "#070708" : "#71717a"}
+                      name={server.icon}
+                      size={22}
+                      color={colors.gold}
                     />
                   </View>
-
-                  {/* Text */}
-                  <View className="flex-1">
-                    <View className="flex-row items-center">
-                      <Text
-                        style={{
-                          fontSize: 14,
-                          fontFamily: "Inter_600SemiBold",
-                          color: isSelected ? "#D4A237" : "#e4e4e7",
-                        }}
-                      >
-                        {source.label}
-                      </Text>
-                      {source.recommended && (
-                        <View
-                          style={{
-                            marginLeft: 8,
-                            backgroundColor: "rgba(212,162,55,0.2)",
-                            borderRadius: 4,
-                            paddingHorizontal: 5,
-                            paddingVertical: 1,
-                          }}
-                        >
-                          <Text
-                            style={{
-                              color: "#D4A237",
-                              fontSize: 9,
-                              fontFamily: "Inter_600SemiBold",
-                            }}
-                          >
-                            Recommended
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text
-                      style={{
-                        color: "#A1A1AA",
-                        fontSize: 11,
-                        fontFamily: "Inter_400Regular",
-                        marginTop: 2,
-                      }}
-                    >
-                      {source.subtitle}
-                    </Text>
-                    <Text
-                      style={{
-                        color: "#52525B",
-                        fontSize: 10,
-                        fontFamily: "Inter_400Regular",
-                        marginTop: 1,
-                      }}
-                    >
-                      {source.description}
-                    </Text>
+                  <View style={styles.serverInfo}>
+                    <Text style={styles.serverLabel}>{server.label}</Text>
+                    <Text style={styles.serverSubtitle}>{server.subtitle}</Text>
                   </View>
-
-                  {/* Radio indicator */}
-                  {isSelected && (
-                    <View
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 4,
-                        backgroundColor: "#D4A237",
-                      }}
-                    />
-                  )}
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={colors.textTertiary}
+                  />
                 </TouchableOpacity>
-              );
-            })}
-
-            {/* Start Download button */}
-            <TouchableOpacity
-              onPress={handleStartDownload}
-              activeOpacity={0.9}
-              style={{
-                backgroundColor: "#D4A237",
-                borderRadius: 10,
-                paddingVertical: 14,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                marginTop: 12,
-                marginBottom: 8,
-              }}
-            >
-              <Ionicons
-                name="download"
-                size={16}
-                color="#070708"
-                style={{ marginRight: 8 }}
-              />
-              <Text
-                style={{
-                  fontFamily: "Inter_600SemiBold",
-                  fontSize: 14,
-                  color: "#070708",
-                }}
-              >
-                Start Download
-              </Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </View>
-      </View>
+              ))}
+            </View>
+          </SafeAreaView>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
+
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.85)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: colors.zinc900,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingBottom: 60,
+    maxHeight: "70%",
+  },
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.progressTrack,
+    alignSelf: "center",
+    marginTop: 12,
+    marginBottom: 16,
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 16,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: colors.textPrimary,
+  },
+  headerSubtitle: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginTop: 2,
+    maxWidth: 260,
+  },
+  closeBtn: {
+    padding: 4,
+  },
+  list: {
+    gap: 10,
+    marginBottom: 8,
+  },
+  serverRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: colors.zinc800,
+    gap: 14,
+  },
+  serverIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: colors.goldBadge,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  serverInfo: {
+    flex: 1,
+  },
+  serverLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: colors.textPrimary,
+  },
+  serverSubtitle: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+});

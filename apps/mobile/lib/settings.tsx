@@ -51,6 +51,13 @@ export interface AppSettings {
 
   // Onboarding
   hasSeenWelcome: boolean;
+
+  // Home page — section ordering (IDs: hero, trending-movies, trending-tv,
+  // more-like-this, continue-watching, popular-movies)
+  homeRowOrder: string[];
+
+  // Player — whether to show per-server usage notes below player
+  showServerNotes: boolean;
 }
 
 type SettingKey = keyof AppSettings;
@@ -93,6 +100,18 @@ const DEFAULT_SETTINGS: AppSettings = {
 
   // Onboarding
   hasSeenWelcome: false,
+
+  // Home page section order (hero is always first and excluded from this list)
+  homeRowOrder: [
+    "trending-movies",
+    "trending-tv",
+    "more-like-this",
+    "continue-watching",
+    "popular-movies",
+  ],
+
+  // Player — show per-server usage notes below player
+  showServerNotes: true,
 };
 
 // ── Context ──

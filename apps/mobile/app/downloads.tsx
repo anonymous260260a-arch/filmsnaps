@@ -5,6 +5,7 @@
  * failed) with real-time progress, pause/resume, and file management.
  */
 
+import { colors } from "../theme/colors";
 import React, {
   useCallback,
   useEffect,
@@ -26,7 +27,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackIcon } from "../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import * as Sharing from "expo-sharing";
 import {
   useDownloadList,
@@ -43,7 +44,7 @@ import type { DownloadTask } from "../lib/download";
 
 function ProgressBar({
   fraction,
-  color = "#D4A237",
+  color = colors.gold,
 }: {
   fraction: number;
   color?: string;
@@ -52,7 +53,7 @@ function ProgressBar({
   return (
     <View
       className="h-1.5 rounded-full overflow-hidden"
-      style={{ backgroundColor: "#222226" }}
+      style={{ backgroundColor: colors.progressTrack }}
     >
       <View
         className="h-full rounded-full"
@@ -85,16 +86,8 @@ function formatETA(remainingBytes: number, bytesPerSec: number): string {
 // ── Task Row ──
 
 function TaskRow({ taskId }: { taskId: string }) {
-  const {
-    task,
-    progress,
-    queuePosition,
-    pause,
-    resume,
-    cancel,
-    retry,
-    remove,
-  } = useDownload(taskId);
+  const { task, progress, pause, resume, cancel, retry, remove } =
+    useDownload(taskId);
   const speedSamples = useRef<SpeedSample[]>([]);
 
   if (!task) return null;
@@ -144,9 +137,9 @@ function TaskRow({ taskId }: { taskId: string }) {
     <View
       className="rounded-xl mb-2 overflow-hidden"
       style={{
-        backgroundColor: "#141414",
+        backgroundColor: colors.bgCard,
         borderWidth: 0.5,
-        borderColor: "#1f1f1f",
+        borderColor: colors.border,
       }}
     >
       {/* Info row */}
@@ -183,14 +176,12 @@ function TaskRow({ taskId }: { taskId: string }) {
           <View className="mt-2">
             <ProgressBar
               fraction={status === "pending" ? 0 : progress}
-              color={status === "pending" ? "#52525B" : "#D4A237"}
+              color={status === "pending" ? colors.textTertiary : colors.gold}
             />
             <View className="flex-row justify-between mt-1">
               <Text className="text-zinc-500 text-[10px]">
                 {status === "pending"
-                  ? queuePosition
-                    ? `Queued · #${queuePosition.position} — will start when a slot opens`
-                    : "Starting..."
+                  ? "Starting..."
                   : `${formatBytes(receivedBytes)} / ${formatBytes(totalBytes || 1)}`}
               </Text>
               <Text className="text-zinc-500 text-[10px]">{pct}%</Text>
@@ -203,7 +194,7 @@ function TaskRow({ taskId }: { taskId: string }) {
                     <Ionicons
                       name="speedometer-outline"
                       size={10}
-                      color="#52525b"
+                      color={colors.textTertiary}
                     />
                     <Text className="text-zinc-500 text-[10px] ml-1">
                       {speedLabel}
@@ -212,7 +203,11 @@ function TaskRow({ taskId }: { taskId: string }) {
                 ) : null}
                 {etaLabel ? (
                   <View className="flex-row items-center">
-                    <Ionicons name="time-outline" size={10} color="#52525b" />
+                    <Ionicons
+                      name="time-outline"
+                      size={10}
+                      color={colors.textTertiary}
+                    />
                     <Text className="text-zinc-500 text-[10px] ml-1">
                       {etaLabel}
                     </Text>
@@ -226,7 +221,7 @@ function TaskRow({ taskId }: { taskId: string }) {
         {/* Paused: progress bar + resume CTA */}
         {status === "paused" && (
           <View className="mt-2">
-            <ProgressBar fraction={progress} color="#52525B" />
+            <ProgressBar fraction={progress} color={colors.textTertiary} />
             <View className="flex-row justify-between mt-1">
               <Text className="text-zinc-500 text-[10px]">
                 Paused · {formatBytes(receivedBytes)} /{" "}
@@ -242,7 +237,11 @@ function TaskRow({ taskId }: { taskId: string }) {
         {/* Completed */}
         {status === "completed" && (
           <View className="flex-row items-center gap-1 mt-1">
-            <Ionicons name="checkmark-circle" size={12} color="#22c55e" />
+            <Ionicons
+              name="checkmark-circle"
+              size={12}
+              color={colors.successGreen}
+            />
             <Text className="text-green-500 text-[10px] font-semibold">
               Saved · {fileUri ? formatBytes(totalBytes) : "Unknown size"}
             </Text>
@@ -252,7 +251,7 @@ function TaskRow({ taskId }: { taskId: string }) {
         {/* Failed */}
         {status === "failed" && (
           <View className="mt-1 flex-row items-center gap-1">
-            <Ionicons name="alert-circle" size={12} color="#ef4444" />
+            <Ionicons name="alert-circle" size={12} color={colors.error} />
             <Text className="text-red-400 text-[10px] flex-1" numberOfLines={2}>
               {error || "Download failed"}
             </Text>
@@ -262,7 +261,11 @@ function TaskRow({ taskId }: { taskId: string }) {
         {/* Cancelled */}
         {status === "cancelled" && (
           <View className="flex-row items-center gap-1 mt-1">
-            <Ionicons name="close-circle" size={12} color="#a1a1aa" />
+            <Ionicons
+              name="close-circle"
+              size={12}
+              color={colors.textSecondary}
+            />
             <Text className="text-zinc-400 text-[10px]">Cancelled</Text>
           </View>
         )}
@@ -270,18 +273,13 @@ function TaskRow({ taskId }: { taskId: string }) {
         {/* Retrying */}
         {status === "retrying" && (
           <View className="mt-1 flex-row items-center gap-1">
-            <Ionicons name="refresh" size={12} color="#f59e0b" />
+            <Ionicons name="refresh" size={12} color={colors.amber} />
             <Text
               className="text-amber-400 text-[10px] flex-1"
               numberOfLines={2}
             >
               {error ? `Retrying — ${error}` : "Waiting to retry…"}
             </Text>
-            {queuePosition && (
-              <Text className="text-zinc-500 text-[9px]">
-                #{queuePosition.position} in queue
-              </Text>
-            )}
           </View>
         )}
 
@@ -294,7 +292,10 @@ function TaskRow({ taskId }: { taskId: string }) {
       {/* Action buttons */}
       <View
         className="flex-row border-t px-3 py-2"
-        style={{ borderTopColor: "#1f1f1f", backgroundColor: "#111" }}
+        style={{
+          borderTopColor: colors.border,
+          backgroundColor: colors.bgOverlay,
+        }}
       >
         {/* Active / Pending */}
         {(status === "downloading" || status === "pending") && (
@@ -302,13 +303,13 @@ function TaskRow({ taskId }: { taskId: string }) {
             <TaskAction
               icon="pause-circle-outline"
               label="Pause"
-              color="#D4A237"
+              color={colors.gold}
               onPress={pause}
             />
             <TaskAction
               icon="close-circle-outline"
               label="Cancel"
-              color="#ef4444"
+              color={colors.error}
               onPress={cancel}
             />
           </>
@@ -320,13 +321,13 @@ function TaskRow({ taskId }: { taskId: string }) {
             <TaskAction
               icon="play-circle-outline"
               label="Resume"
-              color="#22c55e"
+              color={colors.successGreen}
               onPress={resume}
             />
             <TaskAction
               icon="close-circle-outline"
               label="Cancel"
-              color="#ef4444"
+              color={colors.error}
               onPress={cancel}
             />
           </>
@@ -338,19 +339,19 @@ function TaskRow({ taskId }: { taskId: string }) {
             <TaskAction
               icon="play-circle-outline"
               label="VLC"
-              color="#D4A237"
+              color={colors.gold}
               onPress={() => openInVLC(fileUri)}
             />
             <TaskAction
               icon="share-outline"
               label="Share"
-              color="#5b9cf6"
+              color={colors.info}
               onPress={() => handleShare(fileUri, fileName)}
             />
             <TaskAction
               icon="trash-outline"
               label="Delete"
-              color="#ef4444"
+              color={colors.error}
               onPress={() => handleDelete(task, remove)}
             />
           </>
@@ -362,13 +363,13 @@ function TaskRow({ taskId }: { taskId: string }) {
             <TaskAction
               icon="refresh-outline"
               label="Retry"
-              color="#D4A237"
+              color={colors.gold}
               onPress={retry}
             />
             <TaskAction
               icon="trash-outline"
               label="Remove"
-              color="#a1a1aa"
+              color={colors.textSecondary}
               onPress={remove}
             />
           </>
@@ -380,7 +381,7 @@ function TaskRow({ taskId }: { taskId: string }) {
             <TaskAction
               icon="close-circle-outline"
               label="Cancel"
-              color="#ef4444"
+              color={colors.error}
               onPress={cancel}
             />
           </>
@@ -392,13 +393,13 @@ function TaskRow({ taskId }: { taskId: string }) {
             <TaskAction
               icon="refresh-outline"
               label="Retry"
-              color="#D4A237"
+              color={colors.gold}
               onPress={resume}
             />
             <TaskAction
               icon="trash-outline"
               label="Remove"
-              color="#a1a1aa"
+              color={colors.textSecondary}
               onPress={remove}
             />
           </>
@@ -471,10 +472,14 @@ function SectionRow({
           activeOpacity={0.7}
           className="flex-row items-center"
         >
-          <Ionicons name="play" size={10} color={actionColor || "#22c55e"} />
+          <Ionicons
+            name="play"
+            size={10}
+            color={actionColor || colors.successGreen}
+          />
           <Text
             className="text-xs font-semibold ml-1"
-            style={{ color: actionColor || "#22c55e" }}
+            style={{ color: actionColor || colors.successGreen }}
           >
             {actionLabel}
           </Text>
@@ -553,7 +558,7 @@ async function openInVLC(fileUri: string | null) {
 // ── Main Screen ──
 
 export default function DownloadsScreen() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const { manager } = useDownloadInfra();
   const {
@@ -577,8 +582,10 @@ export default function DownloadsScreen() {
     let cancelled = false;
     async function load() {
       try {
-        const info = await manager.getStorageInfo();
-        if (!cancelled) setStorageInfo(info);
+        const storage = manager.getStorageManager();
+        const used = await storage.getUsedSpace();
+        const free = await storage.getFreeSpace();
+        if (!cancelled) setStorageInfo({ available: free, used });
       } catch {}
     }
     load();
@@ -646,9 +653,9 @@ export default function DownloadsScreen() {
     return (
       <View
         className="flex-1 items-center justify-center"
-        style={{ backgroundColor: "#070708", paddingTop: insets.top }}
+        style={{ backgroundColor: colors.bg, paddingTop: insets.top }}
       >
-        <ActivityIndicator size="large" color="#D4A237" />
+        <ActivityIndicator size="large" color={colors.gold} />
       </View>
     );
   }
@@ -656,28 +663,23 @@ export default function DownloadsScreen() {
   return (
     <View
       className="flex-1"
-      style={{ backgroundColor: "#070708", paddingTop: insets.top }}
+      style={{ backgroundColor: colors.bg, paddingTop: insets.top }}
     >
       {/* Header */}
       <View className="px-5 pt-4 pb-2 flex-row items-center justify-between">
         <View className="flex-row items-center">
           <TouchableOpacity
-            onPress={() => {
-              try {
-                if (router.canGoBack()) router.back();
-                else router.push("/");
-              } catch {}
-            }}
+            onPress={() => nav.goBack({ fallback: "/(tabs)" })}
             className="w-9 h-9 rounded-full bg-zinc-800/60 items-center justify-center mr-3"
             activeOpacity={0.7}
           >
-            <BackIcon width={20} height={20} color="#F4F4F5" />
+            <BackIcon width={20} height={20} color={colors.textPrimary} />
           </TouchableOpacity>
           <Text
             style={{
               fontFamily: "PlayfairDisplay_700Bold",
               fontSize: 22,
-              color: "#F4F4F5",
+              color: colors.textPrimary,
             }}
           >
             Downloads
@@ -694,7 +696,10 @@ export default function DownloadsScreen() {
                   {
                     text: "Clear",
                     style: "destructive",
-                    onPress: () => control("remove", { status: "completed" }),
+                    onPress: () => {
+                      control("remove", { status: "completed" });
+                      control("remove", { status: "cancelled" });
+                    },
                   },
                 ],
               )
@@ -702,7 +707,7 @@ export default function DownloadsScreen() {
             activeOpacity={0.7}
             className="flex-row items-center"
           >
-            <Ionicons name="trash-outline" size={16} color="#ef4444" />
+            <Ionicons name="trash-outline" size={16} color={colors.error} />
             <Text className="text-red-400 text-xs ml-1.5 font-semibold">
               Clear
             </Text>
@@ -725,7 +730,11 @@ export default function DownloadsScreen() {
                     (storageInfo.available + storageInfo.used)
                   : 0;
               const color =
-                pct > 0.9 ? "#ef4444" : pct > 0.8 ? "#f59e0b" : "#22c55e";
+                pct > 0.9
+                  ? colors.error
+                  : pct > 0.8
+                    ? colors.amber
+                    : colors.successGreen;
               return (
                 <Text
                   style={{
@@ -741,7 +750,7 @@ export default function DownloadsScreen() {
           </View>
           <View
             className="h-1 rounded-full overflow-hidden"
-            style={{ backgroundColor: "#222226" }}
+            style={{ backgroundColor: colors.progressTrack }}
           >
             <View
               className="h-full rounded-full"
@@ -757,10 +766,10 @@ export default function DownloadsScreen() {
                     storageInfo.used /
                     Math.max(storageInfo.available + storageInfo.used, 1);
                   return pct > 0.9
-                    ? "#ef4444"
+                    ? colors.error
                     : pct > 0.8
-                      ? "#f59e0b"
-                      : "#22c55e";
+                      ? colors.amber
+                      : colors.successGreen;
                 })(),
               }}
             />
@@ -774,7 +783,7 @@ export default function DownloadsScreen() {
           title="No downloads yet"
           message="Downloaded movies and shows will appear here."
           actionLabel="Browse Films"
-          onAction={() => router.push("/")}
+          onAction={() => nav.push("/(tabs)")}
         />
       ) : (
         <FlatList
@@ -792,7 +801,7 @@ export default function DownloadsScreen() {
                     count={active.length}
                     action={() => control("pause", { status: "downloading" })}
                     actionLabel="Pause All"
-                    actionColor="#D4A237"
+                    actionColor={colors.gold}
                   />
                 );
               }
@@ -803,7 +812,7 @@ export default function DownloadsScreen() {
                     count={paused.length}
                     action={() => control("resume", { status: "paused" })}
                     actionLabel="Resume All"
-                    actionColor="#22c55e"
+                    actionColor={colors.successGreen}
                   />
                 );
               }
@@ -814,7 +823,7 @@ export default function DownloadsScreen() {
                     count={completed.length}
                     action={() => control("remove", { status: "completed" })}
                     actionLabel="Clear All"
-                    actionColor="#ef4444"
+                    actionColor={colors.error}
                   />
                 );
               }
@@ -825,13 +834,19 @@ export default function DownloadsScreen() {
                     count={failed.length}
                     action={() => control("retry", { status: "failed" })}
                     actionLabel="Retry All"
-                    actionColor="#D4A237"
+                    actionColor={colors.gold}
                   />
                 );
               }
               if (sectionKey === "cancelled") {
                 return (
-                  <SectionRow title="Cancelled" count={cancelled.length} />
+                  <SectionRow
+                    title="Cancelled"
+                    count={cancelled.length}
+                    action={() => control("remove", { status: "cancelled" })}
+                    actionLabel="Clear All"
+                    actionColor={colors.error}
+                  />
                 );
               }
               if (sectionKey === "retrying") {
@@ -841,7 +856,7 @@ export default function DownloadsScreen() {
                     count={retrying.length}
                     action={() => control("cancel", { status: "retrying" })}
                     actionLabel="Cancel All"
-                    actionColor="#ef4444"
+                    actionColor={colors.error}
                   />
                 );
               }

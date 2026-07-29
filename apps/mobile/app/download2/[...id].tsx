@@ -8,10 +8,12 @@ import {
   Alert,
 } from "react-native";
 import { WebView } from "react-native-webview";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useDownloadInfra } from "../../lib/download";
+import { colors } from "../../theme/colors";
 
 // ── Safe video extensions ──
 const VIDEO_EXTS = [
@@ -175,7 +177,7 @@ true;
 `;
 
 export default function Download2Screen() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const rawParams = useLocalSearchParams<{ id: string[] }>();
   const webViewRef = useRef<WebView>(null);
@@ -318,10 +320,14 @@ export default function Download2Screen() {
     return (
       <View className="flex-1 items-center justify-center bg-zinc-950 px-8">
         <StatusBar barStyle="light-content" />
-        <Ionicons name="download-outline" size={48} color="#52525b" />
+        <Ionicons
+          name="download-outline"
+          size={48}
+          color={colors.textTertiary}
+        />
         <Text className="text-zinc-400 mt-3">Download unavailable</Text>
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => nav.goBack({ fallback: "/(tabs)" })}
           className="bg-amber-500 rounded-xl py-3 px-8 mt-4"
           activeOpacity={0.8}
         >
@@ -341,19 +347,19 @@ export default function Download2Screen() {
         <View className="flex-row items-center justify-between px-4 py-2">
           <View className="flex-row items-center">
             <TouchableOpacity
-              onPress={() => router.back()}
+              onPress={() => nav.goBack({ fallback: "/(tabs)" })}
               className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
               activeOpacity={0.7}
               accessibilityLabel="Close download"
               accessibilityRole="button"
             >
-              <Ionicons name="close" size={20} color="#fff" />
+              <Ionicons name="close" size={20} color={colors.textPrimary} />
             </TouchableOpacity>
             <Text className="text-white font-bold text-sm ml-3">Download</Text>
           </View>
           <View className="flex-row items-center" style={{ gap: 6 }}>
             <TouchableOpacity
-              onPress={() => router.push("/downloads")}
+              onPress={() => nav.push("/downloads")}
               className="h-9 rounded-full flex-row items-center px-3"
               style={{ backgroundColor: "rgba(212,162,55,0.12)" }}
               activeOpacity={0.7}
@@ -361,7 +367,7 @@ export default function Download2Screen() {
               <Ionicons
                 name="download-outline"
                 size={14}
-                color="#D4A237"
+                color={colors.gold}
                 style={{ marginRight: 4 }}
               />
               <Text className="text-amber-400 text-[11px] font-bold">
@@ -375,7 +381,7 @@ export default function Download2Screen() {
               accessibilityLabel="Reload page"
               accessibilityRole="button"
             >
-              <Ionicons name="refresh" size={16} color="#fff" />
+              <Ionicons name="refresh" size={16} color={colors.textPrimary} />
             </TouchableOpacity>
           </View>
         </View>
@@ -383,7 +389,7 @@ export default function Download2Screen() {
 
       {loading && (
         <View className="absolute inset-0 z-20 items-center justify-center bg-black/80">
-          <ActivityIndicator size="large" color="#f59e0b" />
+          <ActivityIndicator size="large" color={colors.amber} />
           <Text className="text-zinc-400 text-sm mt-4">Loading...</Text>
         </View>
       )}
@@ -410,7 +416,7 @@ export default function Download2Screen() {
               className="bg-blue-600 rounded-full py-2.5 flex-row items-center justify-center"
               activeOpacity={0.8}
             >
-              <Ionicons name="download" size={16} color="#fff" />
+              <Ionicons name="download" size={16} color={colors.textPrimary} />
               <Text className="text-white text-xs font-bold ml-1.5">
                 💾 Save as .mp4 (via app)
               </Text>
@@ -423,7 +429,7 @@ export default function Download2Screen() {
         <WebView
           ref={webViewRef}
           source={{ uri: downloadUrl }}
-          style={{ flex: 1, backgroundColor: "#000" }}
+          style={{ flex: 1, backgroundColor: colors.playerBg }}
           allowsFullscreenVideo={true}
           allowsInlineMediaPlayback={true}
           mediaPlaybackRequiresUserAction={false}
