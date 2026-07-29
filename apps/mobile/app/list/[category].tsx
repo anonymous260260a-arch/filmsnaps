@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -9,12 +9,14 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackIcon } from "../../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { tmdbApi } from "../../lib/api";
 import { MediaCard } from "../../components/MediaCard";
+import { colors } from "../../theme/colors";
 
 const CATEGORY_CONFIG: Record<
   string,
@@ -22,11 +24,11 @@ const CATEGORY_CONFIG: Record<
 > = {
   "trending-movies": {
     title: "Trending Movies",
-    fetchFn: (page) => tmdbApi.getTrendingMovies(),
+    fetchFn: (page) => tmdbApi.getTrendingMovies(page),
   },
   "trending-tv": {
     title: "Trending TV",
-    fetchFn: (page) => tmdbApi.getTrendingTV(),
+    fetchFn: (page) => tmdbApi.getTrendingTV(page),
   },
   "popular-movies": {
     title: "Popular Movies",
@@ -41,6 +43,7 @@ const PADDING = 16;
 
 export default function CategoryListScreen() {
   const { category } = useLocalSearchParams<{ category: string }>();
+  const nav = useSafeNavigation();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
@@ -49,6 +52,7 @@ export default function CategoryListScreen() {
   const config = category ? CATEGORY_CONFIG[category] : undefined;
   const [page, setPage] = useState(1);
   const [allResults, setAllResults] = useState<any[]>([]);
+  const seenIdsRef = useRef<Set<number>>(new Set());
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["category", category, page],
@@ -59,13 +63,21 @@ export default function CategoryListScreen() {
     refetchOnWindowFocus: false,
   });
 
-  // Accumulate results across pages
+  // Accumulate results across pages — deduplicated by ID
   React.useEffect(() => {
     if (data?.results) {
       if (page === 1) {
+        seenIdsRef.current = new Set(data.results.map((r: any) => r.id));
         setAllResults(data.results);
       } else {
-        setAllResults((prev) => [...prev, ...data.results]);
+        const fresh = data.results.filter((r: any) => {
+          if (seenIdsRef.current.has(r.id)) return false;
+          seenIdsRef.current.add(r.id);
+          return true;
+        });
+        if (fresh.length > 0) {
+          setAllResults((prev) => [...prev, ...fresh]);
+        }
       }
     }
   }, [data, page]);
@@ -75,12 +87,13 @@ export default function CategoryListScreen() {
     setRefreshing(true);
     setPage(1);
     setAllResults([]);
+    seenIdsRef.current = new Set();
     await refetch();
     setRefreshing(false);
   }, [refetch]);
 
   const handleLoadMore = useCallback(() => {
-    if (!isFetching && data?.results?.length === (page === 1 ? 20 : 20)) {
+    if (!isFetching && data && page < (data.total_pages ?? 1)) {
       setPage((p) => p + 1);
     }
   }, [isFetching, data, page]);
@@ -99,20 +112,20 @@ export default function CategoryListScreen() {
         staleTime: 1000 * 60 * 60,
       });
       router.prefetch(dest);
-      router.push(dest);
+      nav.push(dest);
     },
-    [router, queryClient, category],
+    [nav, router, queryClient, category],
   );
 
   if (!config) {
     return (
       <View
         className="flex-1 items-center justify-center bg-void"
-        style={{ backgroundColor: "#070708", paddingTop: insets.top }}
+        style={{ backgroundColor: colors.bg, paddingTop: insets.top }}
       >
         <Text className="text-text-secondary text-lg">Category not found</Text>
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => nav.goBack({ fallback: "/(tabs)" })}
           className="bg-primary rounded-xl py-3 px-8 mt-4"
           activeOpacity={0.8}
         >
@@ -128,12 +141,12 @@ export default function CategoryListScreen() {
   return (
     <View
       className="flex-1 bg-void"
-      style={{ backgroundColor: "#070708", paddingTop: insets.top }}
+      style={{ backgroundColor: colors.bg, paddingTop: insets.top }}
     >
       {/* Header */}
       <View className="flex-row items-center px-4 pt-2 pb-3">
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => nav.goBack({ fallback: "/(tabs)" })}
           activeOpacity={0.7}
           accessibilityLabel="Go back"
           accessibilityRole="button"
@@ -146,12 +159,12 @@ export default function CategoryListScreen() {
             paddingVertical: 6,
           }}
         >
-          <BackIcon width={18} height={18} color="#F4F4F5" />
+          <BackIcon width={18} height={18} color={colors.textPrimary} />
           <Text
             style={{
               fontFamily: "Inter_500Medium",
               fontSize: 12,
-              color: "#F4F4F5",
+              color: colors.textPrimary,
               marginLeft: 2,
             }}
           >
@@ -162,7 +175,7 @@ export default function CategoryListScreen() {
           style={{
             fontFamily: "PlayfairDisplay_700Bold",
             fontSize: 20,
-            color: "#F4F4F5",
+            color: colors.textPrimary,
           }}
         >
           {config.title}
@@ -185,7 +198,7 @@ export default function CategoryListScreen() {
                   width: itemWidth,
                   height: itemWidth * 1.5,
                   borderRadius: 12,
-                  backgroundColor: "#1C1C20",
+                  backgroundColor: colors.skeletonBg,
                 }}
               />
               <View
@@ -193,7 +206,7 @@ export default function CategoryListScreen() {
                   width: "80%",
                   height: 10,
                   borderRadius: 4,
-                  backgroundColor: "#1C1C20",
+                  backgroundColor: colors.skeletonBg,
                   marginTop: 6,
                 }}
               />
@@ -214,13 +227,13 @@ export default function CategoryListScreen() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor="#D4A237"
+              tintColor={colors.gold}
             />
           }
           ListFooterComponent={
             allResults.length > 0 && isFetching ? (
               <View className="self-center mt-6 mb-8 py-1">
-                <ActivityIndicator size="small" color="#D4A237" />
+                <ActivityIndicator size="small" color={colors.gold} />
               </View>
             ) : null
           }

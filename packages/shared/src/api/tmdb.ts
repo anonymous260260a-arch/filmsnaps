@@ -23,9 +23,11 @@ export function createTmdbApi(apiBase: string) {
   };
 
   return {
-    getTrendingMovies: () => fetchTmdb("/trending/movie/week"),
+    getTrendingMovies: (page = 1) =>
+      fetchTmdb(`/trending/movie/week${page > 1 ? `?page=${page}` : ""}`),
 
-    getTrendingTV: () => fetchTmdb("/trending/tv/week"),
+    getTrendingTV: (page = 1) =>
+      fetchTmdb(`/trending/tv/week${page > 1 ? `?page=${page}` : ""}`),
 
     getPopularMovies: (page = 1) => fetchTmdb(`/movie/popular?page=${page}`),
 

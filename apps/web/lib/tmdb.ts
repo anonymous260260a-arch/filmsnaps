@@ -1,27 +1,27 @@
-import Fuse from 'fuse.js';
+import Fuse from "fuse.js";
 
-const IMAGE_BASE_URL = 'https://image.tmdb.org/t/p';
-const BASE_API = '/api/tmdb';
+const IMAGE_BASE_URL = "https://image.tmdb.org/t/p";
+const BASE_API = "/api/tmdb";
 
-export const getImageUrl = (path?: string, size = 'original') => {
-  if (!path) return '/placeholder.jpg';
+export const getImageUrl = (path?: string, size = "original") => {
+  if (!path) return "/placeholder.jpg";
   return `${IMAGE_BASE_URL}/${size}${path}`;
 };
 
 export const getTrailerKey = (videos: any) => {
   return videos?.results?.find(
-    (v: any) => v.type === 'Trailer' && v.site === 'YouTube'
+    (v: any) => v.type === "Trailer" && v.site === "YouTube",
   )?.key;
 };
 
 const getBaseUrl = () => {
   // Browser
-  if (typeof window !== 'undefined') {
-    return '';
+  if (typeof window !== "undefined") {
+    return "";
   }
 
   // Server (Vercel / Node)
-  return process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+  return process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 };
 
 const apiFetch = async (path: string) => {
@@ -30,29 +30,35 @@ const apiFetch = async (path: string) => {
   const res = await fetch(`${baseUrl}/api/tmdb${path}`);
 
   if (!res.ok) {
-    throw new Error('Failed to fetch TMDB data');
+    throw new Error("Failed to fetch TMDB data");
   }
 
   return res.json();
 };
 
 export const tmdbApi = {
-  getTrendingMovies: () => apiFetch('/trending/movie/week'),
+  getTrendingMovies: (page = 1) =>
+    apiFetch(`/trending/movie/week${page > 1 ? `?page=${page}` : ""}`),
 
-  getTrendingTV: () => apiFetch('/trending/tv/week'),
+  getTrendingTV: (page = 1) =>
+    apiFetch(`/trending/tv/week${page > 1 ? `?page=${page}` : ""}`),
 
   getPopularMovies: (page = 1) => apiFetch(`/movie/popular?page=${page}`),
 
-  getUpcomingMovies: () => apiFetch('/movie/upcoming'),
+  getUpcomingMovies: () => apiFetch("/movie/upcoming"),
 
   getMovieDetails: (id: number | string) =>
     apiFetch(`/movie/${id}?append_to_response=videos,credits,similar`),
 
   searchMulti: (query: string) =>
-    apiFetch(`/search/multi?query=${encodeURIComponent(query)}&language=en-US&include_adult=false`),
+    apiFetch(
+      `/search/multi?query=${encodeURIComponent(query)}&language=en-US&include_adult=false`,
+    ),
 
   searchMultiVerbose: (query: string, page = 1) =>
-    apiFetch(`/search/multi?query=${encodeURIComponent(query)}&language=en-US&include_adult=false&page=${page}`),
+    apiFetch(
+      `/search/multi?query=${encodeURIComponent(query)}&language=en-US&include_adult=false&page=${page}`,
+    ),
 
   getMovies: (params: {
     genreIds?: number[];
@@ -65,22 +71,22 @@ export const tmdbApi = {
     page?: number;
   }) => {
     const q = new URLSearchParams();
-    q.set('page', String(params.page ?? 1));
-    q.set('sort_by', params.sortBy ?? 'popularity.desc');
+    q.set("page", String(params.page ?? 1));
+    q.set("sort_by", params.sortBy ?? "popularity.desc");
 
     if (params.genreIds?.length)
-      q.set('with_genres', params.genreIds.join(','));
+      q.set("with_genres", params.genreIds.join(","));
 
     if (params.yearStart && params.yearEnd) {
-      q.set('primary_release_date.gte', `${params.yearStart}-01-01`);
-      q.set('primary_release_date.lte', `${params.yearEnd}-12-31`);
+      q.set("primary_release_date.gte", `${params.yearStart}-01-01`);
+      q.set("primary_release_date.lte", `${params.yearEnd}-12-31`);
     }
 
     if (params.minRating !== undefined)
-      q.set('vote_average.gte', String(params.minRating));
+      q.set("vote_average.gte", String(params.minRating));
     if (params.maxRating !== undefined)
-      q.set('vote_average.lte', String(params.maxRating));
-    if (params.language) q.set('with_original_language', params.language);
+      q.set("vote_average.lte", String(params.maxRating));
+    if (params.language) q.set("with_original_language", params.language);
 
     return apiFetch(`/discover/movie?${q}`);
   },
@@ -91,20 +97,20 @@ function preprocessQuery(q: string): string {
   return q
     .toLowerCase()
     .trim()
-    .replace(/\s+/g, ' ')        // collapse whitespace
-    .replace(/[^\w\s-]/g, '');   // strip punctuation except hyphens
+    .replace(/\s+/g, " ") // collapse whitespace
+    .replace(/[^\w\s-]/g, ""); // strip punctuation except hyphens
 }
 
 // ── Helper: generate search variants ──
 function generateVariants(query: string): string[] {
   const raw = preprocessQuery(query);
   const set = new Set<string>([raw]);
-  const noSpace = raw.replace(/\s+/g, '');
+  const noSpace = raw.replace(/\s+/g, "");
   if (noSpace !== raw) set.add(noSpace);
-  const dashed = raw.replace(/\s+/g, '-');
+  const dashed = raw.replace(/\s+/g, "-");
   if (dashed !== raw && !set.has(dashed)) set.add(dashed);
   // "spider-man" → also search as "spider man"
-  const unDashed = raw.replace(/[-_]/g, ' ');
+  const unDashed = raw.replace(/[-_]/g, " ");
   if (unDashed !== raw) set.add(unDashed);
   return Array.from(set);
 }
@@ -177,12 +183,12 @@ export function rankSearchResults(
   if (!q) return [];
 
   const candidates = results.filter(
-    (r: any) => r.media_type === 'movie' || r.media_type === 'tv',
+    (r: any) => r.media_type === "movie" || r.media_type === "tv",
   );
   if (!candidates.length) return [];
 
   const fuse = new Fuse(candidates, {
-    keys: ['title', 'name', 'original_title', 'original_name'],
+    keys: ["title", "name", "original_title", "original_name"],
     threshold: 0.45,
     includeScore: true,
     ignoreLocation: true,
@@ -212,7 +218,11 @@ export function rankSearchResults(
       const voteCount = Math.min((item.vote_count || 0) * 0.05, 20);
       score += voteCount * 0.1;
 
-      return { ...item, _score: Math.round(score * 100) / 100, _fuzzyScore: fuzzyScore };
+      return {
+        ...item,
+        _score: Math.round(score * 100) / 100,
+        _fuzzyScore: fuzzyScore,
+      };
     })
     .filter((item: ScoredResult) => item._fuzzyScore > 5) // fuzzy must pass a minimum bar
     .sort((a: ScoredResult, b: ScoredResult) => b._score - a._score)

@@ -10,31 +10,32 @@ import { View, Text, TouchableOpacity, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackIcon } from "../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
+import { colors } from "../theme/colors";
 
 export default function HowItWorksScreen() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
 
   return (
     <View
       className="flex-1"
-      style={{ backgroundColor: "#070708", paddingTop: insets.top }}
+      style={{ backgroundColor: colors.bg, paddingTop: insets.top }}
     >
       {/* Header */}
       <View className="px-5 pt-4 pb-2 flex-row items-center">
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => nav.goBack({ fallback: "/(tabs)" })}
           className="w-9 h-9 rounded-full bg-zinc-800/60 items-center justify-center mr-3"
           activeOpacity={0.7}
         >
-          <BackIcon width={20} height={20} color="#F4F4F5" />
+          <BackIcon width={20} height={20} color={colors.textPrimary} />
         </TouchableOpacity>
         <Text
           style={{
             fontFamily: "PlayfairDisplay_700Bold",
             fontSize: 22,
-            color: "#F4F4F5",
+            color: colors.textPrimary,
           }}
         >
           How Content Works
@@ -47,10 +48,13 @@ export default function HowItWorksScreen() {
       >
         <View
           className="w-16 h-0.5 mb-5"
-          style={{ backgroundColor: "#D4A237" }}
+          style={{ backgroundColor: colors.gold }}
         />
 
-        <Text className="text-sm leading-6 mb-6" style={{ color: "#A1A1AA" }}>
+        <Text
+          className="text-sm leading-6 mb-6"
+          style={{ color: colors.textSecondary }}
+        >
           Everything you need to know about how FilmSnaps sources content,
           blocks ads, and protects your privacy — explained transparently.
         </Text>
@@ -216,39 +220,39 @@ export default function HowItWorksScreen() {
           <View
             className="mt-3 mb-1 rounded-xl overflow-hidden"
             style={{
-              backgroundColor: "#0E0E11",
+              backgroundColor: colors.bgSurface,
               borderWidth: 0.5,
-              borderColor: "#1f1f1f",
+              borderColor: colors.bgTop,
             }}
           >
             <TechRow
               label="Native engine"
               value="Aho-Corasick pattern matching"
-              color="#D4A237"
+              color={colors.gold}
             />
             <TechDivider />
             <TechRow
               label="Filter lists"
               value="EasyList, EasyPrivacy, AdGuard, custom"
-              color="#22c55e"
+              color={colors.successGreen}
             />
             <TechDivider />
             <TechRow
               label="Cosmetic CSS"
               value="Per-provider element hiding"
-              color="#5b9cf6"
+              color={colors.info}
             />
             <TechDivider />
             <TechRow
               label="Guard JS"
               value="15-layer runtime protection"
-              color="#a855f7"
+              color={colors.secondary}
             />
             <TechDivider />
             <TechRow
               label="Session trust"
               value="Auto-allow video CDNs"
-              color="#f97316"
+              color={colors.amber}
             />
             <TechDivider />
             <TechRow
@@ -457,26 +461,26 @@ function CollapsibleSection({
           <Ionicons
             name={icon as any}
             size={16}
-            color="#D4A237"
+            color={colors.gold}
             style={{ marginRight: 10 }}
           />
         )}
         <Text
           className="flex-1 text-sm font-semibold"
-          style={{ color: "#F4F4F5", fontFamily: "Inter_600SemiBold" }}
+          style={{ color: colors.textPrimary, fontFamily: "Inter_600SemiBold" }}
         >
           {title}
         </Text>
         <Ionicons
           name={open ? "chevron-up" : "chevron-down"}
           size={16}
-          color="#52525b"
+          color={colors.iconSecondary}
         />
       </TouchableOpacity>
       {open && (
         <View
           className="ml-1 pl-3 border-l-2"
-          style={{ borderColor: "#1f1f1f" }}
+          style={{ borderColor: colors.bgTop }}
         >
           {children}
         </View>
@@ -499,9 +503,9 @@ function FaqItem({
     <View
       className="mb-3 mt-2 rounded-xl overflow-hidden"
       style={{
-        backgroundColor: "#0A0A0D",
+        backgroundColor: colors.bgCard,
         borderWidth: 0.5,
-        borderColor: "#1a1a1e",
+        borderColor: colors.zincBgFull,
       }}
     >
       <TouchableOpacity
@@ -511,21 +515,21 @@ function FaqItem({
       >
         <Text
           className="flex-1 text-sm leading-5 pr-2"
-          style={{ color: "#F4F4F5", fontFamily: "Inter_500Medium" }}
+          style={{ color: colors.textPrimary, fontFamily: "Inter_500Medium" }}
         >
           {question}
         </Text>
         <Ionicons
           name={open ? "remove-circle-outline" : "add-circle-outline"}
           size={18}
-          color="#D4A237"
+          color={colors.gold}
         />
       </TouchableOpacity>
       {open && (
         <View className="px-4 pb-3 pt-1">
           <View
             className="w-full h-[1px] mb-3"
-            style={{ backgroundColor: "#1a1a1e" }}
+            style={{ backgroundColor: colors.bgActiveDrag }}
           />
           {answer}
         </View>
@@ -547,7 +551,7 @@ function SubSection({
     <View className="mb-4 mt-3">
       <Text
         className="text-xs font-semibold mb-2"
-        style={{ color: "#D4A237", fontFamily: "Inter_600SemiBold" }}
+        style={{ color: colors.gold, fontFamily: "Inter_600SemiBold" }}
       >
         {title}
       </Text>
@@ -566,7 +570,7 @@ function Body({
   return (
     <Text
       className={`text-sm leading-6 ${extraMargin ? "mt-3" : ""}`}
-      style={{ color: "#D4D4D8" }}
+      style={{ color: colors.textSecondary }}
     >
       {children}
     </Text>
@@ -575,7 +579,9 @@ function Body({
 
 function Bold({ children }: { children: React.ReactNode }) {
   return (
-    <Text style={{ fontFamily: "Inter_600SemiBold", color: "#F4F4F5" }}>
+    <Text
+      style={{ fontFamily: "Inter_600SemiBold", color: colors.textPrimary }}
+    >
       {children}
     </Text>
   );
@@ -584,10 +590,16 @@ function Bold({ children }: { children: React.ReactNode }) {
 function Bullet({ text }: { text: string }) {
   return (
     <View className="flex-row items-start mt-2">
-      <Text className="text-[10px] mt-1.5 mr-2.5" style={{ color: "#D4A237" }}>
+      <Text
+        className="text-[10px] mt-1.5 mr-2.5"
+        style={{ color: colors.gold }}
+      >
         ■
       </Text>
-      <Text className="text-sm leading-5 flex-1" style={{ color: "#D4D4D8" }}>
+      <Text
+        className="text-sm leading-5 flex-1"
+        style={{ color: colors.textSecondary }}
+      >
         {text}
       </Text>
     </View>
@@ -611,13 +623,13 @@ function TechRow({
       />
       <Text
         className="text-xs flex-1"
-        style={{ color: "#A1A1AA", fontFamily: "Inter_500Medium" }}
+        style={{ color: colors.textSecondary, fontFamily: "Inter_500Medium" }}
       >
         {label}
       </Text>
       <Text
         className="text-xs text-right"
-        style={{ color: "#F4F4F5", fontFamily: "Inter_400Regular" }}
+        style={{ color: colors.textPrimary, fontFamily: "Inter_400Regular" }}
       >
         {value}
       </Text>
@@ -627,6 +639,9 @@ function TechRow({
 
 function TechDivider() {
   return (
-    <View className="h-[1px] mx-4" style={{ backgroundColor: "#1a1a1e" }} />
+    <View
+      className="h-[1px] mx-4"
+      style={{ backgroundColor: colors.bgActiveDrag }}
+    />
   );
 }

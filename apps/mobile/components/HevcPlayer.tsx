@@ -28,6 +28,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ScreenOrientation from "expo-screen-orientation";
 import * as KeepAwake from "expo-keep-awake";
+import { colors } from "../theme/colors";
 import { AudioTrackPicker } from "./player/AudioTrackPicker";
 import { SubtitlePicker } from "./player/SubtitlePicker";
 import { saveProgress } from "../lib/watchHistory";
@@ -279,7 +280,11 @@ export function HevcPlayer({
               style={styles.controlButton}
               activeOpacity={0.7}
             >
-              <Ionicons name="chevron-down" size={24} color="#fff" />
+              <Ionicons
+                name="chevron-down"
+                size={24}
+                color={colors.textPrimary}
+              />
             </TouchableOpacity>
 
             <Text style={styles.title} numberOfLines={1}>
@@ -292,7 +297,7 @@ export function HevcPlayer({
                 style={styles.controlButton}
                 activeOpacity={0.7}
               >
-                <Ionicons name="musical-notes" size={20} color="#D4A237" />
+                <Ionicons name="musical-notes" size={20} color={colors.gold} />
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -300,7 +305,7 @@ export function HevcPlayer({
                 style={styles.controlButton}
                 activeOpacity={0.7}
               >
-                <Ionicons name="text" size={20} color="#D4A237" />
+                <Ionicons name="text" size={20} color={colors.gold} />
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -311,7 +316,7 @@ export function HevcPlayer({
                 <Ionicons
                   name={isFullscreen ? "contract" : "expand"}
                   size={20}
-                  color="#fff"
+                  color={colors.textPrimary}
                 />
               </TouchableOpacity>
             </View>
@@ -324,7 +329,7 @@ export function HevcPlayer({
               style={styles.seekButton}
               activeOpacity={0.7}
             >
-              <Ionicons name="play-back" size={32} color="#fff" />
+              <Ionicons name="play-back" size={32} color={colors.textPrimary} />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -335,7 +340,7 @@ export function HevcPlayer({
               <Ionicons
                 name={isPlaying ? "pause" : "play"}
                 size={40}
-                color="#070708"
+                color={colors.bg}
               />
             </TouchableOpacity>
 
@@ -344,7 +349,11 @@ export function HevcPlayer({
               style={styles.seekButton}
               activeOpacity={0.7}
             >
-              <Ionicons name="play-forward" size={32} color="#fff" />
+              <Ionicons
+                name="play-forward"
+                size={32}
+                color={colors.textPrimary}
+              />
             </TouchableOpacity>
           </View>
 
@@ -397,7 +406,7 @@ export function HevcPlayer({
       {/* Loading Overlay */}
       {isBuffering && (
         <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color="#D4A237" />
+          <ActivityIndicator size="large" color={colors.gold} />
           <Text style={styles.loadingText}>Loading video...</Text>
         </View>
       )}
@@ -422,7 +431,7 @@ export function HevcPlayer({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#000",
+    backgroundColor: colors.playerBg,
   },
   videoContainer: {
     ...StyleSheet.absoluteFillObject,
@@ -460,7 +469,7 @@ const styles = StyleSheet.create({
   },
   title: {
     flex: 1,
-    color: "#fff",
+    color: colors.textPrimary,
     fontSize: 16,
     fontWeight: "600",
     marginHorizontal: 12,
@@ -487,7 +496,7 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: "#D4A237",
+    backgroundColor: colors.gold,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -497,7 +506,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.5)",
   },
   timeText: {
-    color: "#A1A1AA",
+    color: colors.textSecondary,
     fontSize: 12,
     marginBottom: 8,
   },
@@ -508,13 +517,13 @@ const styles = StyleSheet.create({
   },
   seekBarBackground: {
     height: 4,
-    backgroundColor: "rgba(255,255,255,0.2)",
+    backgroundColor: colors.progressTrackAlt,
     borderRadius: 2,
     overflow: "hidden",
   },
   seekBarProgress: {
     height: "100%",
-    backgroundColor: "#D4A237",
+    backgroundColor: colors.gold,
     borderRadius: 2,
   },
   seekBarTouch: {
@@ -522,14 +531,14 @@ const styles = StyleSheet.create({
   },
   formatBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "rgba(212,162,55,0.2)",
+    backgroundColor: colors.goldBadge,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 4,
     marginTop: 8,
   },
   formatBadgeText: {
-    color: "#D4A237",
+    color: colors.gold,
     fontSize: 10,
     fontWeight: "700",
   },
@@ -541,7 +550,7 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   loadingText: {
-    color: "#A1A1AA",
+    color: colors.textSecondary,
     fontSize: 14,
     marginTop: 12,
   },

@@ -1,6 +1,7 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import React from "react";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { colors } from "../theme/colors";
 
 interface EmptyStateProps {
   icon?: keyof typeof Ionicons.glyphMap;
@@ -11,7 +12,7 @@ interface EmptyStateProps {
 }
 
 export function EmptyState({
-  icon = 'film-outline',
+  icon = "film-outline",
   title,
   message,
   actionLabel,
@@ -19,7 +20,7 @@ export function EmptyState({
 }: EmptyStateProps) {
   return (
     <View style={styles.container}>
-      <Ionicons name={icon} size={64} color="#3F3F46" />
+      <Ionicons name={icon} size={64} color={colors.emptyIcon} />
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.message}>{message}</Text>
       {actionLabel && onAction && (
@@ -34,34 +35,34 @@ export function EmptyState({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     paddingHorizontal: 32,
     paddingVertical: 64,
   },
   title: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#F4F4F5',
+    fontWeight: "600",
+    color: colors.textPrimary,
     marginTop: 16,
     marginBottom: 8,
   },
   message: {
     fontSize: 14,
-    color: '#A1A1AA',
-    textAlign: 'center',
+    color: colors.textSecondary,
+    textAlign: "center",
     lineHeight: 20,
   },
   button: {
     marginTop: 24,
-    backgroundColor: '#D4A237',
+    backgroundColor: colors.gold,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
   },
   buttonText: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#070708',
+    fontWeight: "600",
+    color: colors.bg,
   },
 });

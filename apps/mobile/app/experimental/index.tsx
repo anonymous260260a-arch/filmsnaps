@@ -22,10 +22,11 @@ import {
   StatusBar,
   ActivityIndicator,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import { BackIcon } from "../../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { colors } from "../../theme/colors";
 import { ProviderSandbox } from "../../components/experimental/ProviderSandbox";
 import { EXPERIMENTAL_PROVIDERS } from "../../components/experimental/providerSources";
 import type {
@@ -43,7 +44,7 @@ const QUICK_IDS = [
 ];
 
 export default function ExperimentalPage() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
 
   // ── Input state ──
@@ -260,19 +261,19 @@ export default function ExperimentalPage() {
   };
 
   return (
-    <SafeAreaView className="flex-1" style={{ backgroundColor: "#070708" }}>
+    <SafeAreaView className="flex-1" style={{ backgroundColor: colors.bg }}>
       <StatusBar barStyle="light-content" />
       <View className="flex-1 px-4 pt-2">
         {/* ── Header ── */}
         <View className="flex-row items-center justify-between mb-4">
           <View className="flex-row items-center">
             <TouchableOpacity
-              onPress={() => router.back()}
+              onPress={() => nav.goBack({ fallback: "/(tabs)" })}
               className="mr-3 p-1"
               activeOpacity={0.7}
               accessibilityLabel="Go back"
             >
-              <BackIcon width={22} height={22} color="#F4F4F5" />
+              <BackIcon width={22} height={22} color={colors.textPrimary} />
             </TouchableOpacity>
             <View>
               <Text
@@ -302,7 +303,7 @@ export default function ExperimentalPage() {
               value={tmdbId}
               onChangeText={setTmdbId}
               placeholder="e.g. 872585"
-              placeholderTextColor="#52525b"
+              placeholderTextColor={colors.textTertiary}
               className="bg-zinc-900 text-white rounded-xl px-4 py-3 text-base border border-zinc-800"
               keyboardType="number-pad"
               autoCapitalize="none"
@@ -427,7 +428,11 @@ export default function ExperimentalPage() {
                     }`}
                   >
                     {selectedProviders.has(p.id) && (
-                      <Ionicons name="checkmark" size={14} color="#000" />
+                      <Ionicons
+                        name="checkmark"
+                        size={14}
+                        color={colors.voidBlack}
+                      />
                     )}
                   </View>
                   <View className="flex-1">
@@ -441,12 +446,14 @@ export default function ExperimentalPage() {
                           className="rounded-sm px-1.5 py-0.5 mr-1"
                           style={{
                             backgroundColor:
-                              (langColors[lang] || "#52525b") + "20",
+                              (langColors[lang] || colors.textTertiary) + "20",
                           }}
                         >
                           <Text
                             className="text-[10px]"
-                            style={{ color: langColors[lang] || "#a1a1aa" }}
+                            style={{
+                              color: langColors[lang] || colors.textSecondary,
+                            }}
                           >
                             {lang}
                           </Text>
@@ -497,9 +504,9 @@ export default function ExperimentalPage() {
               activeOpacity={0.8}
             >
               {isTesting ? (
-                <ActivityIndicator size="small" color="#d4d4d8" />
+                <ActivityIndicator size="small" color={colors.zinc300} />
               ) : (
-                <Ionicons name="play" size={16} color="#000" />
+                <Ionicons name="play" size={16} color={colors.voidBlack} />
               )}
               <Text
                 className={`font-bold text-sm ml-2 ${
@@ -515,7 +522,11 @@ export default function ExperimentalPage() {
               className="bg-zinc-900 rounded-xl py-3 px-4 items-center justify-center border border-zinc-800"
               activeOpacity={0.7}
             >
-              <Ionicons name="trash-outline" size={16} color="#a1a1aa" />
+              <Ionicons
+                name="trash-outline"
+                size={16}
+                color={colors.textSecondary}
+              />
             </TouchableOpacity>
           </View>
 
@@ -560,7 +571,7 @@ export default function ExperimentalPage() {
                               ? "#22c55e"
                               : isError
                                 ? "#ef4444"
-                                : "#a1a1aa"
+                                : colors.textSecondary
                           }
                         />
                         <Text className="text-white text-sm font-medium ml-1.5">
@@ -630,7 +641,7 @@ export default function ExperimentalPage() {
                       <View className="flex-row items-center mt-1">
                         <ActivityIndicator
                           size={10}
-                          color="#a1a1aa"
+                          color={colors.textSecondary}
                           style={{ marginRight: 6 }}
                         />
                         <Text className="text-zinc-500 text-xs">
@@ -657,7 +668,7 @@ export default function ExperimentalPage() {
                 <Ionicons
                   name={showAdvanced ? "chevron-up" : "chevron-down"}
                   size={14}
-                  color="#52525b"
+                  color={colors.textTertiary}
                 />
               </TouchableOpacity>
               {showAdvanced && (

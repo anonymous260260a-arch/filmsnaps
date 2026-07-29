@@ -1,453 +1,467 @@
-/**
- * Download Infrastructure Provider — Wires manager ↔ store ↔ notifications.
- *
- * Creates singleton manager and store instances, loads persisted state
- * on mount, and wires manager events (progress, status) into store mutations
- * automatically. The DownloadManager handles queue, retry, speed limiting,
- * SQLite persistence, and notifications.
- *
- * Provides a stable context reference via useRef so the instances never change.
- * The old engine.ts is no longer used — the manager's adapter (BlobDownloaderAdapter)
- * handles all download I/O via react-native-blob-util.
- */
+// apps/mobile/lib/download/context.tsx
 
-import React, { createContext, useContext, useEffect, useRef } from "react";
-import NetInfo from "@react-native-community/netinfo";
-import {
-  createDownloadStore,
-  type IDownloadStore,
-  createAsyncStorageAdapter,
-} from "./store";
+import React, {
+  createContext,
+  useContext,
+  useRef,
+  useEffect,
+  useCallback,
+  type ReactNode,
+} from "react";
 import { DownloadManager } from "./manager";
+import { createDownloadStore, type DownloadStore } from "./store";
 import { DownloadNotifications } from "./notifications";
-import { downloadToast } from "../../components/DownloadToast";
+import { logger } from "./logger";
 import type {
-  DownloadTask,
   DownloadMeta,
+  DownloadTask,
   ControlAction,
   ControlTarget,
 } from "./types";
 
-// ── Helpers ──
-
-function generateId(): string {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return `dl_${crypto.randomUUID().substring(0, 8)}`;
-  }
-  return `dl_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-}
-
-// ── Context Value ──
-
-export interface DownloadInfra {
-  store: IDownloadStore;
-  /** DownloadManager — the sole orchestrator for queue, retry, speed, SQLite, notifications */
+// ─── Context Shape ───
+interface DownloadInfraContext {
   manager: DownloadManager;
-  /** Enqueue a new download task (creates, persists to SQLite, starts via manager queue) */
-  enqueue: (meta: DownloadMeta) => string;
-  /** Perform an action on one or more tasks by filter */
-  control: (action: ControlAction, target?: ControlTarget) => Promise<void>;
+  store: DownloadStore;
+  enqueue: (meta: DownloadMeta) => Promise<string>;
+  control: (action: ControlAction, target: ControlTarget) => Promise<void>;
+  loaded: boolean;
 }
 
-const DownloadInfraContext = createContext<DownloadInfra | null>(null);
+const Ctx = createContext<DownloadInfraContext | null>(null);
 
-// ── Provider ──
-
+// ─── Provider ───
 export function DownloadInfraProvider({
   children,
   storeOverride,
 }: {
-  children: React.ReactNode;
-  storeOverride?: IDownloadStore;
+  children: ReactNode;
+  storeOverride?: DownloadStore;
 }) {
-  const infraRef = useRef<DownloadInfra | null>(null);
+  const managerRef = useRef<DownloadManager | null>(null);
+  const storeRef = useRef<IDownloadStore | null>(null);
+  const initStartedRef = useRef(false);
+  const [loaded, setLoaded] = React.useState(false);
 
-  if (!infraRef.current) {
-    const store =
-      storeOverride ?? createDownloadStore(createAsyncStorageAdapter());
-
-    // Create the DownloadManager (the sole orchestrator)
-    let manager: DownloadManager;
-    try {
-      const { BlobDownloaderAdapter } = require("./blobDownloader");
-      const adapter = new BlobDownloaderAdapter();
-      manager = new DownloadManager(adapter, {
-        maxConcurrent: 3,
-        enableNotifications: true,
-      });
-    } catch (e) {
-      console.error(
-        "[Provider] DownloadManager init failed — downloads unavailable:",
-        e,
-      );
-      throw e;
-    }
-
-    const control = createControl(manager, store);
-    const enqueue = createEnqueue(manager, store);
-    infraRef.current = { store, manager, enqueue, control };
+  // Initialize singleton manager + store
+  if (!managerRef.current) {
+    managerRef.current = new DownloadManager({
+      maxConcurrent: 3,
+      networkPolicy: "any",
+      autoRetry: true,
+      maxRetries: 3,
+      showNativeNotification: true,
+    });
   }
 
-  const { manager, store } = infraRef.current;
+  if (!storeRef.current) {
+    storeRef.current = storeOverride ?? createDownloadStore();
+  }
 
-  // ── Load persisted state on mount ──
-  // FIX: Sequence store.load() → manager.initialize() so the store has fully
-  // hydrated (including its own stale-task recovery) before the manager does
-  // its SQLite-side recovery. This prevents the library/hooks from seeing an
-  // empty store on first render even when downloads exist in the database.
+  const manager = managerRef.current;
+  const store = storeRef.current;
+
+  // Expert follow-up: inject store reference so initialize() can push DB corrections
+  // into the store via store.upsertMany().
+  manager.setStore(store);
+
+  // ─── Load persisted state + initialize manager on mount ───
   useEffect(() => {
-    const init = async () => {
-      await store.load();
-      await manager.initialize();
+    let mounted = true;
+    // Q5 fix: guard against double-initialization in React Strict Mode
+    // (which mounts → unmounts → remounts in dev). Without this guard,
+    // initialization runs twice, and the first async setLoaded(true)
+    // races with the second init, leaving loaded=false.
+    if (initStartedRef.current) return;
+    initStartedRef.current = true;
+
+    (async () => {
+      try {
+        logger.debug("Context: loading store");
+        await store.load(); // hydrate from DB first
+        logger.debug("Context: initializing manager");
+        await manager.initialize(); // then reconcile against live service state + push
+        // corrections into the store via store.upsertMany()
+        if (mounted) {
+          setLoaded(true);
+          logger.debug("Context: initialized — loaded=true");
+        }
+      } catch (err) {
+        logger.error("Context initialization failed:", err);
+        if (mounted) setLoaded(true);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+      logger.debug("Context: provider unmounting");
     };
-    init().catch(() => {});
   }, [store, manager]);
 
-  // ── Wire manager events → store mutations + notifications ──
+  // ─── Wire manager events → store mutations ───
   useEffect(() => {
-    // ═══════════════════════════════════════════════════════════════
-    // TIERED PROGRESS: O(1) per event → 250ms UI flush → 2s DB persist
-    //
-    // RNFB fires progress every ~100ms. Doing store.upsert (which
-    // copies the entire tasks array) on every tick freezes the JS
-    // thread. Instead:
-    //   TIER 1 — per event: O(1) Map.set (coalesced, no React)
-    //   TIER 2 — every 250ms: batch-flush to store.upsert (4 fps max)
-    //   TIER 3 — every 2s: DB write via manager's internal timer
-    // ═══════════════════════════════════════════════════════════════
-    const pendingProgress = new Map<
-      string,
-      { received: number; total: number }
-    >();
-
     const unsubProgress = manager.onProgress((p) => {
-      // Tier 1: O(1) — only the last value per task survives
-      pendingProgress.set(p.taskId, {
-        received: Number(p.receivedBytes) || 0,
-        total: Number(p.totalBytes) || 0,
-      });
+      store.upsertProgress(
+        p.taskId,
+        p.receivedBytes,
+        p.totalBytes,
+        p.speed,
+        p.eta,
+      );
+      // no console.log here — this fires up to several times/sec per active download
     });
 
-    // Tier 2: flush pending progress to store at 250ms (max 4 updates/sec/task)
-    const flushInterval = setInterval(() => {
-      if (pendingProgress.size === 0) return;
-      const batch = [...pendingProgress.entries()];
-      pendingProgress.clear();
-      for (const [taskId, { received, total }] of batch) {
-        const existing = store.getById(taskId);
-        if (existing) {
-          store.upsert({
-            ...existing,
-            receivedBytes: received,
-            totalBytes: total,
-            status: "downloading",
-            resumeData: existing.resumeData ?? null,
-          });
-        }
-      }
-    }, 250);
-
     const unsubStatus = manager.onStatus((s) => {
-      const existing = store.getById(s.taskId);
-      if (existing) {
-        const update: DownloadTask = {
-          ...existing,
-          status: s.status,
-          error: s.error,
-        };
-        if (s.resumeData !== undefined) {
-          update.resumeData = s.resumeData;
-        }
-        store.upsert(update);
+      logger.debug("status change", s.taskId, s.status);
+      if (s.removed) {
+        store.remove(s.taskId).catch(() => {});
+        return;
       }
-      const title = existing?.title || existing?.fileName || "Download";
 
-      // ── Show in-app toasts for user-facing events ──
-      // Banner handles ambient status on tab screens; toasts reserved for errors,
-      // cancellations, and events that occur on non-tab screens.
-      if (existing) {
-        switch (s.status) {
-          case "downloading": {
-            // Only toast when retrying (always notable) or resuming from pause
-            if (existing.status === "paused") {
-              downloadToast.info(`"${title}" resumed`);
-            } else if (existing.status === "failed") {
-              downloadToast.info(`"${title}" retrying...`);
-            }
-            // First-start toast suppressed — Banner shows ambient state
-            break;
-          }
-          case "completed":
-            downloadToast.success(`"${title}" downloaded`);
-            DownloadNotifications.showCompleted(
-              title,
-              existing?.fileUri || "",
-            ).catch(() => {});
-            break;
-          case "failed":
-            downloadToast.error(s.error || `"${title}" failed`);
-            DownloadNotifications.showFailed(
-              title,
-              s.error || "Unknown error",
-            ).catch(() => {});
-            break;
-          case "cancelled":
-            downloadToast.warning(`"${title}" cancelled`);
-            break;
-        }
+      const task = store.getById(s.taskId);
+      if (!task) return;
+
+      store.upsert({
+        ...task,
+        status: s.status,
+        error: s.error,
+        fileUri: s.fileUri ?? task.fileUri,
+        receivedBytes: s.receivedBytes ?? task.receivedBytes,
+        totalBytes: s.totalBytes ?? task.totalBytes,
+        updatedAt: Date.now(),
+      });
+
+      // Show notification for terminal states
+      if (s.status === "completed") {
+        DownloadNotifications.showCompleted(
+          s.taskId,
+          task.title ?? task.fileName,
+        ).catch(() => {});
+      } else if (s.status === "failed") {
+        DownloadNotifications.showFailed(
+          s.taskId,
+          task.title ?? task.fileName,
+          s.error ?? "Unknown error",
+        ).catch(() => {});
       }
     });
 
     return () => {
-      clearInterval(flushInterval);
       unsubProgress();
       unsubStatus();
     };
   }, [manager, store]);
 
-  // ── Destroy manager on unmount ──
-  useEffect(() => {
-    return () => {
-      manager.destroy();
-    };
-  }, [manager]);
+  // ─── Enqueue ───
+  const enqueue = useCallback(
+    async (meta: DownloadMeta): Promise<string> => {
+      logger.debug(
+        "Context enqueue",
+        meta.title,
+        meta.server,
+        meta.quality,
+        meta.tmdbId,
+      );
+      const id = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+      const task: DownloadTask = {
+        ...meta,
+        id,
+        fileUri: null,
+        totalBytes: 0,
+        receivedBytes: 0,
+        status: "pending",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        priority: 1,
+        retryCount: 0,
+        maxRetries: 3,
+      };
+
+      // Immediate UI feedback
+      await store.upsert(task);
+      logger.debug("Context enqueue: task stored", id);
+
+      // Hand off to manager (non-fatal)
+      try {
+        await manager.add(task);
+        logger.debug("Context enqueue: manager.add succeeded", id);
+      } catch (err) {
+        logger.error("Context enqueue failed:", err);
+        await store.upsert({
+          ...task,
+          status: "failed",
+          error:
+            err instanceof Error ? err.message : "Failed to start download",
+          updatedAt: Date.now(),
+        });
+      }
+
+      // Notification permission (non-blocking)
+      DownloadNotifications.requestPermissions().catch(() => {});
+
+      return id;
+    },
+    [store, manager],
+  );
+
+  // ─── Batch Control ───
+  const control = useCallback(
+    async (action: ControlAction, target: ControlTarget) => {
+      let ids: string[] = [];
+
+      if (typeof target === "string") {
+        ids = [target];
+      } else if (Array.isArray(target)) {
+        ids = target;
+      } else {
+        // Status filter
+        const statuses = Array.isArray(target.status)
+          ? target.status
+          : [target.status!];
+        const tasks = store.getAll().filter((t) => statuses.includes(t.status));
+        ids = tasks.map((t) => t.id);
+      }
+
+      logger.debug("Context control", action, ids.length, ids.slice(0, 3));
+      for (const id of ids) {
+        try {
+          switch (action) {
+            case "pause":
+              await manager.pause(id);
+              break;
+            case "resume":
+              await manager.resume(id);
+              break;
+            case "cancel":
+              await manager.cancel(id);
+              break;
+            case "retry":
+              await manager.retry(id);
+              break;
+            case "remove":
+              await manager.remove(id);
+              break;
+          }
+          logger.debug("Context control done", action, id);
+        } catch (err) {
+          logger.error("Context control failed", action, id, err);
+        }
+      }
+    },
+    [manager, store],
+  );
 
   return (
-    <DownloadInfraContext.Provider value={infraRef.current}>
+    <Ctx.Provider value={{ manager, store, enqueue, control, loaded }}>
       {children}
-    </DownloadInfraContext.Provider>
+    </Ctx.Provider>
   );
 }
 
-// ── Hook ──
-
-export function useDownloadInfra(): DownloadInfra {
-  const ctx = useContext(DownloadInfraContext);
-  if (!ctx) throw new Error("DownloadInfraProvider not found in tree");
+// ─── Hook ───
+export function useDownloadInfra(): DownloadInfraContext {
+  const ctx = useContext(Ctx);
+  if (!ctx) {
+    throw new Error(
+      "useDownloadInfra must be used within DownloadInfraProvider",
+    );
+  }
   return ctx;
 }
 
-// ── Enqueue factory ──
+// ─── NEW: Media download state hook ───
+import type {
+  MediaDownloadState,
+  MediaDownloadSummary,
+  SeasonDownloadSummary,
+  DownloadQuality,
+  SmartDownloadConfig,
+  DownloadServer,
+} from "./types";
+import { QUALITY_TO_SERVER, DEFAULT_SMART_CONFIG } from "./types";
+import { useNetInfo } from "@react-native-community/netinfo";
+import * as Haptics from "expo-haptics";
 
-function createEnqueue(manager: DownloadManager, store: IDownloadStore) {
-  // FIX: In-memory dedup lock based on url + fileName.
-  // Prevents UI double-taps or React Strict Mode from enqueuing twice.
-  const pendingEnqueues = new Map<string, string>();
+/**
+ * Hook that aggregates download state for a specific movie/TV title.
+ * Used by detail pages to show download status without navigating away.
+ */
+export function useMediaDownloadState(
+  mediaType: "movie" | "tv",
+  tmdbId: string,
+): MediaDownloadSummary {
+  const { store } = useDownloadInfra();
 
-  // Phase 10b: Request notification permissions on first enqueue (primer)
-  let permissionPrimerShown = false;
+  // We read from store reactively — the store uses useSyncExternalStore internally
+  // but since we're outside React tree, we re-render via the store subscription.
+  // Use React.useSyncExternalStore for proper reactive subscription.
+  const tasks = React.useSyncExternalStore(
+    (cb: () => void) => store.subscribe(cb),
+    () => store.getAll(),
+  );
 
-  function requestPermissionPrimer() {
-    if (permissionPrimerShown) return;
-    permissionPrimerShown = true;
-    DownloadNotifications.requestPermissions()
-      .then((granted) => {
-        if (!granted) {
-          console.log(
-            "[Enqueue] Notification permissions not granted — Banner/Toast feedback still works",
-          );
-        }
-      })
-      .catch(() => {});
-  }
-
-  return function enqueue(meta: DownloadMeta): string {
-    // Fire-and-forget permission request on first enqueue
-    requestPermissionPrimer();
-    const key = `${meta.url}_${meta.fileName}`;
-
-    // FIX 1: Check if an identical enqueue is currently in-flight
-    const pendingId = pendingEnqueues.get(key);
-    if (pendingId) {
-      console.log("[Enqueue] Deduplicated via in-memory lock");
-      return pendingId;
-    }
-
-    // Phase 1: If already completed, show "already saved" toast instead of silent dedup
-    const alreadyCompleted = store
-      .getAll()
-      .find(
-        (t) =>
-          t.url === meta.url &&
-          t.fileName === meta.fileName &&
-          t.status === "completed",
-      );
-    if (alreadyCompleted) {
-      downloadToast.success(
-        `"${alreadyCompleted.title || "Download"}" already saved · ▶ Play`,
-        4000,
-      );
-      return alreadyCompleted.id;
-    }
-
-    // FIX 2: Check store for existing active/pending (slower, async-safe)
-    const existing = store
-      .getAll()
-      .find(
-        (t) =>
-          t.url === meta.url &&
-          t.fileName === meta.fileName &&
-          !["completed", "cancelled"].includes(t.status),
-      );
-    if (existing) return existing.id;
-
-    // FIX 3: Generate new ID and immediately set the lock
-    const id = generateId();
-    pendingEnqueues.set(key, id);
-
-    // Safe extension extraction: only use the part after the last dot if there IS a dot
-    const fileNameParts = meta.fileName.split(".");
-    const ext =
-      meta.extension ||
-      (fileNameParts.length > 1 ? fileNameParts.pop()! : "mp4");
-    const task: DownloadTask = {
-      ...meta,
-      id,
-      fileUri: null,
-      totalBytes: 0,
-      receivedBytes: 0,
-      status: "pending",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      extension: ext,
-      speedLimit: meta.speedLimit ?? 0,
-    };
-
-    // Log the download URL for debugging
-    console.log(`[Enqueue] Download URL: ${meta.url}`);
-    console.log(
-      `[Enqueue] File: ${meta.fileName}, Server: ${meta.server}, Speed limit: ${meta.speedLimit ?? 0} B/s`,
+  return React.useMemo(() => {
+    const relevant = tasks.filter(
+      (t) => t.tmdbId === tmdbId && t.mediaType === mediaType,
     );
 
-    // Persist to store (hooks see it immediately)
-    store.upsert(task);
+    if (relevant.length === 0) {
+      return {
+        state: "none" as MediaDownloadState,
+        totalTasks: 0,
+        completedTasks: 0,
+        activeTasks: 0,
+        failedTasks: 0,
+        totalBytes: 0,
+        receivedBytes: 0,
+      };
+    }
 
-    // Show immediate toast feedback
-    const title = task.title || task.fileName || "Download";
-    downloadToast.success(`"${title}" queued`);
+    const completed = relevant.filter((t) => t.status === "completed");
+    const active = relevant.filter(
+      (t) =>
+        t.status === "downloading" ||
+        t.status === "pending" ||
+        t.status === "retrying",
+    );
+    const failed = relevant.filter((t) => t.status === "failed");
+    const paused = relevant.filter((t) => t.status === "paused");
 
-    // Add to the manager's queue (SQLite + download orchestration)
-    manager
-      .add(task)
-      .catch((err) => {
-        console.error("[Enqueue] manager.add failed:", err);
-        const current = store.getById(id);
-        if (current && current.status === "pending") {
-          store.upsert({
-            ...current,
-            status: "failed",
-            error: err?.message || "Failed to enqueue",
-          });
+    let state: MediaDownloadState;
+    if (completed.length === relevant.length) {
+      state = "completed";
+    } else if (active.length > 0) {
+      state = "downloading";
+    } else if (failed.length > 0 && completed.length === 0) {
+      state = "failed";
+    } else if (completed.length > 0) {
+      state = "partial";
+    } else {
+      state = "none";
+    }
+
+    const totalBytes = relevant.reduce((s, t) => s + t.totalBytes, 0);
+    const receivedBytes = relevant.reduce((s, t) => s + t.receivedBytes, 0);
+
+    // TV: build per-season summary
+    let seasons: SeasonDownloadSummary[] | undefined;
+    if (mediaType === "tv") {
+      const seasonMap = new Map<
+        number,
+        {
+          total: number;
+          downloaded: number;
+          downloading: number;
+          failed: number;
         }
-        downloadToast.error(
-          `Failed to start download: ${err?.message || "Unknown error"}`,
-        );
-      })
-      .finally(() => {
-        // FIX 4: Release the lock after 2 seconds to allow DB to settle.
-        // Prevents double-taps without permanently blocking retries.
-        setTimeout(() => pendingEnqueues.delete(key), 2000);
-      });
+      >();
+      for (const t of relevant) {
+        const sn = t.season ?? 1;
+        const entry = seasonMap.get(sn) ?? {
+          total: 0,
+          downloaded: 0,
+          downloading: 0,
+          failed: 0,
+        };
+        entry.total++;
+        if (t.status === "completed") entry.downloaded++;
+        if (t.status === "downloading" || t.status === "pending")
+          entry.downloading++;
+        if (t.status === "failed") entry.failed++;
+        seasonMap.set(sn, entry);
+      }
+      seasons = Array.from(seasonMap.entries())
+        .map(([seasonNumber, s]) => ({
+          seasonNumber,
+          totalEpisodes: s.total,
+          downloadedEpisodes: s.downloaded,
+          downloadingEpisodes: s.downloading,
+          failedEpisodes: s.failed,
+        }))
+        .sort((a, b) => a.seasonNumber - b.seasonNumber);
+    }
 
-    return id;
-  };
+    return {
+      state,
+      totalTasks: relevant.length,
+      completedTasks: completed.length,
+      activeTasks: active.length + paused.length,
+      failedTasks: failed.length,
+      totalBytes,
+      receivedBytes,
+      seasons,
+    };
+  }, [tasks, tmdbId, mediaType]);
 }
 
-// ── Control (batch action) factory — uses manager exclusively ──
+/**
+ * Hook that provides one-tap "smart download" that auto-picks quality
+ * based on network connection (WiFi = HD, cellular = small).
+ */
+export function useSmartDownload() {
+  const { enqueue } = useDownloadInfra();
+  const netInfo = useNetInfo();
 
-function createControl(manager: DownloadManager, store: IDownloadStore) {
-  // FIX: Track in-flight actions to prevent duplicate processing
-  const inFlightActions = new Set<string>();
-  // Phase 10: Cancel undo stack
-  const undoStack = new Map<
-    string,
-    { task: DownloadTask; timeout: ReturnType<typeof setTimeout> }
-  >();
-
-  return async function control(action: ControlAction, target?: ControlTarget) {
-    let ids: string[] = [];
-    if (!target) {
-      ids = store.getAll().map((t) => t.id);
-    } else if (typeof target === "string") {
-      ids = [target];
-    } else if (Array.isArray(target)) {
-      ids = target;
-    } else if (target.status) {
-      const statuses = Array.isArray(target.status)
-        ? target.status
-        : [target.status];
-      ids = store
-        .getAll()
-        .filter((t) => statuses.includes(t.status))
-        .map((t) => t.id);
-    }
-
-    for (const id of ids) {
-      // FIX: Dedup key prevents the same action+task from running concurrently
-      const dedupKey = `${action}:${id}`;
-      if (inFlightActions.has(dedupKey)) {
-        console.log(`[Control] Skipping duplicate ${action} for ${id}`);
-        continue;
+  const resolveQuality = React.useCallback(
+    (config: SmartDownloadConfig = DEFAULT_SMART_CONFIG): DownloadQuality => {
+      const isCellular = netInfo.type === "cellular";
+      if (isCellular && config.autoQualityOnCellular) {
+        return "small";
       }
-      inFlightActions.add(dedupKey);
+      return config.preferredQuality;
+    },
+    [netInfo.type],
+  );
 
-      try {
-        const task = store.getById(id);
-        if (!task) continue;
-        switch (action) {
-          case "pause": {
-            if (task.status !== "downloading") break;
-            await manager.pause(id);
-            break;
-          }
-          case "resume": {
-            if (task.status === "paused") {
-              await manager.resume(id);
-            } else if (
-              task.status === "failed" ||
-              task.status === "cancelled"
-            ) {
-              await manager.retry(id);
-            }
-            break;
-          }
-          case "cancel": {
-            await manager.cancel(id);
-            // Show undo toast with 5s timeout
-            const title = task.title || task.fileName || "Download";
-            const timeout = setTimeout(() => {
-              undoStack.delete(id);
-            }, 5000);
-            undoStack.set(id, { task, timeout });
-            downloadToast.warning(
-              `"${title}" cancelled · Undo`,
-              5000,
-              "Undo",
-              async () => {
-                const entry = undoStack.get(id);
-                if (entry) {
-                  clearTimeout(entry.timeout);
-                  undoStack.delete(id);
-                  await manager.retry(id);
-                  downloadToast.info(`"${title}" download resumed`);
-                }
-              },
-            );
-            break;
-          }
-          case "retry": {
-            await manager.retry(id);
-            break;
-          }
-          case "remove": {
-            await manager.remove(id);
-            await store.remove(id);
-            break;
-          }
-        }
-      } finally {
-        inFlightActions.delete(dedupKey);
-      }
-    }
-  };
+  const smartDownload = React.useCallback(
+    async (
+      meta: Omit<import("./types").DownloadMeta, "server">,
+      quality?: DownloadQuality,
+    ): Promise<string> => {
+      const resolvedQuality = quality ?? resolveQuality();
+      const server: DownloadServer = QUALITY_TO_SERVER[resolvedQuality];
+
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+      const id = await enqueue({
+        ...meta,
+        server,
+        quality: resolvedQuality,
+      });
+
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      return id;
+    },
+    [enqueue, resolveQuality],
+  );
+
+  return { smartDownload, resolveQuality };
+}
+
+/**
+ * Hook that returns the download status of a specific TV episode.
+ */
+export function useEpisodeDownloadStatus(
+  tmdbId: string,
+  season: number,
+  episode: number,
+): { status: import("./types").DownloadStatus | null } {
+  const { store } = useDownloadInfra();
+
+  const tasks = React.useSyncExternalStore(
+    (cb: () => void) => store.subscribe(cb),
+    () => store.getAll(),
+  );
+
+  return React.useMemo(() => {
+    const task = tasks.find(
+      (t) =>
+        t.tmdbId === tmdbId &&
+        t.season === season &&
+        t.episode === episode &&
+        t.status !== "cancelled",
+    );
+    return { status: task?.status ?? null };
+  }, [tasks, tmdbId, season, episode]);
 }

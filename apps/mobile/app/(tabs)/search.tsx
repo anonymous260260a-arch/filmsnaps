@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import { MOVIE_GENRES, TV_GENRES } from "@filmsnaps/shared";
 import { useDebounce } from "../../hooks/useDebounce";
 import {
@@ -30,6 +31,7 @@ import { tmdbApi } from "../../lib/api";
 import { MediaCard } from "../../components/MediaCard";
 import { EmptyState } from "../../components/EmptyState";
 import type { Movie } from "@filmsnaps/shared";
+import { colors } from "../../theme/colors";
 
 const NUM_COLUMNS = 3;
 const GAP = 8;
@@ -49,6 +51,7 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
 ];
 
 export default function SearchScreen() {
+  const nav = useSafeNavigation();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width: SCREEN_WIDTH } = useWindowDimensions();
@@ -70,6 +73,8 @@ export default function SearchScreen() {
   const [page, setPage] = useState(1);
   const [allResults, setAllResults] = useState<any[]>([]);
   const allResultsRef = useRef<any[]>([]);
+  const consumedMoviePage = useRef<number>(0);
+  const consumedTvPage = useRef<number>(0);
 
   const hasFilters = selectedGenreIds.length > 0 || mediaTypeFilter !== "all";
 
@@ -81,18 +86,26 @@ export default function SearchScreen() {
     isSearching ? page : 1,
   );
 
-  // Discover/filter mode hooks
-  const movieFilterResult = useFilteredMovies({
-    genreIds: selectedGenreIds.length ? selectedGenreIds : undefined,
-    sortBy,
-    page,
-  });
+  // Discover/filter mode hooks — memoize params to keep query key stable
+  const movieParams = useMemo(
+    () => ({
+      genreIds: selectedGenreIds.length ? selectedGenreIds : undefined,
+      sortBy,
+      page,
+    }),
+    [selectedGenreIds, sortBy, page],
+  );
+  const tvParams = useMemo(
+    () => ({
+      genreIds: selectedGenreIds.length ? selectedGenreIds : undefined,
+      sortBy,
+      page,
+    }),
+    [selectedGenreIds, sortBy, page],
+  );
 
-  const tvFilterResult = useFilteredTVShows({
-    genreIds: selectedGenreIds.length ? selectedGenreIds : undefined,
-    sortBy,
-    page,
-  });
+  const movieFilterResult = useFilteredMovies(movieParams);
+  const tvFilterResult = useFilteredTVShows(tvParams);
 
   // ── Determine active data source ──
   const isFilterMode = isSearching || hasFilters;
@@ -103,76 +116,64 @@ export default function SearchScreen() {
     : movieFilterResult.isFetching || tvFilterResult.isFetching;
 
   // ── Accumulate results across pages ──
-  // For search mode
+  const appendUnique = useCallback((incoming: any[]) => {
+    setAllResults((prev) => {
+      const existingIds = new Set(prev.map((p: any) => p.id));
+      const fresh = incoming.filter((i: any) => !existingIds.has(i.id));
+      if (fresh.length === 0) return prev;
+      const next = [...prev, ...fresh];
+      allResultsRef.current = next;
+      return next;
+    });
+  }, []);
+
+  // Search mode — single source, simple
   useEffect(() => {
     if (!isSearching) return;
     if (!searchResult.data?.results) return;
-    if (page === 1) {
-      const next = searchResult.data.results.filter(
-        (item: any) => item.media_type === "movie" || item.media_type === "tv",
-      );
-      setAllResults(next);
-      allResultsRef.current = next;
-    } else {
-      const next = searchResult.data.results.filter(
-        (item: any) => item.media_type === "movie" || item.media_type === "tv",
-      );
-      setAllResults((prev) => [...prev, ...next]);
-      allResultsRef.current = [...allResultsRef.current, ...next];
-    }
-  }, [searchResult.data, page, isSearching]);
+    const next = searchResult.data.results.filter(
+      (item: any) => item.media_type === "movie" || item.media_type === "tv",
+    );
+    if (next.length) appendUnique(next);
+  }, [searchResult.data, isSearching, appendUnique]);
 
-  // For discover mode
+  // Movie source — gated by consumed page counter
   useEffect(() => {
     if (isSearching) return;
-    const movieResults = movieFilterResult.data?.results ?? [];
-    const tvResults = tvFilterResult.data?.results ?? [];
-
-    const merged: any[] = [];
-    const max = Math.max(movieResults.length, tvResults.length);
-    for (let i = 0; i < max; i++) {
-      if (i < movieResults.length)
-        merged.push({ ...movieResults[i], _mediaType: "movie" });
-      if (i < tvResults.length)
-        merged.push({ ...tvResults[i], _mediaType: "tv" });
-    }
-
-    if (mediaTypeFilter === "movie") {
-      const raw = movieFilterResult.data?.results ?? [];
-      const tagged = raw.map((r: any) => ({ ...r, _mediaType: "movie" }));
-      if (page === 1) {
-        setAllResults(tagged);
-        allResultsRef.current = tagged;
-      } else {
-        setAllResults((prev) => [...prev, ...tagged]);
-        allResultsRef.current = [...allResultsRef.current, ...tagged];
-      }
-    } else if (mediaTypeFilter === "tv") {
-      const raw = tvFilterResult.data?.results ?? [];
-      const tagged = raw.map((r: any) => ({ ...r, _mediaType: "tv" }));
-      if (page === 1) {
-        setAllResults(tagged);
-        allResultsRef.current = tagged;
-      } else {
-        setAllResults((prev) => [...prev, ...tagged]);
-        allResultsRef.current = [...allResultsRef.current, ...tagged];
-      }
-    } else {
-      if (page === 1) {
-        setAllResults(merged);
-        allResultsRef.current = merged;
-      } else {
-        setAllResults((prev) => [...prev, ...merged]);
-        allResultsRef.current = [...allResultsRef.current, ...merged];
-      }
-    }
+    if (mediaTypeFilter !== "movie" && mediaTypeFilter !== "all") return;
+    const data = movieFilterResult.data;
+    if (!data?.results?.length) return;
+    const thisPage = data.page ?? page;
+    if (thisPage <= consumedMoviePage.current) return;
+    consumedMoviePage.current = thisPage;
+    const tagged = data.results.map((r: any) => ({
+      ...r,
+      _mediaType: "movie" as const,
+    }));
+    appendUnique(tagged);
   }, [
     movieFilterResult.data,
-    tvFilterResult.data,
-    page,
     isSearching,
     mediaTypeFilter,
+    appendUnique,
+    page,
   ]);
+
+  // TV source — gated by consumed page counter
+  useEffect(() => {
+    if (isSearching) return;
+    if (mediaTypeFilter !== "tv" && mediaTypeFilter !== "all") return;
+    const data = tvFilterResult.data;
+    if (!data?.results?.length) return;
+    const thisPage = data.page ?? page;
+    if (thisPage <= consumedTvPage.current) return;
+    consumedTvPage.current = thisPage;
+    const tagged = data.results.map((r: any) => ({
+      ...r,
+      _mediaType: "tv" as const,
+    }));
+    appendUnique(tagged);
+  }, [tvFilterResult.data, isSearching, mediaTypeFilter, appendUnique, page]);
 
   // ── Check if there are more pages ──
   const hasMorePages = useMemo(() => {
@@ -199,6 +200,8 @@ export default function SearchScreen() {
     setPage(1);
     setAllResults([]);
     allResultsRef.current = [];
+    consumedMoviePage.current = 0;
+    consumedTvPage.current = 0;
   }, []);
 
   // ── Handlers ──
@@ -258,7 +261,7 @@ export default function SearchScreen() {
           staleTime: 1000 * 60 * 60,
         });
         router.prefetch(`/tv/${id}`);
-        router.push(`/tv/${id}`);
+        nav.push(`/tv/${id}`);
       } else {
         queryClient.prefetchQuery({
           queryKey: ["movie", id],
@@ -266,10 +269,10 @@ export default function SearchScreen() {
           staleTime: 1000 * 60 * 60,
         });
         router.prefetch(`/movie/${id}`);
-        router.push(`/movie/${id}`);
+        nav.push(`/movie/${id}`);
       }
     },
-    [router, queryClient],
+    [nav, router, queryClient],
   );
 
   const handleQueryChange = useCallback(
@@ -297,7 +300,7 @@ export default function SearchScreen() {
   return (
     <View
       className="flex-1 bg-void"
-      style={{ paddingTop: insets.top, backgroundColor: "#070708" }}
+      style={{ paddingTop: insets.top, backgroundColor: colors.bg }}
     >
       {/* ─── Search header ─── */}
       <View className="px-4 pt-4 pb-2">
@@ -305,8 +308,7 @@ export default function SearchScreen() {
           style={{
             fontFamily: "PlayfairDisplay_700Bold",
             fontSize: 22,
-            color: "#F4F4F5",
-            marginBottom: 16,
+            color: colors.textPrimary,
           }}
         >
           Search
@@ -314,11 +316,11 @@ export default function SearchScreen() {
 
         {/* Search bar */}
         <View className="flex-row items-center bg-elevated rounded-[50] px-4 h-11 border-[0.5px] border-subtle">
-          <Ionicons name="search" size={18} color="#A1A1AA" />
+          <Ionicons name="search" size={18} color={colors.textSecondary} />
           <TextInput
-            className="flex-1 text-[#F4F4F5] text-base ml-2.5"
+            className="flex-1 text-text-primary text-base ml-2.5"
             placeholder="Movies, TV shows..."
-            placeholderTextColor="#52525B"
+            placeholderTextColor={colors.textTertiary}
             value={query}
             onChangeText={handleQueryChange}
             autoCapitalize="none"
@@ -333,7 +335,11 @@ export default function SearchScreen() {
               }}
               activeOpacity={0.7}
             >
-              <Ionicons name="close-circle" size={18} color="#52525B" />
+              <Ionicons
+                name="close-circle"
+                size={18}
+                color={colors.textTertiary}
+              />
             </TouchableOpacity>
           )}
         </View>
@@ -395,7 +401,11 @@ export default function SearchScreen() {
             className="ml-2 w-9 h-9 rounded-full bg-zinc-800 items-center justify-center"
             activeOpacity={0.7}
           >
-            <Ionicons name="funnel-outline" size={16} color="#A1A1AA" />
+            <Ionicons
+              name="funnel-outline"
+              size={16}
+              color={colors.textSecondary}
+            />
           </TouchableOpacity>
         </View>
 
@@ -451,7 +461,7 @@ export default function SearchScreen() {
                   width: itemWidth,
                   height: itemHeight,
                   borderRadius: 12,
-                  backgroundColor: "#1C1C20",
+                  backgroundColor: colors.skeletonBg,
                 }}
               />
               <View
@@ -459,7 +469,7 @@ export default function SearchScreen() {
                   width: "80%",
                   height: 10,
                   borderRadius: 4,
-                  backgroundColor: "#1C1C20",
+                  backgroundColor: colors.skeletonBg,
                   marginTop: 6,
                 }}
               />
@@ -488,7 +498,11 @@ export default function SearchScreen() {
                 className="flex-1 items-center justify-center px-8"
                 style={{ paddingTop: 80 }}
               >
-                <Ionicons name="search-outline" size={48} color="#222226" />
+                <Ionicons
+                  name="search-outline"
+                  size={48}
+                  color={colors.progressTrack}
+                />
                 <Text className="text-zinc-400 text-base mt-4 text-center">
                   {hasFilters ? "No results found" : "Search movies & TV shows"}
                 </Text>
@@ -508,10 +522,10 @@ export default function SearchScreen() {
               >
                 {isFetchingCurrent ? (
                   <View className="flex-row items-center" style={{ gap: 8 }}>
-                    <ActivityIndicator size="small" color="#D4A237" />
+                    <ActivityIndicator size="small" color={colors.gold} />
                     <Text
                       style={{
-                        color: "#A1A1AA",
+                        color: colors.textSecondary,
                         fontSize: 12,
                         fontFamily: "Inter_400Regular",
                       }}
@@ -522,7 +536,7 @@ export default function SearchScreen() {
                 ) : !hasMorePages && allResults.length >= ITEMS_PER_PAGE ? (
                   <Text
                     style={{
-                      color: "#52525B",
+                      color: colors.textTertiary,
                       fontSize: 11,
                       fontFamily: "Inter_400Regular",
                     }}
@@ -543,7 +557,7 @@ export default function SearchScreen() {
         // Empty state — no query, no filters
         // Show a helpful prompt instead of carousel previews
         <View className="flex-1 items-center justify-center px-8">
-          <Ionicons name="search" size={48} color="#222226" />
+          <Ionicons name="search" size={48} color={colors.progressTrack} />
           <Text className="text-zinc-400 text-base mt-4 text-center">
             Search movies & TV shows
           </Text>

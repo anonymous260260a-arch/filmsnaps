@@ -26,6 +26,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useSettings } from "../lib/settings";
+import { colors } from "../theme/colors";
 
 // Enable LayoutAnimation on Android
 if (
@@ -40,9 +41,11 @@ const SECTIONS = [
     key: "content",
     title: "Content Notice",
     body: () => (
-      <Text className="text-sm leading-6" style={{ color: "#D4D4D8" }}>
+      <Text className="text-sm leading-6" style={{ color: colors.zinc300 }}>
         FilmSnaps does{" "}
-        <Text style={{ fontFamily: "Inter_600SemiBold", color: "#F4F4F5" }}>
+        <Text
+          style={{ fontFamily: "Inter_600SemiBold", color: colors.textPrimary }}
+        >
           not
         </Text>{" "}
         host, store, upload, or manage any video content, files, or media. All
@@ -55,7 +58,7 @@ const SECTIONS = [
     key: "affiliation",
     title: "No Affiliation",
     body: () => (
-      <Text className="text-sm leading-6" style={{ color: "#D4D4D8" }}>
+      <Text className="text-sm leading-6" style={{ color: colors.zinc300 }}>
         We do not own, operate, or have any access to the servers that host the
         content you stream or download through this app. We do not control what
         content is available, how it is stored, or who has access to it. Any
@@ -68,7 +71,7 @@ const SECTIONS = [
     key: "about",
     title: "About This Project",
     body: () => (
-      <Text className="text-sm leading-6" style={{ color: "#D4D4D8" }}>
+      <Text className="text-sm leading-6" style={{ color: colors.zinc300 }}>
         FilmSnaps is an independent project and is not a commercial streaming
         service. It demonstrates open-source software development and modern
         mobile application architecture.
@@ -80,19 +83,19 @@ const SECTIONS = [
     title: "User Responsibility",
     body: () => (
       <View>
-        <Text className="text-sm leading-6" style={{ color: "#D4D4D8" }}>
+        <Text className="text-sm leading-6" style={{ color: colors.zinc300 }}>
           As a user of this application, you are responsible for:
         </Text>
         <View className="flex-row items-start mt-2">
           <Text
             className="text-[10px] mt-1.5 mr-2.5"
-            style={{ color: "#D4A237" }}
+            style={{ color: colors.gold }}
           >
             ■
           </Text>
           <Text
             className="text-sm leading-5 flex-1"
-            style={{ color: "#D4D4D8" }}
+            style={{ color: colors.zinc300 }}
           >
             Ensuring your use complies with local laws in your jurisdiction
           </Text>
@@ -100,13 +103,13 @@ const SECTIONS = [
         <View className="flex-row items-start mt-2">
           <Text
             className="text-[10px] mt-1.5 mr-2.5"
-            style={{ color: "#D4A237" }}
+            style={{ color: colors.gold }}
           >
             ■
           </Text>
           <Text
             className="text-sm leading-5 flex-1"
-            style={{ color: "#D4D4D8" }}
+            style={{ color: colors.zinc300 }}
           >
             Using the app only for accessing content you have the legal right to
             access
@@ -115,13 +118,13 @@ const SECTIONS = [
         <View className="flex-row items-start mt-2">
           <Text
             className="text-[10px] mt-1.5 mr-2.5"
-            style={{ color: "#D4A237" }}
+            style={{ color: colors.gold }}
           >
             ■
           </Text>
           <Text
             className="text-sm leading-5 flex-1"
-            style={{ color: "#D4D4D8" }}
+            style={{ color: colors.zinc300 }}
           >
             Not redistributing downloaded content or using it for commercial
             purposes
@@ -134,7 +137,7 @@ const SECTIONS = [
     key: "warranty",
     title: "No Warranty",
     body: () => (
-      <Text className="text-sm leading-6" style={{ color: "#D4D4D8" }}>
+      <Text className="text-sm leading-6" style={{ color: colors.zinc300 }}>
         This software is provided "as is" without warranty of any kind. The
         developers and contributors are not responsible for any damages or legal
         issues that may arise from the use of this application.
@@ -182,7 +185,7 @@ export default function LegalGate() {
     return (
       <View
         className="flex-1 items-center justify-center px-8"
-        style={{ backgroundColor: "#070708" }}
+        style={{ backgroundColor: colors.bg }}
       >
         <Image
           source={require("../assets/icon.png")}
@@ -193,7 +196,7 @@ export default function LegalGate() {
           style={{
             fontFamily: "PlayfairDisplay_700Bold",
             fontSize: 22,
-            color: "#F4F4F5",
+            color: colors.textPrimary,
             textAlign: "center",
             marginBottom: 12,
           }}
@@ -202,7 +205,7 @@ export default function LegalGate() {
         </Text>
         <Text
           className="text-sm leading-6 text-center"
-          style={{ color: "#A1A1AA", marginBottom: 32 }}
+          style={{ color: colors.textSecondary, marginBottom: 32 }}
         >
           You can delete FilmSnaps from your device, or review the terms again
           below.
@@ -212,11 +215,11 @@ export default function LegalGate() {
           onPress={handleReviewTerms}
           activeOpacity={0.8}
           className="w-full py-3.5 rounded-xl items-center mb-3"
-          style={{ backgroundColor: "#D4A237" }}
+          style={{ backgroundColor: colors.gold }}
         >
           <Text
             className="text-sm font-bold"
-            style={{ color: "#070708", fontFamily: "Inter_600SemiBold" }}
+            style={{ color: colors.bg, fontFamily: "Inter_600SemiBold" }}
           >
             Review Terms Again
           </Text>
@@ -227,11 +230,11 @@ export default function LegalGate() {
             onPress={() => BackHandler.exitApp()}
             activeOpacity={0.7}
             className="w-full py-3 rounded-xl items-center"
-            style={{ backgroundColor: "#1C1C20" }}
+            style={{ backgroundColor: colors.skeletonBg }}
           >
             <Text
               className="text-sm"
-              style={{ color: "#71717A", fontFamily: "Inter_500Medium" }}
+              style={{ color: colors.zinc500, fontFamily: "Inter_500Medium" }}
             >
               Exit App
             </Text>
@@ -245,7 +248,7 @@ export default function LegalGate() {
   return (
     <View
       className="flex-1"
-      style={{ backgroundColor: "#070708", paddingTop: insets.top }}
+      style={{ backgroundColor: colors.bg, paddingTop: insets.top }}
     >
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 160 }}
@@ -267,7 +270,7 @@ export default function LegalGate() {
             style={{
               fontFamily: "PlayfairDisplay_700Bold",
               fontSize: 18,
-              color: "#D4A237",
+              color: colors.gold,
               textAlign: "center",
               lineHeight: 26,
             }}
@@ -280,7 +283,7 @@ export default function LegalGate() {
         {/* Gold accent divider */}
         <View
           className="w-12 h-0.5 mx-auto mb-6"
-          style={{ backgroundColor: "#D4A237" }}
+          style={{ backgroundColor: colors.gold }}
         />
 
         {/* Accordion sections */}
@@ -292,12 +295,12 @@ export default function LegalGate() {
                 onPress={() => toggleSection(section.key)}
                 activeOpacity={0.7}
                 className="flex-row items-center justify-between px-4 py-3.5"
-                style={{ backgroundColor: "#0E0E11" }}
+                style={{ backgroundColor: colors.bgSurface }}
               >
                 <Text
                   className="text-sm font-semibold"
                   style={{
-                    color: "#D4A237",
+                    color: colors.gold,
                     fontFamily: "Inter_600SemiBold",
                   }}
                 >
@@ -306,13 +309,13 @@ export default function LegalGate() {
                 <Ionicons
                   name={isExpanded ? "chevron-up" : "chevron-down"}
                   size={16}
-                  color="#D4A237"
+                  color={colors.gold}
                 />
               </TouchableOpacity>
               {isExpanded && (
                 <View
                   className="px-4 py-3"
-                  style={{ backgroundColor: "#0E0E11" }}
+                  style={{ backgroundColor: colors.bgSurface }}
                 >
                   <section.body />
                 </View>
@@ -324,7 +327,7 @@ export default function LegalGate() {
         {/* Summary line */}
         <Text
           className="text-xs text-center mt-6"
-          style={{ color: "#A1A1AA", lineHeight: 18 }}
+          style={{ color: colors.textSecondary, lineHeight: 18 }}
         >
           By continuing, you acknowledge and accept the above terms.
         </Text>
@@ -334,7 +337,7 @@ export default function LegalGate() {
       <View
         className="absolute bottom-0 left-0 right-0 px-5 pt-4"
         style={{
-          backgroundColor: "#070708",
+          backgroundColor: colors.bg,
           paddingBottom: insets.bottom + 16,
         }}
       >
@@ -342,11 +345,11 @@ export default function LegalGate() {
           onPress={handleAccept}
           activeOpacity={0.8}
           className="w-full py-3.5 rounded-xl items-center"
-          style={{ backgroundColor: "#D4A237" }}
+          style={{ backgroundColor: colors.gold }}
         >
           <Text
             className="text-sm font-bold"
-            style={{ color: "#070708", fontFamily: "Inter_600SemiBold" }}
+            style={{ color: colors.bg, fontFamily: "Inter_600SemiBold" }}
           >
             I Understand
           </Text>
@@ -359,7 +362,7 @@ export default function LegalGate() {
         >
           <Text
             className="text-sm"
-            style={{ color: "#71717A", fontFamily: "Inter_400Regular" }}
+            style={{ color: colors.zinc500, fontFamily: "Inter_400Regular" }}
           >
             Decline
           </Text>

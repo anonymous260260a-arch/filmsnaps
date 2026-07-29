@@ -1,0 +1,24 @@
+{
+  "name": "filmsnaps-feedback",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-06-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets"
+  },
+  "d1_databases": [
+    {
+      "binding": "FEEDBACK_DB",
+      "database_name": "feedback-db",
+      "database_id": "06220465-7685-46e5-83f5-3908d73a38ab"
+    }
+  ],
+  "vars": {
+    "ENVIRONMENT": "production",
+    "TURNSTILE_SECRET_KEY": "",
+    "RATE_LIMIT_IP_MAX": "20",
+    "RATE_LIMIT_VISITOR_MAX": "10",
+    "RATE_LIMIT_FINGERPRINT_MAX": "5",
+    "RATE_LIMIT_WINDOW_MS": "3600000"
+  }
+}

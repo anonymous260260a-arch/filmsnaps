@@ -1,4 +1,10 @@
-import React, { useCallback, useRef, useState, useEffect } from "react";
+import React, {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useEffect,
+} from "react";
 import {
   View,
   ScrollView,
@@ -6,18 +12,19 @@ import {
   Text,
   ActivityIndicator,
   useWindowDimensions,
-  FlatList,
   TouchableOpacity,
   Image,
 } from "react-native";
-import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ForwardIcon } from "../../components/Icons";
+import { useSafeNavigation } from "@/lib/navigation";
 import { Ionicons } from "@expo/vector-icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { Hero } from "../../components/Hero";
 import { MediaCarousel } from "../../components/MediaCarousel";
 import { ProgressiveImage } from "../../components/ProgressiveImage";
+import { Shimmer } from "../../components/Shimmer";
+import { SeeAllButton } from "../../components/SeeAllButton";
+import { DeferredContent } from "../../components/DeferredContent";
 import {
   useTrendingMovies,
   useTrendingTV,
@@ -30,12 +37,34 @@ import { getAggregatedHistory } from "../../lib/watchHistory";
 import { getImageUrl, PROVIDERS } from "@filmsnaps/shared";
 import type { Movie } from "@filmsnaps/shared";
 import type { WatchProgress } from "../../lib/watchHistory";
+import type { Announcement } from "../../lib/announcements";
+import {
+  fetchAnnouncements,
+  dismissAnnouncement,
+} from "../../lib/announcements";
+import { AnnouncementBanner } from "../../components/AnnouncementBanner";
 import NetInfo from "@react-native-community/netinfo";
+import { useSettings } from "../../lib/settings";
+import { colors } from "../../theme/colors";
+import { typography } from "../../theme/typography";
 
 const SKELETON_ITEMS = 3;
 
+// ── Module-level constants (never rebuilt per render) ──
+const PROVIDER_LABELS: Record<string, string> = Object.fromEntries(
+  PROVIDERS.map((p) => [p.id, p.displayName ?? p.name]),
+);
+
+const SECTION_CONFIG: Record<string, { label: string }> = {
+  "trending-movies": { label: "Trending Movies" },
+  "trending-tv": { label: "Trending TV" },
+  "more-like-this": { label: "More Like This" },
+  "continue-watching": { label: "Continue Watching" },
+  "popular-movies": { label: "Popular Movies" },
+};
+
 export default function HomeScreen() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const { width: SCREEN_WIDTH } = useWindowDimensions();
@@ -45,19 +74,16 @@ export default function HomeScreen() {
     data: trendingMovies,
     refetch: refetchMovies,
     isLoading: loadingMovies,
-    isFetching: fetchingMovies,
   } = useTrendingMovies();
   const {
     data: trendingTV,
     refetch: refetchTV,
     isLoading: loadingTV,
-    isFetching: fetchingTV,
   } = useTrendingTV();
   const {
     data: popularMovies,
     refetch: refetchPopular,
     isLoading: loadingPopular,
-    isFetching: fetchingPopular,
   } = usePopularMovies();
 
   // ── History entries (must be declared before useMoreLikeThis) ──
@@ -72,6 +98,10 @@ export default function HomeScreen() {
   );
   const historyLoadedRef = useRef(false);
 
+  // ── Announcements (loaded with lowest priority, never blocks UI) ──
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const announcementsFetchedRef = useRef(false);
+
   // ── Offline detection ──
   const [isOffline, setIsOffline] = useState(false);
   useEffect(() => {
@@ -85,7 +115,7 @@ export default function HomeScreen() {
   const { data: moreLikeThis } = useMoreLikeThis(historyEntries);
 
   // Curate hero: prefer quality content with good ratings and enough votes
-  const heroItem = React.useMemo(() => {
+  const heroItem = useMemo(() => {
     const results = trendingMovies?.results ?? [];
     const curated = results.find(
       (m: Movie) =>
@@ -96,36 +126,31 @@ export default function HomeScreen() {
     return curated ?? results[0];
   }, [trendingMovies]);
 
-  // â”€â”€ Skeleton card dimensions (matches MediaCarousel) â”€â”€
-  const itemWidth = (SCREEN_WIDTH - 48) / 3;
-  const itemHeight = itemWidth * 1.5;
+  // ── Skeleton card dimensions (matches MediaCarousel) ──
+  const itemWidth = useMemo(() => (SCREEN_WIDTH - 48) / 3, [SCREEN_WIDTH]);
+  const itemHeight = useMemo(() => itemWidth * 1.5, [itemWidth]);
 
-  // â”€â”€ Pull-to-refresh â”€â”€
-  const [isRefreshing, setIsRefreshing] = React.useState(false);
+  // ── Pull-to-refresh ──
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // â”€â”€ History entries â”€â”€
-  const { active: activeDownloads } = useDownloadList();
+  // ── Settings ──
+  const { settings } = useSettings();
+  const { active: activeDownloads, completed: completedDownloads } =
+    useDownloadList();
 
-  // Stable reference for contentContainerStyle — prevents ScrollView re-mount on re-render
+  // ── Scroll padding (useMemo instead of useRef so it updates reactively) ──
   const bannerHeight = 48;
   const tabBarHeight = 72;
   const bottomPadding = Math.max(insets.bottom, 8);
-  const scrollBottomPadding =
-    activeDownloads.length > 0
-      ? tabBarHeight + bannerHeight + 16 + bottomPadding
-      : tabBarHeight + 16 + bottomPadding;
-  const scrollPaddingStyle = useRef({
-    paddingBottom: scrollBottomPadding,
-  }).current;
-
-  // Provider display name lookup for Continue Watching
-
-  const providerLabelMap = useRef<Record<string, string>>({});
-  if (Object.keys(providerLabelMap.current).length === 0) {
-    for (const p of PROVIDERS) {
-      providerLabelMap.current[p.id] = p.displayName ?? p.name;
-    }
-  }
+  const scrollPaddingStyle = useMemo(
+    () => ({
+      paddingBottom:
+        activeDownloads.length > 0
+          ? tabBarHeight + bannerHeight + 16 + bottomPadding
+          : tabBarHeight + 16 + bottomPadding,
+    }),
+    [activeDownloads.length, bottomPadding],
+  );
 
   const loadHistory = useCallback(async () => {
     if (historyLoadedRef.current) return;
@@ -157,45 +182,80 @@ export default function HomeScreen() {
       );
       setHistoryMeta((prev) => ({ ...prev, ...metaMap }));
       historyLoadedRef.current = true;
-    } catch {}
+    } catch (e) {
+      console.warn("[Home] loadHistory failed:", e);
+    }
   }, []);
 
   useEffect(() => {
     loadHistory();
   }, [loadHistory]);
 
+  // ── Fetch announcements (lowest priority — deferred until after main data) ──
+  useEffect(() => {
+    if (announcementsFetchedRef.current) return;
+    announcementsFetchedRef.current = true;
+
+    // Use a microtask delay so announcements never compete with initial hero/sections
+    const handle = requestAnimationFrame(() => {
+      setTimeout(async () => {
+        try {
+          const result = await fetchAnnouncements();
+          if (result.length > 0) {
+            setAnnouncements(result);
+          }
+        } catch {
+          // Silent — never block UI
+        }
+      }, 1500); // 1.5s delay to let everything else load first
+    });
+
+    return () => cancelAnimationFrame(handle);
+  }, []);
+
+  const handleDismissAnnouncement = useCallback((id: string) => {
+    dismissAnnouncement(id).catch(() => {});
+    setAnnouncements((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
   const onRefresh = useCallback(async () => {
     if (refreshing.current) return;
     refreshing.current = true;
     setIsRefreshing(true);
-    // Fire all refetches independently â€” sections pop in as they arrive
-    refetchMovies();
-    refetchTV();
-    refetchPopular();
-    // Reload history
+
     historyLoadedRef.current = false;
     setHistoryEntries([]);
-    loadHistory();
-    // Wait a bit then hide the indicator (content updates progressively)
-    setTimeout(() => {
-      setIsRefreshing(false);
-      refreshing.current = false;
-    }, 1500);
+
+    // Wait for actual completion instead of a hardcoded timeout
+    await Promise.allSettled([
+      refetchMovies(),
+      refetchTV(),
+      refetchPopular(),
+      loadHistory(),
+    ]);
+
+    // Also refresh announcements in background
+    try {
+      const fresh = await fetchAnnouncements({ force: true });
+      setAnnouncements(fresh);
+    } catch {}
+
+    setIsRefreshing(false);
+    refreshing.current = false;
   }, [refetchMovies, refetchTV, refetchPopular, loadHistory]);
 
-  // â”€â”€ Navigation â”€â”€
-
+  // ── Navigation ──
   const handleSeeAllTrendingMovies = useCallback(() => {
-    router.push("/list/trending-movies");
-  }, [router]);
+    nav.push("/list/trending-movies");
+  }, [nav]);
 
   const handleSeeAllTrendingTV = useCallback(() => {
-    router.push("/list/trending-tv");
-  }, [router]);
+    nav.push("/list/trending-tv");
+  }, [nav]);
 
   const handleSeeAllPopularMovies = useCallback(() => {
-    router.push("/list/popular-movies");
-  }, [router]);
+    nav.push("/list/popular-movies");
+  }, [nav]);
 
   const handleMoviePress = useCallback(
     (item: Movie) => {
@@ -208,59 +268,207 @@ export default function HomeScreen() {
           queryFn: () => tmdbApi.getTVDetails(id),
           staleTime: 1000 * 60 * 60,
         });
-        router.prefetch(`/tv/${id}`);
-        router.push(`/tv/${id}`);
+        nav.push(`/tv/${id}`);
       } else {
         queryClient.prefetchQuery({
           queryKey: ["movie", id],
           queryFn: () => tmdbApi.getMovieDetails(id),
           staleTime: 1000 * 60 * 60,
         });
-        router.prefetch(`/movie/${id}`);
-        router.push(`/movie/${id}`);
+        nav.push(`/movie/${id}`);
       }
     },
-    [router, queryClient],
+    [nav, queryClient],
   );
 
   const handleWatchPress = useCallback(
     (item: Movie) => {
-      router.push(`/watch/movie/${item.id}`);
+      nav.push(`/watch/movie/${item.id}`);
     },
-    [router],
+    [nav],
   );
 
+  // ── Memoised section ordering ──
+  const orderedSections = useMemo(() => {
+    const order: Record<string, number> = {};
+    settings.homeRowOrder.forEach((id: string, i: number) => {
+      order[id] = i;
+    });
+    return Object.keys(SECTION_CONFIG).sort(
+      (a, b) => (order[a] ?? 999) - (order[b] ?? 999),
+    );
+  }, [settings.homeRowOrder]);
+
+  // ── Render each section ──
+  const renderSection = useCallback(
+    (id: string) => {
+      switch (id) {
+        case "trending-movies":
+          return trendingMovies ? (
+            <MediaCarousel
+              title={SECTION_CONFIG["trending-movies"].label}
+              data={trendingMovies.results ?? []}
+              onItemPress={handleMoviePress}
+              onSeeAll={handleSeeAllTrendingMovies}
+            />
+          ) : (
+            <View className="mb-6 px-4">
+              <Shimmer
+                width={144}
+                height={20}
+                borderRadius={4}
+                style={{ marginBottom: 12 }}
+              />
+              <View className="flex-row" style={{ gap: 10 }}>
+                {Array.from({ length: SKELETON_ITEMS }).map((_, i) => (
+                  <Shimmer
+                    key={i}
+                    width={itemWidth}
+                    height={itemHeight}
+                    borderRadius={12}
+                  />
+                ))}
+              </View>
+            </View>
+          );
+
+        case "trending-tv":
+          return trendingTV ? (
+            <MediaCarousel
+              title={SECTION_CONFIG["trending-tv"].label}
+              data={trendingTV.results ?? []}
+              onItemPress={handleMoviePress}
+              onSeeAll={handleSeeAllTrendingTV}
+            />
+          ) : (
+            <View className="mb-6 px-4">
+              <Shimmer
+                width={144}
+                height={20}
+                borderRadius={4}
+                style={{ marginBottom: 12 }}
+              />
+              <View className="flex-row" style={{ gap: 10 }}>
+                {Array.from({ length: SKELETON_ITEMS }).map((_, i) => (
+                  <Shimmer
+                    key={i}
+                    width={itemWidth}
+                    height={itemHeight}
+                    borderRadius={12}
+                  />
+                ))}
+              </View>
+            </View>
+          );
+
+        case "more-like-this":
+          return moreLikeThis?.length > 0 ? (
+            <DeferredContent fallback={null} delayMs={200}>
+              <MediaCarousel
+                title={SECTION_CONFIG["more-like-this"].label}
+                data={moreLikeThis}
+                onItemPress={handleMoviePress}
+              />
+            </DeferredContent>
+          ) : null;
+
+        case "continue-watching":
+          return historyEntries.length > 0 ? (
+            <DeferredContent fallback={null} delayMs={400}>
+              <ContinueWatchingSection
+                historyEntries={historyEntries}
+                historyMeta={historyMeta}
+                nav={nav}
+                SCREEN_WIDTH={SCREEN_WIDTH}
+                providerLabelMap={PROVIDER_LABELS}
+              />
+            </DeferredContent>
+          ) : null;
+
+        case "popular-movies":
+          return popularMovies ? (
+            <DeferredContent fallback={null} delayMs={600}>
+              <MediaCarousel
+                title={SECTION_CONFIG["popular-movies"].label}
+                data={popularMovies.results ?? []}
+                onItemPress={handleMoviePress}
+                onSeeAll={handleSeeAllPopularMovies}
+              />
+            </DeferredContent>
+          ) : (
+            <View className="mb-6 px-4">
+              <Shimmer
+                width={144}
+                height={20}
+                borderRadius={4}
+                style={{ marginBottom: 12 }}
+              />
+              <View className="flex-row" style={{ gap: 10 }}>
+                {Array.from({ length: SKELETON_ITEMS }).map((_, i) => (
+                  <Shimmer
+                    key={i}
+                    width={itemWidth}
+                    height={itemHeight}
+                    borderRadius={12}
+                  />
+                ))}
+              </View>
+            </View>
+          );
+
+        default:
+          return null;
+      }
+    },
+    [
+      trendingMovies,
+      trendingTV,
+      popularMovies,
+      moreLikeThis,
+      historyEntries,
+      historyMeta,
+      handleMoviePress,
+      handleSeeAllTrendingMovies,
+      handleSeeAllTrendingTV,
+      handleSeeAllPopularMovies,
+      nav,
+      SCREEN_WIDTH,
+      itemWidth,
+      itemHeight,
+    ],
+  );
+
+  // ── Skeleton (full-screen when all three queries first load) ──
   if (loadingMovies && loadingTV && loadingPopular) {
     return (
       <View
         className="flex-1 bg-void"
-        style={{ paddingTop: insets.top, backgroundColor: "#070708" }}
+        style={{ paddingTop: insets.top, backgroundColor: colors.bg }}
       >
         {/* Hero skeleton */}
         <View
           style={{
             width: SCREEN_WIDTH,
             height: SCREEN_WIDTH * 0.56,
-            backgroundColor: "#141414",
+            backgroundColor: colors.skeletonBgAlt,
           }}
         />
         {/* Sections skeleton */}
         {[1, 2].map((s) => (
           <View key={s} className="mb-6 px-4 mt-4">
-            <View
-              className="w-36 h-5 bg-subtle rounded"
-              style={{ backgroundColor: "#1C1C20" }}
+            <Shimmer
+              width={144}
+              height={20}
+              borderRadius={4}
+              style={{ marginBottom: 12 }}
             />
             <View className="flex-row mt-3" style={{ gap: 10 }}>
               {Array.from({ length: SKELETON_ITEMS }).map((_, i) => (
-                <View
+                <Shimmer
                   key={i}
-                  style={{
-                    width: itemWidth,
-                    height: itemHeight,
-                    borderRadius: 12,
-                    backgroundColor: "#1C1C20",
-                  }}
+                  width={itemWidth}
+                  height={itemHeight}
+                  borderRadius={12}
                 />
               ))}
             </View>
@@ -273,22 +481,22 @@ export default function HomeScreen() {
   return (
     <View
       className="flex-1 bg-void"
-      style={{ paddingTop: insets.top, backgroundColor: "#070708" }}
+      style={{ paddingTop: insets.top, backgroundColor: colors.bg }}
     >
       <ScrollView
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={onRefresh}
-            tintColor="#D4A237"
-            colors={["#D4A237"]}
+            tintColor={colors.gold}
+            colors={[colors.gold]}
           />
         }
         className="flex-1"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={scrollPaddingStyle}
       >
-        {/* Header */}
+        {/* ── Header with navigation affordances ── */}
         <View className="px-5 py-4 flex-row items-center justify-between">
           <View className="flex-row items-center">
             <Image
@@ -301,58 +509,97 @@ export default function HomeScreen() {
                 style={{
                   fontFamily: "PlayfairDisplay_700Bold",
                   fontSize: 20,
-                  color: "#D4A237",
+                  color: colors.gold,
                 }}
               >
                 FilmSnaps
               </Text>
-              <Text
-                className="text-text-secondary text-xs"
-                style={{ color: "#A1A1AA" }}
-              >
-                Discover & Watch
-              </Text>
             </View>
+          </View>
+
+          {/* Right: Actions */}
+          <View className="flex-row items-center" style={{ gap: 16 }}>
+            <TouchableOpacity
+              onPress={() => nav.push("/search")}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Search"
+              accessibilityHint="Opens search screen"
+            >
+              <Ionicons
+                name="search-outline"
+                size={22}
+                color={colors.textSecondary}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => nav.push("/settings")}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Settings"
+              accessibilityHint="Opens settings screen"
+            >
+              <Ionicons
+                name="settings-outline"
+                size={22}
+                color={colors.textSecondary}
+              />
+            </TouchableOpacity>
           </View>
         </View>
 
         {/* ── Offline Hero Rail ── */}
         {isOffline ? (
           <View className="mb-6 px-4">
-            <View className="bg-zinc-900/80 rounded-2xl p-5 mb-4 border border-zinc-800">
+            <View
+              style={{
+                borderRadius: 16,
+                backgroundColor: "rgba(251,191,36,0.08)",
+                borderWidth: 1,
+                borderColor: "rgba(251,191,36,0.2)",
+                padding: 20,
+                marginBottom: 16,
+              }}
+            >
               <View className="flex-row items-center mb-1">
                 <Ionicons
                   name="cloud-offline-outline"
                   size={18}
-                  color="#D4A237"
+                  color={colors.offline}
                   style={{ marginRight: 8 }}
                 />
                 <Text
                   style={{
                     fontFamily: "Inter_600SemiBold",
                     fontSize: 15,
-                    color: "#F4F4F5",
+                    color: colors.textPrimary,
                   }}
                 >
                   You're offline
                 </Text>
               </View>
               <Text
-                className="text-zinc-400 text-xs mb-3"
-                style={{ marginLeft: 26 }}
+                style={{
+                  color: colors.textSecondary,
+                  fontSize: 13,
+                  lineHeight: 18,
+                  marginTop: 2,
+                }}
               >
-                Here's what's ready to watch
+                {completedDownloads.length > 0
+                  ? `${completedDownloads.length} title${completedDownloads.length > 1 ? "s" : ""} ready to watch below.`
+                  : "Connect to the internet to browse, or download titles ahead of time."}
               </Text>
             </View>
 
             {completedDownloads.length > 0 ? (
               <View>
                 <Text
-                  className="text-text-primary text-lg font-bold mb-3"
                   style={{
                     fontFamily: "PlayfairDisplay_700Bold",
                     fontSize: 18,
-                    color: "#F4F4F5",
+                    color: colors.textPrimary,
+                    marginBottom: 12,
                   }}
                 >
                   Downloaded
@@ -361,16 +608,18 @@ export default function HomeScreen() {
                   {completedDownloads.slice(0, 6).map((d) => (
                     <TouchableOpacity
                       key={d.id}
-                      onPress={() => router.push("/downloads")}
+                      onPress={() => nav.push("/downloads")}
                       activeOpacity={0.7}
                       style={{ width: (SCREEN_WIDTH - 48 - 20) / 3 }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open ${d.title || d.fileName} download`}
                     >
                       <View
                         style={{
                           width: "100%",
                           aspectRatio: 2 / 3,
                           borderRadius: 10,
-                          backgroundColor: "#1C1C20",
+                          backgroundColor: colors.bgElevated,
                           alignItems: "center",
                           justifyContent: "center",
                         }}
@@ -378,7 +627,7 @@ export default function HomeScreen() {
                         <Ionicons
                           name="film-outline"
                           size={22}
-                          color="#52525B"
+                          color={colors.iconSecondary}
                         />
                       </View>
                       <Text
@@ -391,13 +640,13 @@ export default function HomeScreen() {
                   ))}
                 </View>
                 <TouchableOpacity
-                  onPress={() => router.push("/downloads")}
+                  onPress={() => nav.push("/downloads")}
                   className="mt-3"
                   activeOpacity={0.7}
                 >
                   <Text
                     style={{
-                      color: "#D4A237",
+                      color: colors.gold,
                       fontSize: 12,
                       fontFamily: "Inter_500Medium",
                     }}
@@ -410,7 +659,7 @@ export default function HomeScreen() {
               <View className="items-center py-6">
                 <Text
                   style={{
-                    color: "#52525B",
+                    color: colors.textTertiary,
                     fontSize: 13,
                     fontFamily: "Inter_400Regular",
                   }}
@@ -419,7 +668,7 @@ export default function HomeScreen() {
                 </Text>
                 <Text
                   style={{
-                    color: "#3f3f3f",
+                    color: colors.textDisabled,
                     fontSize: 11,
                     fontFamily: "Inter_400Regular",
                     marginTop: 2,
@@ -432,272 +681,248 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        {/* Hero section â€” appears as soon as trendingMovies arrives */}
+        {/* ── Hero — always first, never reordered ── */}
         {heroItem ? (
           <Hero item={heroItem} onWatchPress={handleWatchPress} />
         ) : !loadingMovies ? (
           <View
-            className="w-full bg-elevated"
-            style={{ height: SCREEN_WIDTH * 0.62 }}
+            className="w-full"
+            style={{
+              height: SCREEN_WIDTH * 0.62,
+              backgroundColor: colors.skeletonBgAlt,
+            }}
           />
         ) : null}
 
-        {/* Trending Movies â€” skeleton until data loads */}
-        {trendingMovies ? (
-          <MediaCarousel
-            title="Trending Movies"
-            data={trendingMovies.results ?? []}
-            onItemPress={handleMoviePress}
-            onSeeAll={handleSeeAllTrendingMovies}
-          />
-        ) : (
-          <View className="mb-6 px-4">
-            <View className="w-36 h-5 bg-subtle rounded mb-3" />
-            <View className="flex-row" style={{ gap: 10 }}>
-              {Array.from({ length: SKELETON_ITEMS }).map((_, i) => (
-                <View
-                  key={i}
-                  className="bg-subtle rounded-xl"
-                  style={{ width: itemWidth, height: itemHeight }}
-                />
-              ))}
-            </View>
-          </View>
+        {/* ── Announcements banner (non-blocking, between Hero and sections) ── */}
+        {announcements.length > 0 && (
+          <DeferredContent fallback={null} delayMs={100}>
+            {announcements.map((ann) => (
+              <AnnouncementBanner
+                key={ann.id}
+                announcement={ann}
+                onDismiss={handleDismissAnnouncement}
+              />
+            ))}
+          </DeferredContent>
         )}
 
-        {/* Trending TV */}
-        {trendingTV ? (
-          <MediaCarousel
-            title="Trending TV"
-            data={trendingTV.results ?? []}
-            onItemPress={handleMoviePress}
-            onSeeAll={handleSeeAllTrendingTV}
-          />
-        ) : (
-          <View className="mb-6 px-4">
-            <View className="w-36 h-5 bg-subtle rounded mb-3" />
-            <View className="flex-row" style={{ gap: 10 }}>
-              {Array.from({ length: SKELETON_ITEMS }).map((_, i) => (
-                <View
-                  key={i}
-                  className="bg-subtle rounded-xl"
-                  style={{ width: itemWidth, height: itemHeight }}
-                />
-              ))}
-            </View>
-          </View>
-        )}
+        {/* ── Remaining sections ordered by settings.homeRowOrder ── */}
+        {orderedSections.map((id) => (
+          <View key={id}>{renderSection(id)}</View>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
 
-        {/* More Like This — genre-based recs from last-watched item */}
-        {moreLikeThis?.length > 0 && (
-          <MediaCarousel
-            title="More Like This"
-            data={moreLikeThis}
-            onItemPress={handleMoviePress}
-          />
-        )}
+// ── Continue Watching Section (extracted to avoid nesting FlatList in ScrollView) ──
 
-        {/* Continue Watching / History */}
-        {historyEntries.length > 0 && (
-          <View className="mb-6">
-            <View className="flex-row items-center justify-between px-4 mb-3">
-              <Text
-                className="text-text-primary text-lg font-bold"
-                style={{
-                  fontFamily: "PlayfairDisplay_700Bold",
-                  fontSize: 20,
-                  color: "#F4F4F5",
-                }}
-              >
-                Continue Watching
-              </Text>
-              <TouchableOpacity
-                onPress={() => router.push("/history")}
-                activeOpacity={0.7}
-                style={{ flexDirection: "row", alignItems: "center" }}
-              >
-                <Text className="text-primary text-xs font-semibold">
-                  See All
-                </Text>
-                <ForwardIcon
-                  width={12}
-                  height={12}
-                  color="#D4A237"
-                  style={{ marginLeft: 4 }}
-                />
-              </TouchableOpacity>
-            </View>
-            <FlatList
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
-              data={historyEntries}
-              keyExtractor={(item) =>
-                `${item.latest.mediaType}:${item.latest.tmdbId}`
-              }
-              renderItem={({ item }) => {
-                const p = item.latest;
-                const meta = historyMeta[p.tmdbId];
-                const title =
-                  (p.mediaType === "tv" ? meta?.name : meta?.title) ?? "";
-                const poster = meta?.poster_path;
-                const cardWidth = (SCREEN_WIDTH - 48) / 3;
-                const cardHeight = cardWidth * 1.5;
+interface ContinueWatchingSectionProps {
+  historyEntries: Array<{
+    latest: WatchProgress;
+    fullyWatched: boolean;
+  }>;
+  historyMeta: Record<string, Movie | null>;
+  nav: ReturnType<typeof useSafeNavigation>;
+  SCREEN_WIDTH: number;
+  providerLabelMap: Record<string, string>;
+}
 
-                return (
-                  <TouchableOpacity
-                    onPress={() => {
-                      if (p.mediaType === "tv") {
-                        router.push(
-                          `/watch/tv/${p.tmdbId}/${p.season ?? 1}/${p.episode ?? 1}`,
-                        );
-                      } else {
-                        router.push(`/watch/movie/${p.tmdbId}`);
-                      }
-                    }}
-                    activeOpacity={0.7}
-                    style={{ width: cardWidth }}
-                  >
-                    <View
-                      style={{ width: cardWidth, height: cardHeight }}
-                      className="bg-elevated rounded-xl overflow-hidden"
-                    >
-                      {poster ? (
-                        <ProgressiveImage
-                          uri={getImageUrl(poster, "w185")}
-                          style={{ width: cardWidth, height: cardHeight }}
-                          resizeMode="cover"
-                        />
-                      ) : (
-                        <View
-                          className="flex-1 items-center justify-center"
-                          style={{ backgroundColor: "#1f1f1f" }}
-                        >
-                          <Ionicons
-                            name={p.mediaType === "tv" ? "tv" : "film"}
-                            size={24}
-                            color="#3f3f3f"
-                          />
-                        </View>
-                      )}
-                      {/* Progress bar at bottom */}
-                      <View
-                        style={{
-                          position: "absolute",
-                          bottom: 0,
-                          left: 0,
-                          right: 0,
-                          height: 3,
-                          backgroundColor: "rgba(255,255,255,0.1)",
-                        }}
-                      >
-                        <View
-                          style={{
-                            width: `${Math.round((p.completed ? 1 : p.percent) * 100)}%`,
-                            height: "100%",
-                            backgroundColor: item.fullyWatched
-                              ? "#22c55e"
-                              : "#D4A237",
-                          }}
-                        />
-                      </View>
-                      {/* Episode badge for TV */}
-                      {p.mediaType === "tv" &&
-                        p.season != null &&
-                        p.episode != null && (
-                          <View
-                            style={{
-                              position: "absolute",
-                              top: 4,
-                              left: 4,
-                              backgroundColor: "rgba(0,0,0,0.75)",
-                              borderRadius: 3,
-                              paddingHorizontal: 4,
-                              paddingVertical: 1,
-                            }}
-                          >
-                            <Text className="text-white text-[9px] font-bold">
-                              S{p.season}:E{p.episode}
-                            </Text>
-                          </View>
-                        )}
-                      {/* Provider label */}
-                      {p.providerId ? (
-                        <View
-                          style={{
-                            position: "absolute",
-                            bottom: 6,
-                            left: 4,
-                            backgroundColor: "rgba(212,162,55,0.2)",
-                            borderRadius: 3,
-                            paddingHorizontal: 4,
-                            paddingVertical: 1,
-                            maxWidth: cardWidth - 8,
-                          }}
-                        >
-                          <Text
-                            className="text-primary text-[8px] font-bold"
-                            numberOfLines={1}
-                          >
-                            {providerLabelMap.current[p.providerId] ??
-                              p.providerId}
-                          </Text>
-                        </View>
-                      ) : null}
-                      {/* Completed badge */}
-                      {item.fullyWatched && (
-                        <View
-                          style={{
-                            position: "absolute",
-                            top: 4,
-                            right: 4,
-                            backgroundColor: "rgba(34,197,94,0.85)",
-                            borderRadius: 10,
-                            width: 18,
-                            height: 18,
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          <Ionicons name="checkmark" size={12} color="#fff" />
-                        </View>
-                      )}
-                    </View>
-                    <Text
-                      className="text-text-secondary text-[11px] mt-1.5"
-                      numberOfLines={1}
-                    >
-                      {title || `ID: ${p.tmdbId}`}
-                    </Text>
-                  </TouchableOpacity>
-                );
+function ContinueWatchingSection({
+  historyEntries,
+  historyMeta,
+  nav,
+  SCREEN_WIDTH,
+  providerLabelMap,
+}: ContinueWatchingSectionProps) {
+  const cardWidth = (SCREEN_WIDTH - 48) / 3;
+  const cardHeight = cardWidth * 1.5;
+
+  return (
+    <View className="mb-6">
+      {/* Header */}
+      <View className="flex-row items-center justify-between px-4 mb-3">
+        <Text style={typography.heading}>Continue Watching</Text>
+        <SeeAllButton onPress={() => nav.push("/history")} />
+      </View>
+
+      {/* Horizontal ScrollView — replaces FlatList to avoid nesting warning */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
+        accessibilityRole="list"
+        accessibilityLabel="Continue watching items"
+      >
+        {historyEntries.map((item) => {
+          const p = item.latest;
+          const meta = historyMeta[p.tmdbId];
+          const title = (p.mediaType === "tv" ? meta?.name : meta?.title) ?? "";
+          const poster = meta?.poster_path;
+
+          return (
+            <TouchableOpacity
+              key={`${p.mediaType}:${p.tmdbId}`}
+              onPress={() => {
+                if (p.mediaType === "tv") {
+                  nav.push(
+                    `/watch/tv/${p.tmdbId}/${p.season ?? 1}/${p.episode ?? 1}`,
+                  );
+                } else {
+                  nav.push(`/watch/movie/${p.tmdbId}`);
+                }
               }}
-            />
-          </View>
-        )}
+              activeOpacity={0.7}
+              style={{ width: cardWidth }}
+              accessibilityRole="button"
+              accessibilityLabel={`Continue watching ${title}`}
+              accessibilityHint={`Opens ${title} at your last watched position`}
+            >
+              <View style={{ width: cardWidth, height: cardHeight }}>
+                {/* Poster image */}
+                {poster ? (
+                  <ProgressiveImage
+                    uri={getImageUrl(poster, "w185")}
+                    style={{
+                      width: cardWidth,
+                      height: cardHeight,
+                      borderRadius: 12,
+                    }}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View
+                    className="flex-1 items-center justify-center rounded-xl"
+                    style={{ backgroundColor: colors.bgTop }}
+                  >
+                    <Ionicons
+                      name={p.mediaType === "tv" ? "tv" : "film"}
+                      size={24}
+                      color={colors.iconMuted}
+                    />
+                  </View>
+                )}
 
-        {/* Popular Movies */}
-        {popularMovies ? (
-          <MediaCarousel
-            title="Popular Movies"
-            data={popularMovies.results ?? []}
-            onItemPress={handleMoviePress}
-            onSeeAll={handleSeeAllPopularMovies}
-          />
-        ) : (
-          <View className="mb-6 px-4">
-            <View className="w-36 h-5 bg-subtle rounded mb-3" />
-            <View className="flex-row" style={{ gap: 10 }}>
-              {Array.from({ length: SKELETON_ITEMS }).map((_, i) => (
+                {/* Progress bar — 4px, themed */}
                 <View
-                  key={i}
-                  className="bg-subtle rounded-xl"
-                  style={{ width: itemWidth, height: itemHeight }}
+                  style={{
+                    position: "absolute",
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    height: 4,
+                    backgroundColor: colors.progressTrackAlt,
+                    borderBottomLeftRadius: 12,
+                    borderBottomRightRadius: 12,
+                    overflow: "hidden",
+                  }}
+                >
+                  <View
+                    style={{
+                      width: `${Math.round((p.completed ? 1 : p.percent) * 100)}%`,
+                      height: "100%",
+                      backgroundColor: item.fullyWatched
+                        ? colors.successGreen
+                        : colors.gold,
+                      borderRadius: 2,
+                    }}
+                  />
+                </View>
+
+                {/* Gradient overlay at bottom so progress bar doesn't float */}
+                <View
+                  style={{
+                    position: "absolute",
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    height: 40,
+                    backgroundColor: "transparent",
+                  }}
+                  pointerEvents="none"
                 />
-              ))}
-            </View>
-          </View>
-        )}
+
+                {/* TV episode badge */}
+                {p.mediaType === "tv" &&
+                  p.season != null &&
+                  p.episode != null && (
+                    <View
+                      style={{
+                        position: "absolute",
+                        top: 4,
+                        left: 4,
+                        backgroundColor: colors.black75,
+                        borderRadius: 3,
+                        paddingHorizontal: 4,
+                        paddingVertical: 1,
+                      }}
+                    >
+                      <Text className="text-white text-[9px] font-bold">
+                        S{p.season}:E{p.episode}
+                      </Text>
+                    </View>
+                  )}
+
+                {/* Provider badge */}
+                {p.providerId ? (
+                  <View
+                    style={{
+                      position: "absolute",
+                      bottom: 10,
+                      left: 4,
+                      backgroundColor: colors.goldBadge,
+                      borderRadius: 3,
+                      paddingHorizontal: 4,
+                      paddingVertical: 1,
+                      maxWidth: cardWidth - 8,
+                    }}
+                  >
+                    <Text
+                      className="text-primary text-[8px] font-bold"
+                      numberOfLines={1}
+                      style={{ color: colors.gold }}
+                    >
+                      {providerLabelMap[p.providerId] ?? p.providerId}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Fully watched checkmark */}
+                {item.fullyWatched && (
+                  <View
+                    style={{
+                      position: "absolute",
+                      top: 4,
+                      right: 4,
+                      backgroundColor: colors.greenBadge,
+                      borderRadius: 10,
+                      width: 18,
+                      height: 18,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Ionicons name="checkmark" size={12} color="#fff" />
+                  </View>
+                )}
+              </View>
+
+              {/* Title */}
+              <Text
+                style={{
+                  color: colors.textSecondary,
+                  fontSize: 11,
+                  fontFamily: "Inter_400Regular",
+                  marginTop: 6,
+                }}
+                numberOfLines={1}
+              >
+                {title || `ID: ${p.tmdbId}`}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
     </View>
   );

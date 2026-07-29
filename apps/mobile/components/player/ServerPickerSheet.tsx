@@ -1,8 +1,9 @@
 /**
  * ServerPicker — bottom sheet modal for selecting streaming providers on mobile.
+ * Supports swipe-down-to-dismiss via PanResponder with rubber-band resistance.
  */
 
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -10,11 +11,16 @@ import {
   Modal,
   ScrollView,
   Dimensions,
+  Animated,
+  PanResponder,
+  type GestureResponderEvent,
+  type PanResponderGestureState,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import * as Haptics from "expo-haptics";
+import { colors } from "../../theme/colors";
 import type { ProviderDefinition } from "@filmsnaps/shared";
 
 interface ServerPickerSheetProps {
@@ -26,6 +32,9 @@ interface ServerPickerSheetProps {
   getDisplayName: (p: ProviderDefinition) => string;
 }
 
+const SWIPE_DISMISS_THRESHOLD = 0.3; // 30% of sheet height
+const RUBBER_BAND_RESISTANCE = 0.3; // resistance factor beyond 100px
+
 export function ServerPickerSheet({
   visible,
   providers,
@@ -35,27 +44,133 @@ export function ServerPickerSheet({
   getDisplayName,
 }: ServerPickerSheetProps) {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const { height: SCREEN_HEIGHT } = Dimensions.get("window");
 
-  return (
-    <Modal visible={visible} transparent animationType="slide">
-      <View className="flex-1 justify-end bg-black/60">
-        <TouchableOpacity
-          className="flex-1"
-          activeOpacity={1}
-          onPress={onClose}
-        />
+  // Animated values
+  const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
 
-        <View
+  // Track current visible state for animation gating
+  const isVisibleRef = useRef(visible);
+
+  // ── PanResponder for swipe-down-to-dismiss ──
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
+      onPanResponderMove: (
+        _: GestureResponderEvent,
+        g: PanResponderGestureState,
+      ) => {
+        if (g.dy <= 0) return; // ignore upward swipes
+        // Rubber-band resistance: first 100px are 1:1, then reduced
+        const resisted =
+          g.dy <= 100 ? g.dy : 100 + (g.dy - 100) * RUBBER_BAND_RESISTANCE;
+        translateY.setValue(resisted);
+      },
+      onPanResponderRelease: (
+        _: GestureResponderEvent,
+        g: PanResponderGestureState,
+      ) => {
+        if (g.dy <= 0) {
+          // Not a downward swipe — snap back
+          Animated.spring(translateY, {
+            toValue: 0,
+            useNativeDriver: true,
+            damping: 20,
+            stiffness: 200,
+          }).start();
+          return;
+        }
+        const sheetHeight = SCREEN_HEIGHT * 0.6;
+        if (g.dy > sheetHeight * SWIPE_DISMISS_THRESHOLD || g.vy > 0.5) {
+          // Dismiss
+          Animated.timing(translateY, {
+            toValue: SCREEN_HEIGHT,
+            duration: 200,
+            useNativeDriver: true,
+          }).start(() => onClose());
+        } else {
+          // Snap back
+          Animated.spring(translateY, {
+            toValue: 0,
+            useNativeDriver: true,
+            damping: 20,
+            stiffness: 200,
+          }).start();
+        }
+      },
+    }),
+  ).current;
+
+  // ── Enter/exit animation ──
+  useEffect(() => {
+    if (visible && !isVisibleRef.current) {
+      isVisibleRef.current = true;
+      // Reset position and animate in
+      translateY.setValue(SCREEN_HEIGHT);
+      backdropOpacity.setValue(0);
+      Animated.parallel([
+        Animated.spring(translateY, {
+          toValue: 0,
+          useNativeDriver: true,
+          damping: 22,
+          stiffness: 220,
+        }),
+        Animated.timing(backdropOpacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else if (!visible && isVisibleRef.current) {
+      isVisibleRef.current = false;
+      Animated.parallel([
+        Animated.timing(translateY, {
+          toValue: SCREEN_HEIGHT,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(backdropOpacity, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [visible, SCREEN_HEIGHT, translateY, backdropOpacity]);
+
+  return (
+    <Modal visible={visible} transparent onRequestClose={onClose}>
+      <View className="flex-1 justify-end">
+        {/* Animated backdrop */}
+        <Animated.View
+          className="absolute inset-0 bg-black/60"
+          style={{ opacity: backdropOpacity }}
+        >
+          <TouchableOpacity
+            className="flex-1"
+            activeOpacity={1}
+            onPress={onClose}
+          />
+        </Animated.View>
+
+        {/* Animated sheet */}
+        <Animated.View
           className="bg-zinc-900 rounded-t-3xl"
           style={{
             maxHeight: SCREEN_HEIGHT * 0.6,
             paddingBottom: insets.bottom + 16,
+            transform: [{ translateY }],
           }}
         >
-          {/* Handle */}
-          <View className="items-center pt-3 pb-2">
+          {/* Drag handle — interactive with PanResponder */}
+          <View
+            {...panResponder.panHandlers}
+            className="items-center pt-3 pb-2"
+            style={{ height: 44, justifyContent: "center" }}
+          >
             <View className="w-10 h-1 rounded-full bg-zinc-600" />
           </View>
 
@@ -66,7 +181,7 @@ export function ServerPickerSheet({
             </Text>
             <View className="flex-row items-center" style={{ gap: 12 }}>
               <TouchableOpacity
-                onPress={() => router.push("/guide?section=sources")}
+                onPress={() => nav.push("/guide?section=sources")}
                 activeOpacity={0.7}
                 accessibilityLabel="Help choosing a source"
                 accessibilityRole="button"
@@ -74,7 +189,7 @@ export function ServerPickerSheet({
                 <Ionicons
                   name="help-circle-outline"
                   size={20}
-                  color="#71717a"
+                  color={colors.zinc500}
                 />
               </TouchableOpacity>
               <TouchableOpacity
@@ -83,7 +198,7 @@ export function ServerPickerSheet({
                 accessibilityLabel="Close source selection"
                 accessibilityRole="button"
               >
-                <Ionicons name="close" size={22} color="#71717a" />
+                <Ionicons name="close" size={22} color={colors.zinc500} />
               </TouchableOpacity>
             </View>
           </View>
@@ -115,12 +230,16 @@ export function ServerPickerSheet({
                     }`}
                   >
                     {isActive ? (
-                      <Ionicons name="checkmark" size={18} color="#000" />
+                      <Ionicons
+                        name="checkmark"
+                        size={18}
+                        color={colors.voidBlack}
+                      />
                     ) : (
                       <Ionicons
                         name="server-outline"
                         size={16}
-                        color="#71717a"
+                        color={colors.zinc500}
                       />
                     )}
                   </View>
@@ -145,7 +264,7 @@ export function ServerPickerSheet({
               );
             })}
           </ScrollView>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );

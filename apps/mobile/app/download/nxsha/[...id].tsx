@@ -21,16 +21,18 @@ import {
   Dimensions,
 } from "react-native";
 import { WebView } from "react-native-webview";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { colors } from "../../../theme/colors";
 import { EpisodeRail } from "../../../components/player/EpisodeRail";
 import { useDownloadInfra, useDownloadList } from "../../../lib/download";
 
 // ── Constants ──
 
 const AUTO_SOLVE_TIMEOUT = 30000;
-const SCRAPE_TIMEOUT = 45000;
+const SCRAPE_TIMEOUT = 15000;
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const POSTER_W = 100;
 const POSTER_H = 150;
@@ -51,15 +53,15 @@ const QUALITY_RANK: Record<string, number> = {
 };
 
 const QUALITY_COLORS: Record<string, string> = {
-  "4K": "#D4A237",
-  "2160p": "#D4A237",
+  "4K": colors.gold,
+  "2160p": colors.gold,
   "1080p": "#B45309",
   FHD: "#B45309",
   "720p": "#A1A1AA",
   HD: "#A1A1AA",
   "480p": "#64748B",
   SD: "#64748B",
-  "360p": "#52525B",
+  "360p": colors.textTertiary,
   M3U8: "#3B82F6",
 };
 
@@ -316,7 +318,12 @@ interface ParsedLink extends NxshaLink {
   server: string;
 }
 
-type SolveState = "loading-page" | "solving" | "found-links" | "failed";
+type SolveState =
+  | "loading-page"
+  | "solving"
+  | "found-links"
+  | "failed"
+  | "no-links";
 
 // ── Link parser ──
 
@@ -464,9 +471,9 @@ function ServerCard({
     <View
       className="rounded-2xl mb-3 overflow-hidden"
       style={{
-        backgroundColor: "#0E0E11",
+        backgroundColor: colors.bgSurface,
         borderWidth: 0.5,
-        borderColor: "#1f1f1f",
+        borderColor: colors.border,
       }}
     >
       {/* Header */}
@@ -490,7 +497,7 @@ function ServerCard({
               justifyContent: "center",
             }}
           >
-            <Ionicons name="server" size={14} color="#D4A237" />
+            <Ionicons name="server" size={14} color={colors.gold} />
           </View>
           <View className="flex-1">
             <Text className="text-white text-sm font-bold" numberOfLines={1}>
@@ -521,7 +528,7 @@ function ServerCard({
           <Ionicons
             name={expanded ? "chevron-up" : "chevron-down"}
             size={16}
-            color={expanded ? "#D4A237" : "#71717A"}
+            color={expanded ? colors.gold : colors.zinc500}
           />
         </View>
       </TouchableOpacity>
@@ -530,7 +537,7 @@ function ServerCard({
       {expanded && (
         <View
           className="px-3 pb-3 pt-1"
-          style={{ borderTopWidth: 0.5, borderTopColor: "#1f1f1f" }}
+          style={{ borderTopWidth: 0.5, borderTopColor: colors.border }}
         >
           {audioGroups.map((group, gi) => (
             <View key={gi}>
@@ -554,7 +561,7 @@ function ServerCard({
                   </Text>
                   <View
                     className="flex-1 h-px"
-                    style={{ backgroundColor: "#1a1a1e" }}
+                    style={{ backgroundColor: colors.zincBgFull }}
                   />
                 </View>
               )}
@@ -581,17 +588,17 @@ function ServerCard({
 function getAudioColor(type: string): string {
   switch (type) {
     case "hindi":
-      return "#F97316";
+      return colors.amber;
     case "dual-audio":
-      return "#A855F7";
+      return colors.secondary;
     case "original":
-      return "#3B82F6";
+      return colors.info;
     case "tamil":
-      return "#EF4444";
+      return colors.error;
     case "english":
-      return "#22C55E";
+      return colors.successGreen;
     default:
-      return "#71717A";
+      return colors.zinc500;
   }
 }
 
@@ -626,7 +633,7 @@ function DownloadItem({
   const qualityColor =
     QUALITY_COLORS[link.quality.toUpperCase()] ||
     QUALITY_COLORS[qualityDisplay] ||
-    "#52525B";
+    colors.textTertiary;
   const storeTask = useMemo(
     () => downloads.find((t) => t.url === link.url),
     [downloads, link.url],
@@ -645,9 +652,9 @@ function DownloadItem({
       activeOpacity={0.7}
       className="flex-row items-center rounded-xl mb-1.5 px-3 py-2.5"
       style={{
-        backgroundColor: "#141417",
+        backgroundColor: colors.zincBgFull,
         borderWidth: 0.5,
-        borderColor: "#1E1E22",
+        borderColor: colors.bgSubtle,
       }}
     >
       {/* Quality badge */}
@@ -696,7 +703,7 @@ function DownloadItem({
         {isActive && progress > 0 && (
           <View
             className="mt-1.5 h-1 rounded-full overflow-hidden"
-            style={{ backgroundColor: "#222226" }}
+            style={{ backgroundColor: colors.bgSubtle }}
           >
             <View
               className="h-full rounded-full"
@@ -722,14 +729,18 @@ function DownloadItem({
           className="w-8 h-8 rounded-full items-center justify-center"
           style={{ backgroundColor: "rgba(34,197,94,0.15)" }}
         >
-          <Ionicons name="checkmark-circle" size={18} color="#22C55E" />
+          <Ionicons
+            name="checkmark-circle"
+            size={18}
+            color={colors.successGreen}
+          />
         </View>
       ) : (
         <View
           className="w-8 h-8 rounded-full items-center justify-center"
           style={{ backgroundColor: "rgba(212, 162, 55, 0.15)" }}
         >
-          <Ionicons name="download" size={16} color="#D4A237" />
+          <Ionicons name="download" size={16} color={colors.gold} />
         </View>
       )}
     </TouchableOpacity>
@@ -739,7 +750,7 @@ function DownloadItem({
 // ── Main Screen ──
 
 export default function NxshaDownloadScreen() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const rawParams = useLocalSearchParams<{ id: string[] }>();
   const webViewRef = useRef<WebView>(null);
@@ -837,7 +848,7 @@ export default function NxshaDownloadScreen() {
 
       // Download queued — toast appears automatically via context.tsx
       // Navigate to downloads page so user can see progress
-      router.push("/downloads");
+      nav.push("/downloads");
     },
     [
       params.type,
@@ -846,7 +857,7 @@ export default function NxshaDownloadScreen() {
       effectiveSeason,
       effectiveEpisode,
       enqueue,
-      router,
+      nav,
     ],
   );
 
@@ -877,8 +888,8 @@ export default function NxshaDownloadScreen() {
           break;
         }
         case "scrape-timeout":
-          console.warn("[Nxsha] Scrape timeout");
-          setSolveState("failed");
+          console.warn("[Nxsha] Scrape timeout — no links found");
+          setSolveState("no-links");
           break;
         default:
           break;
@@ -936,20 +947,19 @@ export default function NxshaDownloadScreen() {
         <StatusBar barStyle="light-content" />
         <View
           className="w-16 h-16 rounded-full items-center justify-center mb-5"
-          style={{ backgroundColor: "#141414" }}
+          style={{ backgroundColor: colors.bgCard }}
         >
-          <Ionicons name="download-outline" size={36} color="#52525B" />
+          <Ionicons
+            name="download-outline"
+            size={36}
+            color={colors.textTertiary}
+          />
         </View>
         <Text className="text-zinc-300 text-lg font-semibold mb-2">
           Download Unavailable
         </Text>
         <TouchableOpacity
-          onPress={() => {
-            try {
-              if (router.canGoBack()) router.back();
-              else router.push("/");
-            } catch {}
-          }}
+          onPress={() => nav.goBack({ fallback: "/(tabs)" })}
           className="bg-primary rounded-xl py-3 px-8"
           activeOpacity={0.8}
         >
@@ -960,7 +970,7 @@ export default function NxshaDownloadScreen() {
   }
 
   return (
-    <View className="flex-1" style={{ backgroundColor: "#000" }}>
+    <View className="flex-1" style={{ backgroundColor: colors.playerBg }}>
       <StatusBar barStyle="light-content" />
 
       {/* ── Fixed header ── */}
@@ -969,17 +979,12 @@ export default function NxshaDownloadScreen() {
         style={{ paddingTop: insets.top + 8, paddingBottom: 8 }}
       >
         <TouchableOpacity
-          onPress={() => {
-            try {
-              if (router.canGoBack()) router.back();
-              else router.push("/");
-            } catch {}
-          }}
+          onPress={() => nav.goBack({ fallback: "/(tabs)" })}
           className="w-9 h-9 rounded-full items-center justify-center"
           style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
           activeOpacity={0.7}
         >
-          <Ionicons name="close" size={20} color="#fff" />
+          <Ionicons name="close" size={20} color={colors.textPrimary} />
         </TouchableOpacity>
 
         <View className="flex-row items-center" style={{ gap: 8 }}>
@@ -993,7 +998,7 @@ export default function NxshaDownloadScreen() {
               <Ionicons
                 name="list-outline"
                 size={13}
-                color="#D4A237"
+                color={colors.gold}
                 style={{ marginRight: 4 }}
               />
               <Text className="text-amber-400 text-[11px] font-bold">
@@ -1013,10 +1018,10 @@ export default function NxshaDownloadScreen() {
             style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
             activeOpacity={0.7}
           >
-            <Ionicons name="refresh" size={18} color="#fff" />
+            <Ionicons name="refresh" size={18} color={colors.textPrimary} />
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => router.push("/downloads")}
+            onPress={() => nav.push("/downloads")}
             className="h-9 rounded-full flex-row items-center px-3"
             style={{ backgroundColor: "rgba(212,162,55,0.12)" }}
             activeOpacity={0.7}
@@ -1024,7 +1029,7 @@ export default function NxshaDownloadScreen() {
             <Ionicons
               name="download-outline"
               size={14}
-              color="#D4A237"
+              color={colors.gold}
               style={{ marginRight: 4 }}
             />
             <Text className="text-amber-400 text-[11px] font-bold">
@@ -1043,13 +1048,13 @@ export default function NxshaDownloadScreen() {
           <View
             className="rounded-3xl px-8 py-8 items-center"
             style={{
-              backgroundColor: "#0E0E11",
+              backgroundColor: colors.bgSurface,
               borderWidth: 0.5,
-              borderColor: "#1f1f1f",
+              borderColor: colors.border,
               minWidth: 220,
             }}
           >
-            <ActivityIndicator size="large" color="#D4A237" />
+            <ActivityIndicator size="large" color={colors.gold} />
             <Text className="text-white text-sm font-semibold mt-4">
               {solveState === "loading-page"
                 ? "Loading download page..."
@@ -1070,6 +1075,49 @@ export default function NxshaDownloadScreen() {
       )}
 
       {/* ── Failed state overlay ── */}
+      {solveState === "no-links" && !loadingPage && (
+        <View className="absolute top-[100px] left-4 right-4 z-20">
+          <View
+            className="rounded-2xl p-4"
+            style={{
+              backgroundColor: "rgba(239,68,68,0.08)",
+              borderWidth: 0.5,
+              borderColor: "rgba(239,68,68,0.25)",
+            }}
+          >
+            <View className="flex-row items-center mb-1.5" style={{ gap: 8 }}>
+              <View
+                className="w-8 h-8 rounded-full items-center justify-center"
+                style={{ backgroundColor: "rgba(239,68,68,0.15)" }}
+              >
+                <Ionicons name="alert-circle" size={16} color={colors.error} />
+              </View>
+              <View className="flex-1">
+                <Text className="text-red-400 text-sm font-bold">
+                  No links available
+                </Text>
+                <Text className="text-zinc-400 text-[11px] mt-0.5 leading-relaxed">
+                  This server has no downloadable links for this title. Try
+                  using another server instead.
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              onPress={() => {
+                setSolveState("loading-page");
+                setServers([]);
+                webViewRef.current?.reload();
+              }}
+              className="rounded-xl py-2.5 items-center mt-1"
+              style={{ backgroundColor: "rgba(239,68,68,0.15)" }}
+              activeOpacity={0.7}
+            >
+              <Text className="text-red-400 text-xs font-bold">Retry</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {solveState === "failed" && !loadingPage && (
         <View className="absolute top-[100px] left-4 right-4 z-20">
           <View
@@ -1085,7 +1133,7 @@ export default function NxshaDownloadScreen() {
                 className="w-8 h-8 rounded-full items-center justify-center"
                 style={{ backgroundColor: "rgba(239,68,68,0.15)" }}
               >
-                <Ionicons name="alert-circle" size={16} color="#ef4444" />
+                <Ionicons name="alert-circle" size={16} color={colors.error} />
               </View>
               <View className="flex-1">
                 <Text className="text-red-400 text-sm font-bold">
@@ -1130,7 +1178,7 @@ export default function NxshaDownloadScreen() {
             {/* Dark gradient overlay */}
             <View
               className="absolute inset-0"
-              style={{ backgroundColor: "#09090B" }}
+              style={{ backgroundColor: colors.bg }}
             />
 
             {/* Info row */}
@@ -1144,14 +1192,18 @@ export default function NxshaDownloadScreen() {
                   width: POSTER_W,
                   height: POSTER_H,
                   borderRadius: 14,
-                  backgroundColor: "#141417",
+                  backgroundColor: colors.zincBgFull,
                   borderWidth: 1,
-                  borderColor: "#1f1f1f",
+                  borderColor: colors.border,
                   alignItems: "center",
                   justifyContent: "center",
                 }}
               >
-                <Ionicons name="film-outline" size={28} color="#3f3f46" />
+                <Ionicons
+                  name="film-outline"
+                  size={28}
+                  color={colors.emptyIcon}
+                />
               </View>
 
               <View className="flex-1 ml-4 mb-1">
@@ -1190,14 +1242,18 @@ export default function NxshaDownloadScreen() {
                   style={{ gap: 10 }}
                 >
                   <View className="flex-row items-center" style={{ gap: 4 }}>
-                    <Ionicons name="server" size={12} color="#D4A237" />
+                    <Ionicons name="server" size={12} color={colors.gold} />
                     <Text className="text-amber-400 text-[11px] font-bold">
                       {organizedServers.length}
                     </Text>
                   </View>
                   <Text className="text-zinc-600 text-[10px]">·</Text>
                   <View className="flex-row items-center" style={{ gap: 4 }}>
-                    <Ionicons name="link" size={12} color="#A1A1AA" />
+                    <Ionicons
+                      name="link"
+                      size={12}
+                      color={colors.textSecondary}
+                    />
                     <Text className="text-zinc-400 text-[11px] font-medium">
                       {totalLinks} links
                     </Text>
@@ -1270,9 +1326,9 @@ export default function NxshaDownloadScreen() {
           <View
             className="mx-4 mt-2 rounded-2xl p-4"
             style={{
-              backgroundColor: "#0E0E11",
+              backgroundColor: colors.bgSurface,
               borderWidth: 0.5,
-              borderColor: "#1f1f1f",
+              borderColor: colors.border,
             }}
           >
             <View className="flex-row items-start" style={{ gap: 10 }}>
@@ -1280,7 +1336,7 @@ export default function NxshaDownloadScreen() {
                 className="w-8 h-8 rounded-full items-center justify-center flex-shrink-0"
                 style={{ backgroundColor: "rgba(212,162,55,0.1)" }}
               >
-                <Ionicons name="bulb-outline" size={16} color="#D4A237" />
+                <Ionicons name="bulb-outline" size={16} color={colors.gold} />
               </View>
               <View className="flex-1">
                 <Text className="text-zinc-300 text-xs font-bold mb-0.5">
@@ -1312,7 +1368,7 @@ export default function NxshaDownloadScreen() {
         <WebView
           ref={webViewRef}
           source={{ uri: downloadUrl }}
-          style={{ flex: 1, backgroundColor: "#000" }}
+          style={{ flex: 1, backgroundColor: colors.playerBg }}
           allowsFullscreenVideo={true}
           allowsInlineMediaPlayback={true}
           mediaPlaybackRequiresUserAction={false}

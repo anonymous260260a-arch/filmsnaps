@@ -10,31 +10,32 @@ import { View, Text, TouchableOpacity, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackIcon } from "../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
+import { colors } from "../theme/colors";
 
 export default function PrivacyScreen() {
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
 
   return (
     <View
       className="flex-1"
-      style={{ backgroundColor: "#070708", paddingTop: insets.top }}
+      style={{ backgroundColor: colors.bg, paddingTop: insets.top }}
     >
       {/* Header */}
       <View className="px-5 pt-4 pb-2 flex-row items-center">
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => nav.goBack({ fallback: "/(tabs)" })}
           className="w-9 h-9 rounded-full bg-zinc-800/60 items-center justify-center mr-3"
           activeOpacity={0.7}
         >
-          <BackIcon width={20} height={20} color="#F4F4F5" />
+          <BackIcon width={20} height={20} color={colors.textPrimary} />
         </TouchableOpacity>
         <Text
           style={{
             fontFamily: "PlayfairDisplay_700Bold",
             fontSize: 22,
-            color: "#F4F4F5",
+            color: colors.textPrimary,
           }}
         >
           Privacy Policy
@@ -47,7 +48,7 @@ export default function PrivacyScreen() {
       >
         <View
           className="w-16 h-0.5 mb-5"
-          style={{ backgroundColor: "#D4A237" }}
+          style={{ backgroundColor: colors.gold }}
         />
 
         <PBody>Last updated: July 2026</PBody>
@@ -148,7 +149,7 @@ function PSection({
     <View className="mb-5">
       <Text
         className="text-sm font-semibold mb-2"
-        style={{ color: "#D4A237", fontFamily: "Inter_600SemiBold" }}
+        style={{ color: colors.gold, fontFamily: "Inter_600SemiBold" }}
       >
         {title}
       </Text>
@@ -159,7 +160,7 @@ function PSection({
 
 function PBody({ children }: { children: React.ReactNode }) {
   return (
-    <Text className="text-sm leading-6" style={{ color: "#D4D4D8" }}>
+    <Text className="text-sm leading-6" style={{ color: colors.zinc300 }}>
       {children}
     </Text>
   );
@@ -167,7 +168,9 @@ function PBody({ children }: { children: React.ReactNode }) {
 
 function PBold({ children }: { children: React.ReactNode }) {
   return (
-    <Text style={{ fontFamily: "Inter_600SemiBold", color: "#F4F4F5" }}>
+    <Text
+      style={{ fontFamily: "Inter_600SemiBold", color: colors.textPrimary }}
+    >
       {children}
     </Text>
   );
@@ -176,10 +179,16 @@ function PBold({ children }: { children: React.ReactNode }) {
 function PBullet({ text }: { text: string }) {
   return (
     <View className="flex-row items-start mt-2">
-      <Text className="text-[10px] mt-1.5 mr-2.5" style={{ color: "#D4A237" }}>
+      <Text
+        className="text-[10px] mt-1.5 mr-2.5"
+        style={{ color: colors.gold }}
+      >
         ■
       </Text>
-      <Text className="text-sm leading-5 flex-1" style={{ color: "#D4D4D8" }}>
+      <Text
+        className="text-sm leading-5 flex-1"
+        style={{ color: colors.zinc300 }}
+      >
         {text}
       </Text>
     </View>

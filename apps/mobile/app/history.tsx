@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackIcon, ForwardIcon } from "../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { tmdbApi } from "../lib/api";
 import { MediaCard } from "../components/MediaCard";
@@ -28,6 +29,8 @@ import { EmptyState } from "../components/EmptyState";
 import type { Movie } from "@filmsnaps/shared";
 import type { WatchProgress } from "../lib/watchHistory";
 
+import { colors } from "../theme/colors";
+
 const NUM_COLUMNS = 3;
 const GAP = 8;
 const PADDING = 16;
@@ -36,7 +39,7 @@ function HistorySkeleton() {
   const insets = useSafeAreaInsets();
   return (
     <View
-      style={{ flex: 1, backgroundColor: "#070708", paddingTop: insets.top }}
+      style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}
     >
       <View
         style={{
@@ -52,7 +55,7 @@ function HistorySkeleton() {
             width: 80,
             height: 22,
             borderRadius: 4,
-            backgroundColor: "#1C1C20",
+            backgroundColor: colors.skeletonBg,
           }}
         />
         <View
@@ -60,7 +63,7 @@ function HistorySkeleton() {
             width: 48,
             height: 20,
             borderRadius: 4,
-            backgroundColor: "#1C1C20",
+            backgroundColor: colors.skeletonBg,
           }}
         />
       </View>
@@ -69,7 +72,7 @@ function HistorySkeleton() {
           key={i}
           style={{
             flexDirection: "row",
-            backgroundColor: "#141414",
+            backgroundColor: colors.skeletonBgAlt,
             borderRadius: 12,
             marginHorizontal: 16,
             marginBottom: 8,
@@ -77,7 +80,11 @@ function HistorySkeleton() {
           }}
         >
           <View
-            style={{ width: 68, height: 102, backgroundColor: "#1C1C20" }}
+            style={{
+              width: 68,
+              height: 102,
+              backgroundColor: colors.skeletonBg,
+            }}
           />
           <View style={{ flex: 1, padding: 10, justifyContent: "center" }}>
             <View
@@ -85,7 +92,7 @@ function HistorySkeleton() {
                 width: "70%",
                 height: 14,
                 borderRadius: 4,
-                backgroundColor: "#1C1C20",
+                backgroundColor: colors.skeletonBg,
               }}
             />
             <View
@@ -93,7 +100,7 @@ function HistorySkeleton() {
                 width: "40%",
                 height: 10,
                 borderRadius: 4,
-                backgroundColor: "#1C1C20",
+                backgroundColor: colors.skeletonBg,
                 marginTop: 6,
               }}
             />
@@ -102,7 +109,7 @@ function HistorySkeleton() {
                 width: "100%",
                 height: 4,
                 borderRadius: 2,
-                backgroundColor: "#1C1C20",
+                backgroundColor: colors.skeletonBg,
                 marginTop: 8,
               }}
             />
@@ -118,7 +125,7 @@ function HistorySkeleton() {
                   width: 50,
                   height: 10,
                   borderRadius: 4,
-                  backgroundColor: "#1C1C20",
+                  backgroundColor: colors.skeletonBg,
                 }}
               />
               <View
@@ -126,7 +133,7 @@ function HistorySkeleton() {
                   width: 40,
                   height: 10,
                   borderRadius: 4,
-                  backgroundColor: "#1C1C20",
+                  backgroundColor: colors.skeletonBg,
                 }}
               />
             </View>
@@ -138,6 +145,7 @@ function HistorySkeleton() {
 }
 
 export default function HistoryScreen() {
+  const nav = useSafeNavigation();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
@@ -215,7 +223,7 @@ export default function HistoryScreen() {
           staleTime: 1000 * 60 * 60,
         });
         router.prefetch(`/tv/${id}`);
-        router.push(`/watch/tv/${id}/${season}/${episode}`);
+        nav.push(`/watch/tv/${id}/${season}/${episode}`);
       } else {
         queryClient.prefetchQuery({
           queryKey: ["movie", id],
@@ -223,10 +231,10 @@ export default function HistoryScreen() {
           staleTime: 1000 * 60 * 60,
         });
         router.prefetch(`/movie/${id}`);
-        router.push(`/watch/movie/${id}`);
+        nav.push(`/watch/movie/${id}`);
       }
     },
-    [router, queryClient],
+    [nav, router, queryClient],
   );
 
   const formatDate = (ts: number): string => {
@@ -258,23 +266,23 @@ export default function HistoryScreen() {
   return (
     <View
       className="flex-1 bg-void"
-      style={{ backgroundColor: "#070708", paddingTop: insets.top }}
+      style={{ backgroundColor: colors.bg, paddingTop: insets.top }}
     >
       {/* Header */}
       <View className="px-5 pt-4 pb-2 flex-row items-center justify-between">
         <View className="flex-row items-center">
           <TouchableOpacity
-            onPress={() => router.back()}
+            onPress={() => nav.goBack({ fallback: "/(tabs)" })}
             className="w-9 h-9 rounded-full bg-zinc-800/60 items-center justify-center mr-3"
             activeOpacity={0.7}
           >
-            <BackIcon width={20} height={20} color="#F4F4F5" />
+            <BackIcon width={20} height={20} color={colors.textPrimary} />
           </TouchableOpacity>
           <Text
             style={{
               fontFamily: "PlayfairDisplay_700Bold",
               fontSize: 22,
-              color: "#F4F4F5",
+              color: colors.textPrimary,
             }}
           >
             History
@@ -288,7 +296,7 @@ export default function HistoryScreen() {
           title="No history yet"
           message="Movies and TV shows you watch will appear here."
           actionLabel="Browse films"
-          onAction={() => router.push("/")}
+          onAction={() => nav.push("/")}
         />
       ) : (
         <FlatList
@@ -310,15 +318,15 @@ export default function HistoryScreen() {
               onRefresh={() => {
                 loadHistory(true);
               }}
-              tintColor="#D4A237"
-              colors={["#D4A237"]}
+              tintColor={colors.gold}
+              colors={[colors.gold]}
             />
           }
           ListFooterComponent={
             <>
               {displayCount < entries.length ? (
                 <View className="self-center mt-4 mb-3 py-1">
-                  <ActivityIndicator size="small" color="#D4A237" />
+                  <ActivityIndicator size="small" color={colors.gold} />
                 </View>
               ) : entries.length > 0 ? (
                 <View className="self-center mt-4 mb-3">
@@ -347,7 +355,11 @@ export default function HistoryScreen() {
                 className="self-center mb-8"
               >
                 <View className="flex-row items-center">
-                  <Ionicons name="trash-outline" size={14} color="#ef4444" />
+                  <Ionicons
+                    name="trash-outline"
+                    size={14}
+                    color={colors.error}
+                  />
                   <Text className="text-red-400 text-xs ml-1.5">
                     Clear History
                   </Text>
@@ -372,7 +384,7 @@ export default function HistoryScreen() {
                 onPress={() => handleItemPress(p)}
                 activeOpacity={0.7}
                 className="flex-row bg-elevated rounded-xl overflow-hidden"
-                style={{ backgroundColor: "#141414" }}
+                style={{ backgroundColor: colors.bgCard }}
               >
                 {/* Poster */}
                 <View style={{ width: 68, height: 102 }}>
@@ -385,12 +397,12 @@ export default function HistoryScreen() {
                   ) : (
                     <View
                       className="flex-1 items-center justify-center"
-                      style={{ backgroundColor: "#1f1f1f" }}
+                      style={{ backgroundColor: colors.bgTop }}
                     >
                       <Ionicons
                         name={p.mediaType === "tv" ? "tv" : "film"}
                         size={24}
-                        color="#3f3f3f"
+                        color={colors.iconMuted}
                       />
                     </View>
                   )}
@@ -427,13 +439,15 @@ export default function HistoryScreen() {
                   {/* Progress bar */}
                   <View
                     className="h-1 rounded-full mt-2 overflow-hidden"
-                    style={{ backgroundColor: "#222226" }}
+                    style={{ backgroundColor: colors.progressTrack }}
                   >
                     <View
                       className="h-full rounded-full"
                       style={{
                         width: `${Math.round(pct * 100)}%`,
-                        backgroundColor: isFullyWatched ? "#22c55e" : "#D4A237",
+                        backgroundColor: isFullyWatched
+                          ? colors.successGreen
+                          : colors.gold,
                       }}
                     />
                   </View>
@@ -445,16 +459,16 @@ export default function HistoryScreen() {
                         <Ionicons
                           name="checkmark-circle"
                           size={12}
-                          color="#22c55e"
+                          color={colors.successGreen}
                         />
                       ) : p.completed ? (
                         <Ionicons
                           name="checkmark-circle"
                           size={12}
-                          color="#D4A237"
+                          color={colors.gold}
                         />
                       ) : (
-                        <Ionicons name="play" size={10} color="#D4A237" />
+                        <Ionicons name="play" size={10} color={colors.gold} />
                       )}
                       <Text
                         className={`text-xs font-semibold ${isFullyWatched ? "text-green-500" : "text-primary"}`}
@@ -470,7 +484,11 @@ export default function HistoryScreen() {
 
                 {/* Chevron */}
                 <View className="justify-center pr-3">
-                  <ForwardIcon width={16} height={16} color="#3f3f3f" />
+                  <ForwardIcon
+                    width={16}
+                    height={16}
+                    color={colors.iconMuted}
+                  />
                 </View>
               </TouchableOpacity>
             );

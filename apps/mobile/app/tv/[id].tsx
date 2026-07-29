@@ -9,10 +9,12 @@ import {
   useWindowDimensions,
   Platform,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
+import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { BackIcon, ShareIcon } from "../../components/Icons";
+import { colors } from "../../theme/colors";
 import { getImageUrl, getTrailerKey } from "@filmsnaps/shared";
 import { ProgressiveImage } from "../../components/ProgressiveImage";
 import { typography } from "../../lib/typography";
@@ -23,6 +25,7 @@ import { CastCarousel } from "../../components/CastCarousel";
 import { TrailerModal } from "../../components/TrailerModal";
 import { DetailSkeleton } from "../../components/Skeletons";
 import { DownloadSheet } from "../../components/DownloadSheet";
+import { useMediaDownloadState } from "../../lib/download/context";
 import { SeasonPicker } from "../../components/SeasonPicker";
 import {
   isBookmarked,
@@ -51,7 +54,7 @@ export default function TVDetailScreen() {
   const [trailerOpen, setTrailerOpen] = useState(false);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
   const { id } = useLocalSearchParams<{ id: string }>();
-  const router = useRouter();
+  const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = useWindowDimensions();
   const { data, isLoading } = useTVDetails(id!);
@@ -67,6 +70,7 @@ export default function TVDetailScreen() {
   const [bookmarked, setBookmarked] = useState(false);
   const [resumeState, setResumeState] = useState<WatchProgress | null>(null);
   const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
+  const downloadSummary = useMediaDownloadState("tv", String(id));
 
   useEffect(() => {
     if (id) {
@@ -110,6 +114,13 @@ export default function TVDetailScreen() {
     });
   }, [id, title]);
 
+  const handleDownloadServer = useCallback(
+    (server: string) => {
+      nav.push(`/download/${server}/tv/${id}`);
+    },
+    [id, nav],
+  );
+
   if (isLoading) {
     return <DetailSkeleton />;
   }
@@ -118,9 +129,9 @@ export default function TVDetailScreen() {
     return (
       <View
         className="flex-1 items-center justify-center bg-void"
-        style={{ backgroundColor: "#070708" }}
+        style={{ backgroundColor: colors.bg }}
       >
-        <Ionicons name="tv-outline" size={48} color="#52525B" />
+        <Ionicons name="tv-outline" size={48} color={colors.textTertiary} />
         <Text className="text-text-secondary mt-3">Show not found</Text>
       </View>
     );
@@ -134,7 +145,7 @@ export default function TVDetailScreen() {
     show.seasons?.filter((s: any) => s.season_number > 0).length ?? 0;
 
   return (
-    <View className="flex-1 bg-void" style={{ backgroundColor: "#070708" }}>
+    <View className="flex-1 bg-void" style={{ backgroundColor: colors.bg }}>
       <Animated.ScrollView
         showsVerticalScrollIndicator={false}
         onScroll={Animated.event(
@@ -182,7 +193,7 @@ export default function TVDetailScreen() {
           ) : (
             <View
               style={{
-                backgroundColor: "#16161A",
+                backgroundColor: colors.bgElevated,
                 position: "absolute",
                 top: 0,
                 left: 0,
@@ -237,10 +248,10 @@ export default function TVDetailScreen() {
               borderColor: "rgba(255,255,255,0.1)",
             }}
           >
-            <Ionicons name="play" size={10} color="#F4F4F5" />
+            <Ionicons name="play" size={10} color={colors.textPrimary} />
             <Text
               style={{
-                color: "#F4F4F5",
+                color: colors.textPrimary,
                 fontSize: 10,
                 fontFamily: "Inter_500Medium",
                 marginLeft: 4,
@@ -261,7 +272,7 @@ export default function TVDetailScreen() {
           }}
         >
           <TouchableOpacity
-            onPress={() => router.back()}
+            onPress={() => nav.goBack({ fallback: "/(tabs)" })}
             activeOpacity={0.7}
             style={{
               flexDirection: "row",
@@ -272,10 +283,10 @@ export default function TVDetailScreen() {
               paddingVertical: 6,
             }}
           >
-            <BackIcon width={18} height={18} color="#F4F4F5" />
+            <BackIcon width={18} height={18} color={colors.textPrimary} />
             <Text
               style={{
-                color: "#F4F4F5",
+                color: colors.textPrimary,
                 fontSize: 12,
                 marginLeft: 2,
                 fontFamily: "Inter_500Medium",
@@ -299,7 +310,7 @@ export default function TVDetailScreen() {
                   borderRadius: 8,
                   ...Platform.select({
                     ios: {
-                      shadowColor: "#000",
+                      shadowColor: colors.playerBg,
                       shadowOffset: { width: 0, height: 8 },
                       shadowOpacity: 0.55,
                       shadowRadius: 16,
@@ -315,10 +326,14 @@ export default function TVDetailScreen() {
                 style={{
                   width: POSTER_WIDTH,
                   height: POSTER_WIDTH * 1.5,
-                  backgroundColor: "#16161A",
+                  backgroundColor: colors.bgElevated,
                 }}
               >
-                <Ionicons name="tv-outline" size={28} color="#52525B" />
+                <Ionicons
+                  name="tv-outline"
+                  size={28}
+                  color={colors.textTertiary}
+                />
               </View>
             )}
 
@@ -333,7 +348,7 @@ export default function TVDetailScreen() {
                 <Text
                   style={[
                     typography.caption,
-                    { marginTop: 2, color: "#A1A1AA" },
+                    { marginTop: 2, color: colors.textSecondary },
                   ]}
                 >
                   {year}
@@ -346,7 +361,7 @@ export default function TVDetailScreen() {
                     <View
                       key={g.id}
                       style={{
-                        backgroundColor: "#16161A",
+                        backgroundColor: colors.bgElevated,
                         borderRadius: 4,
                         paddingHorizontal: 8,
                         paddingVertical: 3,
@@ -354,7 +369,7 @@ export default function TVDetailScreen() {
                     >
                       <Text
                         style={{
-                          color: "#A1A1AA",
+                          color: colors.textSecondary,
                           fontSize: 10,
                           fontFamily: "Inter_500Medium",
                         }}
@@ -382,7 +397,7 @@ export default function TVDetailScreen() {
                   >
                     <Text
                       style={{
-                        color: "#D4A237",
+                        color: colors.gold,
                         fontSize: 11,
                         fontWeight: "700",
                         marginRight: 3,
@@ -396,7 +411,7 @@ export default function TVDetailScreen() {
                       <Ionicons
                         name="layers-outline"
                         size={14}
-                        color="#52525B"
+                        color={colors.textTertiary}
                       />
                       <Text className="text-text-tertiary text-sm ml-1">
                         {seasonCount} {seasonCount === 1 ? "Season" : "Seasons"}
@@ -414,7 +429,7 @@ export default function TVDetailScreen() {
               <Text
                 style={[
                   typography.title,
-                  { marginBottom: 8, color: "#F4F4F5" },
+                  { marginBottom: 8, color: colors.textPrimary },
                 ]}
               >
                 Overview
@@ -433,7 +448,7 @@ export default function TVDetailScreen() {
                 >
                   <Text
                     style={{
-                      color: "#D4A237",
+                      color: colors.gold,
                       fontSize: 12,
                       fontFamily: "Inter_500Medium",
                     }}
@@ -458,12 +473,12 @@ export default function TVDetailScreen() {
                   resumeState.percent < 0.95
                     ? `?t=${Math.floor(resumeState.currentTime)}&backdrop=${show.backdrop_path || ""}`
                     : `?backdrop=${show.backdrop_path || ""}`;
-                router.push(`${base}${qs}`);
+                nav.push(`${base}${qs}`);
               }}
               activeOpacity={0.9}
               style={{
                 flex: 1,
-                backgroundColor: "#D4A237",
+                backgroundColor: colors.gold,
                 borderRadius: 10,
                 paddingVertical: 14,
                 flexDirection: "row",
@@ -472,7 +487,7 @@ export default function TVDetailScreen() {
                 overflow: "hidden",
                 ...Platform.select({
                   ios: {
-                    shadowColor: "#D4A237",
+                    shadowColor: colors.gold,
                     shadowOffset: { width: 0, height: 4 },
                     shadowOpacity: 0.3,
                     shadowRadius: 8,
@@ -484,14 +499,14 @@ export default function TVDetailScreen() {
               <Ionicons
                 name="play"
                 size={18}
-                color="#070708"
+                color={colors.bg}
                 style={{ marginRight: 8 }}
               />
               <Text
                 style={{
                   fontFamily: "Inter_600SemiBold",
                   fontSize: 14,
-                  color: "#070708",
+                  color: colors.bg,
                 }}
               >
                 {resumeState && resumeState.percent >= 0.95
@@ -529,22 +544,6 @@ export default function TVDetailScreen() {
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => setDownloadSheetOpen(true)}
-              activeOpacity={0.8}
-              accessibilityLabel="Download options"
-              style={{
-                width: 48,
-                borderWidth: 0.5,
-                borderColor: "#222226",
-                borderRadius: 10,
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Ionicons name="download-outline" size={20} color="#A1A1AA" />
-            </TouchableOpacity>
-
-            <TouchableOpacity
               onPress={toggleBookmark}
               activeOpacity={0.8}
               accessibilityLabel={
@@ -556,7 +555,7 @@ export default function TVDetailScreen() {
                   ? "rgba(232,160,32,0.15)"
                   : "transparent",
                 borderWidth: 0.5,
-                borderColor: bookmarked ? "#D4A237" : "#222226",
+                borderColor: bookmarked ? colors.gold : colors.progressTrack,
                 borderRadius: 10,
                 alignItems: "center",
                 justifyContent: "center",
@@ -566,12 +565,12 @@ export default function TVDetailScreen() {
               <Ionicons
                 name={bookmarked ? "bookmark" : "bookmark-outline"}
                 size={20}
-                color={bookmarked ? "#D4A237" : "#A1A1AA"}
+                color={bookmarked ? colors.gold : colors.textSecondary}
               />
               {bookmarked && (
                 <Text
                   style={{
-                    color: "#D4A237",
+                    color: colors.gold,
                     fontSize: 8,
                     fontFamily: "Inter_600SemiBold",
                     marginTop: 2,
@@ -582,6 +581,27 @@ export default function TVDetailScreen() {
               )}
             </TouchableOpacity>
 
+            {/* Download */}
+            <TouchableOpacity
+              onPress={() => setDownloadSheetOpen(true)}
+              activeOpacity={0.8}
+              accessibilityLabel="Download options"
+              style={{
+                width: 48,
+                borderWidth: 0.5,
+                borderColor: colors.progressTrack,
+                borderRadius: 10,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Ionicons
+                name="download-outline"
+                size={20}
+                color={colors.textSecondary}
+              />
+            </TouchableOpacity>
+
             <TouchableOpacity
               onPress={handleShare}
               activeOpacity={0.8}
@@ -589,19 +609,22 @@ export default function TVDetailScreen() {
               style={{
                 width: 48,
                 borderWidth: 0.5,
-                borderColor: "#222226",
+                borderColor: colors.progressTrack,
                 borderRadius: 10,
                 alignItems: "center",
                 justifyContent: "center",
               }}
             >
-              <ShareIcon width={20} height={20} color="#A1A1AA" />
+              <ShareIcon width={20} height={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
           {/* Season picker (TV only) */}
           <SeasonPicker
             tmdbId={id!}
+            title={show.name}
+            posterPath={show.poster_path}
+            downloadSummary={downloadSummary}
             seasons={(show.seasons ?? [])
               .filter((s: any) => s.season_number > 0 && s.episode_count > 0)
               .map((s: any) => ({
@@ -622,7 +645,7 @@ export default function TVDetailScreen() {
               <MediaCarousel
                 title="Similar Shows"
                 data={show.similar.results}
-                onItemPress={(item) => router.push(`/tv/${item.id}`)}
+                onItemPress={(item) => nav.push(`/tv/${item.id}`)}
               />
             </View>
           )}
@@ -638,15 +661,14 @@ export default function TVDetailScreen() {
         onClose={() => setTrailerOpen(false)}
       />
 
-      {/* Download Sheet */}
+      {/* Quality Picker Sheet (long-press) */}
       <DownloadSheet
         visible={downloadSheetOpen}
         onClose={() => setDownloadSheetOpen(false)}
         mediaType="tv"
         tmdbId={id!}
         title={title}
-        posterPath={show?.poster_path}
-        backdropPath={show?.backdrop_path}
+        onSelectServer={handleDownloadServer}
       />
     </View>
   );

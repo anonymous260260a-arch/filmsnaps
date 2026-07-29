@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Platform, View, Text, StyleSheet } from "react-native";
 import { BlurView } from "expo-blur";
 import DownloadBanner from "../../components/DownloadBanner";
+import { colors } from "../../theme/colors";
 
 /**
  * Tab bar styled per the cinematic design system:
@@ -34,14 +35,14 @@ function TabIcon({
       <Ionicons
         name={focused ? activeIcon : inactiveIcon}
         size={22}
-        color={focused ? "#D4A237" : "#52525b"}
+        color={focused ? colors.gold : colors.textTertiary}
       />
       <Text
         style={{
           fontSize: 10,
           fontFamily: "Inter_500Medium",
           marginTop: 3,
-          color: focused ? "#D4A237" : "#52525b",
+          color: focused ? colors.gold : colors.textTertiary,
         }}
       >
         {label}
@@ -53,7 +54,7 @@ function TabIcon({
             width: 20,
             height: 2,
             borderRadius: 1,
-            backgroundColor: "#D4A237",
+            backgroundColor: colors.gold,
             marginTop: 3,
           }}
         />
@@ -74,15 +75,16 @@ export default function TabLayout() {
           headerShown: false,
           tabBarShowLabel: false,
           tabBarStyle: {
-            backgroundColor: Platform.OS === "ios" ? "transparent" : "#0E0E11",
-            borderTopColor: "#222226",
+            backgroundColor:
+              Platform.OS === "ios" ? "transparent" : colors.bgSurface,
+            borderTopColor: colors.progressTrack,
             borderTopWidth: 0.5,
             paddingBottom: bottomInset + 4,
             paddingTop: 8,
             height: 72 + bottomInset,
           },
-          tabBarActiveTintColor: "#D4A237",
-          tabBarInactiveTintColor: "#52525b",
+          tabBarActiveTintColor: colors.gold,
+          tabBarInactiveTintColor: colors.textTertiary,
           tabBarBackground: () =>
             Platform.OS === "ios" ? (
               <BlurView
