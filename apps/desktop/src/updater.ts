@@ -12,32 +12,46 @@
  * can show download progress, "restart to update" prompts, etc.
  */
 
-import { autoUpdater, UpdateInfo } from 'electron-updater';
-import { BrowserWindow } from 'electron';
+import { BrowserWindow } from "electron";
 
-// ── Logging ──
+// Lazy-loaded — electron-updater crashes outside production builds
+// because it reads app.getVersion() at module init time
+let _autoUpdater: any = null;
 
-autoUpdater.logger = console;
-autoUpdater.autoDownload = false; // We control when to download
-autoUpdater.autoInstallOnAppQuit = true;
+function getAutoUpdater(): any {
+  if (!_autoUpdater) {
+    const mod = require("electron-updater");
+    _autoUpdater = mod.autoUpdater;
+    _autoUpdater.logger = console;
+    _autoUpdater.autoDownload = false;
+    _autoUpdater.autoInstallOnAppQuit = true;
+  }
+  return _autoUpdater;
+}
 
 // ── IPC Channels ──
 
 const CHANNELS = {
-  STATUS: 'update:status',
-  PROGRESS: 'update:progress',
-  AVAILABLE: 'update:available',
-  NOT_AVAILABLE: 'update:not-available',
-  ERROR: 'update:error',
+  STATUS: "update:status",
+  PROGRESS: "update:progress",
+  AVAILABLE: "update:available",
+  NOT_AVAILABLE: "update:not-available",
+  ERROR: "update:error",
 } as const;
 
 type UpdateStatus =
-  | { type: 'checking' }
-  | { type: 'available'; version: string; releaseNotes?: string }
-  | { type: 'downloading'; percent: number; bytesPerSecond: number; total: number; transferred: number }
-  | { type: 'downloaded'; version: string }
-  | { type: 'not-available' }
-  | { type: 'error'; message: string };
+  | { type: "checking" }
+  | { type: "available"; version: string; releaseNotes?: string }
+  | {
+      type: "downloading";
+      percent: number;
+      bytesPerSecond: number;
+      total: number;
+      transferred: number;
+    }
+  | { type: "downloaded"; version: string }
+  | { type: "not-available" }
+  | { type: "error"; message: string };
 
 // ── Status dispatcher ──
 
@@ -48,51 +62,61 @@ function sendStatus(status: UpdateStatus): void {
   }
 }
 
-// ── Event Handlers ──
+// ── Event Handlers (lazy — only attached when initUpdater is called) ──
 
-autoUpdater.on('checking-for-update', () => {
-  console.log('[Updater] Checking for updates...');
-  sendStatus({ type: 'checking' });
-});
+let _handlersAttached = false;
 
-autoUpdater.on('update-available', (info: UpdateInfo) => {
-  console.log(`[Updater] Update available: v${info.version}`);
-  sendStatus({
-    type: 'available',
-    version: info.version,
-    releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined,
+function attachHandlers(): void {
+  if (_handlersAttached) return;
+  _handlersAttached = true;
+
+  const a = getAutoUpdater();
+
+  a.on("checking-for-update", () => {
+    console.log("[Updater] Checking for updates...");
+    sendStatus({ type: "checking" });
   });
-  // Auto-start download
-  autoUpdater.downloadUpdate().catch((err) => {
-    console.error('[Updater] Download failed:', err);
-    sendStatus({ type: 'error', message: err.message });
+
+  a.on("update-available", (info: any) => {
+    console.log(`[Updater] Update available: v${info.version}`);
+    sendStatus({
+      type: "available",
+      version: info.version,
+      releaseNotes:
+        typeof info.releaseNotes === "string" ? info.releaseNotes : undefined,
+    });
+    // Auto-start download
+    a.downloadUpdate().catch((err: any) => {
+      console.error("[Updater] Download failed:", err);
+      sendStatus({ type: "error", message: err.message });
+    });
   });
-});
 
-autoUpdater.on('update-not-available', () => {
-  console.log('[Updater] No updates available');
-  sendStatus({ type: 'not-available' });
-});
-
-autoUpdater.on('download-progress', (progress) => {
-  sendStatus({
-    type: 'downloading',
-    percent: Math.round(progress.percent),
-    bytesPerSecond: progress.bytesPerSecond,
-    total: progress.total,
-    transferred: progress.transferred,
+  a.on("update-not-available", () => {
+    console.log("[Updater] No updates available");
+    sendStatus({ type: "not-available" });
   });
-});
 
-autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
-  console.log(`[Updater] Update downloaded: v${info.version}`);
-  sendStatus({ type: 'downloaded', version: info.version });
-});
+  a.on("download-progress", (progress: any) => {
+    sendStatus({
+      type: "downloading",
+      percent: Math.round(progress.percent),
+      bytesPerSecond: progress.bytesPerSecond,
+      total: progress.total,
+      transferred: progress.transferred,
+    });
+  });
 
-autoUpdater.on('error', (err: Error) => {
-  console.error('[Updater] Error:', err.message);
-  sendStatus({ type: 'error', message: err.message });
-});
+  a.on("update-downloaded", (info: any) => {
+    console.log(`[Updater] Update downloaded: v${info.version}`);
+    sendStatus({ type: "downloaded", version: info.version });
+  });
+
+  a.on("error", (err: Error) => {
+    console.error("[Updater] Error:", err.message);
+    sendStatus({ type: "error", message: err.message });
+  });
+}
 
 // ── Public API ──
 
@@ -102,17 +126,21 @@ autoUpdater.on('error', (err: Error) => {
  */
 export function initUpdater(): void {
   // In dev, don't actually check — only in production builds
-  if (process.argv.includes('--dev')) {
-    console.log('[Updater] Skipping update check in dev mode');
+  if (process.argv.includes("--dev")) {
+    console.log("[Updater] Skipping update check in dev mode");
     return;
   }
 
+  attachHandlers();
+
   // Give the app a moment to fully boot, then check
   setTimeout(() => {
-    console.log('[Updater] Starting update check...');
-    autoUpdater.checkForUpdates().catch((err) => {
-      console.error('[Updater] Check failed:', err.message);
-    });
+    console.log("[Updater] Starting update check...");
+    getAutoUpdater()
+      .checkForUpdates()
+      .catch((err: any) => {
+        console.error("[Updater] Check failed:", err.message);
+      });
   }, 5000);
 }
 
@@ -120,16 +148,18 @@ export function initUpdater(): void {
  * Install the downloaded update and restart the app.
  */
 export function quitAndInstall(): void {
-  autoUpdater.quitAndInstall(true, true);
+  getAutoUpdater().quitAndInstall(true, true);
 }
 
 /**
  * Check for updates again (manual trigger).
  */
 export function checkForUpdates(): void {
-  autoUpdater.checkForUpdates().catch((err) => {
-    console.error('[Updater] Manual check failed:', err.message);
-  });
+  getAutoUpdater()
+    .checkForUpdates()
+    .catch((err: any) => {
+      console.error("[Updater] Manual check failed:", err.message);
+    });
 }
 
 export { CHANNELS };

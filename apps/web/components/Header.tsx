@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Search,
   Menu,
@@ -14,20 +14,25 @@ import {
   ArrowLeft,
   Download,
   Clock,
-} from 'lucide-react';
-import { useWatchlist } from '@/hooks/useWatchlist';
-import { GlassButton } from '@/components/ui/glass-button';
+} from "lucide-react";
+import { useWatchlist } from "@/hooks/useWatchlist";
+import { GlassButton } from "@/components/ui/glass-button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { useAuth } from './AuthProvider';
-import { useToast } from '@/hooks/use-toast';
-import { tmdbApi, getImageUrl, rankSearchResults, smartSearch } from '@/lib/tmdb';
-import { useDebounce } from '@/hooks/useDebounce';
-import { useQuery } from '@tanstack/react-query';
+} from "@/components/ui/dropdown-menu";
+import { useAuth } from "./AuthProvider";
+import { useToast } from "@/hooks/use-toast";
+import {
+  tmdbApi,
+  getImageUrl,
+  rankSearchResults,
+  smartSearch,
+} from "@/lib/tmdb";
+import { useDebounce } from "@/hooks/useDebounce";
+import { useQuery } from "@tanstack/react-query";
 
 export function Header() {
   const pathname = usePathname();
@@ -45,7 +50,7 @@ export function Header() {
   const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [isResendingVerification, setIsResendingVerification] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState("");
   const debouncedQuery = useDebounce(searchQuery, 300);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchDropdownRef = useRef<HTMLDivElement>(null);
@@ -55,26 +60,26 @@ export function Header() {
 
   // Detect Electron desktop environment
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.electronAPI?.isDesktop) {
+    if (typeof window !== "undefined" && window.electronAPI?.isDesktop) {
       setIsDesktop(true);
     }
   }, []);
 
   const navLinks = useMemo(
     () => [
-      { href: '/', label: 'Home' },
-      { href: '/movie', label: 'Movies' },
-      { href: '/tv', label: 'TV Shows' },
-      { href: '/saved', label: 'Saved', count: savedMovies?.length },
-      { href: '/history', label: 'History' },
-      ...(!isDesktop ? [{ href: '/download', label: 'Download' }] : []),
+      { href: "/", label: "Home" },
+      { href: "/movie", label: "Movies" },
+      { href: "/tv", label: "TV Shows" },
+      { href: "/saved", label: "Saved", count: savedMovies?.length },
+      { href: "/history", label: "History" },
+      ...(!isDesktop ? [{ href: "/download", label: "Download" }] : []),
     ],
-    [savedMovies?.length, isDesktop]
+    [savedMovies?.length, isDesktop],
   );
 
   // Search suggestions
   const { data: searchResults } = useQuery({
-    queryKey: ['header-search', debouncedQuery],
+    queryKey: ["header-search", debouncedQuery],
     queryFn: () => smartSearch(debouncedQuery),
     enabled: debouncedQuery.length > 1,
     staleTime: 30 * 1000,
@@ -89,18 +94,18 @@ export function Header() {
   // Keyboard shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         setSearchOpen((prev) => !prev);
       }
-      if (e.key === 'Escape') {
+      if (e.key === "Escape") {
         setSearchOpen(false);
         setMobileSearchOpen(false);
         setMenuOpen(false);
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   // Focus input when desktop search opens
@@ -114,7 +119,7 @@ export function Header() {
   useEffect(() => {
     setSearchOpen(false);
     setMobileSearchOpen(false);
-    setSearchQuery('');
+    setSearchQuery("");
   }, [pathname]);
 
   // Close desktop search dropdown when clicking outside
@@ -128,38 +133,53 @@ export function Header() {
         !searchBtnRef.current.contains(e.target as Node)
       ) {
         setSearchOpen(false);
-        setSearchQuery('');
+        setSearchQuery("");
       }
     };
     const timer = setTimeout(() => {
-      document.addEventListener('mousedown', handleClick);
+      document.addEventListener("mousedown", handleClick);
     }, 0);
     return () => {
       clearTimeout(timer);
-      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener("mousedown", handleClick);
     };
   }, [searchOpen]);
 
   // Disable body scroll when menu is open
   useEffect(() => {
-    document.body.style.overflow = menuOpen ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
+    document.body.style.overflow = menuOpen ? "hidden" : "";
+    return () => {
+      document.body.style.overflow = "";
+    };
   }, [menuOpen]);
 
   const handleResetPassword = useCallback(async () => {
     if (!user?.email || isResettingPassword) return;
-    toast({ title: 'Auth disabled', description: 'Password reset is not available right now.' });
+    toast({
+      title: "Auth disabled",
+      description: "Password reset is not available right now.",
+    });
   }, [user?.email, isResettingPassword, toast]);
 
   const handleResendVerification = useCallback(async () => {
     if (!user?.email || isResendingVerification) return;
-    toast({ title: 'Auth disabled', description: 'Email verification is not available right now.' });
+    toast({
+      title: "Auth disabled",
+      description: "Email verification is not available right now.",
+    });
   }, [user?.email, isResendingVerification, toast]);
 
   const isActive = (href: string) => {
-    if (href === '/') return pathname === '/';
+    if (href === "/") return pathname === "/";
     return pathname.startsWith(href);
   };
+
+  // ── Desktop shell takes over chrome ──
+  // On Electron the global DesktopAppShell (sidebar + top bar) replaces
+  // this website header entirely — including nav, search, and window chrome.
+  // Keeping the Header mounted but returning null preserves all 8 mount
+  // sites without editing them, and leaves the web build untouched.
+  if (isDesktop) return null;
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -167,15 +187,15 @@ export function Header() {
       setSearchOpen(false);
       setMobileSearchOpen(false);
       router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
-      setSearchQuery('');
+      setSearchQuery("");
     }
   };
 
   const handleSuggestionClick = (item: any) => {
     setSearchOpen(false);
     setMobileSearchOpen(false);
-    setSearchQuery('');
-    const type = item.media_type || 'movie';
+    setSearchQuery("");
+    const type = item.media_type || "movie";
     router.push(`/${type}/${item.id}`);
   };
 
@@ -188,15 +208,21 @@ export function Header() {
     <header className="fixed top-0 left-0 right-0 z-50 glass border-b border-white/[0.04] transition-all">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-
           {/* ── Logo ── */}
-          <Link href="/" className="flex items-center gap-2 group flex-shrink-0">
+          <Link
+            href="/"
+            className="flex items-center gap-2 group flex-shrink-0"
+          >
             <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-[#D4A237]/10 group-hover:bg-[#D4A237]/20 transition-all duration-300 overflow-hidden">
-              <img src="/logo.png" alt="FilmSnaps" className="h-7 w-7 object-contain" />
+              <img
+                src="/logo.png"
+                alt="FilmSnaps"
+                className="h-7 w-7 object-contain"
+              />
             </div>
             <span
               className="text-xl font-bold tracking-tight text-foreground"
-              style={{ fontFamily: 'var(--font-display)' }}
+              style={{ fontFamily: "var(--font-display)" }}
             >
               FilmSnaps
             </span>
@@ -210,14 +236,17 @@ export function Header() {
                 href={link.href}
                 className={`relative px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
                   isActive(link.href)
-                    ? 'text-primary bg-primary/10'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-white/[0.04]'
+                    ? "text-primary bg-primary/10"
+                    : "text-muted-foreground hover:text-foreground hover:bg-white/[0.04]"
                 }`}
               >
                 {link.label}
                 {link.count !== undefined && link.count > 0 && (
-                  <span suppressHydrationWarning className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold rounded-full bg-primary/20 text-primary">
-                    {link.count > 99 ? '99+' : link.count}
+                  <span
+                    suppressHydrationWarning
+                    className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold rounded-full bg-primary/20 text-primary"
+                  >
+                    {link.count > 99 ? "99+" : link.count}
                   </span>
                 )}
               </Link>
@@ -241,9 +270,11 @@ export function Header() {
                 <div
                   ref={searchDropdownRef}
                   className="fixed md:absolute md:top-full md:right-0 md:mt-2 md:w-[420px] md:rounded-2xl bg-[#0a0a0f]/90 backdrop-blur-2xl border border-white/[0.06] shadow-2xl overflow-hidden z-[60] animate-fade-in"
-                  style={{
-                    // On mobile it's full screen, on desktop it's positioned below the button
-                  }}
+                  style={
+                    {
+                      // On mobile it's full screen, on desktop it's positioned below the button
+                    }
+                  }
                 >
                   <form onSubmit={handleSearchSubmit} className="p-3">
                     <div className="relative flex items-center">
@@ -277,7 +308,12 @@ export function Header() {
                               <div className="w-8 h-12 rounded-lg overflow-hidden bg-secondary/40 flex-shrink-0">
                                 {(item.poster_path || item.poster) && (
                                   <img
-                                    src={getImageUrl(item.poster_path || item.poster, 'w92') || ''}
+                                    src={
+                                      getImageUrl(
+                                        item.poster_path || item.poster,
+                                        "w92",
+                                      ) || ""
+                                    }
                                     alt=""
                                     className="w-full h-full object-cover"
                                   />
@@ -288,10 +324,12 @@ export function Header() {
                                   {item.title || item.name}
                                 </p>
                                 <p className="text-xs text-muted-foreground capitalize">
-                                  {item.media_type === 'movie' ? 'Movie' : 'TV Show'}
+                                  {item.media_type === "movie"
+                                    ? "Movie"
+                                    : "TV Show"}
                                   {item.release_date || item.first_air_date
                                     ? ` · ${(item.release_date || item.first_air_date).slice(0, 4)}`
-                                    : ''}
+                                    : ""}
                                 </p>
                               </div>
                             </button>
@@ -335,10 +373,17 @@ export function Header() {
                       <User className="h-[18px] w-[18px]" />
                     </GlassButton>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-64 glass-light border-white/[0.06]">
+                  <DropdownMenuContent
+                    align="end"
+                    className="w-64 glass-light border-white/[0.06]"
+                  >
                     <div className="px-3 py-2.5 border-b border-white/[0.06]">
-                      <p className="text-sm font-medium truncate text-foreground">{user.email}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">Account</p>
+                      <p className="text-sm font-medium truncate text-foreground">
+                        {user.email}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Account
+                      </p>
                     </div>
                     <div className="py-1">
                       <DropdownMenuItem
@@ -347,7 +392,7 @@ export function Header() {
                         className="text-sm"
                       >
                         <Bookmark className="mr-2 h-4 w-4" />
-                        {isResettingPassword ? 'Sending...' : 'Reset Password'}
+                        {isResettingPassword ? "Sending..." : "Reset Password"}
                       </DropdownMenuItem>
                       {!emailVerified && (
                         <DropdownMenuItem
@@ -356,7 +401,9 @@ export function Header() {
                           className="text-sm text-amber-accent focus:text-amber-accent"
                         >
                           <Mail className="mr-2 h-4 w-4" />
-                          {isResendingVerification ? 'Sending...' : 'Resend Verification'}
+                          {isResendingVerification
+                            ? "Sending..."
+                            : "Resend Verification"}
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuItem
@@ -386,7 +433,10 @@ export function Header() {
               <div className="fixed inset-0 z-50 bg-background/98 backdrop-blur-lg">
                 <div className="flex items-center gap-2 px-4 h-16 border-b border-white/[0.04]">
                   <button
-                    onClick={() => { setMobileSearchOpen(false); setSearchQuery(''); }}
+                    onClick={() => {
+                      setMobileSearchOpen(false);
+                      setSearchQuery("");
+                    }}
                     className="p-1.5 -ml-1 text-muted-foreground hover:text-foreground transition-colors"
                   >
                     <ArrowLeft className="h-5 w-5" />
@@ -419,19 +469,28 @@ export function Header() {
                           <div className="w-10 h-14 rounded-lg overflow-hidden bg-secondary/40 flex-shrink-0">
                             {(item.poster_path || item.poster) && (
                               <img
-                                src={getImageUrl(item.poster_path || item.poster, 'w92') || ''}
+                                src={
+                                  getImageUrl(
+                                    item.poster_path || item.poster,
+                                    "w92",
+                                  ) || ""
+                                }
                                 alt=""
                                 className="w-full h-full object-cover"
                               />
                             )}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="font-medium text-foreground truncate">{item.title || item.name}</p>
+                            <p className="font-medium text-foreground truncate">
+                              {item.title || item.name}
+                            </p>
                             <p className="text-xs text-muted-foreground capitalize">
-                              {item.media_type === 'movie' ? 'Movie' : 'TV Show'}
+                              {item.media_type === "movie"
+                                ? "Movie"
+                                : "TV Show"}
                               {item.release_date || item.first_air_date
                                 ? ` · ${(item.release_date || item.first_air_date).slice(0, 4)}`
-                                : ''}
+                                : ""}
                             </p>
                           </div>
                         </button>
@@ -461,7 +520,10 @@ export function Header() {
             ) : (
               <>
                 <button
-                  onClick={() => { setMobileSearchOpen(true); setMenuOpen(false); }}
+                  onClick={() => {
+                    setMobileSearchOpen(true);
+                    setMenuOpen(false);
+                  }}
                   className="p-2 rounded-xl hover:bg-white/[0.06] transition-all duration-200"
                   aria-label="Open search"
                 >
@@ -487,7 +549,9 @@ export function Header() {
       {/* ── Mobile Overlay ── */}
       <div
         className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-300 ${
-          menuOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+          menuOpen
+            ? "opacity-100 pointer-events-auto"
+            : "opacity-0 pointer-events-none"
         }`}
         onClick={() => setMenuOpen(false)}
       />
@@ -495,7 +559,7 @@ export function Header() {
       {/* ── Mobile Drawer ── */}
       <div
         className={`fixed top-0 right-0 z-50 h-screen w-72 glass border-l border-white/[0.06] shadow-2xl transform transition-transform duration-300 ease-out ${
-          menuOpen ? 'translate-x-0' : 'translate-x-full'
+          menuOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
@@ -518,14 +582,17 @@ export function Header() {
               onClick={() => setMenuOpen(false)}
               className={`flex items-center justify-between px-3 py-2.5 text-sm font-medium rounded-xl transition-all duration-200 ${
                 isActive(link.href)
-                  ? 'text-primary bg-primary/10'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-white/[0.04]'
+                  ? "text-primary bg-primary/10"
+                  : "text-muted-foreground hover:text-foreground hover:bg-white/[0.04]"
               }`}
             >
               {link.label}
               {link.count !== undefined && link.count > 0 && (
-                <span suppressHydrationWarning className="inline-flex items-center justify-center min-w-[20px] h-[20px] px-1.5 text-[10px] font-bold rounded-full bg-primary/20 text-primary">
-                  {link.count > 99 ? '99+' : link.count}
+                <span
+                  suppressHydrationWarning
+                  className="inline-flex items-center justify-center min-w-[20px] h-[20px] px-1.5 text-[10px] font-bold rounded-full bg-primary/20 text-primary"
+                >
+                  {link.count > 99 ? "99+" : link.count}
                 </span>
               )}
             </Link>
@@ -537,7 +604,9 @@ export function Header() {
           {user ? (
             <div className="space-y-1">
               <div className="px-3 py-2">
-                <p className="text-sm font-medium truncate text-foreground">{user.email}</p>
+                <p className="text-sm font-medium truncate text-foreground">
+                  {user.email}
+                </p>
                 {!emailVerified && (
                   <p className="text-xs text-amber-accent flex items-center mt-1">
                     <Mail className="h-3 w-3 mr-1" />
@@ -546,25 +615,36 @@ export function Header() {
                 )}
               </div>
               <button
-                onClick={() => { handleResetPassword(); setMenuOpen(false); }}
+                onClick={() => {
+                  handleResetPassword();
+                  setMenuOpen(false);
+                }}
                 disabled={isResettingPassword}
                 className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-muted-foreground hover:text-foreground rounded-xl hover:bg-white/[0.04] transition-all disabled:opacity-50"
               >
                 <Bookmark className="h-4 w-4" />
-                {isResettingPassword ? 'Sending...' : 'Reset Password'}
+                {isResettingPassword ? "Sending..." : "Reset Password"}
               </button>
               {!emailVerified && (
                 <button
-                  onClick={() => { handleResendVerification(); setMenuOpen(false); }}
+                  onClick={() => {
+                    handleResendVerification();
+                    setMenuOpen(false);
+                  }}
                   disabled={isResendingVerification}
                   className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-amber-accent rounded-xl hover:bg-white/[0.04] transition-all disabled:opacity-50"
                 >
                   <Mail className="h-4 w-4" />
-                  {isResendingVerification ? 'Sending...' : 'Resend Verification'}
+                  {isResendingVerification
+                    ? "Sending..."
+                    : "Resend Verification"}
                 </button>
               )}
               <button
-                onClick={() => { signOut(); setMenuOpen(false); }}
+                onClick={() => {
+                  signOut();
+                  setMenuOpen(false);
+                }}
                 className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-red-400 rounded-xl hover:bg-white/[0.04] transition-all"
               >
                 <LogOut className="h-4 w-4" />

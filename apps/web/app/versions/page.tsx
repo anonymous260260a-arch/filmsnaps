@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import Link from 'next/link';
+import { useState } from "react";
+import Link from "next/link";
 import {
   Download,
   ArrowLeft,
@@ -11,14 +11,15 @@ import {
   Monitor,
   Tag,
   ChevronRight,
-} from 'lucide-react';
+} from "lucide-react";
 
-import mobileVersions from '../../public/versions.json';
-import desktopVersions from '../../public/desktop-versions.json';
+import mobileVersions from "../../public/versions.json";
+import desktopVersions from "../../public/desktop-versions.json";
+import { DesktopGate } from "@/components/desktop/DesktopGate";
 
 // ── Types ──
 
-type ViewMode = 'mobile' | 'desktop';
+type ViewMode = "mobile" | "desktop";
 
 interface PlatformEntry {
   label: string;
@@ -30,41 +31,44 @@ interface PlatformEntry {
 // ── Data ──
 
 const VIEWS: { id: ViewMode; label: string; icon: React.ReactNode }[] = [
-  { id: 'mobile', label: 'Android', icon: <Smartphone className="w-4 h-4" /> },
-  { id: 'desktop', label: 'Desktop', icon: <Monitor className="w-4 h-4" /> },
+  { id: "mobile", label: "Android", icon: <Smartphone className="w-4 h-4" /> },
+  { id: "desktop", label: "Desktop", icon: <Monitor className="w-4 h-4" /> },
 ];
 
 // ── Component ──
 
 export default function VersionsPage() {
-  const [view, setView] = useState<ViewMode>('mobile');
+  const [view, setView] = useState<ViewMode>("mobile");
 
-  const entries = view === 'mobile' ? mobileVersions.versions : desktopVersions.versions;
+  const entries =
+    view === "mobile" ? mobileVersions.versions : desktopVersions.versions;
 
   // Build platform download options for desktop entries
-  function getPlatformsForDesktop(version: (typeof desktopVersions.versions)[0]): PlatformEntry[] {
+  function getPlatformsForDesktop(
+    version: (typeof desktopVersions.versions)[0],
+  ): PlatformEntry[] {
     if (!version.platforms) return [];
     return [
       {
-        label: 'Windows',
+        label: "Windows",
         icon: <Monitor className="w-4 h-4" />,
         downloadUrl: version.platforms.win?.downloadUrl ?? null,
         size: version.platforms.win?.size ?? null,
       },
       {
-        label: 'macOS Intel',
+        label: "macOS Intel",
         icon: <Monitor className="w-4 h-4" />,
         downloadUrl: version.platforms.mac?.downloadUrl ?? null,
         size: version.platforms.mac?.size ?? null,
       },
       {
-        label: 'macOS Apple Silicon',
+        label: "macOS Apple Silicon",
         icon: <Monitor className="w-4 h-4" />,
-        downloadUrl: version.platforms['mac-arm']?.downloadUrl ?? null,
-        size: version.platforms['mac-arm']?.size ?? null,
+        downloadUrl: version.platforms["mac-arm"]?.downloadUrl ?? null,
+        size: version.platforms["mac-arm"]?.size ?? null,
       },
       {
-        label: 'Linux',
+        label: "Linux",
         icon: <Monitor className="w-4 h-4" />,
         downloadUrl: version.platforms.linux?.downloadUrl ?? null,
         size: version.platforms.linux?.size ?? null,
@@ -74,21 +78,23 @@ export default function VersionsPage() {
 
   return (
     <div className="min-h-screen bg-zinc-950">
-      {/* Nav */}
-      <header className="border-b border-zinc-800">
-        <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
-          <Link href="/" className="text-white font-bold text-lg">
-            FilmSnaps
-          </Link>
-          <Link
-            href="/download"
-            className="text-zinc-400 hover:text-white text-sm transition-colors flex items-center gap-1"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            Download
-          </Link>
-        </div>
-      </header>
+      {/* Nav — hidden inside the desktop shell (GlobalTopBar provides chrome) */}
+      <DesktopGate>
+        <header className="border-b border-zinc-800">
+          <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
+            <Link href="/" className="text-white font-bold text-lg">
+              FilmSnaps
+            </Link>
+            <Link
+              href="/download"
+              className="text-zinc-400 hover:text-white text-sm transition-colors flex items-center gap-1"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Download
+            </Link>
+          </div>
+        </header>
+      </DesktopGate>
 
       <main className="max-w-3xl mx-auto px-4 pt-12 pb-24">
         {/* Title */}
@@ -110,8 +116,8 @@ export default function VersionsPage() {
               onClick={() => setView(v.id)}
               className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
                 view === v.id
-                  ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30 shadow-[0_0_20px_rgba(251,191,36,0.08)]'
-                  : 'text-zinc-500 hover:text-zinc-300 border border-transparent hover:border-zinc-800'
+                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/30 shadow-[0_0_20px_rgba(251,191,36,0.08)]"
+                  : "text-zinc-500 hover:text-zinc-300 border border-transparent hover:border-zinc-800"
               }`}
             >
               {v.icon}
@@ -149,7 +155,7 @@ export default function VersionsPage() {
                   </div>
                   <p className="text-zinc-500 text-xs">{entry.date}</p>
                 </div>
-                {view === 'mobile' && entry.size && (
+                {view === "mobile" && entry.size && (
                   <span className="text-zinc-600 text-xs">{entry.size}</span>
                 )}
               </div>
@@ -160,30 +166,30 @@ export default function VersionsPage() {
               </p>
 
               {/* Downloads */}
-              {view === 'mobile' && (
+              {view === "mobile" && (
                 <div className="flex items-center gap-2">
                   <a
-                    href={entry.downloadUrl ?? '#'}
+                    href={entry.downloadUrl ?? "#"}
                     className={`inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-lg transition-all active:scale-[0.97] ${
                       entry.downloadUrl
-                        ? 'bg-amber-500 hover:bg-amber-400 text-black'
-                        : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                        ? "bg-amber-500 hover:bg-amber-400 text-black"
+                        : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
                     }`}
                   >
                     <Download className="w-4 h-4" />
-                    {entry.downloadUrl ? 'Download APK' : 'Unavailable'}
+                    {entry.downloadUrl ? "Download APK" : "Unavailable"}
                   </a>
                 </div>
               )}
 
-              {view === 'desktop' && entry.platforms && (
+              {view === "desktop" && entry.platforms && (
                 <div className="flex flex-wrap gap-2">
                   {(
                     [
-                      ['win', 'Windows'],
-                      ['mac', 'macOS Intel'],
-                      ['mac-arm', 'macOS Apple Silicon'],
-                      ['linux', 'Linux'],
+                      ["win", "Windows"],
+                      ["mac", "macOS Intel"],
+                      ["mac-arm", "macOS Apple Silicon"],
+                      ["linux", "Linux"],
                     ] as const
                   ).map(([key, label]) => {
                     const plat = entry.platforms[key];

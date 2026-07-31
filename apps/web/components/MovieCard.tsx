@@ -1,46 +1,63 @@
-'use client';
+"use client";
 
-import Image from 'next/image';
-import Link from 'next/link';
-import { Play, Star, X } from 'lucide-react';
-import { getImageUrl, tmdbApi } from '@/lib/tmdb';
-import { SaveButton } from '@/components/SaveButton';
-import { GlassButton } from '@/components/ui/glass-button';
-import { Movie } from '@filmsnaps/shared';
-import { useQueryClient } from '@tanstack/react-query';
-import { Button } from './ui/button';
-import { useRouter } from 'next/navigation';
+import Image from "next/image";
+import Link from "next/link";
+import { Play, Star, X } from "lucide-react";
+import { getImageUrl, tmdbApi } from "@/lib/tmdb";
+import { SaveButton } from "@/components/SaveButton";
+import { GlassButton } from "@/components/ui/glass-button";
+import { Movie } from "@filmsnaps/shared";
+import { useQueryClient } from "@tanstack/react-query";
+import { Button } from "./ui/button";
+import { useRouter } from "next/navigation";
+import { useIsDesktop } from "@/hooks/useIsDesktop";
 
 interface MovieCardProps {
   item: Movie;
   mediaType?: string;
   className?: string;
-  variant?: 'default' | 'saved';
+  variant?: "default" | "saved";
   onRemove?: (id: number, title: string) => void;
 }
 
 export function MovieCard({
   item,
   mediaType,
-  className = '',
-  variant = 'default',
+  className = "",
+  variant = "default",
   onRemove,
 }: MovieCardProps) {
   const router = useRouter();
-  const type = mediaType || item.media_type || 'movie';
+  const type = mediaType || item.media_type || "movie";
   const title = item.title || item.name;
   const posterPath = item.poster_path || item.poster;
   const rating = item.vote_average?.toFixed(1);
   const releaseDate = item.release_date || item.first_air_date;
-  const year = releaseDate ? new Date(releaseDate).getFullYear() : '';
+  const year = releaseDate ? new Date(releaseDate).getFullYear() : "";
   const queryClient = useQueryClient();
+  const isDesktop = useIsDesktop();
 
   const prefetchMovie = () => {
+    // Desktop has hover — prefetch the detail data, the watch route chunk,
+    // and the w1280 backdrop so the watch page opens to a fully-painted
+    // hero with zero network waits. Browsers skip the watch-route/backdrop
+    // prefetch (no hover, limited value).
     queryClient.prefetchQuery({
-      queryKey: ['movie', item.id],
+      queryKey: ["movie", item.id],
       queryFn: () => tmdbApi.getMovieDetails(item.id),
-      staleTime: 10 * 60 * 1000,
+      staleTime: 7 * 24 * 60 * 60 * 1000, // TMDB details are effectively static
     });
+
+    if (!isDesktop) return;
+    router.prefetch(`/watch/${type}/${item.id}`);
+    const backdropUrl = getImageUrl(item.backdrop_path, "w1280");
+    if (backdropUrl && backdropUrl !== "/placeholder.jpg") {
+      const link = document.createElement("link");
+      link.rel = "prefetch";
+      link.as = "image";
+      link.href = backdropUrl;
+      document.head.appendChild(link);
+    }
   };
 
   return (
@@ -55,8 +72,8 @@ export function MovieCard({
         <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-secondary shadow-lg transition-all duration-500 group-hover:shadow-2xl group-hover:shadow-primary/5">
           {posterPath ? (
             <Image
-              src={getImageUrl(posterPath, 'w500') || ''}
-              alt={title ?? 'Movie poster'}
+              src={getImageUrl(posterPath, "w500") || ""}
+              alt={title ?? "Movie poster"}
               fill
               sizes="(max-width: 640px) 50vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 16vw"
               loading="lazy"
@@ -92,7 +109,7 @@ export function MovieCard({
           </div>
 
           {/* Rating badge — always visible */}
-          {rating && variant === 'default' && (
+          {rating && variant === "default" && (
             <div className="absolute top-2.5 right-2.5 flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-lg border border-white/[0.06]">
               <Star className="h-3 w-3 text-amber-accent fill-amber-accent" />
               <span className="text-xs font-semibold text-white">{rating}</span>
@@ -100,7 +117,7 @@ export function MovieCard({
           )}
 
           {/* Saved remove button */}
-          {variant === 'saved' && (
+          {variant === "saved" && (
             <div className="absolute top-2.5 left-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
               <GlassButton
                 size="icon"
@@ -109,7 +126,7 @@ export function MovieCard({
                 aria-label="Remove from watchlist"
                 onClick={(e) => {
                   e.preventDefault();
-                  onRemove?.(item.id, title || 'Movie');
+                  onRemove?.(item.id, title || "Movie");
                 }}
               >
                 <X className="h-4 w-4" />
@@ -120,13 +137,14 @@ export function MovieCard({
       </Link>
 
       {/* Info below card */}
-      <Link href={`/${type}/${item.id}`} className="block mt-2.5 space-y-0.5 px-0.5">
+      <Link
+        href={`/${type}/${item.id}`}
+        className="block mt-2.5 space-y-0.5 px-0.5"
+      >
         <h3 className="text-sm font-semibold text-foreground/90 line-clamp-1 group-hover:text-primary transition-colors duration-200">
           {title}
         </h3>
-        {year && (
-          <p className="text-xs text-muted-foreground/70">{year}</p>
-        )}
+        {year && <p className="text-xs text-muted-foreground/70">{year}</p>}
       </Link>
     </div>
   );

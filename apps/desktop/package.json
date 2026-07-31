@@ -1,13 +1,13 @@
 {
   "name": "@filmsnaps/desktop",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": "FilmSnaps",
   "private": true,
   "description": "FilmSnaps Desktop App — secure streaming with Electron",
   "main": "dist/main.js",
   "scripts": {
-    "dev": "concurrently -k \"cd ../web && pnpm dev\" \"wait-on http://localhost:3000 && tsc && pnpm exec electron . --dev\"",
-    "build": "tsc",
+    "dev": "concurrently -k \"cd ../web && pnpm dev\" \"wait-on http://localhost:3000 && pnpm build && pnpm exec electron . --dev\"",
+    "build": "tsc && node scripts/inject-preload-css.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "dist": "pnpm build && electron-builder --publish=never",
@@ -16,7 +16,44 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist release"
   },
+  "build": {
+    "appId": "app.filmsnaps.desktop",
+    "productName": "FilmSnaps",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "resources/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../../packages/filter-compiler/build/compiled-engine.bin",
+        "to": "filter-engine/compiled-engine.bin"
+      },
+      {
+        "from": "../../blocklist.json",
+        "to": "blocklist.json"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "resources/icon.png"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "resources/icon.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "resources/icon.png"
+    }
+  },
   "dependencies": {
+    "@cliqz/adblocker": "^1.34.0",
+    "@filmsnaps/adblock-config": "workspace:*",
+    "@filmsnaps/filter-compiler": "workspace:*",
+    "@filmsnaps/shared": "workspace:*",
     "electron-updater": "^6.3.0"
   },
   "devDependencies": {

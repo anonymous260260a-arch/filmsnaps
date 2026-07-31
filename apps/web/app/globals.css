@@ -94,6 +94,64 @@
   -ms-overflow-style: none;
 }
 
+/* â”€â”€ Desktop-Style Scrollbars â”€â”€
+ * Thin, dark, gold-on-hover — replaces the bright Chromium default so
+ * the frameless desktop app reads as a native app rather than a browser. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.10);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(212, 162, 55, 0.45);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* â”€â”€ Frameless Window Drag Regions â”€â”€
+ * Electron requires -webkit-app-region to move a frameless window.
+ * These were referenced by WatchTopBar/DesktopTitleBar but never defined,
+ * so the window could not be dragged. `.no-drag` must be applied to every
+ * interactive element inside a drag region or clicks get swallowed. */
+@layer utilities {
+  .drag-region {
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
+
+/* â”€â”€ Desktop Shell Scope â”€â”€
+ * Under the desktop shell the top bar is in-flow, so the per-page
+ * pt-16/pt-20/pt-24 classes that cleared the old fixed website header
+ * become dead space. Neutralize them inside the shell only (specificity
+ * 0,1,1 beats the utility class, and it never touches web/browser pages).
+ *
+ * --shell-top-offset lets full-viewport pages (/auth, /reset-password)
+ * center within the scroll area below the in-flow 48px bar instead of
+ * the full 100vh. */
+:root {
+  --shell-top-offset: 0px;
+}
+.desktop-shell {
+  --shell-top-offset: 48px; /* h-12 GlobalTopBar */
+}
+.desktop-shell main {
+  padding-top: 0;
+}
+
 /* â”€â”€ Utility Classes â”€â”€ */
 @layer utilities {
   .text-shadow-soft {

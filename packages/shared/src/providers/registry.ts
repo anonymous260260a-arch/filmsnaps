@@ -30,10 +30,7 @@ export const PROVIDERS: ProviderDefinition[] = [
       "https://nxcdn.app",
       "https://cdn.nxsha.app",
     ],
-    coverOverlays: [
-      // Cover any overlay ads that survive the proxy
-      { top: "0", left: "0", width: "100%", height: "60px" },
-    ],
+
     protection: {
       enabled: true,
       customBlockPatterns: [
@@ -361,6 +358,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     id: "vidking",
     name: "VidKing",
     displayName: "Source 19",
+    enabled: false,
     baseUrl: "https://www.vidking.net",
     embed: {
       movie: (id) => `/embed/movie/${id}?color=ff0000`,
@@ -375,6 +373,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     id: "toustream",
     name: "TouStream",
     displayName: "Source 20",
+    enabled: false,
     baseUrl: "https://toustream.xyz",
     embed: {
       movie: (id) => `/tou/movies/${id}`,
@@ -387,6 +386,8 @@ export const PROVIDERS: ProviderDefinition[] = [
     id: "streamguide",
     name: "StreamGuide",
     displayName: "StreamGuide",
+    enabled: false,
+
     baseUrl: "https://streamguide.cfd",
     embed: {
       movie: (id) => `/embed/?type=m&id=m-api-${id}&ep=m-api-${id}`,
@@ -408,6 +409,19 @@ export const PROVIDERS: ProviderDefinition[] = [
         `/embed/tv/${id}/${season}/${episode}?autoPlay=true&autoNext=true&defaultServer=CINEDUB-2${startAt ? `&startTime=${Math.floor(startAt)}` : ""}`,
     },
     allowedOrigins: ["https://vidsync.live"],
+    platforms: ["web", "mobile"],
+  },
+  // ── vidzee ────────────────────────────────────────────────
+  {
+    id: "vidzee",
+    name: "vidzee",
+    displayName: "vidzee",
+    baseUrl: "player.vidzee.wtf",
+    embed: {
+      movie: (id) => `/embed/movie/${id}`,
+      tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}`,
+    },
+    allowedOrigins: ["player.vidzee.wtf"],
     platforms: ["web", "mobile"],
   },
 ];

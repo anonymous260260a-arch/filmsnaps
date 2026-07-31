@@ -6,39 +6,47 @@
  * Uses health check indicators for server availability.
  */
 
-'use client';
+"use client";
 
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { ChevronDown, Check, RefreshCw } from 'lucide-react';
-import { getEnabledProviders, checkAllProviders } from '@filmsnaps/shared';
-import type { ProviderDefinition, HealthCache } from '@filmsnaps/shared';
-import { usePlayer } from './PlayerProvider';
+import React, { useMemo, useState, useEffect, useCallback } from "react";
+import { ChevronDown, Check, RefreshCw } from "lucide-react";
+import { getEnabledProviders } from "@filmsnaps/shared";
+import type { ProviderDefinition } from "@filmsnaps/shared";
+import { usePlayer } from "./PlayerProvider";
+import { usePlayerHealth } from "@/hooks/usePlayerHealth";
 
 interface ServerPickerSheetProps {
   /** Called with the selected provider */
   onSelect: (provider: ProviderDefinition) => void;
   /** Currently selected provider id */
   selectedId: string | null;
+  /**
+   * Optional pre-filtered provider list.
+   * When provided, this list is used instead of the internal
+   * getEnabledProviders() filtered by platforms. Used by
+   * the desktop Electron view which shows all providers.
+   */
+  providers?: ProviderDefinition[];
 }
 
-export function ServerPickerSheet({ onSelect, selectedId }: ServerPickerSheetProps) {
+export function ServerPickerSheet({
+  onSelect,
+  selectedId,
+  providers: externalProviders,
+}: ServerPickerSheetProps) {
   const { minimal } = usePlayer();
   const [isOpen, setIsOpen] = useState(false);
-  const [healthCache, setHealthCache] = useState<HealthCache>(new Map());
 
   const providers = useMemo(
-    () => getEnabledProviders().filter((p) => p.platforms?.includes('web')),
-    [],
+    () =>
+      externalProviders ??
+      getEnabledProviders().filter((p) => p.platforms?.includes("web")),
+    [externalProviders],
   );
 
-  // Check provider health on mount (for status indicators only)
-  useEffect(() => {
-    let alive = true;
-    checkAllProviders(providers, { timeoutMs: 5000 }).then((cache) => {
-      if (alive) setHealthCache(cache);
-    });
-    return () => { alive = false; };
-  }, [providers]);
+  // Shared provider-health cache — the same ['provider-health'] query the
+  // desktop pill uses, so simultaneous mounts dedupe into one sweep.
+  const { healthCache, isRefreshing, refresh } = usePlayerHealth({ providers });
 
   const currentProvider = useMemo(
     () => providers.find((p) => p.id === selectedId) ?? providers[0],
@@ -49,20 +57,22 @@ export function ServerPickerSheet({ onSelect, selectedId }: ServerPickerSheetPro
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsOpen(false);
+      if (e.key === "Escape") setIsOpen(false);
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [isOpen]);
 
   // Lock body scroll when sheet is open
   useEffect(() => {
     if (isOpen) {
-      document.body.style.overflow = 'hidden';
+      document.body.style.overflow = "hidden";
     } else {
-      document.body.style.overflow = '';
+      document.body.style.overflow = "";
     }
-    return () => { document.body.style.overflow = ''; };
+    return () => {
+      document.body.style.overflow = "";
+    };
   }, [isOpen]);
 
   const handleSelect = useCallback(
@@ -92,13 +102,15 @@ export function ServerPickerSheet({ onSelect, selectedId }: ServerPickerSheetPro
         >
           <div className="flex items-center gap-3 min-w-0">
             {/* Health Dot */}
-            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-              healthCache.get(currentProvider.id)?.alive
-                ? 'bg-[#4CAF82] shadow-[0_0_8px_rgba(76,175,130,0.4)]'
-                : healthCache.has(currentProvider.id)
-                  ? 'bg-[#E05252]'
-                  : 'bg-[#52525B]'
-            }`} />
+            <span
+              className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                healthCache.get(currentProvider.id)?.alive
+                  ? "bg-[#4CAF82] shadow-[0_0_8px_rgba(76,175,130,0.4)]"
+                  : healthCache.has(currentProvider.id)
+                    ? "bg-[#E05252]"
+                    : "bg-[#52525B]"
+              }`}
+            />
             <div className="min-w-0">
               <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-0.5">
                 Source Server
@@ -129,30 +141,30 @@ export function ServerPickerSheet({ onSelect, selectedId }: ServerPickerSheetPro
             onClick={(e) => e.stopPropagation()}
           >
             {/* Drag handle (mobile) */}
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 w-12 h-1.5
-              bg-[#222226] rounded-full md:hidden" />
+            <div
+              className="absolute top-3 left-1/2 -translate-x-1/2 w-12 h-1.5
+              bg-[#222226] rounded-full md:hidden"
+            />
 
             {/* Header */}
             <div className="flex items-center justify-between mb-6 mt-2 md:mt-0">
               <h3
                 className="text-lg font-bold text-[#F4F4F5]"
-                style={{ fontFamily: 'var(--font-display)' }}
+                style={{ fontFamily: "var(--font-display)" }}
               >
                 Select Source
               </h3>
               <button
-                onClick={() => {
-                  setHealthCache(new Map());
-                  checkAllProviders(providers, { timeoutMs: 5000 }).then((cache) => {
-                    setHealthCache(cache);
-                  });
-                }}
+                onClick={refresh}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg
                   bg-white/5 hover:bg-white/10 text-xs text-zinc-400
                   hover:text-white transition-colors"
                 aria-label="Recheck server health"
               >
-                <RefreshCw size={12} />
+                <RefreshCw
+                  size={12}
+                  className={isRefreshing ? "animate-spin" : ""}
+                />
                 Refresh
               </button>
             </div>
@@ -170,24 +182,27 @@ export function ServerPickerSheet({ onSelect, selectedId }: ServerPickerSheetPro
                     onClick={() => handleSelect(p)}
                     className={`w-full flex items-center gap-4 p-4 rounded-xl
                       transition-all duration-200 text-left
-                      ${isActive
-                        ? 'bg-[#D4A237]/10 border border-[#D4A237]/40'
-                        : 'bg-[#0E0E11] border border-transparent hover:border-white/10'
+                      ${
+                        isActive
+                          ? "bg-[#D4A237]/10 border border-[#D4A237]/40"
+                          : "bg-[#0E0E11] border border-transparent hover:border-white/10"
                       }`}
                   >
                     {/* Health indicator */}
-                    <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                      !health
-                        ? 'bg-[#52525B]'
-                        : isAlive
-                          ? 'bg-[#4CAF82] shadow-[0_0_8px_rgba(76,175,130,0.4)]'
-                          : 'bg-[#E05252]'
-                    }`} />
+                    <span
+                      className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                        !health
+                          ? "bg-[#52525B]"
+                          : isAlive
+                            ? "bg-[#4CAF82] shadow-[0_0_8px_rgba(76,175,130,0.4)]"
+                            : "bg-[#E05252]"
+                      }`}
+                    />
 
                     {/* Name */}
                     <span
                       className={`flex-1 text-sm font-semibold ${
-                        isActive ? 'text-[#D4A237]' : 'text-[#F4F4F5]'
+                        isActive ? "text-[#D4A237]" : "text-[#F4F4F5]"
                       }`}
                     >
                       {p.displayName || p.name}
@@ -204,7 +219,10 @@ export function ServerPickerSheet({ onSelect, selectedId }: ServerPickerSheetPro
 
                     {/* Active check */}
                     {isActive && (
-                      <Check size={18} className="text-[#D4A237] flex-shrink-0" />
+                      <Check
+                        size={18}
+                        className="text-[#D4A237] flex-shrink-0"
+                      />
                     )}
                   </button>
                 );
