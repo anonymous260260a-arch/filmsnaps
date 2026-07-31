@@ -1,75 +1,76 @@
-import './globals.css';
-import { Inter, Playfair_Display } from 'next/font/google';
-import { Providers } from '@/lib/providers';
-import { Toaster } from '@/components/ui/toaster';
-import { AuthProvider } from '@/components/AuthProvider';
-import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { UpdateNotifier } from '@/components/UpdateNotifier';
-import { Metadata } from 'next';
+import "./globals.css";
+import { Inter, Playfair_Display } from "next/font/google";
+import { Providers } from "@/lib/providers";
+import { Toaster } from "@/components/ui/toaster";
+import { AuthProvider } from "@/components/AuthProvider";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { UpdateNotifier } from "@/components/UpdateNotifier";
+import { DesktopAppShell } from "@/components/desktop/DesktopAppShell";
+import { Metadata } from "next";
 
 const inter = Inter({
-  subsets: ['latin'],
-  display: 'swap',
+  subsets: ["latin"],
+  display: "swap",
   preload: true,
-  variable: '--font-body',
+  variable: "--font-body",
 });
 
 const playfair = Playfair_Display({
-  subsets: ['latin'],
-  display: 'swap',
+  subsets: ["latin"],
+  display: "swap",
   preload: true,
-  variable: '--font-display',
+  variable: "--font-display",
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://filmsnaps.com'),
+  metadataBase: new URL("https://filmsnaps.com"),
   title: {
-    default: 'FilmSnaps - Discover Movies & TV Shows',
-    template: '%s | FilmSnaps',
+    default: "FilmSnaps - Discover Movies & TV Shows",
+    template: "%s | FilmSnaps",
   },
   description:
-    'Discover and explore your favorite movies and TV shows on FilmSnaps. Browse trending content, search for titles, and build your personal watchlist.',
+    "Discover and explore your favorite movies and TV shows on FilmSnaps. Browse trending content, search for titles, and build your personal watchlist.",
   keywords: [
-    'movies',
-    'TV shows',
-    'streaming',
-    'films',
-    'series',
-    'watchlist',
-    'entertainment',
+    "movies",
+    "TV shows",
+    "streaming",
+    "films",
+    "series",
+    "watchlist",
+    "entertainment",
   ],
-  authors: [{ name: 'FilmSnaps' }],
-  creator: 'FilmSnaps',
-  publisher: 'FilmSnaps',
+  authors: [{ name: "FilmSnaps" }],
+  creator: "FilmSnaps",
+  publisher: "FilmSnaps",
   formatDetection: {
     email: false,
     address: false,
     telephone: false,
   },
   openGraph: {
-    type: 'website',
-    locale: 'en_US',
-    url: 'https://filmsnaps.com',
-    siteName: 'FilmSnaps',
-    title: 'FilmSnaps - Discover Movies & TV Shows',
+    type: "website",
+    locale: "en_US",
+    url: "https://filmsnaps.com",
+    siteName: "FilmSnaps",
+    title: "FilmSnaps - Discover Movies & TV Shows",
     description:
-      'Discover and explore your favorite movies and TV shows on FilmSnaps.',
+      "Discover and explore your favorite movies and TV shows on FilmSnaps.",
     images: [
       {
-        url: '/og-image.jpg',
+        url: "/og-image.jpg",
         width: 1200,
         height: 630,
-        alt: 'FilmSnaps - Discover Movies & TV Shows',
+        alt: "FilmSnaps - Discover Movies & TV Shows",
       },
     ],
   },
   twitter: {
-    card: 'summary_large_image',
-    title: 'FilmSnaps - Discover Movies & TV Shows',
+    card: "summary_large_image",
+    title: "FilmSnaps - Discover Movies & TV Shows",
     description:
-      'Discover and explore your favorite movies and TV shows on FilmSnaps.',
-    creator: '@filmsnaps',
-    images: ['/og-image.jpg'],
+      "Discover and explore your favorite movies and TV shows on FilmSnaps.",
+    creator: "@filmsnaps",
+    images: ["/og-image.jpg"],
   },
   robots: {
     index: true,
@@ -77,9 +78,9 @@ export const metadata: Metadata = {
     googleBot: {
       index: true,
       follow: true,
-      'max-video-preview': -1,
-      'max-image-preview': 'large',
-      'max-snippet': -1,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
     },
   },
   verification: {
@@ -90,15 +91,15 @@ export const metadata: Metadata = {
 
   // ── PWA / Installable App ──
   icons: {
-    icon: '/icon.png',
-    apple: '/icon.png',
+    icon: "/icon.png",
+    apple: "/icon.png",
   },
   other: {
-    'theme-color': '#070708',
-    'apple-mobile-web-app-capable': 'yes',
-    'apple-mobile-web-app-status-bar-style': 'black-translucent',
-    'apple-mobile-web-app-title': 'FilmSnaps',
-    'msapplication-TileColor': '#070708',
+    "theme-color": "#070708",
+    "apple-mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-status-bar-style": "black-translucent",
+    "apple-mobile-web-app-title": "FilmSnaps",
+    "msapplication-TileColor": "#070708",
   },
 };
 
@@ -109,6 +110,13 @@ export default async function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Pre-warm the TMDB image origin so card posters/backdrops and the
+            watch-page hero resolve DNS + TLS before first use. API data is
+            same-origin (/api/tmdb) — no preconnect needed for it. */}
+        <link rel="preconnect" href="https://image.tmdb.org" crossOrigin="" />
+        <link rel="dns-prefetch" href="https://image.tmdb.org" />
+      </head>
       <body
         className={`${inter.className} ${playfair.className} ${inter.variable} ${playfair.variable}`}
         suppressHydrationWarning
@@ -116,7 +124,7 @@ export default async function RootLayout({
         <ErrorBoundary>
           <Providers>
             <AuthProvider>
-              {children}
+              <DesktopAppShell>{children}</DesktopAppShell>
               <Toaster />
               <UpdateNotifier />
             </AuthProvider>

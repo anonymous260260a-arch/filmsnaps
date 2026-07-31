@@ -7,11 +7,11 @@
  * - Prev/Next navigation buttons below
  */
 
-'use client';
+"use client";
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Film, Check } from 'lucide-react';
-import { usePlayer } from './PlayerProvider';
+import React, { useState, useRef, useCallback, useEffect } from "react";
+import { ChevronLeft, ChevronRight, Film, Check } from "lucide-react";
+import { usePlayer } from "./PlayerProvider";
 
 interface SeasonData {
   episodes?: Array<{
@@ -33,7 +33,11 @@ interface EpisodeRailProps {
   onSeasonChange: (season: number) => void;
 }
 
-export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: EpisodeRailProps) {
+export function EpisodeRail({
+  seasonData,
+  seasons = [],
+  onSeasonChange,
+}: EpisodeRailProps) {
   const {
     selectedSeason,
     activeEpisode,
@@ -48,7 +52,7 @@ export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: Episod
   const scrollRef = useRef<HTMLDivElement>(null);
   const seasonsRef = useRef<HTMLDivElement>(null);
 
-  if (mediaType !== 'tv' || minimal) return null;
+  if (mediaType !== "tv" || minimal) return null;
 
   const currentEpisode = seasonData?.episodes?.find(
     (e) => e.episode_number === activeEpisode,
@@ -62,18 +66,21 @@ export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: Episod
   useEffect(() => {
     if (!showSeasons) return;
     const handleClick = (e: MouseEvent) => {
-      if (seasonsRef.current && !seasonsRef.current.contains(e.target as Node)) {
+      if (
+        seasonsRef.current &&
+        !seasonsRef.current.contains(e.target as Node)
+      ) {
         setShowSeasons(false);
       }
     };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
   }, [showSeasons]);
 
-  const scroll = useCallback((dir: 'left' | 'right') => {
+  const scroll = useCallback((dir: "left" | "right") => {
     if (scrollRef.current) {
-      const amount = dir === 'left' ? -320 : 320;
-      scrollRef.current.scrollBy({ left: amount, behavior: 'smooth' });
+      const amount = dir === "left" ? -320 : 320;
+      scrollRef.current.scrollBy({ left: amount, behavior: "smooth" });
     }
   }, []);
 
@@ -86,7 +93,7 @@ export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: Episod
   );
 
   return (
-    <div className="space-y-3 mt-3 sm:mt-4">
+    <div className="space-y-2 mt-0">
       {/* ── Season Selector ── */}
       {filteredSeasons.length > 0 && (
         <div className="relative" ref={seasonsRef}>
@@ -96,9 +103,7 @@ export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: Episod
               border border-[#222226] rounded-xl text-sm font-bold text-[#F4F4F5]
               hover:border-white/20 transition-colors"
           >
-            <span
-              className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500"
-            >
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">
               Season
             </span>
             <span className="text-sm">
@@ -107,7 +112,7 @@ export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: Episod
             <ChevronRight
               size={14}
               className={`text-zinc-500 transition-transform duration-200 ${
-                showSeasons ? 'rotate-90' : ''
+                showSeasons ? "rotate-90" : ""
               }`}
             />
           </button>
@@ -126,13 +131,17 @@ export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: Episod
                     key={s.id}
                     onClick={() => handleSeasonSelect(s.season_number)}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors
-                      ${isActive
-                        ? 'bg-[#D4A237]/10 text-[#D4A237]'
-                        : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-300'
+                      ${
+                        isActive
+                          ? "bg-[#D4A237]/10 text-[#D4A237]"
+                          : "text-zinc-400 hover:bg-white/5 hover:text-zinc-300"
                       }`}
                   >
                     <span className="flex-1 text-left">
-                      Season {s.season_number < 10 ? `0${s.season_number}` : s.season_number}
+                      Season{" "}
+                      {s.season_number < 10
+                        ? `0${s.season_number}`
+                        : s.season_number}
                     </span>
                     {isActive && <Check size={14} className="text-[#D4A237]" />}
                   </button>
@@ -148,7 +157,7 @@ export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: Episod
         <div className="relative">
           {/* Scroll Left (desktop only) */}
           <button
-            onClick={() => scroll('left')}
+            onClick={() => scroll("left")}
             className="hidden md:flex absolute -left-4 top-1/2 -translate-y-1/2 z-20
               w-9 h-9 rounded-full bg-[#0E0E11] border border-[#222226]
               items-center justify-center text-zinc-500 hover:text-white
@@ -175,9 +184,10 @@ export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: Episod
                   className={`snap-start flex-shrink-0 w-[260px] md:w-[220px] lg:w-[250px]
                     cursor-pointer group rounded-xl overflow-hidden border
                     transition-all duration-300 bg-[#0E0E11]
-                    ${isActive
-                      ? 'border-[#D4A237]/50 shadow-[0_4px_20px_rgba(212,162,55,0.15)]'
-                      : 'border-transparent hover:border-white/10 hover:bg-[#16161A]'
+                    ${
+                      isActive
+                        ? "border-[#D4A237]/50 shadow-[0_4px_20px_rgba(212,162,55,0.15)]"
+                        : "border-transparent hover:border-white/10 hover:bg-[#16161A]"
                     }`}
                 >
                   {/* Thumbnail */}
@@ -202,12 +212,15 @@ export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: Episod
                       <div
                         className={`w-1.5 h-1.5 rounded-full ${
                           isActive
-                            ? 'bg-[#D4A237] animate-pulse shadow-[0_0_6px_rgba(212,162,55,0.6)]'
-                            : 'bg-white/40'
+                            ? "bg-[#D4A237] animate-pulse shadow-[0_0_6px_rgba(212,162,55,0.6)]"
+                            : "bg-white/40"
                         }`}
                       />
                       <span className="text-xs font-bold text-white drop-shadow-sm">
-                        E{ep.episode_number < 10 ? `0${ep.episode_number}` : ep.episode_number}
+                        E
+                        {ep.episode_number < 10
+                          ? `0${ep.episode_number}`
+                          : ep.episode_number}
                       </span>
                     </div>
                   </div>
@@ -216,14 +229,14 @@ export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: Episod
                   <div className="px-2.5 py-2">
                     <p
                       className={`text-sm font-semibold truncate ${
-                        isActive ? 'text-[#D4A237]' : 'text-zinc-300'
+                        isActive ? "text-[#D4A237]" : "text-zinc-300"
                       }`}
                     >
                       {ep.name || `Episode ${ep.episode_number}`}
                     </p>
                     <p className="text-[11px] text-zinc-600 mt-0.5">
                       Episode {ep.episode_number}
-                      {ep.runtime ? ` · ${ep.runtime}m` : ''}
+                      {ep.runtime ? ` · ${ep.runtime}m` : ""}
                     </p>
                   </div>
                 </div>
@@ -233,7 +246,7 @@ export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: Episod
 
           {/* Scroll Right (desktop only) */}
           <button
-            onClick={() => scroll('right')}
+            onClick={() => scroll("right")}
             className="hidden md:flex absolute -right-4 top-1/2 -translate-y-1/2 z-20
               w-9 h-9 rounded-full bg-[#0E0E11] border border-[#222226]
               items-center justify-center text-zinc-500 hover:text-white
@@ -246,7 +259,7 @@ export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: Episod
 
       {/* ── Now Watching Metadata ── */}
       {currentEpisode && (
-        <div className="flex items-center gap-3 pt-2">
+        <div className="flex items-center gap-3 pt-1.5">
           <span className="relative flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D4A237] opacity-75" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-[#D4A237]" />
@@ -255,7 +268,8 @@ export function EpisodeRail({ seasonData, seasons = [], onSeasonChange }: Episod
             Now Watching
           </p>
           <h3 className="text-sm font-bold text-[#F4F4F5]">
-            S{selectedSeason < 10 ? `0${selectedSeason}` : selectedSeason} : E{activeEpisode < 10 ? `0${activeEpisode}` : activeEpisode}
+            S{selectedSeason < 10 ? `0${selectedSeason}` : selectedSeason} : E
+            {activeEpisode < 10 ? `0${activeEpisode}` : activeEpisode}
           </h3>
           <p className="hidden lg:block text-sm text-zinc-400 italic truncate max-w-md">
             — {currentEpisode.name}

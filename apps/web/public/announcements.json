@@ -1,0 +1,20 @@
+{
+  "announcements": [
+    {
+      "id": "welcome-to-filmsnaps",
+      "type": "feature",
+      "title": "Welcome to FilmSnaps",
+      "subtitle": "Stream movies and TV shows for free. No sign-up required.",
+      "body": [
+        "FilmSnaps lets you watch thousands of movies and TV shows instantly — no account, no subscription, no payment needed.",
+        "Browse trending titles, search for your favorites, or explore by category. Tap any title to see available streaming sources and start watching.",
+        "You can also download content to watch offline, track your watch history, and save titles to your personal list."
+      ],
+      "detailRoute": "/announcement/welcome-to-filmsnaps",
+      "actionLabel": "Get Started",
+      "date": "July 29, 2026",
+      "dismissible": true,
+      "expiresAt": "2026-12-31T00:00:00Z"
+    }
+  ]
+}

@@ -1,11 +1,14 @@
-'use client';
+"use client";
 
-import { Film } from 'lucide-react';
-import Link from 'next/link';
+import { Film } from "lucide-react";
+import Link from "next/link";
 
 export default function AuthPage() {
   return (
-    <div className="relative min-h-screen flex items-center justify-center overflow-hidden bg-black">
+    <div
+      className="relative min-h-[100dvh] flex items-center justify-center overflow-hidden bg-black"
+      style={{ minHeight: "calc(100dvh - var(--shell-top-offset))" }}
+    >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.25),_transparent_60%)]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom,_rgba(147,51,234,0.25),_transparent_60%)]" />
 
