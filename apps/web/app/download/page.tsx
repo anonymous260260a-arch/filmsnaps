@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import Link from "next/link";
 import {
   Download,
   Smartphone,
@@ -10,14 +10,15 @@ import {
   Clock,
   ChevronRight,
   Github,
-} from 'lucide-react';
+} from "lucide-react";
 
-import mobileVersions from '../../public/versions.json';
-import desktopVersions from '../../public/desktop-versions.json';
+import { DesktopGate } from "@/components/desktop/DesktopGate";
+import mobileVersions from "../../public/versions.json";
+import desktopVersions from "../../public/desktop-versions.json";
 
 // ── Platform definitions ──
 
-type PlatformId = 'android' | 'windows' | 'mac' | 'linux';
+type PlatformId = "android" | "windows" | "mac" | "linux";
 
 interface PlatformInfo {
   id: PlatformId;
@@ -31,40 +32,40 @@ interface PlatformInfo {
 
 const PLATFORMS: PlatformInfo[] = [
   {
-    id: 'android',
-    label: 'Android',
+    id: "android",
+    label: "Android",
     icon: <Smartphone className="w-5 h-5" />,
-    description: 'The full FilmSnaps experience on your phone or tablet.',
-    requirements: 'Requires Android 8.0+ (API 26+)',
-    downloadLabel: 'Download APK',
-    artifactPattern: 'filmsnaps-v{version}.apk',
+    description: "The full FilmSnaps experience on your phone or tablet.",
+    requirements: "Requires Android 8.0+ (API 26+)",
+    downloadLabel: "Download APK",
+    artifactPattern: "filmsnaps-v{version}.apk",
   },
   {
-    id: 'windows',
-    label: 'Windows',
+    id: "windows",
+    label: "Windows",
     icon: <Monitor className="w-5 h-5" />,
-    description: 'Native Windows app with secure video player.',
-    requirements: 'Windows 10 64-bit or later',
-    downloadLabel: 'Download Installer',
-    artifactPattern: 'FilmSnaps-Setup-{version}.exe',
+    description: "Native Windows app with secure video player.",
+    requirements: "Windows 10 64-bit or later",
+    downloadLabel: "Download Installer",
+    artifactPattern: "FilmSnaps-Setup-{version}.exe",
   },
   {
-    id: 'mac',
-    label: 'macOS',
+    id: "mac",
+    label: "macOS",
     icon: <Apple className="w-5 h-5" />,
-    description: 'Native macOS app — Intel & Apple Silicon.',
-    requirements: 'macOS 11 Big Sur or later',
-    downloadLabel: 'Download DMG',
-    artifactPattern: 'FilmSnaps-{version}-{arch}.dmg',
+    description: "Native macOS app — Intel & Apple Silicon.",
+    requirements: "macOS 11 Big Sur or later",
+    downloadLabel: "Download DMG",
+    artifactPattern: "FilmSnaps-{version}-{arch}.dmg",
   },
   {
-    id: 'linux',
-    label: 'Linux',
+    id: "linux",
+    label: "Linux",
     icon: <Terminal className="w-5 h-5" />,
-    description: 'AppImage for all major Linux distributions.',
-    requirements: 'AppImage runtime required',
-    downloadLabel: 'Download AppImage',
-    artifactPattern: 'FilmSnaps-{version}.AppImage',
+    description: "AppImage for all major Linux distributions.",
+    requirements: "AppImage runtime required",
+    downloadLabel: "Download AppImage",
+    artifactPattern: "FilmSnaps-{version}.AppImage",
   },
 ];
 
@@ -74,7 +75,7 @@ const mobileLatest = mobileVersions.versions[0];
 const desktopLatest = desktopVersions.versions[0];
 
 function getDownloadUrl(platform: PlatformId): string | null {
-  if (platform === 'android') {
+  if (platform === "android") {
     return mobileLatest?.downloadUrl ?? null;
   }
   // Desktop platforms
@@ -87,7 +88,7 @@ function getDownloadUrl(platform: PlatformId): string | null {
 }
 
 function getFileSize(platform: PlatformId): string | null {
-  if (platform === 'android') return mobileLatest?.size ?? null;
+  if (platform === "android") return mobileLatest?.size ?? null;
   const map: Record<string, string | undefined> = {
     windows: desktopLatest?.platforms?.win?.size,
     mac: desktopLatest?.platforms?.mac?.size,
@@ -97,24 +98,29 @@ function getFileSize(platform: PlatformId): string | null {
 }
 
 function getVersion(platform: PlatformId): string {
-  return platform === 'android' ? mobileLatest?.version : desktopLatest?.version;
+  return platform === "android"
+    ? mobileLatest?.version
+    : desktopLatest?.version;
 }
 
 // ── Platform details (shown below download card) ──
 
-const PLATFORM_NOTES: Record<PlatformId, { icon: React.ReactNode; title: string; body: React.ReactNode }[]> = {
+const PLATFORM_NOTES: Record<
+  PlatformId,
+  { icon: React.ReactNode; title: string; body: React.ReactNode }[]
+> = {
   android: [
     {
       icon: <Smartphone className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />,
-      title: 'Android Only',
+      title: "Android Only",
       body: <>Requires Android 8.0+ (API 26+). iOS version coming soon.</>,
     },
     {
       icon: <Shield className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />,
-      title: 'Sideload Only',
+      title: "Sideload Only",
       body: (
         <>
-          Not available on Google Play. You may need to enable{' '}
+          Not available on Google Play. You may need to enable{" "}
           <span className="text-zinc-300">Install from unknown sources</span> in
           your device settings.
         </>
@@ -124,17 +130,19 @@ const PLATFORM_NOTES: Record<PlatformId, { icon: React.ReactNode; title: string;
   windows: [
     {
       icon: <Shield className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
-      title: '6-Layer Security',
+      title: "6-Layer Security",
       body: (
         <>
-          Ad blocking, popup protection, navigation guards, and session isolation
-          built in at the OS level — provider scripts cannot bypass.
+          Ad blocking, popup protection, navigation guards, and session
+          isolation built in at the OS level — provider scripts cannot bypass.
         </>
       ),
     },
     {
-      icon: <ExternalLink className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
-      title: 'Auto-Updates',
+      icon: (
+        <ExternalLink className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+      ),
+      title: "Auto-Updates",
       body: (
         <>
           The app checks for updates on launch and downloads new versions in the
@@ -146,17 +154,19 @@ const PLATFORM_NOTES: Record<PlatformId, { icon: React.ReactNode; title: string;
   mac: [
     {
       icon: <Shield className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
-      title: '6-Layer Security',
+      title: "6-Layer Security",
       body: (
         <>
-          Ad blocking, popup protection, navigation guards, and session isolation
-          built in at the OS level — provider scripts cannot bypass.
+          Ad blocking, popup protection, navigation guards, and session
+          isolation built in at the OS level — provider scripts cannot bypass.
         </>
       ),
     },
     {
-      icon: <ExternalLink className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
-      title: 'Auto-Updates',
+      icon: (
+        <ExternalLink className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+      ),
+      title: "Auto-Updates",
       body: (
         <>
           The app checks for updates on launch and downloads new versions in the
@@ -168,17 +178,19 @@ const PLATFORM_NOTES: Record<PlatformId, { icon: React.ReactNode; title: string;
   linux: [
     {
       icon: <Shield className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
-      title: '6-Layer Security',
+      title: "6-Layer Security",
       body: (
         <>
-          Ad blocking, popup protection, navigation guards, and session isolation
-          built in at the OS level — provider scripts cannot bypass.
+          Ad blocking, popup protection, navigation guards, and session
+          isolation built in at the OS level — provider scripts cannot bypass.
         </>
       ),
     },
     {
-      icon: <ExternalLink className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
-      title: 'Auto-Updates',
+      icon: (
+        <ExternalLink className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+      ),
+      title: "Auto-Updates",
       body: (
         <>
           The app checks for updates on launch and downloads new versions in the
@@ -194,20 +206,22 @@ const PLATFORM_NOTES: Record<PlatformId, { icon: React.ReactNode; title: string;
 export default function DownloadPage() {
   return (
     <div className="min-h-screen bg-zinc-950">
-      {/* Nav */}
-      <header className="border-b border-zinc-800">
-        <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
-          <Link href="/" className="text-white font-bold text-lg">
-            FilmSnaps
-          </Link>
-          <Link
-            href="/"
-            className="text-zinc-400 hover:text-white text-sm transition-colors"
-          >
-            ← Back to Home
-          </Link>
-        </div>
-      </header>
+      {/* Nav — hidden inside the desktop shell (GlobalTopBar provides chrome) */}
+      <DesktopGate>
+        <header className="border-b border-zinc-800">
+          <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
+            <Link href="/" className="text-white font-bold text-lg">
+              FilmSnaps
+            </Link>
+            <Link
+              href="/"
+              className="text-zinc-400 hover:text-white text-sm transition-colors"
+            >
+              ← Back to Home
+            </Link>
+          </div>
+        </header>
+      </DesktopGate>
 
       <PlatformDownloadSection />
 
@@ -248,7 +262,7 @@ function PlatformDownloadSection() {
           const downloadUrl = getDownloadUrl(platform.id);
           const version = getVersion(platform.id);
           const fileSize = getFileSize(platform.id);
-          const hasDownload = downloadUrl !== null && downloadUrl !== '#';
+          const hasDownload = downloadUrl !== null && downloadUrl !== "#";
 
           return (
             <div
@@ -262,7 +276,9 @@ function PlatformDownloadSection() {
                 </span>
                 <div>
                   <h2 className="text-white font-bold">{platform.label}</h2>
-                  <p className="text-zinc-500 text-xs">{platform.requirements}</p>
+                  <p className="text-zinc-500 text-xs">
+                    {platform.requirements}
+                  </p>
                 </div>
               </div>
 
@@ -287,16 +303,16 @@ function PlatformDownloadSection() {
 
               {/* Download button */}
               <a
-                href={downloadUrl ?? '#'}
-                download={platform.id === 'android'}
+                href={downloadUrl ?? "#"}
+                download={platform.id === "android"}
                 className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all ${
                   hasDownload
-                    ? 'bg-amber-500 text-black hover:bg-amber-400 active:scale-[0.98]'
-                    : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                    ? "bg-amber-500 text-black hover:bg-amber-400 active:scale-[0.98]"
+                    : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
                 }`}
               >
                 <Download className="w-4 h-4" />
-                {hasDownload ? platform.downloadLabel : 'Coming Soon'}
+                {hasDownload ? platform.downloadLabel : "Coming Soon"}
               </a>
             </div>
           );

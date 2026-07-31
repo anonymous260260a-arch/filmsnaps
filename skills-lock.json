@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "Desktop App Design": {
+      "source": "phazurlabs/ux-ui-mastery",
+      "sourceType": "github",
+      "skillPath": "skills/desktop-app-design/SKILL.md",
+      "computedHash": "ceeb52e7754a1e7f9085c067d48c8f16f705f90360d4cd1618a35695b7886384"
+    },
     "Mobile App Design Standards": {
       "source": "awesome-skills/mobile-app-design",
       "sourceType": "github",
@@ -36,6 +42,18 @@
       "sourceType": "github",
       "skillPath": "skills/deprecated/design-an-interface/SKILL.md",
       "computedHash": "7012bc90f6f71495e52632e0454c2f4c63bf0ebe21d5969be40220f06aef4a1a"
+    },
+    "desktop": {
+      "source": "lobehub/lobe-chat",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/desktop/SKILL.md",
+      "computedHash": "f4a9d276f357781437a486934248184e11fae8395eacf527016e45e7781e8b50"
+    },
+    "desktop-app": {
+      "source": "popup-studio-ai/bkit-claude-code",
+      "sourceType": "github",
+      "skillPath": "skills/desktop-app/SKILL.md",
+      "computedHash": "12f81fac61ef0c0a1ed0e98f256352c0ea04a94450ca1644feab0d34b7f1b295"
     },
     "documentation-writer": {
       "source": "github/awesome-copilot",
