@@ -7,7 +7,7 @@
  * the entire SecureIframe/WebView tree otherwise.
  */
 
-'use client';
+"use client";
 
 import React, {
   createContext,
@@ -17,7 +17,7 @@ import React, {
   useRef,
   useEffect,
   type ReactNode,
-} from 'react';
+} from "react";
 
 export interface PlayerProviderState {
   /** Currently selected provider id */
@@ -32,10 +32,14 @@ export interface PlayerProviderState {
   cpuWarning: boolean;
   /** Whether the iframe failed to load (timeout / error) */
   iframeLoadError: boolean;
+  /** Whether the embed content is in a buffering/loading state */
+  buffering: boolean;
+  /** Whether the embed has finished loading (player is ready) */
+  playerReady: boolean;
   /** Incremented to force iframe refresh */
   refreshKey: number;
   /** Media type: 'movie' or 'tv' */
-  mediaType: 'movie' | 'tv';
+  mediaType: "movie" | "tv";
   /** TMDB content id */
   contentId: string;
   /** Whether the page is in minimal/embedded mode */
@@ -49,6 +53,8 @@ export interface PlayerProviderActions {
   setIsFullscreen: (fs: boolean) => void;
   setCpuWarning: (warn: boolean) => void;
   setIframeLoadError: (err: boolean) => void;
+  setBuffering: (b: boolean) => void;
+  setPlayerReady: (r: boolean) => void;
   refreshIframe: () => void;
   toggleFullscreen: () => void;
   goToNextEpisode: () => void;
@@ -61,7 +67,7 @@ const PlayerContext = createContext<PlayerContextValue | null>(null);
 
 interface PlayerProviderProps {
   children: ReactNode;
-  mediaType: 'movie' | 'tv';
+  mediaType: "movie" | "tv";
   contentId: string;
   initialProviderId?: string;
   initialSeason?: number;
@@ -89,14 +95,16 @@ export function PlayerProvider({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [cpuWarning, setCpuWarning] = useState(false);
   const [iframeLoadError, setIframeLoadError] = useState(false);
+  const [buffering, setBuffering] = useState(false);
+  const [playerReady, setPlayerReady] = useState(false);
   const refreshKeyRef = useRef(0);
   const [refreshKey, setRefreshKey] = useState(0);
 
   // Fullscreen listener
   useEffect(() => {
     const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', onFsChange);
-    return () => document.removeEventListener('fullscreenchange', onFsChange);
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
   }, []);
 
   const refreshIframe = useCallback(() => {
@@ -127,6 +135,8 @@ export function PlayerProvider({
     isFullscreen,
     cpuWarning,
     iframeLoadError,
+    buffering,
+    playerReady,
     refreshKey,
     mediaType,
     contentId,
@@ -137,6 +147,8 @@ export function PlayerProvider({
     setIsFullscreen,
     setCpuWarning,
     setIframeLoadError,
+    setBuffering,
+    setPlayerReady,
     refreshIframe,
     toggleFullscreen,
     goToNextEpisode,
@@ -144,16 +156,14 @@ export function PlayerProvider({
   };
 
   return (
-    <PlayerContext.Provider value={value}>
-      {children}
-    </PlayerContext.Provider>
+    <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>
   );
 }
 
 export function usePlayer(): PlayerContextValue {
   const ctx = useContext(PlayerContext);
   if (!ctx) {
-    throw new Error('usePlayer must be used within a PlayerProvider');
+    throw new Error("usePlayer must be used within a PlayerProvider");
   }
   return ctx;
 }
