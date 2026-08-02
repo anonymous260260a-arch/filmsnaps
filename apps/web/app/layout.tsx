@@ -6,6 +6,7 @@ import { AuthProvider } from "@/components/AuthProvider";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { UpdateNotifier } from "@/components/UpdateNotifier";
 import { DesktopAppShell } from "@/components/desktop/DesktopAppShell";
+import { DesktopLegalGate } from "@/components/legal/DesktopLegalGate";
 import { Metadata } from "next";
 
 const inter = Inter({
@@ -127,6 +128,10 @@ export default async function RootLayout({
               <DesktopAppShell>{children}</DesktopAppShell>
               <Toaster />
               <UpdateNotifier />
+              {/* First-run Legal & DMCA gate — desktop only (web gates on the
+                  watch page via WebLegalGate). Rendered after the shell so the
+                  overlay stacks above the top bar and immersive fullscreen. */}
+              <DesktopLegalGate />
             </AuthProvider>
           </Providers>
         </ErrorBoundary>

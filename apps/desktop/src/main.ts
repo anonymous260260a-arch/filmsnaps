@@ -24,11 +24,13 @@ import {
 } from "electron";
 import { join } from "path";
 import { ChildProcess, spawn } from "child_process";
+import { createServer, type AddressInfo } from "net";
 import {
   loadWindowState,
   shouldStartMaximized,
   saveWindowState,
 } from "./lib/window-state";
+import { getLegalAccepted, setLegalAccepted } from "./lib/legal-accept";
 import { initUpdater, quitAndInstall, checkForUpdates } from "./updater";
 import {
   createProviderSession,
@@ -64,6 +66,8 @@ function resourcePath(...segments: string[]): string {
 
 let mainWindow: BrowserWindow | null = null;
 let nextServerProcess: ChildProcess | null = null;
+/** The localhost port the Next.js server is actually running on (prod only). */
+let nextServerPort = 3000;
 
 // ── Provider session state (for inline webview) ──
 let currentProviderSession: ReturnType<typeof createProviderSession> | null =
@@ -176,6 +180,12 @@ function createMainWindow(): void {
   // Register updater IPC handlers
   ipcMain.handle("update:check", () => checkForUpdates());
   ipcMain.handle("update:install", () => quitAndInstall());
+
+  // Register legal-acceptance IPC handlers (first-run gate)
+  ipcMain.handle("legal:status", () => getLegalAccepted());
+  ipcMain.handle("legal:accept", () => {
+    setLegalAccepted(true);
+  });
 
   // Save window state on changes + push maximize state to the renderer
   // so the custom title bar can swap its maximize/restore icon live.
@@ -460,18 +470,57 @@ function preSeedTrustForProviderSessions(): { cdnDomains: Set<string> } {
 
 // ── Next.js Server (Production) ──
 
-function startNextServer(): void {
+/**
+ * Find a free localhost port for the Next.js server.
+ *
+ * Binds a temporary server to port 0 (OS assigns any free port), reads the
+ * actual port, then closes it. The tiny race window (another process grabbing
+ * the port between close and spawn) is handled because the Next.js server
+ * fails loudly on EADDRINUSE — never hang, and the app's webRequest has no
+ * dependency on this port.
+ */
+function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const port = (srv.address() as AddressInfo).port;
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+/**
+ * Start the Next.js standalone server on a FREE localhost port and load the
+ * app. Picking a free port avoids clashing with whatever else the user runs
+ * on 3000 (another dev server, Docker, etc.) — a hardcoded port would fail
+ * with EADDRINUSE and leave the window blank.
+ */
+async function startNextServer(): Promise<void> {
   console.log("[Main] Starting Next.js production server...");
 
   // The standalone output bundles the server at `server.js` inside WEB_APP_DIR.
   // We run it directly with Node, passing the port via env.
   const serverScript = join(WEB_APP_DIR, "server.js");
+  let port = 3000;
+
+  try {
+    port = await findFreePort();
+  } catch (err) {
+    // Fall back to 3000 — spawn will fail loudly if it's taken; the error
+    // handler below surfaces it instead of silently blanking.
+    console.warn("[Main] Free-port probe failed, using 3000:", err);
+  }
+  nextServerPort = port;
+
+  console.log(`[Main] Spawning Next.js server on localhost:${port}`);
 
   nextServerProcess = spawn("node", [serverScript], {
     cwd: WEB_APP_DIR,
     env: {
       ...process.env,
-      PORT: "3000",
+      PORT: String(port),
+      HOSTNAME: "127.0.0.1",
       NODE_ENV: "production",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -480,9 +529,19 @@ function startNextServer(): void {
   nextServerProcess.stdout?.on("data", (data: Buffer) => {
     const msg = data.toString();
     console.log(`[NextServer] ${msg}`);
-    if (msg.includes("started") || msg.includes("localhost:")) {
-      // Server is ready — load the app
-      mainWindow?.loadURL(DEV_SERVER_URL);
+    // Next.js prints "Local: http://127.0.0.1:<port>" / "Ready" once the
+    // standalone server is listening. Match both the localhost and 127.0.0.1
+    // forms (the server binds 127.0.0.1 via HOSTNAME) plus the legacy
+    // "started" string. Without the 127.0.0.1 match, readiness is never
+    // detected and the window stays on the background color forever.
+    if (
+      msg.includes("started") ||
+      msg.includes("localhost:") ||
+      msg.includes("127.0.0.1:")
+    ) {
+      // Server is ready — load the app on the ACTUAL bound address/port.
+      // Use 127.0.0.1 to exactly match what the server binds to.
+      mainWindow?.loadURL(`http://127.0.0.1:${nextServerPort}`);
     }
   });
 

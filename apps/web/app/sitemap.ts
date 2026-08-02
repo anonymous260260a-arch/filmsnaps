@@ -1,19 +1,24 @@
-import { MetadataRoute } from 'next';
+import { MetadataRoute } from "next";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = 'https://filmsnaps.com';
+  const baseUrl = "https://filmsnaps.com";
 
   // Static routes
   const routes = [
-    '',
-    '/movie',
-    '/tv',
-    '/search',
+    "",
+    "/movie",
+    "/tv",
+    "/search",
+    "/download",
+    "/versions",
+    "/legal",
+    "/privacy",
+    "/how-it-works",
   ].map((route) => ({
     url: `${baseUrl}${route}`,
     lastModified: new Date(),
-    changeFrequency: 'daily' as const,
-    priority: route === '' ? 1 : 0.8,
+    changeFrequency: "daily" as const,
+    priority: route === "" ? 1 : 0.8,
   }));
 
   return routes;

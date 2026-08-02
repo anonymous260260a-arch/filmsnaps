@@ -33,6 +33,7 @@ import {
   LogOut,
   LogIn,
   ChevronRight,
+  ScrollText,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useChromeStore, toggleSidebarCollapsed } from "./chrome-store";
@@ -442,6 +443,33 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
             className="h-full bg-[#D4A237] transition-[width] duration-300"
             style={{ width: `${pct}%` }}
           />
+        </div>
+      )}
+
+      {/* ── Footer: legal links ── */}
+      {!sidebarCollapsed && (
+        <div className="relative border-t border-white/[0.06] px-2.5 py-2">
+          <Link
+            href="/legal"
+            className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-zinc-600 transition-colors hover:bg-white/[0.04] hover:text-zinc-300"
+          >
+            <ScrollText size={14} className="shrink-0" />
+            Legal & DMCA
+          </Link>
+          <Link
+            href="/privacy"
+            className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-zinc-600 transition-colors hover:bg-white/[0.04] hover:text-zinc-300"
+          >
+            <ScrollText size={14} className="shrink-0" />
+            Privacy Policy
+          </Link>
+          <Link
+            href="/how-it-works"
+            className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-zinc-600 transition-colors hover:bg-white/[0.04] hover:text-zinc-300"
+          >
+            <ScrollText size={14} className="shrink-0" />
+            How Content Works
+          </Link>
         </div>
       )}
 

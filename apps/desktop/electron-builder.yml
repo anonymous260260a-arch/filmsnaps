@@ -1,4 +1,11 @@
 # FilmSnaps Desktop — Electron Builder Configuration
+#
+# Single source of truth for electron-builder. IMPORTANT: electron-builder
+# only reads this file when package.json has NO "build" field — if a "build"
+# field exists in package.json it is used instead and this file is silently
+# ignored (see node_modules/app-builder-lib/out/util/config/load.js). Keep the
+# config in ONE place: either here or in the package.json "build" field, never
+# both.
 
 appId: com.filmsnaps.desktop
 productName: FilmSnaps
@@ -15,10 +22,16 @@ files:
 
 icon: resources/icon.png
 
-# In production, bundle the web app's Next.js standalone output
-# so Electron can serve the app locally. The standalone output
-# includes the server + all necessary node_modules + static files.
+# In production, bundle the web app's Next.js standalone output so Electron
+# can serve the app locally. Built by scripts/build-web.mjs (which sets
+# BUILD_FOR_DESKTOP=true so next.config.js emits .next/standalone). The
+# standalone output includes the server + all necessary node_modules + static
+# files. `from` paths are relative to THIS file's directory (apps/desktop).
 extraResources:
+  - from: ../../packages/filter-compiler/build/compiled-engine.bin
+    to: filter-engine/compiled-engine.bin
+  - from: ../../blocklist.json
+    to: blocklist.json
   - from: ../web/.next/standalone
     to: web
   - from: ../web/public
