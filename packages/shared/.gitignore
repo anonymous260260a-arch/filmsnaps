@@ -1,0 +1,6 @@
+# The root .gitignore's `scripts/` rule is meant for the monorepo-root scripts/
+# folder only, but it also swallows this package's build-critical scripts/
+# directory (fix-dist-imports.mjs is required by the `build` script, which runs
+# during Netlify's postinstall). Re-include it here so the build works for
+# anyone who checks out the repo.
+!scripts/

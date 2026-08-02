@@ -41,6 +41,9 @@ const PAGE_TITLES: Array<{ prefix: string; title: string }> = [
   { prefix: "/search", title: "Search" },
   { prefix: "/auth", title: "Account" },
   { prefix: "/versions", title: "Versions" },
+  { prefix: "/legal", title: "Legal & DMCA" },
+  { prefix: "/privacy", title: "Privacy Policy" },
+  { prefix: "/how-it-works", title: "How Content Works" },
 ];
 
 function titleForPath(pathname: string): string {

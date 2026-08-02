@@ -46,6 +46,7 @@ import { buildIframeCSP } from "@/lib/movieProviders/cspBuilder";
 import { useIsDesktop } from "@/hooks/useIsDesktop";
 import { useWatchKeyboardShortcuts } from "@/hooks/useWatchKeyboardShortcuts";
 import { DesktopWatchLayout } from "@/components/watch/DesktopWatchLayout";
+import { WebLegalGate } from "@/components/legal/WebLegalGate";
 import type { ProviderDefinition } from "@filmsnaps/shared";
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -608,22 +609,28 @@ export default function WatchClient({
   initialEpisode = 1,
 }: WatchClientProps) {
   return (
-    <PlayerProvider
-      mediaType={plat}
-      contentId={contentid}
-      initialProviderId={defaultProvider}
-      initialSeason={initialSeason}
-      initialEpisode={initialEpisode}
-      minimal={minimal}
-      maxEpisodeCount={initialSeasonData?.episodes?.length ?? 99}
-    >
-      <WatchClientContent
-        contentid={contentid}
-        plat={plat}
-        initialMeta={initialMeta}
-        initialSeasonData={initialSeasonData}
+    <>
+      {/* First-time Legal & DMCA acceptance (browser only — the desktop app
+          gates at the root layout via DesktopLegalGate). Mounted OUTSIDE
+          PlayerProvider so player state changes don't re-render it. */}
+      <WebLegalGate />
+      <PlayerProvider
+        mediaType={plat}
+        contentId={contentid}
+        initialProviderId={defaultProvider}
+        initialSeason={initialSeason}
+        initialEpisode={initialEpisode}
         minimal={minimal}
-      />
-    </PlayerProvider>
+        maxEpisodeCount={initialSeasonData?.episodes?.length ?? 99}
+      >
+        <WatchClientContent
+          contentid={contentid}
+          plat={plat}
+          initialMeta={initialMeta}
+          initialSeasonData={initialSeasonData}
+          minimal={minimal}
+        />
+      </PlayerProvider>
+    </>
   );
 }
