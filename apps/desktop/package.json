@@ -7,7 +7,7 @@
   "main": "dist/main.js",
   "scripts": {
     "dev": "concurrently -k \"cd ../web && pnpm dev\" \"wait-on http://localhost:3000 && pnpm build && pnpm exec electron . --dev\"",
-    "build": "tsc && node scripts/inject-preload-css.js",
+    "build": "node scripts/build-web.mjs && tsc && node scripts/inject-preload-css.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "dist": "pnpm build && electron-builder --publish=never",
@@ -15,39 +15,6 @@
     "pack": "pnpm build && electron-builder --dir",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist release"
-  },
-  "build": {
-    "appId": "app.filmsnaps.desktop",
-    "productName": "FilmSnaps",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "resources/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "../../packages/filter-compiler/build/compiled-engine.bin",
-        "to": "filter-engine/compiled-engine.bin"
-      },
-      {
-        "from": "../../blocklist.json",
-        "to": "blocklist.json"
-      }
-    ],
-    "win": {
-      "target": "nsis",
-      "icon": "resources/icon.png"
-    },
-    "mac": {
-      "target": "dmg",
-      "icon": "resources/icon.png"
-    },
-    "linux": {
-      "target": "AppImage",
-      "icon": "resources/icon.png"
-    }
   },
   "dependencies": {
     "@cliqz/adblocker": "^1.34.0",

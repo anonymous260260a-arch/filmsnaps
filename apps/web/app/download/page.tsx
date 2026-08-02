@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { DesktopGate } from "@/components/desktop/DesktopGate";
+import { LegalFooter } from "@/components/legal/LegalFooter";
 import mobileVersions from "../../public/versions.json";
 import desktopVersions from "../../public/desktop-versions.json";
 
@@ -53,8 +54,8 @@ const PLATFORMS: PlatformInfo[] = [
     id: "mac",
     label: "macOS",
     icon: <Apple className="w-5 h-5" />,
-    description: "Native macOS app — Intel & Apple Silicon.",
-    requirements: "macOS 11 Big Sur or later",
+    description: "Coming soon — macOS support is on the roadmap.",
+    requirements: "Coming soon",
     downloadLabel: "Download DMG",
     artifactPattern: "FilmSnaps-{version}-{arch}.dmg",
   },
@@ -62,8 +63,8 @@ const PLATFORMS: PlatformInfo[] = [
     id: "linux",
     label: "Linux",
     icon: <Terminal className="w-5 h-5" />,
-    description: "AppImage for all major Linux distributions.",
-    requirements: "AppImage runtime required",
+    description: "Coming soon — Linux support is on the roadmap.",
+    requirements: "Coming soon",
     downloadLabel: "Download AppImage",
     artifactPattern: "FilmSnaps-{version}.AppImage",
   },
@@ -78,23 +79,16 @@ function getDownloadUrl(platform: PlatformId): string | null {
   if (platform === "android") {
     return mobileLatest?.downloadUrl ?? null;
   }
-  // Desktop platforms
-  const map: Record<string, string | undefined> = {
-    windows: desktopLatest?.platforms?.win?.downloadUrl,
-    mac: desktopLatest?.platforms?.mac?.downloadUrl,
-    linux: desktopLatest?.platforms?.linux?.downloadUrl,
-  };
-  return map[platform] ?? null;
+  // Only Windows is currently available for desktop. macOS and Linux are
+  // coming soon — no download URL yet, so the card renders as "Coming Soon".
+  if (platform !== "windows") return null;
+  return desktopLatest?.platforms?.win?.downloadUrl ?? null;
 }
 
 function getFileSize(platform: PlatformId): string | null {
   if (platform === "android") return mobileLatest?.size ?? null;
-  const map: Record<string, string | undefined> = {
-    windows: desktopLatest?.platforms?.win?.size,
-    mac: desktopLatest?.platforms?.mac?.size,
-    linux: desktopLatest?.platforms?.linux?.size,
-  };
-  return map[platform] ?? null;
+  if (platform !== "windows") return null;
+  return desktopLatest?.platforms?.win?.size ?? null;
 }
 
 function getVersion(platform: PlatformId): string {
@@ -105,9 +99,11 @@ function getVersion(platform: PlatformId): string {
 
 // ── Platform details (shown below download card) ──
 
-const PLATFORM_NOTES: Record<
-  PlatformId,
-  { icon: React.ReactNode; title: string; body: React.ReactNode }[]
+const PLATFORM_NOTES: Partial<
+  Record<
+    PlatformId,
+    { icon: React.ReactNode; title: string; body: React.ReactNode }[]
+  >
 > = {
   android: [
     {
@@ -128,54 +124,6 @@ const PLATFORM_NOTES: Record<
     },
   ],
   windows: [
-    {
-      icon: <Shield className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
-      title: "6-Layer Security",
-      body: (
-        <>
-          Ad blocking, popup protection, navigation guards, and session
-          isolation built in at the OS level — provider scripts cannot bypass.
-        </>
-      ),
-    },
-    {
-      icon: (
-        <ExternalLink className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
-      ),
-      title: "Auto-Updates",
-      body: (
-        <>
-          The app checks for updates on launch and downloads new versions in the
-          background — no manual re-downloads needed.
-        </>
-      ),
-    },
-  ],
-  mac: [
-    {
-      icon: <Shield className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
-      title: "6-Layer Security",
-      body: (
-        <>
-          Ad blocking, popup protection, navigation guards, and session
-          isolation built in at the OS level — provider scripts cannot bypass.
-        </>
-      ),
-    },
-    {
-      icon: (
-        <ExternalLink className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
-      ),
-      title: "Auto-Updates",
-      body: (
-        <>
-          The app checks for updates on launch and downloads new versions in the
-          background — no manual re-downloads needed.
-        </>
-      ),
-    },
-  ],
-  linux: [
     {
       icon: <Shield className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />,
       title: "6-Layer Security",
@@ -236,6 +184,8 @@ export default function DownloadPage() {
           <ChevronRight className="w-3.5 h-3.5" />
         </Link>
       </div>
+
+      <LegalFooter />
     </div>
   );
 }
