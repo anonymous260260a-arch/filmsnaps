@@ -1,18 +1,19 @@
 // app/page.tsx
-import dynamic from 'next/dynamic';
-import { Suspense } from 'react';
-import { Header } from '@/components/Header';
-import { SkeletonHero, SkeletonRow } from '@/components/SkeletonLoader';
+import dynamic from "next/dynamic";
+import { Suspense } from "react";
+import { Header } from "@/components/Header";
+import { SkeletonHero, SkeletonRow } from "@/components/SkeletonLoader";
 
 // Lazy load heavy components
 const Hero = dynamic(
-  () => import('@/components/Hero').then((mod) => ({ default: mod.Hero })),
-  { loading: () => <SkeletonHero />, ssr: true }
+  () => import("@/components/Hero").then((mod) => ({ default: mod.Hero })),
+  { loading: () => <SkeletonHero />, ssr: true },
 );
 
-import { MediaCarouselClient as MediaCarousel } from '@/components/MediaCarouselClient';
-import { ContinueWatchingWrapper } from '@/components/ContinueWatchingWrapper';
-import { tmdb } from '@/lib/tmdb.server';
+import { MediaCarouselClient as MediaCarousel } from "@/components/MediaCarouselClient";
+import { ContinueWatchingWrapper } from "@/components/ContinueWatchingWrapper";
+import { LegalFooter } from "@/components/legal/LegalFooter";
+import { tmdb } from "@/lib/tmdb.server";
 
 export default async function Home() {
   let trendingMovies: any = { results: [] };
@@ -23,13 +24,13 @@ export default async function Home() {
   try {
     [trendingMovies, trendingTV, popularMovies, upcomingMovies] =
       await Promise.all([
-        tmdb('/trending/movie/week'),
-        tmdb('/trending/tv/week'),
-        tmdb('/movie/popular'),
-        tmdb('/movie/upcoming'),
+        tmdb("/trending/movie/week"),
+        tmdb("/trending/tv/week"),
+        tmdb("/movie/popular"),
+        tmdb("/movie/upcoming"),
       ]);
   } catch (e) {
-    console.error('[Home] Failed to fetch TMDB data:', e);
+    console.error("[Home] Failed to fetch TMDB data:", e);
   }
 
   const featuredMovies = trendingMovies.results.slice(0, 5) || [];
@@ -94,6 +95,7 @@ export default async function Home() {
           )}
         </div>
       </main>
+      <LegalFooter />
     </div>
   );
 }

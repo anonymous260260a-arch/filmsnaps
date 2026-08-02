@@ -9,18 +9,21 @@ FilmSnaps is a cross-platform streaming discovery app powered by the TMDB API. B
 ## ✨ Features
 
 ### 🔍 Smart Search
+
 - Fuzzy title matching with Fuse.js (handles typos, spacing, partial names)
 - Hybrid ranking: fuzzy relevance + popularity + vote score
 - Variant generation: "zombie land" → `Zombieland`, "spider-man" → `Spider Man`
 
 ### 📱 Cross-Platform
-| Platform | Stack | Status |
-|---|---|---|
-| **Web** | Next.js 15 (App Router), Tailwind CSS, TypeScript | ✅ Live |
-| **Mobile** | Flutter (Android 8.0+) | ✅ APK available |
-| **Desktop** | Electron + Next.js | ✅ v1.0.0 |
+
+| Platform    | Stack                                             | Status           |
+| ----------- | ------------------------------------------------- | ---------------- |
+| **Web**     | Next.js 15 (App Router), Tailwind CSS, TypeScript | ✅ Live          |
+| **Mobile**  | Flutter (Android 8.0+)                            | ✅ APK available |
+| **Desktop** | Electron + Next.js                                | ✅ v1.0.0        |
 
 ### 🎬 Streaming Player
+
 - **Web**: Proxy iframe with JS protection (popup/navigation blocking)
 - **Mobile**: Flutter WebView with 16-layer JS injection protection
 - **Desktop**: Separate BrowserWindow with **6 native security layers**:
@@ -32,6 +35,7 @@ FilmSnaps is a cross-platform streaming discovery app powered by the TMDB API. B
   6. Resource watchdog (CPU/memory monitoring, auto-reload on abuse)
 
 ### 📋 Watchlist
+
 - Save movies and TV shows
 - Cross-session persistence
 - Badge count in navigation
@@ -79,6 +83,7 @@ filmsnaps/
 ## 🚀 Getting Started
 
 ### Prerequisites
+
 - **Node.js** v18+
 - **pnpm** (recommended) or npm
 - **TMDB API key** ([get one free](https://www.themoviedb.org/settings/api))
@@ -102,20 +107,14 @@ The web app runs at [http://localhost:3000](http://localhost:3000).
 ### Desktop App (Development)
 
 ```bash
-# Build the web app first (desktop bundles it)
-cd apps/web && pnpm build
-
-# Run desktop in dev mode
+# Run desktop in dev mode (starts the web dev server + Electron)
 cd apps/desktop && pnpm dev
 ```
 
 ### Desktop App (Production Build)
 
 ```bash
-# 1. Build the web app (standalone output)
-cd apps/web && pnpm build
-
-# 2. Build and package the desktop app
+# Build the web standalone bundle AND package the installer
 cd apps/desktop && pnpm dist
 
 # Or build + publish to GitHub Releases:
@@ -123,10 +122,13 @@ cd apps/desktop && pnpm dist
 # pnpm dist:publish
 ```
 
-The output goes to `apps/desktop/release/`:
-- **Windows**: `FilmSnaps-Setup-1.0.0.exe` (NSIS installer)
-- **macOS**: `FilmSnaps-1.0.0-x64.dmg` / `FilmSnaps-1.0.0-arm64.dmg`
-- **Linux**: `FilmSnaps-1.0.0.AppImage`
+`pnpm dist` builds the web app with `BUILD_FOR_DESKTOP=true` (producing
+`.next/standalone`), then packages it into the installer via electron-builder's
+`extraResources`. The output goes to `apps/desktop/release/`:
+
+- **Windows**: `FilmSnaps-Setup-<version>.exe` (NSIS installer)
+- **macOS**: `FilmSnaps-<version>-x64.dmg` / `FilmSnaps-<version>-arm64.dmg`
+- **Linux**: `FilmSnaps-<version>.AppImage`
 
 ---
 
@@ -143,14 +145,12 @@ The desktop app uses `electron-updater` to check for new versions on GitHub Rele
 
 ```bash
 # 1. Bump version in apps/desktop/package.json
-# 2. Build web app
-cd apps/web && pnpm build
-# 3. Tag and push
+# 2. Build the installer (web standalone is built automatically)
+cd apps/desktop && pnpm dist:publish
+# 3. Tag and push (triggers CI web/mobile builds)
 git tag v1.0.1
 git push origin v1.0.1
-# 4. Build and publish
-cd apps/desktop && pnpm dist:publish
-# 5. Update apps/web/public/desktop-versions.json with the new release
+# 4. Update apps/web/public/desktop-versions.json with the new release
 ```
 
 ---
@@ -159,12 +159,12 @@ cd apps/desktop && pnpm dist:publish
 
 Get the latest version for your platform:
 
-| Platform | Download |
-|---|---|
-| **Android** | [Download APK](https://filmsnaps.com/download) |
+| Platform    | Download                                             |
+| ----------- | ---------------------------------------------------- |
+| **Android** | [Download APK](https://filmsnaps.com/download)       |
 | **Windows** | [Download Installer](https://filmsnaps.com/download) |
-| **macOS** | [Download DMG](https://filmsnaps.com/download) |
-| **Linux** | [Download AppImage](https://filmsnaps.com/download) |
+| **macOS**   | [Download DMG](https://filmsnaps.com/download)       |
+| **Linux**   | [Download AppImage](https://filmsnaps.com/download)  |
 
 All releases are published on [GitHub Releases](https://github.com/anonymous260260a-arch/filmsnaps/releases).
 
@@ -172,17 +172,17 @@ All releases are published on [GitHub Releases](https://github.com/anonymous2602
 
 ## 🧰 Tech Stack
 
-| Layer | Technology |
-|---|---|
-| **Framework** | Next.js 15 (App Router) |
-| **Language** | TypeScript, JavaScript |
-| **Styling** | Tailwind CSS |
-| **Database / Auth** | Supabase + Firebase |
-| **API** | TMDB (The Movie Database) |
-| **Desktop** | Electron, electron-builder, electron-updater |
-| **Search** | Fuse.js (fuzzy matching) |
-| **Package Manager** | pnpm (workspace monorepo) |
-| **Deployment** | Netlify (web), GitHub Releases (desktop) |
+| Layer               | Technology                                   |
+| ------------------- | -------------------------------------------- |
+| **Framework**       | Next.js 15 (App Router)                      |
+| **Language**        | TypeScript, JavaScript                       |
+| **Styling**         | Tailwind CSS                                 |
+| **Database / Auth** | Supabase + Firebase                          |
+| **API**             | TMDB (The Movie Database)                    |
+| **Desktop**         | Electron, electron-builder, electron-updater |
+| **Search**          | Fuse.js (fuzzy matching)                     |
+| **Package Manager** | pnpm (workspace monorepo)                    |
+| **Deployment**      | Netlify (web), GitHub Releases (desktop)     |
 
 ---
 

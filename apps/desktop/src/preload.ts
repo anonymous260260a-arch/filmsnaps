@@ -84,6 +84,10 @@ export interface ElectronAPI {
   ) => () => void;
   /** Subscribe to loading start/stop transitions. Returns an unsubscribe fn. */
   onLoadingChange: (callback: (isLoading: boolean) => void) => () => void;
+  /** Whether the user has accepted the Legal & DMCA terms (persisted in main process) */
+  getLegalAccepted: () => Promise<boolean>;
+  /** Mark the Legal & DMCA terms as accepted */
+  setLegalAccepted: () => Promise<void>;
 }
 
 // Read version from package.json at build time
@@ -149,4 +153,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.removeListener("window:loading", listener);
     };
   },
+  getLegalAccepted: () => ipcRenderer.invoke("legal:status"),
+  setLegalAccepted: () => ipcRenderer.invoke("legal:accept"),
 });

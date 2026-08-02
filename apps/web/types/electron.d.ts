@@ -62,6 +62,10 @@ interface ElectronAPI {
   ) => () => void;
   /** Subscribe to loading start/stop transitions; returns unsubscribe fn */
   onLoadingChange: (callback: (isLoading: boolean) => void) => () => void;
+  /** Whether the user has accepted the Legal & DMCA terms (persisted in the main process) */
+  getLegalAccepted: () => Promise<boolean>;
+  /** Mark the Legal & DMCA terms as accepted (persisted in the main process) */
+  setLegalAccepted: () => Promise<void>;
 }
 
 interface Window {
