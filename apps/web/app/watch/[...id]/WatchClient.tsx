@@ -153,24 +153,76 @@ function useKeyboardShortcuts() {
  * Manages the Electron provider session lifecycle.
  * On mount and provider change, initialises the isolated session
  * partition with full R0-R8 filtering via the main process IPC.
+ *
+ * Returns `sessionReady` (the webview may mount) AND `appliedEmbedUrl` — the
+ * URL the webview should actually show.
+ *
+ * On the FIRST provider the webview stays gated (hidden) until the main
+ * process has configured that provider's rules, closing the startup race.
+ *
+ * On a provider SWITCH we keep `sessionReady` HIGH and hold `appliedEmbedUrl`
+ * at the CURRENT provider until the NEW provider's session has been installed.
+ * This is deliberate: dropping `sessionReady` to false would UNMOUNT the
+ * singleton <webview> (React gate), tearing down the old guest mid-navigation
+ * and emitting `ERR_FAILED (-2)` (the teardown race that broke server
+ * switching). And navigating to the new provider before its per-provider
+ * rules are installed would feed R3.5 the OLD provider's profile and block the
+ * new provider's own scripts. Holding the URL until init resolves avoids both.
  */
-function useDesktopProviderSession(providerId: string, embedUrl: string) {
+function useHeldProviderSession(
+  providerId: string,
+  embedUrl: string,
+): { sessionReady: boolean; appliedEmbedUrl: string } {
   const isDesktop =
     typeof window !== "undefined" && window.electronAPI?.isDesktop === true;
   const initRef = useRef<string | null>(null);
+  const latestRequestRef = useRef<string>("");
+  const [appliedEmbedUrl, setAppliedEmbedUrl] = useState(embedUrl);
+  const [sessionReady, setSessionReady] = useState(false);
 
   useEffect(() => {
-    if (!isDesktop) return;
-    if (!window.electronAPI) return;
-    if (initRef.current === providerId) return;
-    initRef.current = providerId;
+    // Mark the newest requested provider synchronously so a stale async init
+    // (user switched A→B→A before B's IPC resolved) can detect it's outdated.
+    latestRequestRef.current = providerId;
 
+    if (!isDesktop) {
+      // Web path — no session to gate on.
+      setSessionReady(true);
+      setAppliedEmbedUrl(embedUrl);
+      return;
+    }
+    if (!window.electronAPI) return;
+
+    // Same provider as the currently-initialised one (episode/season/refresh
+    // change): rules already installed — apply the new URL immediately.
+    if (initRef.current === providerId) {
+      setAppliedEmbedUrl(embedUrl);
+      setSessionReady(true);
+      return;
+    }
+
+    // First mount OR provider switch. Keep the webview mounted (sessionReady
+    // stays as-is); only swap the applied URL once the new provider's session
+    // is installed in main.
     window.electronAPI
       .initProviderSession({ providerId, embedUrl })
+      .then(() => {
+        // Ignore the resolution if the user already asked for another provider.
+        if (latestRequestRef.current !== providerId) return;
+        initRef.current = providerId;
+        setAppliedEmbedUrl(embedUrl);
+        setSessionReady(true);
+      })
       .catch((err) => {
         console.warn("[DesktopSession] Failed to init provider session:", err);
+        if (latestRequestRef.current !== providerId) return;
+        initRef.current = providerId;
+        setAppliedEmbedUrl(embedUrl);
+        setSessionReady(true); // fail-open for non-security errors
       });
   }, [isDesktop, providerId, embedUrl]);
+
+  return { sessionReady, appliedEmbedUrl };
 }
 
 // ── Content (inner) — lives inside PlayerProvider ─────────────────
@@ -255,7 +307,15 @@ function WatchClientContent({
     : "";
 
   // ── Desktop: initialise provider session with R0-R8 filtering ──
-  useDesktopProviderSession(currentProvider?.id ?? "", embedUrl);
+  // sessionReady gates the webview's first mount; appliedEmbedUrl is the URL
+  // the webview may actually navigate to. On a provider switch the URL is held
+  // at the current provider until the new provider's rules are installed in
+  // main, so the singleton webview never unmounts (no teardown ERR_FAILED -2)
+  // and never navigates before its per-provider rules exist.
+  const { sessionReady, appliedEmbedUrl } = useHeldProviderSession(
+    currentProvider?.id ?? "",
+    embedUrl,
+  );
 
   // Reset loading state when URL changes
   useEffect(() => {
@@ -369,8 +429,9 @@ function WatchClientContent({
         providers={providers}
         currentProvider={currentProvider}
         selectedProviderId={selectedProviderId}
-        embedUrl={embedUrl}
+        embedUrl={appliedEmbedUrl}
         playerKey={playerKey}
+        sessionReady={sessionReady}
         isElectron={isElectronEnv}
         isPending={isPending}
         selectedSeason={selectedSeason}
@@ -467,16 +528,23 @@ function WatchClientContent({
               />
             )}
 
-          {/* ── Desktop: Electron <webview> with R0-R8 session filtering ── */}
+          {/* ── Desktop: Electron <webview> with R0-R8 session filtering ──
+               Mounted only after the provider session is configured
+               (sessionReady) so the webview can never navigate before the
+               main process has installed per-provider rules + CSP. Uses
+               appliedEmbedUrl (the held URL) so a provider switch never
+               unmounts the singleton and never navigates before rules exist. */}
           {isElectronEnv &&
+            sessionReady &&
             !cpuWarning &&
             !iframeLoadError &&
-            embedUrl &&
+            appliedEmbedUrl &&
             currentProvider &&
             !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
-              <div className="absolute inset-0 z-10" key={playerKey}>
+              // NO key — the webview is a singleton (see VideoZone).
+              <div className="absolute inset-0 z-10">
                 <DesktopSecureWebview
-                  src={embedUrl}
+                  src={appliedEmbedUrl}
                   onLoad={handleIframeLoad}
                   onError={handleIframeError}
                 />

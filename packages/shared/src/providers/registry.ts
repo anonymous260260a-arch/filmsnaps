@@ -411,19 +411,6 @@ export const PROVIDERS: ProviderDefinition[] = [
     allowedOrigins: ["https://vidsync.live"],
     platforms: ["web", "mobile"],
   },
-  // ── vidzee ────────────────────────────────────────────────
-  {
-    id: "vidzee",
-    name: "vidzee",
-    displayName: "vidzee",
-    baseUrl: "player.vidzee.wtf",
-    embed: {
-      movie: (id) => `/embed/movie/${id}`,
-      tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}`,
-    },
-    allowedOrigins: ["player.vidzee.wtf"],
-    platforms: ["web", "mobile"],
-  },
 ];
 
 /**

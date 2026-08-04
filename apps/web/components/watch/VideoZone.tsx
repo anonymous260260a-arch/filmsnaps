@@ -32,6 +32,8 @@ const DIRECT_VIDEO_PROVIDERS = new Set<string>(["falix"]);
 interface VideoZoneProps {
   embedUrl: string;
   playerKey: string;
+  /** True once the provider session is configured (per-provider rules + CSP installed in main). */
+  sessionReady: boolean;
   isElectron: boolean;
   isPending: boolean;
   currentProvider: ProviderDefinition | undefined;
@@ -57,6 +59,7 @@ interface VideoZoneProps {
 export function VideoZone({
   embedUrl,
   playerKey,
+  sessionReady,
   isElectron,
   isPending,
   currentProvider,
@@ -205,14 +208,21 @@ export function VideoZone({
             />
           )}
 
-        {/* Desktop: Electron <webview> */}
+        {/* Desktop: Electron <webview> — gated on sessionReady so the webview
+             never navigates before the main process has installed the
+             per-provider rules + CSP (closes the startup race). */}
         {isElectron &&
+          sessionReady &&
           !cpuWarning &&
           !iframeLoadError &&
           embedUrl &&
           currentProvider &&
           !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
-            <div className="absolute inset-0 z-10" key={playerKey}>
+            // NO key on this wrapper — the webview must never be remounted by
+            // React. A key change tears down the element + WebContents and
+            // re-opens the remount race; the webview is a singleton that only
+            // updates src in place (season/episode/refresh changes navigate it).
+            <div className="absolute inset-0 z-10">
               <DesktopSecureWebview
                 src={embedUrl}
                 onLoad={onIframeLoad}
