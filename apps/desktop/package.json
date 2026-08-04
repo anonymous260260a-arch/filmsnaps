@@ -1,13 +1,13 @@
 {
   "name": "@filmsnaps/desktop",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "author": "FilmSnaps",
   "private": true,
   "description": "FilmSnaps Desktop App — secure streaming with Electron",
   "main": "dist/main.js",
   "scripts": {
     "dev": "concurrently -k \"cd ../web && pnpm dev\" \"wait-on http://localhost:3000 && pnpm build && pnpm exec electron . --dev\"",
-    "build": "node scripts/build-web.mjs && tsc && node scripts/inject-preload-css.js",
+    "build": "node scripts/build-web.mjs && tsc && node scripts/build-provider-preload.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "dist": "pnpm build && electron-builder --publish=never",

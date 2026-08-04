@@ -47,6 +47,7 @@ interface WebviewElement extends HTMLElement {
   removeEventListener: (event: string, listener: (e: any) => void) => void;
   getWebContentsId: () => number;
   setAttribute: (name: string, value: string) => void;
+  executeJavaScript: (code: string) => Promise<unknown>;
 }
 
 export interface DesktopSecureWebviewHandle {
@@ -94,6 +95,19 @@ export const DesktopSecureWebview = forwardRef<
 
   const prevSrcRef = useRef<string>(src);
 
+  // Latest props via refs so the one-shot mount effect can read fresh values
+  // without re-running (and without tearing the singleton webview down).
+  const srcRef = useRef(src);
+  srcRef.current = src;
+  const onLoadRef = useRef(onLoad);
+  onLoadRef.current = onLoad;
+  const onLoadStartRef = useRef(onLoadStart);
+  onLoadStartRef.current = onLoadStart;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+  const extraAttrsRef = useRef(extraAttributes);
+  extraAttrsRef.current = extraAttributes;
+
   // ── Expose imperative methods via ref ──
   useImperativeHandle(ref, () => ({
     reload: () => {
@@ -113,7 +127,73 @@ export const DesktopSecureWebview = forwardRef<
   // ── Partition name: scoped to provider so switching resets session ──
   const partitionName = "persist:filmsnaps-provider";
 
-  // ── Initialize webview on mount (ONLY ONCE) ──
+  // Track the src the webview is CURRENTLY (or just was) navigating toward, and
+  // whether a load is in progress, so did-fail-load can tell a REAL navigation
+  // failure from a teardown race (provider switch destroys the old guest
+  // mid-navigation → ERR_FAILED -2). A -2 whose src is stale (we already asked
+  // to go somewhere else) is teardown noise and must NOT surface as an error.
+  const pendingNavRef = useRef<string | null>(null);
+
+  const handleDidFailLoad = useCallback((_e: any) => {
+    const errMsg = _e.errorDescription || "Failed to load";
+    const code: number = _e.errorCode;
+    const failedUrl: string = _e.validatedURL || "";
+
+    // ERR_ABORTED (-3): navigation cancelled by a newer navigation or stop().
+    if (code === -3) return;
+
+    if (code === -2) {
+      // ERR_FAILED — almost always the webview TEARDOWN race: switching
+      // providers destroys the old guest while its in-flight navigation is
+      // still pending, and the destroyed WebContents reports ERR_FAILED for
+      // the aborted load. The singleton webview's src already points at the
+      // NEW provider's URL by the time this fires, so a stale failedUrl means
+      // this is teardown noise, not a real failure of the current destination.
+      if (
+        pendingNavRef.current &&
+        failedUrl &&
+        pendingNavRef.current !== failedUrl
+      ) {
+        // The navigation that failed is NOT the one we're currently after —
+        // a superseding src change caused it. Ignore.
+        return;
+      }
+      // Fallthrough: a -2 for the CURRENT src with no superseding navigation
+      // is still most likely transient teardown — let the next src update or
+      // retry clear it rather than showing a hard error overlay.
+      console.warn(
+        `[DesktopSecureWebview] Transient ERR_FAILED (-2): ${failedUrl}`,
+      );
+      return;
+    }
+
+    // All other error codes are genuine navigation failures.
+    setHasError(true);
+    setErrorMessage(errMsg);
+    onErrorRef.current?.(errMsg);
+  }, []);
+
+  const handleDidStopLoading = useCallback(() => {
+    setIsLoading(false);
+    pendingNavRef.current = null;
+  }, []);
+
+  const handleDidStartLoading = useCallback(() => {
+    setIsLoading(true);
+    onLoadStartRef.current?.();
+  }, []);
+
+  // ── Singleton webview ──
+  // The webview element is created EXACTLY ONCE per mount of this component and
+  // is NEVER destroyed by src/attribute changes. Provider/season/episode/retry
+  // updates navigate the SAME element in place (webview.src = ...), preserving
+  // its WebContents and session — so the session preload (L5/L6), R0-R8 filter
+  // (L2) and CSP (L3), all session-scoped, stay active across every switch.
+  //
+  // CRITICAL: React must never remount this component on key changes (see
+  // WatchClient/VideoZone) — a remount tears down the element and its
+  // WebContents, opening the remount race that lets a fresh guest navigate
+  // before main-process attach (L4/L7) re-arms.
   const initWebview = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -134,13 +214,14 @@ export const DesktopSecureWebview = forwardRef<
       );
       setHasError(true);
       setErrorMessage("Electron webview tag is not enabled. Restart the app.");
-      onError?.("webviewTag is not enabled in BrowserWindow config");
+      onErrorRef.current?.("webviewTag is not enabled in BrowserWindow config");
       return;
     }
 
     // Set initial src — subsequent src changes go through the dedicated effect below
-    webview.src = src;
-    prevSrcRef.current = src;
+    webview.src = srcRef.current;
+    prevSrcRef.current = srcRef.current;
+    pendingNavRef.current = srcRef.current;
     webview.partition = partitionName;
     // NOTE: Do NOT set allowpopups — in Electron, the mere presence of the
     // allowpopups attribute (even "false") enables popup windows.
@@ -154,9 +235,9 @@ export const DesktopSecureWebview = forwardRef<
     // source of truth for the provider webview's security configuration.
     webview.webpreferences = "javascript=yes";
 
-    // Apply extra attributes
-    if (extraAttributes) {
-      for (const [key, value] of Object.entries(extraAttributes)) {
+    // Apply extra attributes (latest via ref)
+    if (extraAttrsRef.current) {
+      for (const [key, value] of Object.entries(extraAttrsRef.current)) {
         webview.setAttribute(key, value);
       }
     }
@@ -183,52 +264,52 @@ export const DesktopSecureWebview = forwardRef<
 
     // ── Loading events ──
     webview.addEventListener("did-start-loading", () => {
-      setIsLoading(true);
-      onLoadStart?.();
+      handleDidStartLoading();
     });
 
     webview.addEventListener("did-stop-loading", () => {
-      setIsLoading(false);
+      handleDidStopLoading();
     });
 
     webview.addEventListener("did-finish-load", () => {
       setIsLoading(false);
       setHasError(false);
+      pendingNavRef.current = null;
       webviewReadyRef.current = true;
 
       // NOTE: protection script + cosmetic CSS are injected at document-start
       // from the MAIN process via CDP (did-attach-webview) — reload-immune,
       // no renderer race. Nothing to inject here anymore.
 
-      onLoad?.();
+      onLoadRef.current?.();
     });
 
     webview.addEventListener("did-fail-load", (_e: any) => {
-      const errMsg = _e.errorDescription || "Failed to load";
-      if (_e.errorCode === -3) return; // cancelled
-      setHasError(true);
-      setErrorMessage(errMsg);
-      onError?.(errMsg);
+      handleDidFailLoad(_e);
     });
 
     webview.addEventListener("crashed", () => {
       setHasError(true);
       setErrorMessage("Web process crashed");
-      onError?.("Web process crashed");
+      onErrorRef.current?.("Web process crashed");
     });
 
     webview.addEventListener("gpu-crashed", () => {
       setHasError(true);
       setErrorMessage("GPU process crashed");
-      onError?.("GPU process crashed");
+      onErrorRef.current?.("GPU process crashed");
     });
 
     // ── Append to container ──
     container.appendChild(webview);
     webviewRef.current = webview;
-  }, [partitionName, extraAttributes, onLoad, onLoadStart, onError]); // NOTE: `src` intentionally excluded — src updates go through the dedicated effect below
+    webviewReadyRef.current = true;
+  }, [partitionName]);
 
-  // ── Mount effect: create the webview once ──
+  // ── Singleton mount effect: create the webview EXACTLY ONCE ──
+  // Never depends on props (src, onLoad, etc.) so a prop change cannot tear the
+  // element down. src updates navigate the same element in place below.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     initWebview();
     return () => {
@@ -238,22 +319,15 @@ export const DesktopSecureWebview = forwardRef<
       }
       webviewRef.current = null;
     };
-    // Run only on mount — src changes handled by the effect below
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Src update effect: update webview src WITHOUT remounting ──
-  // This avoids expensive DOM teardown/recreation on every provider/episode switch.
-  const srcRef = useRef(src);
-  srcRef.current = src;
-
+  // A provider/episode/refresh change navigates the SAME element in place,
+  // preserving its WebContents, process and session — so the session preload
+  // (L5/L6), R0-R8 filter (L2) and CSP (L3) stay active across every switch.
   useEffect(() => {
     const webview = webviewRef.current;
-    if (!webview || !webviewReadyRef.current) {
-      // Webview not ready yet — the init will set src via initWebview
-      prevSrcRef.current = src;
-      return;
-    }
+    if (!webview) return;
 
     if (prevSrcRef.current === src) return;
     prevSrcRef.current = src;
@@ -262,9 +336,30 @@ export const DesktopSecureWebview = forwardRef<
     setIsLoading(true);
     setHasError(false);
 
-    // Update src in-place — webview navigates preserving its process and session
+    // Mark the destination we're navigating toward so did-fail-load can tell
+    // a real failure from a teardown race on a superseded URL.
+    pendingNavRef.current = src;
+
+    // Update src in-place — the webview navigates preserving its session
     webview.src = src;
   }, [src]);
+
+  // ── Extra attributes effect: update attributes in place (no remount) ──
+  const prevAttrsRef = useRef<Record<string, string> | undefined>(undefined);
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (!webview) return;
+    const prev = prevAttrsRef.current;
+    if (prev) {
+      for (const key of Object.keys(prev)) {
+        webview.removeAttribute(key);
+      }
+    }
+    for (const [key, value] of Object.entries(extraAttributes ?? {})) {
+      webview.setAttribute(key, value);
+    }
+    prevAttrsRef.current = extraAttributes;
+  }, [extraAttributes]);
 
   // ── Render ──
   return (

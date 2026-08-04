@@ -292,6 +292,66 @@ export function getCosmeticCSS(pageUrl: string): string {
 }
 
 /**
+ * Compute the cosmetic filter payload (CSS styles + scriptlets) for a LIVE
+ * page, given the DOM tokens present in it.
+ *
+ * Unlike `getCosmeticCSS` (static, getBaseRules-only), this feeds the engine
+ * the actual class/id/href tokens found in the document so its ~42k cosmetic
+ * rules can hide the per-site ad containers that static CSS misses. Mirrors
+ * the @ghostery/adblocker-electron DOMMonitor flow, but called directly from
+ * the main process (the preload collects tokens and posts them over IPC).
+ *
+ * Fail-open: any engine error returns an empty payload — cosmetic filtering
+ * is best-effort and must never break playback.
+ *
+ * @param pageUrl - The URL of the live document
+ * @param classes - Class tokens present in the DOM
+ * @param ids - ID tokens present in the DOM
+ * @param hrefs - Href attributes present in the DOM
+ * @returns { styles, scripts } — CSS to inject and scriptlets to execute
+ */
+export function getCosmeticFilterPayload(
+  pageUrl: string,
+  classes: string[] = [],
+  ids: string[] = [],
+  hrefs: string[] = [],
+): { styles: string; scripts: string[] } {
+  if (!_engine) return { styles: "", scripts: [] };
+
+  try {
+    const parsedUrl = new URL(pageUrl);
+    const cosmetics = _engine.getCosmeticsFilters({
+      url: pageUrl,
+      hostname: parsedUrl.hostname,
+      domain: parsedUrl.hostname,
+      classes,
+      ids,
+      hrefs,
+      getBaseRules: true,
+      getInjectionRules: true,
+      getExtendedRules: true,
+      getRulesFromDOM: true,
+      getRulesFromHostname: true,
+      hidingStyle: "{ display: none !important; }",
+    });
+
+    const styles = cosmetics?.styles || "";
+    const scripts: string[] = Array.isArray(cosmetics?.scripts)
+      ? cosmetics.scripts
+      : [];
+
+    return {
+      styles: styles
+        ? `/* FilmSnaps Adblocker — Engine Cosmetic CSS */\n${styles}`
+        : "",
+      scripts,
+    };
+  } catch {
+    return { styles: "", scripts: [] };
+  }
+}
+
+/**
  * Check whether a URL is allowlisted by exception rules.
  */
 export function isAllowlisted(url: string, sourceUrl: string): boolean {

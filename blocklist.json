@@ -24,9 +24,6 @@
     "fonts.googleapis.com",
     "fonts.gstatic.com",
     "appwrite.io",
-    "cloudflareinsights.com",
-    "googletagmanager.com",
-    "theajack.github.io",
     "vjs.zencdn.net",
     "cache.vdrk.site",
     "api.theintrodb.org",
@@ -183,7 +180,18 @@
         "clicksco.net",
         "hilltopads.com",
         "1xlite.com",
-        "cloudflareinsights.com"
+        "cloudflareinsights.com",
+        "wo.riverlayboy.shop",
+        "hai8g.com",
+        "zoaclachan.cyou",
+        "florian.sorrilylivyershape.cyou",
+        "ag.phrymaphytic.com",
+        "my.rtmark.net",
+        "s.click.aliexpress.com",
+        "developdomicile.com",
+        "frowstyambler",
+        "qpon",
+        "adk2.com"
       ],
       "pathPatterns": [
         "/pop\\.js",
@@ -217,7 +225,29 @@
       "id": "screenscape",
       "embedDomains": ["screenscape.me"],
       "cdnDomains": [],
-      "enabled": true
+      "enabled": true,
+      "apiIntercepts": [
+        {
+          "match": "/api/ads/cycles",
+          "methods": ["GET", "POST"],
+          "synthetic": {
+            "primary": { "ok": true, "anchorMs": "@@NOW@@" },
+            "fallback": { "anchorMs": "@@NOW@@", "source": "fallback" },
+            "fallbackCondition": "source=fallback"
+          }
+        }
+      ],
+      "cosmeticRules": [
+        "button[aria-label^=\"Ads window ends\"]{display:none!important}",
+        "button[title^=\"Ads window ends\"]{display:none!important}",
+        "div[aria-label^=\"Ads window ends\"]{display:none!important}",
+        "span[aria-label^=\"Ads window ends\"]{display:none!important}",
+        "div:has(> a[href=\"https://screenscape.fun\"]){display:none!important}",
+        "a[href=\"https://screenscape.fun\"]{display:none!important}",
+        "a[href=\"https://screenscape.fun\"] + *{display:none!important}",
+        "button[title^=\"Download Sources\"]{display:none!important}",
+        "button[title^=\"Switch server and open Telegram\"]{display:none!important}"
+      ]
     },
     {
       "id": "nhdapi",
