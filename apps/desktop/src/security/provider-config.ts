@@ -38,6 +38,8 @@ export interface ProviderConfig {
   cdnDomains: string[];
   enabled: boolean;
   adblockDisabled?: boolean;
+  /** Hosts the provider's video/player auth APIs run on (R3.5 API exemption). */
+  apiDomains?: string[];
 }
 
 export interface BlocklistConfig {
@@ -189,6 +191,78 @@ export function getProviderProfile(providerId: string): ProviderConfig | null {
 }
 
 /**
+ * Per-provider profile allowlist (mobile Rule 5 parity — rotation-proof).
+ *
+ * Mobile's PlayerWebViewOverlayView blocks any page-facing `script`/`iframe`/
+ * `image` whose host is NOT in the provider's profile set. That set (keyed by
+ * provider embed domain in blocklist.json `providerProfiles`, e.g.
+ * "web.nxsha.app" -> ["web.nxsha.app","workers.dev","cloudfront.net"]) is the
+ * rotation-proof mechanism that defeats rotating ad-orchestrator hostnames
+ * (a blocklist can't — a brand-new hostname per impression clears it).
+ *
+ * Resolution order:
+ *   1. `blocklist.json` `providerProfiles` matched by the provider's embed
+ *      domain as the key (mobile-style keying), falling back to `providerId`
+ *      as the key.
+ *   2. No explicit map entry -> fall back to `embedDomains + cdnDomains` so
+ *      every enabled provider still has *some* profile (an empty profile must
+ *      however fail open, so callers gate on `size > 0`).
+ * Returns a lowercased Set.
+ */
+export function getProviderProfileAllowlist(providerId: string): Set<string> {
+  const profile = getProviderProfile(providerId);
+  const config = loadBlocklistConfig();
+
+  // 1) Explicit providerProfiles map (mobile Rule 5 ground truth), keyed by
+  //    embed domain or provider id.
+  const map = config?.providerProfiles;
+  if (map) {
+    const profileKey =
+      (profile?.embedDomains ?? []).find((d) => map[d]) ?? providerId;
+    const mapped = map[profileKey];
+    if (mapped && mapped.length > 0) {
+      return new Set(mapped.map((h) => h.toLowerCase()));
+    }
+  }
+
+  // 2) Fall back to embedDomains + cdnDomains (every provider has *some*).
+  const domains = new Set<string>();
+  if (profile?.embedDomains) {
+    for (const d of profile.embedDomains) domains.add(d.toLowerCase());
+  }
+  if (profile?.cdnDomains) {
+    for (const d of profile.cdnDomains) domains.add(d.toLowerCase());
+  }
+  return domains;
+}
+
+/**
+ * Is `hostname` the current provider's own API/embed host? Used by R3.5 so an
+ * xhr/fetch to the provider's real API (video auth) is exempt from the profile
+ * gate — matching mobile, where only script/iframe/image are profile-blocked
+ * and provider API traffic is left to the filter engine. Suffix-matched so a
+ * subdomain of the embed host counts.
+ */
+export function isProviderApiHost(
+  hostname: string,
+  providerId: string,
+): boolean {
+  const profile = getProviderProfile(providerId);
+  if (!profile) return false;
+  const lower = hostname.toLowerCase();
+  const candidates = [
+    ...(profile.embedDomains ?? []),
+    ...(profile.apiDomains ?? []),
+  ];
+  for (const c of candidates) {
+    const lc = c.toLowerCase();
+    if (lower === lc) return true;
+    if (lower.endsWith(`.${lc}`)) return true;
+  }
+  return false;
+}
+
+/**
  * Get all allowed domains (embed + CDN) for a provider.
  * Returns a Set for fast lookup.
  */
@@ -226,6 +300,12 @@ export function getAllowedDomainsForProvider(providerId: string): Set<string> {
     }
   }
 
+  // Runtime-augmented per-provider domains (e.g. embed URL host seeded at init).
+  const extra = extraProviderDomains.get(providerId);
+  if (extra) {
+    for (const d of extra) domains.add(d);
+  }
+
   return domains;
 }
 
@@ -242,11 +322,57 @@ export function isAdblockDisabledForProvider(providerId: string): boolean {
 // ── Global allow/block lists ────────────────────────────────────────────────
 
 /**
+ * Runtime-augmented allowlists. The config getters (getGlobalCdnAllowlist /
+ * getAllowedDomainsForProvider) read from cached blocklist.json; these sets hold
+ * domains ADDED at runtime (e.g. the embed URL host or startup pre-seed) that
+ * don't appear in the config file. Feeding R1/R2 here — NOT R0 trust — lets
+ * config/embed-derived hosts reach R4/R5 so always-block domains are still
+ * blocked, while the session trust manager (R0) stays empty until a host
+ * actually serves verified video (V4 step 2 / V5).
+ */
+const extraGlobalCdnDomains = new Set<string>();
+const extraProviderDomains = new Map<string, Set<string>>();
+
+/** Register extra global CDN-allowlist domains (fed at runtime). */
+export function addGlobalCdnAllowlistDomains(domains: Iterable<string>): void {
+  for (const d of domains) {
+    const lower = d.toLowerCase().trim();
+    if (lower) extraGlobalCdnDomains.add(lower);
+  }
+}
+
+/** Register extra per-provider allowed domains (fed at runtime). */
+export function addProviderAllowlistDomains(
+  providerId: string,
+  domains: Iterable<string>,
+): void {
+  let set = extraProviderDomains.get(providerId);
+  if (!set) {
+    set = new Set<string>();
+    extraProviderDomains.set(providerId, set);
+  }
+  for (const d of domains) {
+    const lower = d.toLowerCase().trim();
+    if (lower) set.add(lower);
+  }
+}
+
+/** Clear all runtime-augmented allowlists (provider session teardown). */
+export function clearRuntimeAllowlists(): void {
+  extraGlobalCdnDomains.clear();
+  extraProviderDomains.clear();
+}
+
+/**
  * Get the global CDN allowlist.
  */
 export function getGlobalCdnAllowlist(): Set<string> {
   const config = loadBlocklistConfig();
-  return new Set((config?.allowedCdnHosts ?? []).map((h) => h.toLowerCase()));
+  const set = new Set(
+    (config?.allowedCdnHosts ?? []).map((h) => h.toLowerCase()),
+  );
+  for (const d of extraGlobalCdnDomains) set.add(d);
+  return set;
 }
 
 /**

@@ -12,7 +12,7 @@
  * @returns A self-executing JS string to inject into the player page
  */
 
-import { buildAllScriptlets, getProviderScriptlets } from './scriptlets';
+import { buildAllScriptlets, getProviderScriptlets } from "./scriptlets";
 
 // ── Default ad/tracker patterns (fallback when no config injected) ──
 //
@@ -25,58 +25,178 @@ import { buildAllScriptlets, getProviderScriptlets } from './scriptlets';
 // aggressive fixed-position overlay removal it performs.
 
 export const DEFAULT_AD_FULL_PATTERNS = [
-  'doubleclick.net', 'googleadservices.com', 'googlesyndication.com',
-  'google-analytics.com', 'googletagmanager.com', 'gtag/js',
-  'pagead2.googlesyndication.com', 'adnxs.com', 'rubiconproject.com',
-  'criteo.com', 'criteo.net', 'outbrain.com', 'taboola.com',
-  'revcontent.com', 'adsystem.', 'adserver.', 'ads.',
-  'popads.', 'popcash.', 'popunder.', 'adsterra.com',
-  'propellerads.com', 'trafficfactory.biz',
-  'pixel.', 'track.', 'tracking.', 'beacon.',
-  'histats.com', 'statcounter.com', 'scorecardresearch.com',
-  'amazon-adsystem.com', 'casalemedia.com', 'contextweb.com',
-  'openx.net', 'pubmatic.com', 'sharethrough.com',
-  'media.net', 'advertising.com', 'adap.tv',
-  'moatads.com', 'servedby.', 'exdynsrv.com',
-  'exoclick.com', 'juicyads.com', 'plugrush.com',
-  'trafficjunky.com', 'adreactor.com', 'adcash.com',
-  'adhitz.com', 'adk2.com', 'adpierce.com',
-  'clickadu.com', 'clicksco.net', 'hilltopads.com',
-  'interlinecustomroofingllc.com', '1xlite',
-  'riverlayboy.shop', 'hai8g.com',
-  'zoaclachan.cyou', 'florian.sorrilylivyershape.cyou',
-  'ag.phrymaphytic.com', 'my.rtmark.net',
-  's.click.aliexpress.com', 'developdomicile.com',
-  'cloudflareinsights.com', 'frowstyambler', 'qpon',
-  'go.', 'click.', 'adx.', 'adv.', 'banner.',
-  'traffic.', 'redirect.', 'redirecting.',
-  'bestchange', 'best-',
+  "doubleclick.net",
+  "googleadservices.com",
+  "googlesyndication.com",
+  "google-analytics.com",
+  "googletagmanager.com",
+  "gtag/js",
+  "pagead2.googlesyndication.com",
+  "adnxs.com",
+  "rubiconproject.com",
+  "criteo.com",
+  "criteo.net",
+  "outbrain.com",
+  "taboola.com",
+  "revcontent.com",
+  "adsystem.",
+  "adserver.",
+  "ads.",
+  "popads.",
+  "popcash.",
+  "popunder.",
+  "adsterra.com",
+  "propellerads.com",
+  "trafficfactory.biz",
+  "pixel.",
+  "track.",
+  "tracking.",
+  "beacon.",
+  "histats.com",
+  "statcounter.com",
+  "scorecardresearch.com",
+  "amazon-adsystem.com",
+  "casalemedia.com",
+  "contextweb.com",
+  "openx.net",
+  "pubmatic.com",
+  "sharethrough.com",
+  "media.net",
+  "advertising.com",
+  "adap.tv",
+  "moatads.com",
+  "servedby.",
+  "exdynsrv.com",
+  "exoclick.com",
+  "juicyads.com",
+  "plugrush.com",
+  "trafficjunky.com",
+  "adreactor.com",
+  "adcash.com",
+  "adhitz.com",
+  "adk2.com",
+  "adpierce.com",
+  "clickadu.com",
+  "clicksco.net",
+  "hilltopads.com",
+  "interlinecustomroofingllc.com",
+  "1xlite",
+  "riverlayboy.shop",
+  "hai8g.com",
+  "zoaclachan.cyou",
+  "florian.sorrilylivyershape.cyou",
+  "ag.phrymaphytic.com",
+  "my.rtmark.net",
+  "s.click.aliexpress.com",
+  "developdomicile.com",
+  "cloudflareinsights.com",
+  "frowstyambler",
+  "qpon",
+  "go.",
+  "click.",
+  "adx.",
+  "adv.",
+  "banner.",
+  "traffic.",
+  "redirect.",
+  "redirecting.",
+  "bestchange",
+  "best-",
 ];
 
 export const DEFAULT_AD_SHORT_PATTERNS = [
-  'doubleclick.net', 'googleadservices.com', 'googlesyndication.com',
-  'google-analytics.com', 'googletagmanager.com', 'gtag/js',
-  'pagead2.googlesyndication.com', 'adnxs.com', 'popads.', 'popcash.',
-  'popunder.', 'adsterra.com', 'exoclick.com', 'juicyads.com',
-  'plugrush.com', 'adcash.com', 'clickadu.com',
-  'frowstyambler', 'zoaclachan', 'riverlayboy', 'hai8g',
-  'developdomicile', 'cloudflareinsights',
+  "doubleclick.net",
+  "googleadservices.com",
+  "googlesyndication.com",
+  "google-analytics.com",
+  "googletagmanager.com",
+  "gtag/js",
+  "pagead2.googlesyndication.com",
+  "adnxs.com",
+  "popads.",
+  "popcash.",
+  "popunder.",
+  "adsterra.com",
+  "exoclick.com",
+  "juicyads.com",
+  "plugrush.com",
+  "adcash.com",
+  "clickadu.com",
+  "frowstyambler",
+  "zoaclachan",
+  "riverlayboy",
+  "hai8g",
+  "developdomicile",
+  "cloudflareinsights",
 ];
+
+export interface ApiInterceptRule {
+  match: string;
+  methods?: string[];
+  synthetic: {
+    primary: Record<string, unknown>;
+    fallback?: Record<string, unknown>;
+    fallbackCondition?: string;
+  };
+}
+
+export interface CosmeticRuleBundle {
+  /** CSS rules applied via a <style> at document-start (per-provider). */
+  cssRules?: string[];
+}
 
 export function buildGuardScript(
   providerHostname: string,
   blockedDomains?: string[],
+  apiIntercepts?: ApiInterceptRule[],
 ): string {
   const fullPatterns = blockedDomains ?? DEFAULT_AD_FULL_PATTERNS;
   const shortPatterns = blockedDomains ?? DEFAULT_AD_SHORT_PATTERNS;
   const patternsJson = JSON.stringify(fullPatterns);
   const shortPatternsJson = JSON.stringify(shortPatterns);
+  const apiInterceptsJson = JSON.stringify(apiIntercepts ?? []);
 
   return `
 (function() {
   // ── Injected ad/tracker domain patterns (from blocklist.json or default) ──
   var BLOCKED_DOMAINS = ${patternsJson};
   var BLOCKED_DOMAINS_SHORT = ${shortPatternsJson};
+  var API_INTERCEPTS = ${apiInterceptsJson};
+
+  // ── Video-stream safety guard (rotation-proof, no hardcoded hosts) ──
+  // A request that is unambiguously video-shaped must never be aborted by a
+  // mere substring collision against an ad pattern — that silently kills the
+  // stream (the desktop server-switch stall: the provider page loads, the
+  // player never starts, nothing appears blocked). Only an EXACT hostname
+  // match (dot-boundary safe) on an ad domain is enough to block a video URL,
+  // so a genuine ad host that serves video stays blocked while a legit CDN
+  // with an ad-substring in its path/host is spared.
+  var VIDEO_EXT_RE = /\\.(m3u8|mpd|mp4|webm|mkv|m4v|m4s|ts|aac|key)([?#].*)?$/i;
+  // NOTE: this guard body is a template literal, so every backslash in the
+  // emitted JS must be doubled (\\d, \\/, \\.) or the literal mangles it.
+  var DISGUISED_MEDIA_RE = /(^|\\/)(seg|init|chunk|part|media|hls|dash)[^/]*\\./i;
+  function looksLikeVideo(url) {
+    if (!url || typeof url !== 'string') return false;
+    var base = url.toLowerCase().split('?')[0].split('#')[0];
+    if (VIDEO_EXT_RE.test(base)) return true;
+    // Disguised HLS/DASH segments: opaque extension (.woff2/.css/.png/.bin)
+    // with media-shaped structure — numeric segment path or seg-/init- token.
+    if (/\\.(woff2?|css|png|jpe?g|webp|bin)([?#].*)?$/i.test(base)) {
+      if (/(^|\\/)\\d+\\/\\d+[^/]*$/.test(base)) return true;
+      if (DISGUISED_MEDIA_RE.test(base)) return true;
+    }
+    return false;
+  }
+  function isHostnameAdMatch(url, patterns) {
+    try {
+      var host = new URL(url).hostname.toLowerCase();
+      for (var i = 0; i < patterns.length; i++) {
+        var p = (patterns[i] || '').toLowerCase();
+        if (p && (host === p || host.endsWith('.' + p))) return true;
+      }
+    } catch (e) {}
+    return false;
+  }
 
   // ── Native function masking helper (anti-anti-adblock) ──
   // Providers detect monkey-patched APIs by checking toString():
@@ -136,14 +256,72 @@ export function buildGuardScript(
     }, 'function open() { [native code] }');
   })();
 
+  // ── API-state interception (config-driven; e.g. screenscape's /api/ads/cycles) ──
+  // Returns a synthetic Response when the URL matches an apiIntercepts rule and
+  // the request never touches the network — so no header mutation, no
+  // main-process re-issue (the exact L8 bug we removed), and no fingerprint
+  // change. "@@NOW@@" in the template is replaced with a fresh Date.now() at
+  // interception so any staleness check on the value passes. Empty/missing
+  // rules → no-op (returns undefined), and wallet the fetch/XHR paths fall
+  // through to normal behavior.
+  function buildSyntheticResponse(url, method) {
+    if (!API_INTERCEPTS || API_INTERCEPTS.length === 0) return undefined;
+    var methodUpper = (method || 'GET').toUpperCase();
+    for (var i = 0; i < API_INTERCEPTS.length; i++) {
+      var rule = API_INTERCEPTS[i];
+      if (!rule || !rule.match) continue;
+      if (url.indexOf(rule.match) === -1) continue;
+      var methods = rule.methods || ['GET'];
+      var matched = false;
+      for (var m = 0; m < methods.length; m++) {
+        if (methods[m] === '*' || methods[m] === methodUpper) { matched = true; break; }
+      }
+      if (!matched) continue;
+      var tpl = rule.synthetic && rule.synthetic.primary;
+      if (!tpl) return undefined;
+      // Fallback shape (e.g. source=fallback) when the condition matches.
+      if (rule.synthetic.fallback && rule.synthetic.fallbackCondition &&
+          url.indexOf(rule.synthetic.fallbackCondition) !== -1) {
+        tpl = rule.synthetic.fallback;
+      }
+      var json;
+      try {
+        json = JSON.stringify(tpl).replace(/"@@NOW@@"/g, String(Date.now()));
+      } catch (e) { return undefined; }
+      if (typeof console !== 'undefined') {
+        try { console.log('[PROTECTION] apiIntercept ' + methodUpper + ' ' + String(url).slice(0, 100) + ' -> synthetic'); } catch (e) {}
+      }
+      return new Response(json, {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return undefined;
+  }
+
   // ── Ad / tracker network blocklist (Layer 2) ──
   (function() {
     var AD_PATTERNS = BLOCKED_DOMAINS;
     function isAdUrl(url) {
       if (!url || typeof url !== 'string') return false;
+      // Video safety: never let a substring collision abort the stream. Only
+      // an exact (boundary-safe) hostname match on an ad domain blocks a video URL.
+      if (looksLikeVideo(url)) {
+        var hostBlocked = isHostnameAdMatch(url, AD_PATTERNS);
+        if (typeof console !== 'undefined') {
+          try { console.log('[PROTECTION] video-request ' + (hostBlocked ? 'HOST-BLOCKED' : 'ALLOWED') + ' ' + url); } catch (e) {}
+        }
+        return hostBlocked;
+      }
       var l = url.toLowerCase();
       for (var i = 0; i < AD_PATTERNS.length; i++) {
-        if (l.indexOf(AD_PATTERNS[i]) !== -1) return true;
+        if (l.indexOf(AD_PATTERNS[i]) !== -1) {
+          if (typeof console !== 'undefined') {
+            try { console.log('[PROTECTION] isAdUrl BLOCK', url, AD_PATTERNS[i]); } catch (e) {}
+          }
+          return true;
+        }
       }
       return false;
     }
@@ -152,6 +330,9 @@ export function buildGuardScript(
       var _fetch = window.fetch;
       window.fetch = _maskFn(function(input, init) {
         var url = (typeof input === 'string') ? input : (input && input.url) || '';
+        var method = (init && init.method) || (url ? 'GET' : 'GET');
+        var synthetic = buildSyntheticResponse(url, method);
+        if (synthetic) return Promise.resolve(synthetic);
         if (isAdUrl(url)) return Promise.resolve(new Response('', {status: 204}));
         return _fetch.call(window, input, init);
       }, 'function fetch() { [native code] }');
@@ -160,11 +341,45 @@ export function buildGuardScript(
     try {
       var _xhrOpen = XMLHttpRequest.prototype.open;
       XMLHttpRequest.prototype.open = _maskFn(function(method, url) {
+        var synth = buildSyntheticResponse(String(url), String(method));
+        if (synth) { this._fsSynthetic = synth; return; }
         if (isAdUrl(url)) { this._aborted = true; return; }
         return _xhrOpen.apply(this, arguments);
       }, 'function open() { [native code] }');
       var _xhrSend = XMLHttpRequest.prototype.send;
       XMLHttpRequest.prototype.send = function() {
+        if (this._fsSynthetic) {
+          // Deliver the synthetic JSON to the caller as a completed XHR.
+          var self = this;
+          var s = this._fsSynthetic;
+          this._fsSynthetic = null;
+          var body = '';
+          // Read the body once (async .text()); stash it, then fire the standard
+          // read-only lifecycle events the common .onload / .onreadystatechange
+          // consumers expect. getResponseHeader('content-type') is faked so a
+          // provider that checks it before parsing still works.
+          s.text().then(function(t) {
+            body = t;
+            try {
+              Object.defineProperty(self, 'status', { get: function() { return 200; }, configurable: true });
+              Object.defineProperty(self, 'statusText', { get: function() { return 'OK'; }, configurable: true });
+              Object.defineProperty(self, 'readyState', { get: function() { return 4; }, configurable: true });
+              Object.defineProperty(self, 'responseText', { get: function() { return body; }, configurable: true });
+              Object.defineProperty(self, 'response', { get: function() { return body; }, configurable: true });
+              self.getResponseHeader = function(name) {
+                return String(name).toLowerCase() === 'content-type' ? 'application/json' : null;
+              };
+            } catch (e) {}
+            setTimeout(function() {
+              try {
+                if (self.onreadystatechange) self.onreadystatechange();
+                if (self.onload) self.onload();
+                if (self.onloadend) self.onloadend();
+              } catch (e) {}
+            }, 0);
+          }).catch(function() {});
+          return;
+        }
         if (this._aborted) return;
         return _xhrSend.apply(this, arguments);
       };
@@ -916,13 +1131,17 @@ true;
  * Build the complete set of scripts to inject into a player WebView/iframe.
  * Combines all guard layers + uBO scriptlets into a single concatenated string.
  */
-export function buildAllScripts(providerHostname: string, blockedDomains?: string[]): string {
+export function buildAllScripts(
+  providerHostname: string,
+  blockedDomains?: string[],
+  apiIntercepts?: ApiInterceptRule[],
+): string {
   return [
-    buildGuardScript(providerHostname, blockedDomains),
+    buildGuardScript(providerHostname, blockedDomains, apiIntercepts),
     buildContentReadyScript(),
     buildBridgeScript(),
     buildProgressTrackerScript(),
-  ].join('\n\n');
+  ].join("\n\n");
 }
 
 /**
@@ -931,17 +1150,26 @@ export function buildAllScripts(providerHostname: string, blockedDomains?: strin
  *
  * @param providerHostname - Provider hostname for referrer spoofing
  * @param providerId - Optional provider ID for provider-specific scriptlets
+ * @param blockedDomains - Optional ad/tracker domain patterns
+ * @param apiIntercepts - Optional API state-interception rules (e.g. /api/ads/cycles)
  */
-export function buildAllScriptsWithScriptlets(providerHostname: string, providerId?: string, blockedDomains?: string[]): string {
+export function buildAllScriptsWithScriptlets(
+  providerHostname: string,
+  providerId?: string,
+  blockedDomains?: string[],
+  apiIntercepts?: ApiInterceptRule[],
+): string {
   const baseScriptlets = buildAllScriptlets();
-  const providerScriptlets = providerId ? getProviderScriptlets(providerId) : [];
+  const providerScriptlets = providerId
+    ? getProviderScriptlets(providerId)
+    : [];
 
   return [
-    buildGuardScript(providerHostname, blockedDomains),
+    buildGuardScript(providerHostname, blockedDomains, apiIntercepts),
     baseScriptlets,
     ...providerScriptlets,
     buildContentReadyScript(),
     buildBridgeScript(),
     buildProgressTrackerScript(),
-  ].join('\n\n');
+  ].join("\n\n");
 }

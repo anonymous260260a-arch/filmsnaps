@@ -29,6 +29,12 @@ import { session as electronSession, Session } from "electron";
 import { join } from "path";
 import { shouldBlockRequest, checkResponseForTrust } from "./rule-cascade";
 import { initFilterEngine } from "./filter-engine";
+import {
+  initUrlSubstringFilter,
+  getSubstringFilterStats,
+} from "./url-substring-filter";
+import { registerHtmlInjection } from "./html-injector";
+import { addGlobalCdnAllowlistDomains } from "./provider-config";
 import type { SessionTrustManager } from "./session-trust";
 
 // ── State ───────────────────────────────────────────────────────────────────
@@ -75,6 +81,46 @@ const SESSION_PARTITION = "filmsnaps-provider";
  * and per-provider allowlists would never apply.
  */
 let _currentBlockingProviderId: string | undefined;
+
+/**
+ * Build a clean desktop-Chrome User-Agent derived from the REAL Chromium
+ * version embedded in this Electron build (expert V7, 2026-08-04).
+ *
+ * WHY: Electron's default UA embeds the app identity from package.json
+ * (`@filmsnaps/desktop/1.0.3` + `Electron/42.4.1`). Cloudflare bot-management
+ * flags those app tokens at the edge → HTTP 403 on the provider's own
+ * same-origin token/bootstrap API → no token → player stalls. A clean UA with
+ * no app name / `Electron/` and a version that MATCHES the User-Agent Client
+ * Hints Chromium reports (`Sec-CH-UA: "Chromium";v="<chromeVer>"`) is accepted.
+ *
+ * Never hardcode the version — derive it from `process.versions.chrome` so it
+ * tracks the Electron binary across upgrades and always stays consistent with
+ * Client Hints.
+ */
+function buildCleanDesktopUA(): string {
+  const chromeVer = process.versions.chrome; // e.g. "148.0.7778.265"
+  const platform = process.platform;
+
+  let platformToken: string;
+  switch (platform) {
+    case "win32":
+      platformToken = "Windows NT 10.0; Win64; x64";
+      break;
+    case "darwin":
+      platformToken = "Macintosh; Intel Mac OS X 10_15_7";
+      break;
+    case "linux":
+      platformToken = "X11; Linux x86_64";
+      break;
+    default:
+      platformToken = "Windows NT 10.0; Win64; x64";
+  }
+
+  return (
+    `Mozilla/5.0 (${platformToken}) AppleWebKit/537.36 ` +
+    `(KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
+  );
+}
 
 /**
  * Update the mutable provider ID used by the webRequest handler closure.
@@ -151,6 +197,34 @@ export function createProviderSession(providerId?: string): Session {
 
   initializedSessions.add(SESSION_PARTITION);
 
+  // ── UA: clean desktop-Chrome UA derived from the real Chromium version ──
+  // Expert V7 confirmed (2026-08-04) the root cause of the provider-switch
+  // stall: Electron's DEFAULT UA embeds the app identity from package.json
+  // (`@filmsnaps/desktop/1.0.3 ... Electron/42.4.1`). Cloudflare bot-management
+  // flags those tokens at the edge → 403 on the provider's own same-origin
+  // token/bootstrap API → no token → every /api/servers/* returns 401 → player
+  // stalls. Removing the app tokens while preserving the REAL Chromium version
+  // (which matches the Client Hints Chromium actually reports) resolves the
+  // 403. Option A is version-derived (tracks Electron across updates — never
+  // hardcode) and platform-aware, so UA version always == Client-Hints version.
+  // This only affects the provider partition; the main window (default session)
+  // keeps the stock Electron UA (internal http://127.0.0.1 — no server sees it).
+  providerSession.setUserAgent(buildCleanDesktopUA());
+
+  if (process.env.FILMSNAPS_AUDIT === "1") {
+    console.log(
+      `[SecurityFilter] Provider UA set: ${providerSession.getUserAgent()}`,
+    );
+  }
+
+  // ── Network-layer HTML protection injection ──
+  // THE WHOLE-PAGE GUARANTEE: bake the protection script into every HTML
+  // document at the network layer, so coverage does not depend on the preload
+  // mechanism reaching every frame (programmatic frames, about:blank/srcdoc).
+  // Must be registered before the session's first request — arming here at
+  // startup (before any webview exists) closes the window by construction.
+  registerHtmlInjection(providerSession);
+
   // ── Provider preload (PRIMARY in-page security) ──
   // The session-level preload runs at document-start in the main frame AND
   // every child frame (nodeIntegrationInSubFrames: true on the webview) of
@@ -172,6 +246,20 @@ export function createProviderSession(providerId?: string): Session {
     console.error("[SecurityFilter] Failed to set provider preload:", err);
   }
 
+  // Warm the mobile-parity URL-substring filter (R4b/R5b) off the critical
+  // path so the first provider request never blocks on a synchronous asset
+  // read. Idempotent — loads once. Falls back gracefully if absent.
+  try {
+    initUrlSubstringFilter();
+    console.log(
+      `[SecurityFilter] Mobile-parity substring filter ready: ` +
+        `${getSubstringFilterStats().substringCount} URL substrings + ` +
+        `${getSubstringFilterStats().blockedDomainCount} blocked domains`,
+    );
+  } catch (err) {
+    console.warn("[SecurityFilter] Url-substring filter warm-up failed:", err);
+  }
+
   // Kick off the filter engine load asynchronously (non-blocking). The engine
   // is also started at app.whenReady() via initFilterEngine(), so this is
   // typically a cache hit. onBeforeRequest awaits the same shared promise
@@ -190,6 +278,14 @@ export function createProviderSession(providerId?: string): Session {
 
   // Track responses for session trust (R0)
   setupTrustTracking(providerSession);
+
+  // Install CSP + security headers (L3) HERE at startup, NOT lazily on
+  // provider:init. The webview can attach and navigate before the async
+  // provider:init IPC round-trip completes; if onHeadersReceived is not
+  // installed yet, the first committed document has no CSP/security
+  // headers — the intermittent "security didn't apply" gap. Installing at
+  // startup (before any webview exists) closes that window by construction.
+  setupSecurityHeaders(providerSession);
 
   return providerSession;
 }
@@ -226,9 +322,12 @@ function setupRequestFilter(session: Session, providerId?: string): void {
   );
   trustManagers.set(session, trustManager);
 
-  // Pre-seed trust with known provider CDN and embed domains
-  // so video-serving CDNs are trusted (R0) from the very first request
-  preSeedTrustFromConfig(trustManager);
+  // Feed known provider CDN/embed domains into the R1/R2 ALLOWLISTS (NOT R0
+  // trust). R0 starts EMPTY — trust is earned only when a host serves verified
+  // video content (setupTrustTracking → checkResponseForTrust). Config-derived
+  // hosts must not short-circuit the R1-R8 cascade before they've served
+  // anything (V4 step 2 / V5).
+  preSeedAllowlistsFromConfig();
 
   // Set the initial provider ID so per-provider rules apply from the start
   if (providerId) {
@@ -285,6 +384,22 @@ function setupRequestFilter(session: Session, providerId?: string): void {
         return callback({ cancel: true });
       }
 
+      // ALLOW-side audit log (Gap C / V5 step 1). Gated by FILMSNAPS_AUDIT=1
+      // so production stays quiet (only blocks logged). Mirrors mobile's
+      // ReqLog format: ACTION | RULE | RESOURCE_TYPE | HOST | URL. This is the
+      // single highest-value diagnostic — without it we can't see which
+      // allowing rule lets an ad/beacon request through.
+      if (process.env.FILMSNAPS_AUDIT === "1") {
+        try {
+          const host = new URL(url).hostname;
+          console.log(
+            `[ReqLog] ALLOW [${decision.rule}] ${details.resourceType} ${host} ${url.substring(0, 140)}`,
+          );
+        } catch {
+          /* unparseable — skip audit line */
+        }
+      }
+
       return callback({});
     },
   );
@@ -325,25 +440,27 @@ function setupTrustTracking(session: Session): void {
       contentType,
     );
     if (trusted) {
+      // Log the trust entry INCLUDING its path prefix (V4/V5 trust-granularity
+      // diagnostic). A prefix of "/" means whole-host trust — exactly the
+      // over-broadening that lets same-host ad scripts short-circuit R1-R8.
+      let prefix = "/";
+      try {
+        const entry = trustManager
+          .getTrustedHosts()
+          .find((e) => new URL(details.url).hostname.endsWith(e.hostname));
+        if (entry) prefix = entry.pathPrefix || "/";
+      } catch {}
       console.log(
-        `[SecurityFilter] Trust added: ${new URL(details.url).hostname} (video content detected)`,
+        `[SecurityFilter] Trust added: ${new URL(details.url).hostname} (video content detected, pathPrefix: ${JSON.stringify(prefix)})`,
       );
     }
   });
 
-  // Also check redirect responses for video content
-  session.webRequest.onBeforeRedirect({ urls: ["*://*/*"] }, (details) => {
-    const trustManager = trustManagers.get(session);
-    if (!trustManager) return;
-
-    // The redirect destination might be a video CDN
-    try {
-      const redirectHost = new URL(details.redirectURL).hostname;
-      trustManager.addTrust(redirectHost);
-    } catch {
-      // Ignore invalid URLs
-    }
-  });
+  // NOTE: onBeforeRedirect blanket-trust was REMOVED (expert consultation).
+  // It trusted every redirect destination host at HOST granularity, which let
+  // ad CDNs reached via a redirect short-circuit R1-R8. The destination now
+  // earns path-scoped trust only when it actually serves video content, via
+  // the onCompleted handler above (checkResponseForTrust).
 }
 
 /**
@@ -358,17 +475,27 @@ function getVideoDetectionConfig(): any {
   }
 }
 
-// ── Pre-seed trust ────────────────────────────────────────────────────────
+// ── Pre-seed allowlists ──────────────────────────────────────────────────
 
 /**
- * Pre-seed trust from blocklist.json — collects all known CDN/embed domains
- * across all providers and pre-seeds them into the session trust manager.
- * This ensures video-serving CDNs are trusted (R0) from the very first
- * request without waiting for a video content response.
+ * Pre-seed ALLOWLISTS from blocklist.json — collects all known CDN/embed
+ * domains across all providers and feeds them into the R1/R2 allowlists, NOT
+ * into R0 session trust (V4 step 2 / V5). R0 is reserved for DYNAMICALLY EARNED
+ * trust — hosts that have actually served verified video content this session.
+ *
+ * Why: pre-seeding into R0 gave config-derived hosts whole-host trust before
+ * they'd served anything, letting `cloudflareinsights.com` / `googletagmanager.com`
+ * short-circuit the whole cascade (R1-R8 never ran for them). Fed through
+ * R1/R2 instead, those hosts still reach R4/R5 — so an always-block domain in
+ * R5 is still blocked, and the FiltersEngine (R4) still evaluates them.
+ *
+ * R1/R2 are read by shouldBlockRequest via getGlobalCdnAllowlist() /
+ * getAllowedDomainsForProvider() — both already pull from the SAME blocklist.json
+ * the config loader reads, so this function's effect is: config CDN/embed domains
+ * are already allowlisted at R1/R2 WITHOUT ever touching R0 trust. It exists to
+ * make the intent explicit and to remove the old R0 pre-seed path.
  */
-function preSeedTrustFromConfig(
-  trustManager: InstanceType<typeof SessionTrustManager>,
-): void {
+function preSeedAllowlistsFromConfig(): void {
   try {
     const { loadBlocklistConfig } = require("./provider-config");
     const config = loadBlocklistConfig();
@@ -397,34 +524,29 @@ function preSeedTrustFromConfig(
       );
     }
 
-    let count = 0;
-    for (const domain of domains) {
-      trustManager.addTrust(domain);
-      count++;
-    }
     console.log(
-      `[SecurityFilter] Pre-seeded trust from config: ${count} domains`,
+      `[SecurityFilter] Pre-seeded ${domains.size} CDN/embed domains into R1/R2 allowlists (R0 starts EMPTY — trust is earned only by serving video)`,
     );
   } catch {
-    // Config not available — trust will be built dynamically
+    // Config not available — allowlists resolve lazily from provider-config.
   }
 }
 
 /**
- * Pre-seed session trust with known provider CDN domains (external call).
- * Called from main.ts provider:init IPC to augment the pre-seeded trust.
+ * Pre-seed provider allowlists with known provider CDN domains (external call).
+ * Called from main.ts provider:init IPC. Feeds the R1/R2 ALLOWLISTS — NOT R0
+ * trust (V4 step 2 / V5): config-derived hosts must not short-circuit the
+ * R1-R8 cascade before they've served anything. Fed through R1/R2, they still
+ * fall through to R4/R5, so an always-block domain in R5 is still blocked.
  */
-export function preSeedTrustForProvider(
-  trustManager: InstanceType<typeof SessionTrustManager>,
-  cdnDomains: Set<string>,
-): void {
+export function preSeedProviderAllowlists(cdnDomains: Set<string>): void {
   let count = 0;
   for (const domain of cdnDomains) {
-    trustManager.addTrust(domain);
+    addGlobalCdnAllowlistDomains([domain]);
     count++;
   }
   console.log(
-    `[SecurityFilter] Pre-seeded trust for ${count} CDN/embed domains`,
+    `[SecurityFilter] Fed ${count} CDN/embed domains into the R1/R2 allowlists (R0 trust untouched)`,
   );
 }
 
@@ -456,6 +578,14 @@ export async function clearProviderSession(session: Session): Promise<void> {
       console.log("[SecurityFilter] Session trust cleared");
     }
 
+    // Clear runtime-augmented R1/R2 allowlists (embed host + pre-seed domains)
+    // so a new provider session starts with only config-declared allowlists.
+    try {
+      const { clearRuntimeAllowlists } = require("./provider-config");
+      clearRuntimeAllowlists();
+      console.log("[SecurityFilter] Runtime R1/R2 allowlists cleared");
+    } catch {}
+
     await session.clearStorageData({
       storages: [
         "cookies",
@@ -486,10 +616,17 @@ export function setupSecurityHeaders(session: Session): void {
       ...details.responseHeaders,
       "Content-Security-Policy": [
         // Intentionally permissive — provider players need inline scripts/eval.
-        // Real protection comes from the R0-R8 cascade (onBeforeRequest)
-        // and the navigation guard (will-navigate / will-redirect).
+        // Real protection comes from the R0-R8 cascade (onBeforeRequest),
+        // the navigation guard (will-navigate / will-redirect), and the
+        // network-layer HTML injection (html-injector.ts) which inlines the
+        // protection script at the top of <head>.
+        //
+        // NOTE: no script-src directive. A script-src would gate the injected
+        // protection <script> on 'unsafe-inline' (or a nonce) — a spec-change
+        // or provider that sends its own CSP could then suppress our script.
+        // With no script-src, the fetch spec's CSP default (script-src 'self')
+        // is NOT applied to our response, so the protection always runs.
         `default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; ` +
-          `script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; ` +
           `frame-src *; ` +
           `object-src 'none'; ` +
           `form-action 'none'; ` +
@@ -497,8 +634,20 @@ export function setupSecurityHeaders(session: Session): void {
       ],
       // Prevent MIME-type sniffing
       "X-Content-Type-Options": ["nosniff"],
-      // Send no referrer header
-      "Referrer-Policy": ["no-referrer"],
+      // Referrer policy — CRUCIAL: do NOT use no-referrer here.
+      // Expert V5 confirmed (2026-08-04) that stripping the Referer header on
+      // every provider-session response is the root cause of the cross-origin
+      // stream providers stalling (screenscape.me, peachify.top): their
+      // rotating token-gated CDNs (`*.eat-peach.sbs` etc.) use Referer as an
+      // anti-hotlink gate. nxsha works because it streams SAME-origin (no
+      // Referer needed). Cross-origin manifest fetches without a Referer are
+      // rejected by the CDN, the player JS treats the source as failed, and
+      // never assigns video.src — so no manifest request is ever issued.
+      // Mobile always sends Referer: <provider baseUrl> and works.
+      // 'origin' sends only scheme+host (privacy-preserving) yet satisfies the
+      // CDN's anti-hotlink check. strict-origin-when-cross-origin (the browser
+      // default) is also fine; 'origin' is the slightly more private choice.
+      "Referrer-Policy": ["origin"],
       // Disable DNS prefetching
       "X-DNS-Prefetch-Control": ["off"],
     };

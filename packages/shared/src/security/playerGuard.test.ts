@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from "vitest";
 import {
   buildGuardScript,
   buildContentReadyScript,
@@ -8,154 +8,182 @@ import {
   buildAllScriptsWithScriptlets,
   DEFAULT_AD_FULL_PATTERNS,
   DEFAULT_AD_SHORT_PATTERNS,
-} from './playerGuard';
+} from "./playerGuard";
 
-describe('Player Guard Scripts', () => {
-  describe('DEFAULT_AD patterns', () => {
-    it('DEFAULT_AD_FULL_PATTERNS should be a non-empty array', () => {
+describe("Player Guard Scripts", () => {
+  describe("DEFAULT_AD patterns", () => {
+    it("DEFAULT_AD_FULL_PATTERNS should be a non-empty array", () => {
       expect(Array.isArray(DEFAULT_AD_FULL_PATTERNS)).toBe(true);
       expect(DEFAULT_AD_FULL_PATTERNS.length).toBeGreaterThan(0);
     });
 
-    it('DEFAULT_AD_SHORT_PATTERNS should be a non-empty array', () => {
+    it("DEFAULT_AD_SHORT_PATTERNS should be a non-empty array", () => {
       expect(Array.isArray(DEFAULT_AD_SHORT_PATTERNS)).toBe(true);
       expect(DEFAULT_AD_SHORT_PATTERNS.length).toBeGreaterThan(0);
     });
 
-    it('SHORT patterns should be subsets or prefixes of FULL patterns', () => {
+    it("SHORT patterns should be subsets or prefixes of FULL patterns", () => {
       for (const pattern of DEFAULT_AD_SHORT_PATTERNS) {
         const exactMatch = DEFAULT_AD_FULL_PATTERNS.includes(pattern);
         const prefixMatch = DEFAULT_AD_FULL_PATTERNS.some(
-          (full) => full.startsWith(pattern) || pattern.startsWith(full)
+          (full) => full.startsWith(pattern) || pattern.startsWith(full),
         );
         expect(exactMatch || prefixMatch).toBe(true);
       }
     });
 
-    it('should include common ad domains', () => {
-      expect(DEFAULT_AD_FULL_PATTERNS).toContain('doubleclick.net');
-      expect(DEFAULT_AD_FULL_PATTERNS).toContain('googleadservices.com');
-      expect(DEFAULT_AD_FULL_PATTERNS).toContain('googlesyndication.com');
+    it("should include common ad domains", () => {
+      expect(DEFAULT_AD_FULL_PATTERNS).toContain("doubleclick.net");
+      expect(DEFAULT_AD_FULL_PATTERNS).toContain("googleadservices.com");
+      expect(DEFAULT_AD_FULL_PATTERNS).toContain("googlesyndication.com");
     });
   });
 
-  describe('buildGuardScript', () => {
-    it('should return a non-empty string', () => {
-      const script = buildGuardScript('example.com');
-      expect(typeof script).toBe('string');
+  describe("buildGuardScript", () => {
+    it("should return a non-empty string", () => {
+      const script = buildGuardScript("example.com");
+      expect(typeof script).toBe("string");
       expect(script.length).toBeGreaterThan(0);
     });
 
-    it('should be a self-executing function', () => {
-      const script = buildGuardScript('example.com');
-      expect(script).toContain('(function()');
-      expect(script).toContain('})()');
+    it("should be a self-executing function", () => {
+      const script = buildGuardScript("example.com");
+      expect(script).toContain("(function()");
+      expect(script).toContain("})()");
     });
 
-    it('should accept provider hostname parameter without error', () => {
-      const script = buildGuardScript('example.com');
-      expect(typeof script).toBe('string');
+    it("should accept provider hostname parameter without error", () => {
+      const script = buildGuardScript("example.com");
+      expect(typeof script).toBe("string");
       expect(script.length).toBeGreaterThan(0);
     });
 
-    it('should use default patterns when none provided', () => {
-      const script = buildGuardScript('example.com');
+    it("should use default patterns when none provided", () => {
+      const script = buildGuardScript("example.com");
       // Should contain JSON-encoded default patterns
-      expect(script).toContain('doubleclick.net');
-      expect(script).toContain('googleadservices.com');
+      expect(script).toContain("doubleclick.net");
+      expect(script).toContain("googleadservices.com");
     });
 
-    it('should use custom patterns when provided', () => {
-      const customPatterns = ['custom-ad.com', 'tracker.net'];
-      const script = buildGuardScript('example.com', customPatterns);
-      expect(script).toContain('custom-ad.com');
-      expect(script).toContain('tracker.net');
+    it("should use custom patterns when provided", () => {
+      const customPatterns = ["custom-ad.com", "tracker.net"];
+      const script = buildGuardScript("example.com", customPatterns);
+      expect(script).toContain("custom-ad.com");
+      expect(script).toContain("tracker.net");
       // Should NOT contain default patterns
-      expect(script).not.toContain('doubleclick.net');
+      expect(script).not.toContain("doubleclick.net");
     });
 
-    it('should include popup blocking', () => {
-      const script = buildGuardScript('example.com');
-      expect(script).toContain('window.open');
+    it("should inject apiIntercepts when provided (config-driven state interception)", () => {
+      const script = buildGuardScript("example.com", undefined, [
+        {
+          match: "/api/ads/cycles",
+          methods: ["GET", "POST"],
+          synthetic: {
+            primary: { ok: true, anchorMs: "@@NOW@@" },
+            fallback: { anchorMs: "@@NOW@@", source: "fallback" },
+            fallbackCondition: "source=fallback",
+          },
+        },
+      ]);
+      expect(script).toContain("/api/ads/cycles");
+      expect(script).toContain("buildSyntheticResponse");
+      expect(script).toContain("@@NOW@@");
+      // The synthetic primary shape is baked in so the fetch/XHR paths can
+      // return it verbatim at interception time.
+      expect(script).toContain("anchorMs");
+      expect(script).toContain("source");
     });
 
-    it('should include fetch interception', () => {
-      const script = buildGuardScript('example.com');
-      expect(script).toContain('fetch');
+    it("should emit an empty API_INTERCEPTS array when none provided (no-op)", () => {
+      const script = buildGuardScript("example.com");
+      // The interception helper is always present but guards on an empty list,
+      // so the fetch/XHR paths fall through to normal ad-blocking behavior.
+      expect(script).toContain("var API_INTERCEPTS = []");
     });
 
-    it('should include XHR interception', () => {
-      const script = buildGuardScript('example.com');
-      expect(script).toContain('XMLHttpRequest');
+    it("should include popup blocking", () => {
+      const script = buildGuardScript("example.com");
+      expect(script).toContain("window.open");
     });
 
-    it('should include anti-anti-adblock measures', () => {
-      const script = buildGuardScript('example.com');
-      expect(script).toContain('_maskFn');
-      expect(script).toContain('_fsNativeStr');
+    it("should include fetch interception", () => {
+      const script = buildGuardScript("example.com");
+      expect(script).toContain("fetch");
+    });
+
+    it("should include XHR interception", () => {
+      const script = buildGuardScript("example.com");
+      expect(script).toContain("XMLHttpRequest");
+    });
+
+    it("should include anti-anti-adblock measures", () => {
+      const script = buildGuardScript("example.com");
+      expect(script).toContain("_maskFn");
+      expect(script).toContain("_fsNativeStr");
     });
   });
 
-  describe('buildContentReadyScript', () => {
-    it('should return a non-empty string', () => {
+  describe("buildContentReadyScript", () => {
+    it("should return a non-empty string", () => {
       const script = buildContentReadyScript();
-      expect(typeof script).toBe('string');
+      expect(typeof script).toBe("string");
       expect(script.length).toBeGreaterThan(0);
     });
 
-    it('should be a self-executing function', () => {
+    it("should be a self-executing function", () => {
       const script = buildContentReadyScript();
-      expect(script).toContain('(function()');
+      expect(script).toContain("(function()");
     });
 
-    it('should post a content-ready message', () => {
+    it("should post a content-ready message", () => {
       const script = buildContentReadyScript();
-      expect(script).toContain('content-ready');
+      expect(script).toContain("content-ready");
     });
   });
 
-  describe('buildBridgeScript', () => {
-    it('should return a non-empty string', () => {
+  describe("buildBridgeScript", () => {
+    it("should return a non-empty string", () => {
       const script = buildBridgeScript();
-      expect(typeof script).toBe('string');
+      expect(typeof script).toBe("string");
       expect(script.length).toBeGreaterThan(0);
     });
 
-    it('should be a self-executing function', () => {
+    it("should be a self-executing function", () => {
       const script = buildBridgeScript();
-      expect(script).toContain('(function()');
+      expect(script).toContain("(function()");
     });
 
-    it('should set up message event listener', () => {
+    it("should set up message event listener", () => {
       const script = buildBridgeScript();
-      expect(script).toContain('addEventListener');
-      expect(script).toContain('message');
+      expect(script).toContain("addEventListener");
+      expect(script).toContain("message");
     });
   });
 
-  describe('buildProgressTrackerScript', () => {
-    it('should return a non-empty string', () => {
+  describe("buildProgressTrackerScript", () => {
+    it("should return a non-empty string", () => {
       const script = buildProgressTrackerScript();
-      expect(typeof script).toBe('string');
+      expect(typeof script).toBe("string");
       expect(script.length).toBeGreaterThan(0);
     });
 
-    it('should be a self-executing function', () => {
+    it("should be a self-executing function", () => {
       const script = buildProgressTrackerScript();
-      expect(script).toContain('(function()');
+      expect(script).toContain("(function()");
     });
 
-    it('should track video progress', () => {
+    it("should track video progress", () => {
       const script = buildProgressTrackerScript();
-      expect(script).toContain('timeupdate');
-      expect(script).toContain('currentTime');
+      expect(script).toContain("timeupdate");
+      expect(script).toContain("currentTime");
     });
   });
 
-  describe('buildAllScripts', () => {
-    it('should combine all scripts', () => {
-      const all = buildAllScripts('example.com');
-      const guard = buildGuardScript('example.com');
+  describe("buildAllScripts", () => {
+    it("should combine all scripts", () => {
+      const all = buildAllScripts("example.com");
+      const guard = buildGuardScript("example.com");
       const ready = buildContentReadyScript();
       const bridge = buildBridgeScript();
       const progress = buildProgressTrackerScript();
@@ -166,57 +194,57 @@ describe('Player Guard Scripts', () => {
       expect(all).toContain(progress);
     });
 
-    it('should be larger than any individual script', () => {
-      const all = buildAllScripts('example.com');
-      const guard = buildGuardScript('example.com');
+    it("should be larger than any individual script", () => {
+      const all = buildAllScripts("example.com");
+      const guard = buildGuardScript("example.com");
       expect(all.length).toBeGreaterThan(guard.length);
     });
   });
 
-  describe('buildAllScriptsWithScriptlets', () => {
-    it('should return a non-empty string', () => {
-      const script = buildAllScriptsWithScriptlets('example.com');
-      expect(typeof script).toBe('string');
+  describe("buildAllScriptsWithScriptlets", () => {
+    it("should return a non-empty string", () => {
+      const script = buildAllScriptsWithScriptlets("example.com");
+      expect(typeof script).toBe("string");
       expect(script.length).toBeGreaterThan(0);
     });
 
-    it('should include scriptlets', () => {
-      const script = buildAllScriptsWithScriptlets('example.com');
+    it("should include scriptlets", () => {
+      const script = buildAllScriptsWithScriptlets("example.com");
       // Scriptlets should be present
-      expect(script).toContain('abort-on-property-read');
+      expect(script).toContain("abort-on-property-read");
     });
 
-    it('should include provider-specific scriptlets when providerId given', () => {
-      const script = buildAllScriptsWithScriptlets('example.com', 'nxsha');
+    it("should include provider-specific scriptlets when providerId given", () => {
+      const script = buildAllScriptsWithScriptlets("example.com", "nxsha");
       expect(script.length).toBeGreaterThan(0);
     });
   });
 
-  describe('Script safety', () => {
-    it('guard script should not contain syntax errors (basic check)', () => {
-      const script = buildGuardScript('example.com');
+  describe("Script safety", () => {
+    it("guard script should not contain syntax errors (basic check)", () => {
+      const script = buildGuardScript("example.com");
       // Remove the self-executing wrapper for syntax check
       const inner = script.slice(
-        script.indexOf('(function()'),
-        script.lastIndexOf('})()') + 4
+        script.indexOf("(function()"),
+        script.lastIndexOf("})()") + 4,
       );
       // Should not throw when parsed
       expect(() => new Function(inner)).not.toThrow();
     });
 
-    it('scripts should be valid JavaScript strings', () => {
+    it("scripts should be valid JavaScript strings", () => {
       const scripts = [
-        buildGuardScript('example.com'),
+        buildGuardScript("example.com"),
         buildContentReadyScript(),
         buildBridgeScript(),
         buildProgressTrackerScript(),
       ];
 
       for (const script of scripts) {
-        expect(typeof script).toBe('string');
+        expect(typeof script).toBe("string");
         expect(script.length).toBeGreaterThan(0);
         // Should not contain null bytes
-        expect(script).not.toContain('\0');
+        expect(script).not.toContain("\0");
       }
     });
   });

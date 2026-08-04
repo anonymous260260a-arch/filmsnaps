@@ -38,6 +38,8 @@ interface DesktopWatchLayoutProps {
   selectedProviderId: string | null;
   embedUrl: string;
   playerKey: string;
+  /** True once the provider session is configured (per-provider rules + CSP installed in main). */
+  sessionReady: boolean;
   isElectron: boolean;
   isPending: boolean;
   selectedSeason: number;
@@ -59,6 +61,7 @@ export function DesktopWatchLayout({
   selectedProviderId,
   embedUrl,
   playerKey,
+  sessionReady,
   isElectron,
   isPending,
   selectedSeason,
@@ -158,6 +161,7 @@ export function DesktopWatchLayout({
           <VideoZone
             embedUrl={embedUrl}
             playerKey={playerKey}
+            sessionReady={sessionReady}
             isElectron={isElectron}
             isPending={isPending}
             currentProvider={currentProvider}

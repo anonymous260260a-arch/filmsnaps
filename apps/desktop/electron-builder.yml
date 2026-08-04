@@ -30,6 +30,8 @@ icon: resources/icon.png
 extraResources:
   - from: ../../packages/filter-compiler/build/compiled-engine.bin
     to: filter-engine/compiled-engine.bin
+  - from: ../../packages/filter-compiler/build/android-adblock-patterns.json
+    to: filter-engine/android-adblock-patterns.json
   - from: ../../blocklist.json
     to: blocklist.json
   - from: ../web/.next/standalone
