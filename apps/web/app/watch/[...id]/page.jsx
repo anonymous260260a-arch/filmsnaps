@@ -12,7 +12,7 @@ const Page = async ({ params, searchParams }) => {
   const userAgent = hdrs.get("user-agent") || "";
   // Desktop (Electron) → default nxsha, Web → default cinemaos
   const isDesktop = userAgent.includes("Electron");
-  const defaultProvider = sp.provider || (isDesktop ? "nxsha" : "cinemaos");
+  const defaultProvider = sp.provider || (isDesktop ? "nxsha" : "screenscape");
 
   let meta;
   let initialSeasonData = null;

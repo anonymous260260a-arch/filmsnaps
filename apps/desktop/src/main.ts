@@ -35,9 +35,7 @@ import { initUpdater, quitAndInstall, checkForUpdates } from "./updater";
 import {
   createProviderSession,
   clearProviderSession,
-  setupSecurityHeaders,
-  getTrustManager,
-  preSeedTrustForProvider,
+  preSeedProviderAllowlists,
   resetSessionHandlers,
   setBlockingProviderId,
   getCurrentBlockingProviderId,
@@ -46,7 +44,9 @@ import { applyNavigationGuard } from "./security/navigation-guard";
 import {
   attachProviderSecurity,
   computeProviderAllowedDomains,
+  verifyPreloadInFrames,
 } from "./security/provider-security";
+import { registerCosmeticFilterIPC } from "./security/cosmetic-filter";
 
 // ── Constants ──
 
@@ -176,6 +176,11 @@ function createMainWindow(): void {
 
   // Register provider session IPC handlers (inline webview)
   registerProviderSessionIPC();
+
+  // Register the engine-derived cosmetic filter IPC (Pillar B) — the preload's
+  // DOM sweeper posts class/id/href tokens here and gets the engine's cosmetic
+  // CSS + scriptlets back to apply to the live page.
+  registerCosmeticFilterIPC();
 
   // Register updater IPC handlers
   ipcMain.handle("update:check", () => checkForUpdates());
@@ -311,6 +316,29 @@ function createMainWindow(): void {
       const embedUrl = pendingEmbedUrl || guest.getURL();
       const allowed = computeProviderAllowedDomains(providerId, embedUrl);
 
+      // AUDIT — surface renderer-side logs to main-process stdout so a
+      // FILMSNAPS_AUDIT=1 run reveals what the protection bundle intercepted
+      // and, critically (expert V5), when/how a stream dies BEFORE it reaches
+      // onBeforeRequest / the ReqLog. The webview guest's console-message fires
+      // here in main with the page's console lines.
+      if (process.env.FILMSNAPS_AUDIT === "1") {
+        // `guest` here IS the guest WebContents (Electron's did-attach-webview
+        // hands us the guest's webContents directly).
+        // Electron 42: pass the console-message args via the Event object
+        // (the positional-args form is deprecated).
+        guest.on(
+          "console-message",
+          (_e: unknown, level: number, message: string) => {
+            if (
+              message.includes("[PROTECTION]") ||
+              message.includes("[STREAM-AUDIT]")
+            ) {
+              console.log(`[Webview console][lvl${level}] ${message}`);
+            }
+          },
+        );
+      }
+
       // L4 — main-process navigation/popup/redirect guard.
       applyNavigationGuard(guest, {
         providerUrl: embedUrl || "",
@@ -322,6 +350,23 @@ function createMainWindow(): void {
       // L7 — CDP verification layer: probes each live frame to confirm the
       // session preload (L5/L6) is active. Does NOT inject — the preload does.
       attachProviderSecurity(guest, { providerId, embedUrl });
+
+      // L7b — FAIL-CLOSED per-frame protection verification (no CDP):
+      // sweeps every committed frame for the preload guard sentinel, injects
+      // the protection bundle into about:blank/srcdoc/blob/data frames (the
+      // coverage holes both the session preload and L8 miss), and — if a
+      // committed frame is unprotected — stops THAT frame only (never the
+      // whole webview, which previously broke initial load). The user's
+      // contract is "security must apply every time, no matter what" — a
+      // brief error is preferable to a silent security failure.
+      verifyPreloadInFrames(guest, {
+        onFailClosed: (frameUrl) => {
+          if (guest.isDestroyed()) return;
+          console.warn(
+            `[Main] FAIL-CLOSED: protection absent in ${frameUrl.slice(0, 120)} — frame stopped`,
+          );
+        },
+      });
     }, 50);
   });
 
@@ -371,30 +416,33 @@ function registerProviderSessionIPC(): void {
       // Update the mutable provider ID so the onBeforeRequest handler
       // (which was installed at startup with a closure referencing the
       // module-level _currentBlockingProviderId) applies per-provider rules.
+      //
+      // L3 security headers (CSP) are already installed at app startup inside
+      // createProviderSession() — the webview may attach and navigate before
+      // this async IPC resolves, so we cannot rely on this handler for that.
       const session = createProviderSession(providerId);
       setBlockingProviderId(providerId);
 
-      setupSecurityHeaders(session);
       currentProviderSession = session;
       currentProviderId = providerId;
 
-      // Seed trust from the embed URL host (in case it wasn't in blocklist.json)
+      // Feed the embed URL host into the provider's R1/R3 allowlist (NOT R0
+      // trust) in case it wasn't in blocklist.json. R0 stays reserved for hosts
+      // that have actually served verified video this session (V4 step 2).
       try {
         const embedHost = new URL(embedUrl).hostname;
-        const trustManager = getTrustManager(session);
-        if (trustManager) {
-          trustManager.addTrust(embedHost);
-          console.log(`[Main] Seeded trust for embed host: ${embedHost}`);
-        }
+        const {
+          addProviderAllowlistDomains,
+        } = require("./security/provider-config");
+        addProviderAllowlistDomains(providerId, [embedHost]);
+        console.log(`[Main] Allowlisted embed host (R1/R3): ${embedHost}`);
       } catch {}
 
-      // Pre-seed additional trust from the startup-built domain set
+      // Pre-seed the startup-built domain set into the R1/R2 allowlists
+      // (NOT R0 trust — R0 starts empty, earned only by serving video).
       if (preSeededCdnDomains.size > 0) {
         try {
-          const tm = getTrustManager(session);
-          if (tm) {
-            preSeedTrustForProvider(tm, preSeededCdnDomains);
-          }
+          preSeedProviderAllowlists(preSeededCdnDomains);
         } catch {}
       }
 
@@ -419,9 +467,11 @@ function registerProviderSessionIPC(): void {
 }
 
 /**
- * Pre-seed session trust for all known provider CDN domains from blocklist.json.
- * This ensures that video-serving CDNs are trusted (R0) from the very first
- * request, preventing accidental blocking by the filter engine (R4).
+ * Collect all known provider CDN/embed domains from blocklist.json for the
+ * R1/R2 allowlists. These are NOT R0 trust — the session trust manager (R0)
+ * starts EMPTY and is populated only by runtime video detection
+ * (checkResponseForTrust). Feeding R1/R2 means these domains still fall through
+ * to R4/R5, so always-block domains in R5 are still blocked (V4 step 2 / V5).
  *
  * Called once at app startup and also when a provider session is initialized.
  */
@@ -456,14 +506,14 @@ function preSeedTrustForProviderSessions(): { cdnDomains: Set<string> } {
     }
 
     console.log(
-      `[Main] Pre-seeded ${allCdnDomains.size} CDN/embed domains for session trust:`,
+      `[Main] Collected ${allCdnDomains.size} CDN/embed domains for R1/R2 allowlists:`,
       Array.from(allCdnDomains).slice(0, 5).join(", ") +
         (allCdnDomains.size > 5 ? ", ..." : ""),
     );
 
     return { cdnDomains: allCdnDomains };
   } catch (err) {
-    console.error("[Main] Failed to pre-seed trust:", err);
+    console.error("[Main] Failed to collect allowlist domains:", err);
     return { cdnDomains: new Set<string>() };
   }
 }
