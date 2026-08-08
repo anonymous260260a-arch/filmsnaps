@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 4,
   "allowedCdnHosts": [
     "akamai.net",
     "akamaiedge.net",
@@ -87,6 +87,11 @@
       "test.zxcstream.xyz",
       "player.zxcstream.xyz",
       "cloudfront.net"
+    ],
+    "player.vidzee.wtf": [
+      "player.vidzee.wtf",
+      "core.vidzee.wtf",
+      "cloudfront.net"
     ]
   },
   "providerRootHosts": [
@@ -110,7 +115,9 @@
     "wyzie.io",
     "vdrk.site",
     "toustream.xyz",
-    "streamguide.cfd"
+    "streamguide.cfd",
+    "player.vidzee.wtf",
+    "core.vidzee.wtf"
   ],
   "rules": {
     "videoDetection": {
@@ -203,6 +210,10 @@
       ]
     }
   },
+  "navigationGuard": {
+    "universalBlockPaths": ["/"],
+    "shallowDepthThreshold": 1
+  },
   "providers": [
     {
       "id": "nxsha",
@@ -213,7 +224,12 @@
         "proxy.itsnitrox.tech",
         "oo.itsnitrox.tech"
       ],
-      "enabled": true
+      "enabled": true,
+      "cosmeticRules": [
+        "button:has(svg.lucide-list){display:none!important}",
+        "button[title=\"Crop to Fill\"]{display:none!important}",
+        "div[class*=\"right-3\"][class*=\"top-1/2\"][class*=\"z-30\"]{display:none!important}"
+      ]
     },
     {
       "id": "peachify",
@@ -226,6 +242,7 @@
       "embedDomains": ["screenscape.me"],
       "cdnDomains": [],
       "enabled": true,
+      "blockHomePaths": ["/", "/home", "/trending"],
       "apiIntercepts": [
         {
           "match": "/api/ads/cycles",
@@ -246,7 +263,8 @@
         "a[href=\"https://screenscape.fun\"]{display:none!important}",
         "a[href=\"https://screenscape.fun\"] + *{display:none!important}",
         "button[title^=\"Download Sources\"]{display:none!important}",
-        "button[title^=\"Switch server and open Telegram\"]{display:none!important}"
+        "button[title^=\"Switch server and open Telegram\"]{display:none!important}",
+        "div:has(> button[aria-label=\"Dismiss\"]){display:none!important}"
       ]
     },
     {
@@ -285,6 +303,7 @@
     {
       "id": "chillflix",
       "embedDomains": ["www.chillflix.lol", "chillflix.lol"],
+      "blockHomePaths": ["/", "/home", "/trending"],
       "cdnDomains": ["vidapi.cloud"],
       "enabled": true
     },
@@ -304,6 +323,12 @@
       "id": "streamguide",
       "embedDomains": ["streamguide.cfd"],
       "cdnDomains": [],
+      "enabled": true
+    },
+    {
+      "id": "vidzee",
+      "embedDomains": ["player.vidzee.wtf"],
+      "cdnDomains": ["core.vidzee.wtf"],
       "enabled": true
     }
   ]

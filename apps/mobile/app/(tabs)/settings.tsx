@@ -255,11 +255,8 @@ export default function SettingsScreen() {
   }, []);
 
   // ── Providers for default source picker ──
-  const serverProviders = useMemo(() => {
-    return getEnabledProviders().filter(
-      (p) => !p.platforms || !p.platforms.includes("web"),
-    );
-  }, []);
+  // Mobile shows ALL enabled providers (the platforms filter is web-only).
+  const serverProviders = useMemo(() => getEnabledProviders(), []);
 
   const selectedServer = settings.defaultServer;
   const selectedProviderName = useMemo(() => {

@@ -1,6 +1,6 @@
-import { requireNativeViewManager } from 'expo-modules-core';
-import React from 'react';
-import { StyleProp, ViewStyle } from 'react-native';
+import { requireNativeViewManager } from "expo-modules-core";
+import React from "react";
+import { StyleProp, ViewStyle } from "react-native";
 
 export interface PlayerWebViewMessage {
   type: string;
@@ -17,16 +17,24 @@ export interface PlayerWebViewProps {
   style?: StyleProp<ViewStyle>;
   onLoadingStart?: (event: { nativeEvent: { url: string } }) => void;
   onLoadingFinish?: (event: { nativeEvent: { url: string } }) => void;
-  onHttpError?: (event: { nativeEvent: { statusCode: number; description: string } }) => void;
+  onHttpError?: (event: {
+    nativeEvent: { statusCode: number; description: string };
+  }) => void;
   onMessage?: (event: { nativeEvent: { data: string } }) => void;
   onRenderProcessGone?: (event: { nativeEvent: { didCrash: boolean } }) => void;
+  /** Provider home-page escape — the embed navigated toward a provider home/list
+   *  path (error-UI "Go Home"). Native already auto-reloaded once; escalation
+   *  here means show the existing FAILED overlay (Switch Source). */
+  onEscapeBlocked?: (event: { nativeEvent: { url: string } }) => void;
   setSupportMultipleWindows?: boolean;
   referrer?: string;
   javaScriptCanOpenWindowsAutomatically?: boolean;
   /** Phase 3: Domain Discovery / Audit Mode. When enabled, all network
    *  request hosts are tracked and dispatched via onAuditData. */
   auditMode?: boolean;
-  onAuditData?: (event: { nativeEvent: { hosts: string; count: number; hostsDetailed: string } }) => void;
+  onAuditData?: (event: {
+    nativeEvent: { hosts: string; count: number; hostsDetailed: string };
+  }) => void;
 }
 
 export interface PlayerWebViewRef {
@@ -36,16 +44,16 @@ export interface PlayerWebViewRef {
   injectJavaScript: (script: string) => void;
 }
 
-const NativeView = requireNativeViewManager('PlayerWebview');
+const NativeView = requireNativeViewManager("PlayerWebview");
 
 const PlayerWebView = React.forwardRef<PlayerWebViewRef, PlayerWebViewProps>(
   (props, ref) => {
     const nativeRef = React.useRef<any>(null);
 
-    const [forceLoadUrl, setForceLoadUrl] = React.useState('');
+    const [forceLoadUrl, setForceLoadUrl] = React.useState("");
     const [forceReload, setForceReload] = React.useState(0);
     const [forceStop, setForceStop] = React.useState(0);
-    const [injectedJS, setInjectedJS] = React.useState('');
+    const [injectedJS, setInjectedJS] = React.useState("");
 
     React.useImperativeHandle(ref, () => ({
       forceLoad: (url: string) => setForceLoadUrl(url),
@@ -68,9 +76,9 @@ const PlayerWebView = React.forwardRef<PlayerWebViewRef, PlayerWebViewProps>(
         injectedJavaScript_={injectedJS}
       />
     );
-  }
+  },
 );
 
-PlayerWebView.displayName = 'PlayerWebView';
+PlayerWebView.displayName = "PlayerWebView";
 
 export default PlayerWebView;

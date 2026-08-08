@@ -339,12 +339,33 @@ function createMainWindow(): void {
         );
       }
 
-      // L4 — main-process navigation/popup/redirect guard.
+      // L4 — main-process navigation/popup/redirect guard. Includes the
+      // path-level home-page escape guard (provider error-UI "Go Home" →
+      // provider.com/, which host-level checks can't catch). Config comes from
+      // blocklist.json (navigationGuard.universalBlockPaths + providers[].blockHomePaths).
+      const {
+        getProviderBlockHomePaths,
+        getUniversalBlockPaths,
+      } = require("./security/provider-config");
+      const blockHomePaths = getProviderBlockHomePaths(providerId);
+      const universalBlockPaths = getUniversalBlockPaths();
       applyNavigationGuard(guest, {
         providerUrl: embedUrl || "",
+        requestedEmbedUrl: embedUrl || "",
+        blockHomePaths,
+        universalBlockPaths,
         additionalAllowedHosts: Array.from(allowed),
         onBlocked: (type, url) =>
           console.warn(`[NavGuard] Blocked ${type}: ${url.slice(0, 120)}`),
+        // Escalate after the single auto-reload: tell the renderer to show the
+        // source-unavailable / error UI (never the provider's home page).
+        onEscaped: (count, url) => {
+          if (mainWindow?.isDestroyed()) return;
+          mainWindow?.webContents.send("provider:escape-blocked", {
+            url,
+            count,
+          });
+        },
       });
 
       // L7 — CDP verification layer: probes each live frame to confirm the

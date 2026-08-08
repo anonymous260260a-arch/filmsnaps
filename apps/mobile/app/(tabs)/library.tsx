@@ -40,6 +40,7 @@ import type { WatchProgress } from "../../lib/watchHistory";
 import type { Bookmark } from "../../lib/bookmarks";
 import NetInfo from "@react-native-community/netinfo";
 import type { DownloadTask } from "../../lib/download";
+import { SwipeExemptFlatList } from "../../components/SwipeExemptScroll";
 import { colors } from "../../theme/colors";
 
 const ITEM_WIDTH_COEFF = (width: number) => (width - 48) / 3;
@@ -359,7 +360,7 @@ export default function LibraryScreen() {
                 title="Continue Watching"
                 onSeeAll={() => nav.push("/history")}
               />
-              <FlatList
+              <SwipeExemptFlatList
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={{ paddingHorizontal: 16, gap: CARD_GAP }}

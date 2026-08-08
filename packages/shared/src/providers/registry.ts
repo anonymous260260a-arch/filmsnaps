@@ -23,7 +23,8 @@ export const PROVIDERS: ProviderDefinition[] = [
         `/embed/tv/${id}/${season}/${episode}?disable_dl_button=true&disable_app_ad=true&lang=hi`,
     },
     sandbox: "allow-scripts allow-same-origin ",
-    // platforms: ['web'],
+    // Hidden from the web picker (mobile + desktop show all enabled).
+    platforms: ["mobile"],
     allowedOrigins: [
       "https://web.nxsha.app",
       // Common video CDNs nxsha may use for streaming
@@ -56,6 +57,8 @@ export const PROVIDERS: ProviderDefinition[] = [
       tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
     },
     sandbox: "allow-scripts allow-same-origin ",
+    // Hidden from the web picker (mobile + desktop show all enabled).
+    platforms: ["mobile"],
     allowedOrigins: [
       "https://peachify.top",
       "https://stats.peachify.top",
@@ -112,7 +115,8 @@ export const PROVIDERS: ProviderDefinition[] = [
     allowedOrigins: ["https://zxcstream.xyz"],
     sandbox: "allow-scripts allow-same-origin ",
 
-    platforms: ["web"],
+    // Hidden from the web picker (mobile + desktop show all enabled).
+    platforms: ["mobile"],
   },
   // ── Server 6 ──────────────────────────────────────────────────
   {
@@ -273,6 +277,8 @@ export const PROVIDERS: ProviderDefinition[] = [
         `/tv/${id}/${season}/${episode}${startAt ? `?startAt=${Math.floor(startAt)}` : ""}`,
     },
     allowedOrigins: ["https://vidnest.fun"],
+    // Hidden from the web picker (mobile + desktop show all enabled).
+    platforms: ["mobile"],
   },
   // ── Server 15 (disabled) ────────────────────────────────────
   {
@@ -351,8 +357,26 @@ export const PROVIDERS: ProviderDefinition[] = [
     // Loaded directly (cross-origin, Cloudflare) — sandbox is the primary defense
     sandbox: "allow-scripts allow-same-origin ",
     allowedOrigins: ["https://www.chillflix.lol"],
-    platforms: ["web"],
+    // Hidden from the web picker (mobile + desktop show all enabled).
+    platforms: ["mobile"],
   },
+  // ── Server 21 (VidZee) ──────────────────────────────────────
+  // {
+  //   id: "vidzee",
+  //   name: "VidZee",
+  //   displayName: "VidZee",
+  //   order: 21,
+  //   baseUrl: "https://player.vidzee.wtf",
+  //   embed: {
+  //     movie: (id) => `/embed/movie/${id}`,
+  //     tv: (id, season, episode) =>
+  //       `/embed/tv/${id}/${season}/${episode}`,
+  //   },
+  //   allowedOrigins: ["https://player.vidzee.wtf"],
+  //   sandbox: "allow-scripts allow-same-origin ",
+
+  //   // Visible on web + mobile (no platforms field = everywhere).
+  // },
   // ── Server 19 (was Server 6) ─────────────────────────────────
   {
     id: "vidking",
@@ -409,7 +433,8 @@ export const PROVIDERS: ProviderDefinition[] = [
         `/embed/tv/${id}/${season}/${episode}?autoPlay=true&autoNext=true&defaultServer=CINEDUB-2${startAt ? `&startTime=${Math.floor(startAt)}` : ""}`,
     },
     allowedOrigins: ["https://vidsync.live"],
-    platforms: ["web", "mobile"],
+    // Hidden from the web picker (mobile + desktop show all enabled).
+    platforms: ["mobile"],
   },
 ];
 
@@ -439,4 +464,12 @@ export function getEnabledProviders(
  */
 export function isProtectionEnabled(provider: ProviderDefinition): boolean {
   return provider.protection?.enabled ?? true;
+}
+
+/**
+ * Check whether the Skip Intro / Skip Recap button should show for a given
+ * provider. Absent flag = enabled (current behavior: all providers get it).
+ */
+export function isSkipIntroEnabled(provider: ProviderDefinition): boolean {
+  return provider.skipIntroEnabled ?? true;
 }

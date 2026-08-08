@@ -285,9 +285,20 @@ function WatchClientContent({
   // ── Hooks ──
   useKeyboardShortcuts();
 
-  // Show all enabled providers (same as mobile).
-  // Desktop Electron uses webview with its own filtering, web uses SecureIframe.
-  const providers = useMemo(() => getEnabledProviders(), []);
+  // ── Platform-gated provider list ──
+  // Web (browser, any viewport): only providers that declare the web platform
+  // (or leave platforms unspecified — the registry default is "everywhere").
+  // Desktop Electron: all enabled providers — the desktop webview session
+  // (R0-R8) governs which actually play, so the picker shows the full set.
+  const providers = useMemo(
+    () =>
+      isElectronEnv
+        ? getEnabledProviders()
+        : getEnabledProviders().filter(
+            (p) => !p.platforms || p.platforms.includes("web"),
+          ),
+    [isElectronEnv],
+  );
 
   // Resolve current provider
   const currentProvider = useMemo(
@@ -325,6 +336,19 @@ function WatchClientContent({
       performance.mark("watch:webview-src-set");
     }
   }, [embedUrl, setIframeLoadError]);
+
+  // ── Desktop: provider home-page escape escalation ──
+  // The provider's error UI can navigate the embed to a provider home/list
+  // path ("Go Home"). Desktop main auto-reloads the embed once, then escalates
+  // over IPC: show the existing error/source-unavailable UI (never the home
+  // page). The iframeLoadError → PlayerErrorState chain already exists.
+  useEffect(() => {
+    if (!isElectronEnv) return;
+    const unsubscribe = window.electronAPI?.onEscapeBlocked?.(() =>
+      setIframeLoadError(true),
+    );
+    return () => unsubscribe?.();
+  }, [isElectronEnv, setIframeLoadError]);
 
   // ── Callbacks ──
   const handleIframeLoad = useCallback(() => {

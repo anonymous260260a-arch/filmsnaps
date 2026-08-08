@@ -40,7 +40,10 @@ export function ServerPickerSheet({
   const providers = useMemo(
     () =>
       externalProviders ??
-      getEnabledProviders().filter((p) => p.platforms?.includes("web")),
+      // Registry default: providers with no platforms field show everywhere.
+      getEnabledProviders().filter(
+        (p) => !p.platforms || p.platforms.includes("web"),
+      ),
     [externalProviders],
   );
 

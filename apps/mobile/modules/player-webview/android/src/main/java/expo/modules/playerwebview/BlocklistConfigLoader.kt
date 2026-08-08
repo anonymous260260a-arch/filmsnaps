@@ -122,6 +122,25 @@ private val _config = AtomicReference<BlocklistConfig?>(null)
         if (initialized) return
         initialized = true
 
+        // Version gate: a bundled config from a NEWER build supersedes any
+        // cache written by an older build (the cache survives APK upgrades
+        // and can lack newer schema fields). When the bundled version is
+        // greater than the cached version, discard the cache so the bundled
+        // defaults load instead.
+        val bundledVer = bundledVersion(context)
+        if (bundledVer > 0) {
+            val cacheVer = try {
+                val file = File(context.cacheDir, CACHE_FILE_NAME)
+                if (file.exists() && System.currentTimeMillis() - file.lastModified() <= CACHE_MAX_AGE_MS * 2) {
+                    JSONObject(file.readText()).optInt("version", 0)
+                } else 0
+            } catch (_: Exception) { 0 }
+            if (cacheVer > 0 && cacheVer < bundledVer) {
+                Log.i(TAG, "Cache v$cacheVer < bundled v$bundledVer — discarding stale cache")
+                try { File(context.cacheDir, CACHE_FILE_NAME).delete() } catch (_: Exception) {}
+            }
+        }
+
         // 1. Load cached config (instant, no network)
         loadFromCache(context)
 
@@ -162,9 +181,41 @@ private val _config = AtomicReference<BlocklistConfig?>(null)
             Log.d(TAG, "Loaded cached config v${parsed.version} " +
                 "(${allCdnHosts.size} allowed, " +
                 "${parsed.blockedDomains.size} blocked)")
+            logConfigSummary("cache", parsed)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to load cached config: ${e.message}")
         }
+    }
+
+    /** Emits the fields the home-escape guard + cosmetic prepend read, so a
+     *  stale-config regression (universal=[] / perProvider=[] / empty
+     *  providers) is visible in logcat. Filtered:
+     *  adb logcat -s BlocklistConfig. */
+    private fun logConfigSummary(source: String, cfg: BlocklistConfig) {
+        val universal = cfg.navigationGuard?.universalBlockPaths ?: emptyList()
+        val enabledProviders = cfg.providers.filter { it.enabled }
+        val withHomePaths = enabledProviders.filter { it.blockHomePaths.isNotEmpty() }
+        val withCosmetic = enabledProviders.filter { it.cosmeticRules.isNotEmpty() }
+        Log.i(TAG, "[CONFIG] source=$source version=${cfg.version} " +
+            "universal=$universal " +
+            "providers=${enabledProviders.size} (homePaths=${withHomePaths.size}, cosmetic=${withCosmetic.size}) " +
+            "ids=${enabledProviders.joinToString(",") { it.id }}")
+    }
+
+    /**
+     * True when the bundled asset declares a NEWER config schema version than
+     * the on-disk cache. The cache is app-private and survives APK upgrades;
+     * if it was written by an older build it can be missing newer fields
+     * (V2 providers[], V3 navigationGuard). In that case the cache is stale
+     * and must NOT take precedence over the freshly-bundled defaults — else a
+     * rebuild ships new rules that the stale cache silently hides (the
+     * `universal=[] perProvider=[]` symptom).
+     */
+    private fun bundledVersion(context: Context): Int {
+        return try {
+            val json = context.assets.open(BUNDLED_DEFAULT).bufferedReader().readText()
+            JSONObject(json).optInt("version", 0)
+        } catch (_: Exception) { 0 }
     }
 
     private fun loadFromAssets(context: Context) {
@@ -173,6 +224,7 @@ private val _config = AtomicReference<BlocklistConfig?>(null)
             val parsed = parseConfig(json)
             _config.set(parsed)
             Log.d(TAG, "Loaded bundled default config v${parsed.version}")
+            logConfigSummary("bundled", parsed)
         } catch (e: Exception) {
             Log.w(TAG, "No bundled default config: ${e.message}")
         }
@@ -239,6 +291,7 @@ private val _config = AtomicReference<BlocklistConfig?>(null)
                     Log.d(TAG, "Fetched fresh config v${parsed.version} " +
                         "(${allCdnHosts.size} allowed, " +
                         "${parsed.blockedDomains.size} blocked)")
+                    logConfigSummary("remote", parsed)
                 }
                 else -> {
                     Log.w(TAG, "Config fetch failed: HTTP $responseCode")
@@ -278,6 +331,8 @@ private val _config = AtomicReference<BlocklistConfig?>(null)
                     cdnDomains = parseStringList(pObj, "cdnDomains"),
                     enabled = pObj.optBoolean("enabled", true),
                     adblockDisabled = pObj.optBoolean("adblockDisabled", false),
+                    cosmeticRules = parseStringList(pObj, "cosmeticRules"),
+                    blockHomePaths = parseStringList(pObj, "blockHomePaths"),
                 ))
             }
         }
@@ -292,6 +347,15 @@ private val _config = AtomicReference<BlocklistConfig?>(null)
             )
         } else null
 
+        // V3: parse navigationGuard (provider home-escape containment)
+        val navGuard = obj.optJSONObject("navigationGuard")
+        val navGuardConfig = if (navGuard != null) {
+            NavigationGuardConfig(
+                universalBlockPaths = parseStringList(navGuard, "universalBlockPaths"),
+                shallowDepthThreshold = navGuard.optInt("shallowDepthThreshold", 1),
+            )
+        } else null
+
         return BlocklistConfig(
             version = obj.optInt("version", 0),
             allowedCdnHosts = allowed,
@@ -300,6 +364,7 @@ private val _config = AtomicReference<BlocklistConfig?>(null)
             providerRootHosts = rootHosts,
             videoDetection = vdConfig,
             providers = providers,
+            navigationGuard = navGuardConfig,
         )
     }
 

@@ -29,7 +29,12 @@ export interface ProviderDefinition {
   /** Embed URL builders */
   embed: {
     movie: (id: string, startAt?: number) => string;
-    tv: (id: string, season: number, episode: number, startAt?: number) => string;
+    tv: (
+      id: string,
+      season: number,
+      episode: number,
+      startAt?: number,
+    ) => string;
   };
   /** Security protection config (per-provider toggle) */
   protection?: ProviderProtection;
@@ -39,7 +44,7 @@ export interface ProviderDefinition {
    * Omit or set to all platforms (default) to show everywhere.
    * Example: ['web'] to only show on web, ['mobile'] for mobile only.
    */
-  platforms?: ('web' | 'mobile')[];
+  platforms?: ("web" | "mobile")[];
 
   /**
    * Custom sandbox attributes for the iframe embedding this provider.
@@ -79,7 +84,12 @@ export interface ProviderDefinition {
    *
    * Example: `[{ top: '80px', left: '40%', width: '200px', height: '60px' }]`
    */
-  coverOverlays?: Array<{ top: string; left: string; width: string; height: string }>;
+  coverOverlays?: Array<{
+    top: string;
+    left: string;
+    width: string;
+    height: string;
+  }>;
 
   /**
    * If true, this provider is ONLY available for download pages,
@@ -88,6 +98,15 @@ export interface ProviderDefinition {
    * Default: false
    */
   forDownloadOnly?: boolean;
+
+  /**
+   * Enable the Skip Intro / Skip Recap overlay button for this provider's
+   * player. The button is injected into the provider iframe by the mobile
+   * watch page, so it only matters on mobile (the web app has no skip-intro
+   * button). Absent = enabled (matches current behavior where every provider
+   * gets the button).
+   */
+  skipIntroEnabled?: boolean;
 }
 
 /**

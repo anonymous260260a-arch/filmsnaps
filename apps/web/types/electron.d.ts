@@ -66,6 +66,10 @@ interface ElectronAPI {
   getLegalAccepted: () => Promise<boolean>;
   /** Mark the Legal & DMCA terms as accepted (persisted in the main process) */
   setLegalAccepted: () => Promise<void>;
+  /** Subscribe to provider home-page escape escalations; returns an unsubscribe fn */
+  onEscapeBlocked: (
+    callback: (event: { url: string; count: number }) => void,
+  ) => () => void;
 }
 
 interface Window {

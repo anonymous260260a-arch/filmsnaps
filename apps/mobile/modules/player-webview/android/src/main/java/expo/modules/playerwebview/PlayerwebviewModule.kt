@@ -25,7 +25,8 @@ class PlayerWebviewModule : Module() {
         "onHttpError",
         "onMessage",
         "onRenderProcessGone",
-        "onAuditData"
+        "onAuditData",
+        "onEscapeBlocked"
       )
 
       Prop("injectedJavaScriptBeforeContentLoaded") { view: PlayerWebViewOverlayView, value: String ->

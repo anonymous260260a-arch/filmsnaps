@@ -31,6 +31,7 @@ import { tmdbApi } from "../../lib/api";
 import { MediaCard } from "../../components/MediaCard";
 import { EmptyState } from "../../components/EmptyState";
 import type { Movie } from "@filmsnaps/shared";
+import { SwipeExemptScrollView } from "../../components/SwipeExemptScroll";
 import { colors } from "../../theme/colors";
 
 const NUM_COLUMNS = 3;
@@ -364,7 +365,7 @@ export default function SearchScreen() {
 
         {/* Genre pills + sort */}
         <View className="flex-row items-center mt-3">
-          <ScrollView
+          <SwipeExemptScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             className="flex-1"
@@ -394,7 +395,7 @@ export default function SearchScreen() {
                   </Text>
                 </TouchableOpacity>
               ))}
-          </ScrollView>
+          </SwipeExemptScrollView>
           {/* Sort button */}
           <TouchableOpacity
             onPress={() => setShowSortPicker((p) => !p)}

@@ -38,8 +38,21 @@ export interface ProviderConfig {
   cdnDomains: string[];
   enabled: boolean;
   adblockDisabled?: boolean;
-  /** Hosts the provider's video/player auth APIs run on (R3.5 API exemption). */
+  /** Hosts the provider's video/API auth APIs run on (R3.5 API exemption). */
   apiDomains?: string[];
+  /**
+   * Provider home/list paths that escape the player frame ("Go Home" on an
+   * error UI → provider.com/). Additive deny-list — append new shapes as
+   * discovered. Single source of truth = blocklist.json providers[].blockHomePaths.
+   */
+  blockHomePaths?: string[];
+}
+
+export interface NavigationGuardConfig {
+  /** Paths blocked for EVERY provider (e.g. bare "/"). */
+  universalBlockPaths?: string[];
+  /** Reserved (deny-list is primary); parsed for schema parity. */
+  shallowDepthThreshold?: number;
 }
 
 export interface BlocklistConfig {
@@ -52,6 +65,7 @@ export interface BlocklistConfig {
     videoDetection?: VideoDetectionConfig;
     alwaysBlock?: AlwaysBlockConfig;
   };
+  navigationGuard?: NavigationGuardConfig;
   providers?: ProviderConfig[];
 }
 
@@ -188,6 +202,36 @@ export function getProviderProfile(providerId: string): ProviderConfig | null {
     (p) => p.id === providerId && p.enabled !== false,
   );
   return profile ?? null;
+}
+
+/**
+ * Per-provider home/list paths that escape the player frame (the provider
+ * error-UI "Go Home" → provider.com/ escape). Additive deny-list from
+ * blocklist.json providers[].blockHomePaths. Empty for providers with no
+ * listed home shapes — the universal bare-root block still applies.
+ */
+export function getProviderBlockHomePaths(providerId: string): string[] {
+  const profile = getProviderProfile(providerId);
+  return profile?.blockHomePaths ?? [];
+}
+
+/**
+ * Top-level navigation guard config (blocklist.json navigationGuard).
+ * Defaults to blocking bare "/" for every provider (universalBlockPaths: ["/"]).
+ */
+export function getNavigationGuardConfig(): NavigationGuardConfig | null {
+  const config = loadBlocklistConfig();
+  return config?.navigationGuard ?? null;
+}
+
+/** Universal home/root paths blocked for every provider (default: bare "/"). */
+export function getUniversalBlockPaths(): string[] {
+  return getNavigationGuardConfig()?.universalBlockPaths ?? ["/"];
+}
+
+/** Reserved depth threshold (schema parity; not used for enforcement). */
+export function getShallowDepthThreshold(): number {
+  return getNavigationGuardConfig()?.shallowDepthThreshold ?? 1;
 }
 
 /**
