@@ -47,6 +47,7 @@ import NetInfo from "@react-native-community/netinfo";
 import { useSettings } from "../../lib/settings";
 import { colors } from "../../theme/colors";
 import { typography } from "../../theme/typography";
+import { SwipeExemptScrollView } from "../../components/SwipeExemptScroll";
 
 const SKELETON_ITEMS = 3;
 
@@ -747,8 +748,10 @@ function ContinueWatchingSection({
         <SeeAllButton onPress={() => nav.push("/history")} />
       </View>
 
-      {/* Horizontal ScrollView — replaces FlatList to avoid nesting warning */}
-      <ScrollView
+      {/* Horizontal ScrollView — replaces FlatList to avoid nesting warning.
+          Wrapped in SwipeExemptScrollView so swiping it scrolls the row
+          instead of cycling tabs. */}
+      <SwipeExemptScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
@@ -923,7 +926,7 @@ function ContinueWatchingSection({
             </TouchableOpacity>
           );
         })}
-      </ScrollView>
+      </SwipeExemptScrollView>
     </View>
   );
 }

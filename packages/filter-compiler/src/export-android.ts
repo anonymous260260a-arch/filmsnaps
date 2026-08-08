@@ -133,7 +133,16 @@ for (const filter of networkFilters) {
     // Extract hostname (everything between || and first / or ^ or $)
     const m = text.match(/^\|\|([^\/\^$:]+)/);
     if (m) {
-      blockedDomains.add(m[1].toLowerCase());
+      const domain = m[1].toLowerCase();
+      // DEGENERATE-PATTERN GUARD: reject bare extension tokens (".css") or
+      // scheme literals as domain patterns — they block every request.
+      if (
+        domain.includes(".") &&
+        !/^\.[a-z0-9]{1,6}$/i.test(domain) &&
+        !/^https?:?$/.test(domain)
+      ) {
+        blockedDomains.add(domain);
+      }
     }
     continue;
   }
@@ -142,10 +151,24 @@ for (const filter of networkFilters) {
   if (text.startsWith("|")) {
     const m = text.match(/^\|https?:\/\/([^\/]+)/);
     if (m) {
-      blockedDomains.add(m[1].toLowerCase());
+      const domain = m[1].toLowerCase();
+      if (
+        domain.includes(".") &&
+        !/^\.[a-z0-9]{1,6}$/i.test(domain) &&
+        !/^https?:?$/.test(domain)
+      ) {
+        blockedDomains.add(domain);
+      }
     } else {
-      // Just a URL prefix to match
-      blockedUrlSubstrings.add(text.slice(1).toLowerCase());
+      // Just a URL prefix to match — reject bare extension/scheme tokens
+      const prefix = text.slice(1).toLowerCase();
+      if (
+        prefix.length >= 8 &&
+        !/^https?:?$/.test(prefix) &&
+        !/^\.[a-z0-9]{1,6}$/i.test(prefix)
+      ) {
+        blockedUrlSubstrings.add(prefix);
+      }
     }
     continue;
   }
@@ -184,12 +207,32 @@ for (const filter of networkFilters) {
     if (clean.includes(".") && !clean.startsWith("/")) {
       // Could be "domain.com" format — extract the domain
       const domainPart = clean.split("/")[0];
-      if (domainPart.includes(".") && !domainPart.includes(" ")) {
+      // DEGENERATE-PATTERN GUARD: reject bare extension tokens (".css") or
+      // scheme literals as domain patterns — they block every request.
+      if (
+        domainPart.includes(".") &&
+        !domainPart.includes(" ") &&
+        !/^\.[a-z0-9]{1,6}$/i.test(domainPart) &&
+        !/^https?:?$/.test(domainPart)
+      ) {
         blockedDomains.add(domainPart.toLowerCase());
       }
     }
-    // Still add the full pattern as substring if not too long
-    if (clean.length > 3 && clean.length < 200) {
+    // Still add the full pattern as substring if not too long.
+    // DEGENERATE-PATTERN GUARD: some filter lists ship bare extension tokens
+    // (".css", ".gif", ".php") or the scheme literal "http" as "patterns".
+    // Fed into the Aho-Corasick automaton, "http" matches at index 0 of
+    // EVERY https URL — the engine's leftmost-match then blocks nearly every
+    // request (observed as ADBLOCK_ENGINE killing core.vidzee.wtf streams).
+    // Reject them here so a regenerate can never reintroduce the bug:
+    //   - min length 8 chars (below this a pattern is too generic to be safe)
+    //   - explicit ban on scheme literals and bare extension tokens
+    if (
+      clean.length >= 8 &&
+      clean.length < 200 &&
+      !/^https?:?$/.test(clean) &&
+      !/^\.[a-z0-9]{1,6}$/i.test(clean)
+    ) {
       blockedUrlSubstrings.add(clean.toLowerCase());
     }
   }

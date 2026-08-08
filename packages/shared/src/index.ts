@@ -14,6 +14,7 @@ export {
   getProvider,
   getEnabledProviders,
   isProtectionEnabled,
+  isSkipIntroEnabled,
 } from "./providers/registry";
 export {
   checkProviderHealth,
@@ -84,6 +85,12 @@ export type {
   ApiInterceptRule,
   CosmeticRuleBundle,
 } from "./security/playerGuard";
+export type { NavigationGuardConfig } from "./security/navigation-home";
+export {
+  isHomeEscape,
+  isUniversalHomeEscape,
+  looksHomeLikeWithoutId,
+} from "./security/navigation-home";
 export {
   buildAllScriptlets,
   getProviderScriptlets,

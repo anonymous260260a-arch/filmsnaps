@@ -9,6 +9,7 @@ class PlayerWebView: ExpoView, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
   var onLoadingFinish: ((String) -> Void)? = nil
   var onHttpError: (([String: Any]) -> Void)? = nil
   var onMessage: (([String: Any]) -> Void)? = nil
+  var onEscapeBlocked: (([String: Any]) -> Void)? = nil
 
   // ── Injected script (applied as WKUserScript before page load) ──
   var injectedScript: String = ""
@@ -177,6 +178,91 @@ class PlayerWebView: ExpoView, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
       "statusCode": nsError.code,
       "description": nsError.localizedDescription
     ])
+  }
+
+  // ── Provider home-page escape guard (Android parity) ──
+  // The provider's own error UI can navigate the embed (same host) to its
+  // home page — host-level checks can't catch it. Detect a committed URL that
+  // has left the embed path toward a home/list shape and escalate to
+  // onEscapeBlocked so the RN layer shows the existing FAILED overlay.
+  // (Android additionally auto-reloads once before escalating; iOS mirrors
+  // the detection + escalation surface.)
+  func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    guard let url = webView.url?.absoluteString, !url.isEmpty else { return }
+    if isHomeEscape(target: url) {
+      onEscapeBlocked?(["url": url, "count": 1])
+    }
+  }
+
+  private func normalizeNavPath(_ raw: String) -> String {
+    var p = raw
+    if p.hasPrefix("http") {
+      guard let u = URL(string: p) else { return "" }
+      p = u.path
+    }
+    if p.count > 1 && p.hasSuffix("/") { p.removeLast() }
+    return p.lowercased()
+  }
+
+  /// Full URL → pathname + query (lowercased path, trailing slash stripped).
+  /// Query is part of the identity: a query-only embed (`?tmdb={id}`) has a
+  /// bare "/" path but a NON-EMPTY query — the thing that separates it from
+  /// the home page (bare "/" with no query). Path-only comparison would make
+  /// home "/" identical to the embed and the HARD-ALLOW would let it through.
+  private func normalizeFullNavUrl(_ raw: String) -> String {
+    guard let u = URL(string: raw) else { return "" }
+    var p = u.path.isEmpty ? "/" : u.path
+    if p.count > 1 && p.hasSuffix("/") { p.removeLast() }
+    let q = u.query.map { "?" + $0 } ?? ""
+    return p.lowercased() + q
+  }
+
+  /// True when a full URL still carries a numeric media id (path or query).
+  /// An embed always identifies its title (`/embed/movie/1234` or `?tmdb=1234`);
+  /// a home/list page never does. Keeps the HARD-ALLOW from swallowing a
+  /// bare-root home URL that happens to share the embed's path.
+  private func looksEmbedLike(_ normalizedFull: String) -> Bool {
+    if normalizedFull.isEmpty { return false }
+    if normalizedFull.range(of: "/(movie|tv|embed|player|watch|tou|api)/\\d+(/|$)", options: .regularExpression) != nil { return true }
+    if normalizedFull.range(of: "(?:tmdb|video_id|id)=\\d+", options: .regularExpression) != nil { return true }
+    return false
+  }
+
+  private func isHomeEscape(target: String) -> Bool {
+    let embed = sourceUri
+    guard !embed.isEmpty else { return false }
+    let targetPath = normalizeNavPath(target)
+    let embedPath = normalizeNavPath(embed)
+    let targetFull = normalizeFullNavUrl(target)
+    let embedFull = normalizeFullNavUrl(embed)
+
+    // HARD ALLOW — same embed (exact full URL), or a sub-route that keeps the
+    // media id. A bare-root home URL has no media id → NOT hard-allowed.
+    if !embedFull.isEmpty && targetFull == embedFull { return false }
+    if targetPath == embedPath && looksEmbedLike(targetFull) { return false }
+    if !embedFull.isEmpty && targetFull.hasPrefix(embedFull + "/") && looksEmbedLike(targetFull) { return false }
+
+    // UNIVERSAL BLOCK — bare root (mirrors the Android blocklist
+    // navigationGuard.universalBlockPaths default: ["/"]).
+    let universalBlockPaths = ["/"]
+    for bp in universalBlockPaths {
+      let b = normalizeNavPath(bp)
+      if b.isEmpty { continue }
+      if targetPath == b || targetPath == b + "/" { return true }
+    }
+
+    // PER-PROVIDER BLOCK — provider-specific home/list shapes. On iOS these
+    // are not config-parsed yet (Android/desktop read blocklist.json); the
+    // universal bare-root block covers the common case. Extend here with the
+    // same additive list when per-provider paths are needed on iOS.
+    let providerBlockHomePaths: [String] = []
+    for bp in providerBlockHomePaths {
+      let b = normalizeNavPath(bp)
+      if b.isEmpty { continue }
+      if targetPath == b || targetPath == b + "/" { return true }
+    }
+
+    return false
   }
 
   // ── WKUIDelegate for popups ──

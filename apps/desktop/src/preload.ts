@@ -88,6 +88,14 @@ export interface ElectronAPI {
   getLegalAccepted: () => Promise<boolean>;
   /** Mark the Legal & DMCA terms as accepted */
   setLegalAccepted: () => Promise<void>;
+  /**
+   * Subscribe to provider home-page escape escalations (the embed tried to
+   * navigate to a provider home/list path after already auto-reloading once —
+   * e.g. a "Go Home" button on a provider error UI). Returns an unsubscribe fn.
+   */
+  onEscapeBlocked: (
+    callback: (event: { url: string; count: number }) => void,
+  ) => () => void;
 }
 
 // Read version from package.json at build time
@@ -155,4 +163,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   getLegalAccepted: () => ipcRenderer.invoke("legal:status"),
   setLegalAccepted: () => ipcRenderer.invoke("legal:accept"),
+  onEscapeBlocked: (
+    callback: (event: { url: string; count: number }) => void,
+  ) => {
+    const listener = (
+      _event: unknown,
+      payload: { url: string; count: number },
+    ) => callback(payload);
+    ipcRenderer.on("provider:escape-blocked", listener);
+    return () => {
+      ipcRenderer.removeListener("provider:escape-blocked", listener);
+    };
+  },
 });

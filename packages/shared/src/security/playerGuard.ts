@@ -286,7 +286,14 @@ export function buildGuardScript(
       }
       var json;
       try {
-        json = JSON.stringify(tpl).replace(/"@@NOW@@"/g, String(Date.now()));
+        // V5: stale-anchor substitution. The screenscape ad-window module
+        // (365994) gates isAdWindow = (now − anchorMs) < 10min. A "now"
+        // anchor (= Date.now()) makes the client conclude it is 0ms into a
+        // fresh ad window and OPEN it. Feeding "now − 700000" (>10min old)
+        // makes it conclude isAdWindow=false. 700000 is past the 10min gate
+        // but far inside the 190min cycle (114e5), and still above the
+        // module's own validity floor (a<=0 || a<1776819e6 → reject).
+        json = JSON.stringify(tpl).replace(/"@@NOW@@"/g, String(Date.now() - 700000));
       } catch (e) { return undefined; }
       if (typeof console !== 'undefined') {
         try { console.log('[PROTECTION] apiIntercept ' + methodUpper + ' ' + String(url).slice(0, 100) + ' -> synthetic'); } catch (e) {}
@@ -299,6 +306,43 @@ export function buildGuardScript(
     }
     return undefined;
   }
+
+  // ── Ad-cycle storage seeding (screenscape module 365994) ──
+  // The module resolves its ad-window anchor from localStorage FIRST (keys
+  // below), falling back to the network GET only when storage is empty. On
+  // mobile first-load storage is empty → the GET decides, and a poisoned
+  // "now" anchor opens the ad window. Seeding a STALE state at document-start
+  // (this bundle runs before any page JS via the HTML prepend) short-circuits
+  // the decision entirely — isAdWindow=false with no network dependency at
+  // all. Guarded so we never overwrite a real in-cycle state; inert for any
+  // other provider (they don't read sc:* keys).
+  (function() {
+    try {
+      var _now = Date.now();
+      var _stale = _now - 700000; // >10min old → isAdWindow=false
+      var _seeded = false;
+      function _seed(k) {
+        try {
+          if (!localStorage.getItem(k)) { localStorage.setItem(k, String(_stale)); _seeded = true; }
+        } catch (e) {}
+      }
+      _seed('sc:ads:cycle:anchor:v4');
+      _seed('sc_ads_cycle_anchor_v4');
+      _seed('sc:ads:cycle:elapsed:v4');
+      _seed('sc_ads_cycle_elapsed_v4');
+      try {
+        var _st = localStorage.getItem('sc:ads:cycle:state:v5');
+        if (!_st) {
+          localStorage.setItem('sc:ads:cycle:state:v5',
+            JSON.stringify({ elapsedMs: 700000, lastTickAtMs: _now, wasActiveInAdsWindow: false }));
+          _seeded = true;
+        }
+      } catch (e) {}
+      if (_seeded && typeof console !== 'undefined') {
+        try { console.log('[PROTECTION] ad-cycle storage seeded (stale anchor)'); } catch (e) {}
+      }
+    } catch (e) {}
+  })();
 
   // ── Ad / tracker network blocklist (Layer 2) ──
   (function() {

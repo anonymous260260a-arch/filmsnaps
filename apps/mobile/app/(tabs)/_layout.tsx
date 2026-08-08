@@ -1,4 +1,4 @@
-﻿import React from "react";
+import React from "react";
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -15,6 +15,11 @@ import { colors } from "../../theme/colors";
  * - iOS: BlurView visual effect behind the bar
  * - Icons: filled variant for active, outline for inactive
  * - 4 tabs: Home, Search, Library, Settings
+ *
+ * NOTE: swipe-to-navigate (SwipeTabNavigator) is disabled for now — the new
+ * finger-following implementation lives in
+ * components/SwipeTabNavigator.tsx and can be re-enabled later. The scene
+ * transition animation is disabled too (tabs switch instantly on tap).
  */
 
 function TabIcon({

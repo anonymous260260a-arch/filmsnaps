@@ -879,6 +879,17 @@ var _p=0;
   private var lockedRootHost: String? = null
   private var lockedAllowedHosts: Set<String> = emptySet()
 
+  // ── Provider home-escape guard (P0: path-level navigation containment) ──
+  // The provider's own error UI can carry a "Go Home" button (or auto-redirect)
+  // that navigates the SAME host from the embed path to the home page
+  // (e.g. provider.com/embed/movie/1234 → provider.com/). Host-level guards
+  // can't catch it — this guard keys on path shape. Reload-once-then-error:
+  // first escape reloads the original embed, a recurrence within 15s escalates
+  // to onEscapeBlocked (RN shows the existing FAILED overlay). Resets after 60s.
+  @Volatile private var escapeBlockedOnce = false
+  @Volatile private var lastEscapeAt = 0L
+  @Volatile private var escapeCount = 0
+
   private var lastFinishedUrl: String = ""
   private var isOverlayAttached = false
 
@@ -928,6 +939,13 @@ var _p=0;
 
   var injectedJavaScriptAfterLoad: String = ""
   var referrer: String = ""
+
+  // Cached UA read on the main thread. shouldInterceptRequest runs on a
+  // background thread where `settings.userAgentString` would throw
+  // (IllegalStateException: WebView method called on wrong thread) — the
+  // main-frame HTML-interception branch crashed and was silently swallowed,
+  // so neither DEVTOOT nor injectedScript prepends ever ran (expert V4).
+  private var cachedUserAgent: String = ""
 
   var supportMultipleWindows: Boolean = false
     set(value) {
@@ -1092,6 +1110,16 @@ var _p=0;
         isLoading = true
         dispatchEvent("onLoadingStart") { putString("url", url ?: "") }
 
+        // P0b fallback: home-page escape guard. shouldOverrideUrlLoading covers
+        // full navigations, but JS-driven `window.location` / redirects that
+        // WebView follows internally reach onPageStarted instead. Detect the
+        // committed URL here and respond the same way.
+        if (url != null && isHomeEscapeForRequest(url)) {
+          android.util.Log.w("PlayerWebView",
+            "[AB] HOME-ESCAPE (onPageStarted): ${url.take(120)}")
+          handleHomeEscape(url)
+        }
+
         // Schedule a fallback timer: if onPageFinished doesn't fire within
         // 12 seconds, synthesize it. This handles provider pages that use
         // document.open() without document.close() to keep the document
@@ -1160,6 +1188,12 @@ var _p=0;
         isLoading = true
         // Re-inject disable-devtool blocker
         view?.evaluateJavascript(DEVTOOT_REDIRECT_BLOCKER, null)
+        // P0b fallback: home-page escape guard (same as primary client).
+        if (url != null && isHomeEscapeForRequest(url)) {
+          android.util.Log.w("PlayerWebView",
+            "[AB] HOME-ESCAPE (onPageStarted swap): ${url.take(120)}")
+          handleHomeEscape(url)
+        }
       }
       override fun onPageFinished(view: WebView?, url: String?) {
         // Trigger swap — incoming page is ready
@@ -1202,6 +1236,191 @@ var _p=0;
   // Extracted from WebViewClient callbacks so both the primary and swap
   // WebViews share identical blocking rules without code duplication.
 
+  /**
+   * Normalize a path to a trailing-slash-free lowercase form. Mirrors the
+   * shared isHomeEscape path handling (packages/shared navigation-home.ts).
+   */
+  private fun normalizeNavPath(raw: String): String {
+    var p = raw
+    if (p.startsWith("http")) {
+      val u = try { Uri.parse(p) } catch (e: Exception) { return "" }
+      p = u.path ?: "/"
+    }
+    if (p.length > 1 && p.endsWith("/")) p = p.dropLast(1)
+    return p.lowercase()
+  }
+
+  /**
+   * Normalize a FULL URL to path + query (lowercased path, trailing slash
+   * stripped). Query is part of the identity: a query-only embed
+   * (screenscape `?tmdb={id}`) has a bare "/" path but a NON-EMPTY query — the
+   * thing that separates it from the home page (bare "/" with no query).
+   * Comparing path ONLY would make home "/" path-identical to the embed, so
+   * the HARD-ALLOW would let it through. Mirrors shared normalizeFullUrl.
+   */
+  private fun normalizeFullNavUrl(raw: String): String {
+    if (raw.startsWith("/")) return normalizeFullNavUrl("https://x.invalid$raw")
+    val u = try { Uri.parse(raw) } catch (e: Exception) { return "" }
+    var p = u.path?.takeIf { it.isNotEmpty() } ?: "/"
+    if (p.length > 1 && p.endsWith("/")) p = p.dropLast(1)
+    return p.lowercase() + (u.query?.let { "?$it" } ?: "")
+  }
+
+  /**
+   * True when a normalized full URL still carries a numeric media id (path or
+   * query). An embed always identifies its title (`/embed/movie/1234` or
+   * `?tmdb=1234`); a home/list page never does. Keeps the HARD-ALLOW from
+   * swallowing a bare-root home URL that happens to share the embed's path.
+   */
+  private fun looksEmbedLike(normalizedFull: String): Boolean {
+    if (normalizedFull.isEmpty()) return false
+    return Regex("/(movie|tv|embed|player|watch|tou|api)/\\d+(/|$)").containsMatchIn(normalizedFull) ||
+      Regex("(?:tmdb|video_id|id)=\\d+").containsMatchIn(normalizedFull)
+  }
+
+  /**
+   * Kotlin port of shared isHomeEscape (expert verdict §9.2).
+   *
+   * Rule order: (1) HARD ALLOW the target is the SAME embed (full URL) or a
+   * sub-route that still carries the media id; (2) UNIVERSAL BLOCK vs
+   * universalBlockPaths (bare "/" by default); (3) PER-PROVIDER BLOCK vs
+   * blockHomePaths; else allow. The HARD-ALLOW compares FULL URL (path+query)
+   * so a query-only embed's bare "/" is NOT hard-allowed against home "/".
+   */
+  private fun isHomeEscape(
+    targetUrl: String,
+    requestedEmbedUrl: String,
+    universalBlockPaths: List<String>,
+    blockHomePaths: List<String>,
+  ): Boolean {
+    val targetPath = normalizeNavPath(targetUrl)
+    val embedPath = normalizeNavPath(requestedEmbedUrl)
+    val targetFull = normalizeFullNavUrl(targetUrl)
+    val embedFull = normalizeFullNavUrl(requestedEmbedUrl)
+
+    // DIAG: log every evaluation so a home-page escape that slips through can
+    // be traced. Tag [HOME-GUARD]; filtered via: adb logcat -s PlayerWebView HOME-GUARD:V
+    android.util.Log.d("PlayerWebView",
+      "[HOME-GUARD] evaluate target='${targetUrl.take(120)}' -> path='$targetPath' " +
+      "embed='$embedPath' universal=$universalBlockPaths perProvider=$blockHomePaths")
+
+    // HARD ALLOW — same embed (exact full URL), or a sub-route that keeps the
+    // media id. A bare-root home URL has no media id → NOT hard-allowed.
+    if (embedFull.isNotEmpty() && targetFull == embedFull) {
+      android.util.Log.d("PlayerWebView",
+        "[HOME-GUARD] ALLOW hard (target==embed full URL) path='$targetPath'")
+      return false
+    }
+    if (targetPath == embedPath && looksEmbedLike(targetFull)) {
+      android.util.Log.d("PlayerWebView",
+        "[HOME-GUARD] ALLOW hard (same path, still embeds-like) path='$targetPath'")
+      return false
+    }
+    if (embedFull.isNotEmpty() && targetFull.startsWith("$embedFull/") && looksEmbedLike(targetFull)) {
+      android.util.Log.d("PlayerWebView",
+        "[HOME-GUARD] ALLOW hard (sub-route under embed) path='$targetPath' embed='$embedPath'")
+      return false
+    }
+
+    // UNIVERSAL BLOCK — home/root paths for every provider.
+    for (bp in universalBlockPaths) {
+      val b = normalizeNavPath(bp)
+      if (b.isEmpty()) continue
+      if (targetPath == b || targetPath == "$b/") {
+        android.util.Log.w("PlayerWebView",
+          "[HOME-GUARD] BLOCK universal bp='$bp' path='$targetPath' url='${targetUrl.take(120)}'")
+        return true
+      }
+    }
+
+    // PER-PROVIDER BLOCK — provider-specific home/list shapes.
+    for (bp in blockHomePaths) {
+      val b = normalizeNavPath(bp)
+      if (b.isEmpty()) continue
+      if (targetPath == b || targetPath == "$b/") {
+        android.util.Log.w("PlayerWebView",
+          "[HOME-GUARD] BLOCK perProvider bp='$bp' path='$targetPath' url='${targetUrl.take(120)}'")
+        return true
+      }
+    }
+
+    android.util.Log.d("PlayerWebView",
+      "[HOME-GUARD] ALLOW (no rule matched) path='$targetPath' url='${targetUrl.take(120)}'")
+    return false
+  }
+
+  /**
+   * Per-provider home/list paths that escape the player frame. Resolved off
+   * the requested embed URL (sourceUri) so the guard compares against the
+   * provider that was actually requested — not whatever URL redirects to.
+   */
+  private fun providerBlockHomePathsForEmbed(embedUrl: String): List<String> {
+    val host = try { Uri.parse(embedUrl).host?.lowercase() } catch (e: Exception) { null }
+      ?: return emptyList()
+    val cfg = BlocklistConfigLoader.config
+    return cfg.providers.firstOrNull { provider ->
+      provider.enabled && provider.embedDomains.any { host.contains(it) || it.contains(host) }
+    }?.blockHomePaths ?: emptyList()
+  }
+
+  private fun universalBlockPaths(): List<String> =
+    BlocklistConfigLoader.config.navigationGuard?.universalBlockPaths ?: emptyList()
+
+  /**
+   * Response to a detected home-page escape. Reload-once-then-error:
+   *   - First escape within a 60s window → reload the original embed once.
+   *   - A recurrence within 15s → ESCALATE (dispatch onEscapeBlocked; RN shows
+   *     the existing FAILED overlay). Never loops — max 1 auto-reload.
+   *   - After 60s with no escape → arm resets (a fresh escape can reload once).
+   */
+  private fun handleHomeEscape(url: String) {
+    val now = System.currentTimeMillis()
+    if (now - lastEscapeAt > 60000) {
+      // Cooldown elapsed — re-arm so a fresh escape can auto-recover once.
+      escapeBlockedOnce = false
+      escapeCount = 0
+    }
+    lastEscapeAt = now
+    escapeCount++
+
+    if (escapeBlockedOnce) {
+      // Already auto-reloaded once within 15s — escalate, do NOT reload (loop guard).
+      android.util.Log.w("PlayerWebView",
+        "[AB] HOME-ESCAPE ESCALATE (already reloaded once): ${url.take(120)}")
+      dispatchEvent("onEscapeBlocked") {
+        putString("url", url)
+        putInt("count", escapeCount)
+      }
+      return
+    }
+
+    escapeBlockedOnce = true
+    val embed = sourceUri
+    android.util.Log.w("PlayerWebView",
+      "[AB] HOME-ESCAPE BLOCK reloading embed: ${embed.take(120)}")
+    // Reload the original embed (re-locks the session allowlist for it).
+    loadProviderUrl(embed)
+  }
+
+  /** Path-level home-escape check — shared by both WebView clients. */
+  private fun isHomeEscapeForRequest(url: String): Boolean {
+    val embed = sourceUri
+    if (embed.isEmpty()) {
+      android.util.Log.d("PlayerWebView",
+        "[HOME-GUARD] SKIP: sourceUri empty — guard inactive for '${url.take(120)}'")
+      return false
+    }
+    val result = isHomeEscape(
+      url,
+      embed,
+      universalBlockPaths(),
+      providerBlockHomePathsForEmbed(embed),
+    )
+    android.util.Log.d("PlayerWebView",
+      "[HOME-GUARD] isHomeEscapeForRequest=$result url='${url.take(120)}' embed='${embed.take(120)}'")
+    return result
+  }
+
   private fun shouldOverrideNavForWebView(request: WebResourceRequest?): Boolean {
     val url = request?.url?.toString() ?: return false
 
@@ -1232,6 +1451,15 @@ var _p=0;
           "[AB] HIJACK BLOCK (not in session allowlist): ${url.take(120)}")
         return true
       }
+    }
+
+    // P0b: Provider home-page escape guard (path-level, same-host).
+    // The provider's own error UI can navigate the embed to its home page.
+    // Host-level check above can't catch it — key on path shape instead.
+    if (request.isForMainFrame && isHomeEscapeForRequest(url)) {
+      logRequest("BLOCK", "NAV:home-escape", targetHost, navDest, url)
+      handleHomeEscape(url)
+      return true
     }
 
     if (isAdOrTracker(url)) {
@@ -1359,9 +1587,12 @@ var _p=0;
             conn.requestMethod = "GET"
             conn.connectTimeout = 8000
             conn.readTimeout = 8000
-            // Copy WebView's User-Agent and Cookies for auth
-            currentWebView?.settings?.userAgentString?.let {
-                conn.setRequestProperty("User-Agent", it)
+            // Copy WebView's User-Agent and Cookies for auth. Use the cached
+            // UA (set on the main thread) — `settings.userAgentString` on this
+            // background thread throws IllegalStateException and killed the
+            // whole HTML-injection branch (expert V4).
+            if (cachedUserAgent.isNotEmpty()) {
+                conn.setRequestProperty("User-Agent", cachedUserAgent)
             }
             val cookie = try {
                 CookieManager.getInstance().getCookie(url)
@@ -1396,8 +1627,45 @@ var _p=0;
                         "<!-- stripped: disable-devtool-cdn -->"
                     )
 
-                    // Prepend our JS blocker at the very top of the HTML
-                    val finalHtml = "<script>" + DEVTOOT_REDIRECT_BLOCKER + "</script>" + html
+                    // Prepend our JS blocker at the very top of the HTML.
+                    // Candidate D (ad-suppression, row-3 timing fix): ALSO prepend
+                    // the full injectedScript bundle at the HTML byte level so the
+                    // fetch/XHR monkey-patch is installed before ANY page JS
+                    // parses — catching screenscape's FIRST /api/ads/cycles poll
+                    // (the one that gates the ad window). `addDocumentStartJavaScript`
+                    // silently fails on some devices, and onPageFinished
+                    // evaluateJavascript is too late.
+                    // Escape `</script` → `<\/script` so string literals inside the
+                    // bundle can't close this tag early. Double-execution is
+                    // prevented by the bundle's own Symbol.for(
+                    // '__filmsnaps_preload_guard') guard.
+                    val injectedBlock = if (injectedScript.isNotEmpty()) {
+                      val escaped = injectedScript.replace(
+                        "</script", "<\\/script", ignoreCase = true
+                      )
+                      "<script data-filmsnaps-injected=\"true\">" + escaped + "</script>"
+                    } else {
+                      ""
+                    }
+                    // V5 (Part 3a): prepend the provider's STATIC cosmetic CSS as a
+                    // <style> BEFORE any JS — mirrors desktop's baked __fs_cosmetic
+                    // style (build-provider-preload.mjs). Screenscape's always-present
+                    // download banner/footer/buttons are in the MAIN frame; declarative
+                    // CSS re-applies automatically when React re-creates matching
+                    // elements, so no JS sweep timing can miss them. Rules come from
+                    // blocklist.json providers[].cosmeticRules (single source of truth)
+                    // via BlocklistConfigLoader — no hardcoded selectors here. :has()
+                    // is legal inside a <style> tag (Android querySelectorAll only
+                    // throws on it in JS selectors, which we don't use here).
+                    val cosmeticStyle = buildCosmeticStyleForHost(host)
+                    val finalHtml =
+                      cosmeticStyle + injectedBlock + "<script>" + DEVTOOT_REDIRECT_BLOCKER + "</script>" + html
+                    // DIAGNOSTIC (expert V3 §4.2 / V4): confirms the HTML branch
+                    // now executes (was dead due to the thread crash) and the
+                    // bundle is actually prepended.
+                    android.util.Log.d("PlayerWebView",
+                      "HTML-INTERCEPT: injectedScript.length=${injectedScript.length}, " +
+                      "blocker.length=${DEVTOOT_REDIRECT_BLOCKER.length}, url=${url.take(80)}")
                     val responseHeaders = mutableMapOf<String, String>()
                     conn.headerFields.forEach { (key, values) ->
                         if (key != null && values.isNotEmpty() &&
@@ -1863,6 +2131,10 @@ var _p=0;
 
     currentWebView = wv
     userAgent?.let { wv.settings.userAgentString = it }
+    // Cache the final UA (after applyWebViewSettings + override) so the
+    // background-thread shouldInterceptRequest HTML branch can use it
+    // without touching settings (main-thread-only) — expert V4.
+    cachedUserAgent = wv.settings.userAgentString
     if (supportMultipleWindows) wv.settings.setSupportMultipleWindows(true)
     if (javaScriptCanOpenWindowsAutomatically) wv.settings.javaScriptCanOpenWindowsAutomatically = true
 
@@ -2234,6 +2506,31 @@ var _p=0;
     WebResourceResponse("application/octet-stream", null, 200, "OK",
       mapOf("Cache-Control" to "no-store", "Content-Length" to "0"),
       ByteArrayInputStream(ByteArray(0)))
+
+  /**
+   * Build a static cosmetic <style> for a provider main-frame host, from
+   * blocklist.json providers[].cosmeticRules (single source of truth, loaded
+   * by BlocklistConfigLoader). Returns "" when the host isn't a provider root
+   * or the provider carries no cosmeticRules — so non-screenscape providers
+   * are untouched. Declarative CSS: hides always-present elements (download
+   * banner, footer, ad-window badge) before React paints them, and re-applies
+   * automatically on any re-render.
+   */
+  private fun buildCosmeticStyleForHost(host: String): String {
+    try {
+      val providers = BlocklistConfigLoader.config.providers
+      for (p in providers) {
+        if (!p.enabled) continue
+        if (p.cosmeticRules.isEmpty()) continue
+        val matched = p.embedDomains.any { host == it.lowercase() || host.endsWith(".$it".lowercase()) }
+        if (!matched) continue
+        val css = p.cosmeticRules.joinToString(" ") { it.trim() }
+        if (css.isEmpty()) return ""
+        return "<style data-filmsnaps-cosmetic=\"true\">" + css + "</style>"
+      }
+    } catch (_: Exception) {}
+    return ""
+  }
 
   private fun isAdOrTracker(url: String): Boolean {
     val uri = Uri.parse(url)

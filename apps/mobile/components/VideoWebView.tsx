@@ -25,6 +25,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   getEnabledProviders,
   getImageUrl,
+  isSkipIntroEnabled,
   buildAllScriptsWithScriptlets,
 } from "@filmsnaps/shared";
 import type { ProviderDefinition } from "@filmsnaps/shared";
@@ -59,13 +60,32 @@ function makeConsolidatedScript(
   providerHost: string,
   providerId?: string,
 ): string {
-  // Start with shared guard + uBO scriptlets
-  const sharedScript = buildAllScriptsWithScriptlets(providerHost, providerId);
+  const providerConfig = providerId ? providerConfigs[providerId] : undefined;
+
+  // DIAGNOSTIC (ad-suppression expert consult V2 §2.3): log whether the
+  // 4th arg (apiIntercepts) is actually reaching the shared bundle. If this
+  // logs UNDEFINED, the intercept rule set is empty in the injected JS and
+  // the /api/ads/cycles poll can never be matched.
+  const apiIntercepts = providerConfig?.apiIntercepts;
+  console.log(
+    `[VideoWebView] apiIntercepts for ${providerId ?? "null"}: ${
+      apiIntercepts ? `${apiIntercepts.length} rules` : "UNDEFINED"
+    }`,
+  );
+
+  // Start with shared guard + uBO scriptlets. Pass the provider's synthetic
+  // API intercepts (screenscape's /api/ads/cycles ad-window poll) so the
+  // fetch/XHR monkey-patch returns a synthetic response before the request
+  // leaves the WebView — Level-2 parity with desktop.
+  const sharedScript = buildAllScriptsWithScriptlets(
+    providerHost,
+    providerId,
+    undefined,
+    apiIntercepts,
+  );
 
   // Append per-provider cosmetic CSS
-  const providerSnippet = providerId
-    ? generateProviderSnippet(providerConfigs[providerId])
-    : "";
+  const providerSnippet = generateProviderSnippet(providerConfig);
   if (!providerSnippet) return sharedScript;
 
   // Merge shared script with provider CSS into one IIFE
@@ -253,6 +273,10 @@ export function VideoWebView({
   const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } =
     Dimensions.get("window");
   const webViewRef = useRef<PlayerWebViewRef>(null);
+  // Ad-suppression spray (expert V4 §4A): timers for the onLoadingStart
+  // re-injection retries. The bundle's boot guard makes re-injection
+  // idempotent, so retries at +100/+300ms are safe no-ops if t=0 landed.
+  const injectionTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const providerHostRef = useRef<string>("");
   const navigationChainRef = useRef<Set<string>>(new Set());
   const pageLoadedRef = useRef(false);
@@ -560,6 +584,46 @@ export function VideoWebView({
   }, [type, id, currentSeason, currentEpisode]);
 
   const currentProvider = providers.find((p) => p.id === providerId);
+
+  // DIAGNOSTIC (ad-suppression expert consult V2 §2.3): log the injected-script
+  // length at render time. If this logs length 0 / provider null, the native
+  // side receives "" and skips addDocumentStartJavaScript (the empty-string
+  // prop-timing theory) — no native release needed, gate the render instead.
+  const injectedScriptValue = currentProvider?.baseUrl
+    ? makeConsolidatedScript(
+        new URL(currentProvider.baseUrl).hostname,
+        currentProvider.id,
+      )
+    : "";
+  console.log(
+    `[VideoWebView] script length at render: ${injectedScriptValue.length}, provider: ${currentProvider?.id ?? "null"}`,
+  );
+
+  // Ad-suppression spray (expert V4 §4A): re-inject the full bundle at page
+  // start via the proven main-thread `injectJavaScript` ref, then retry at
+  // +100ms and +300ms. `onPageStarted` may fire before the new document
+  // commits (t=0 can land in the old renderer); the retries land in the
+  // committed document before screenscape's deferred first /api/ads/cycles
+  // poll. The bundle's Symbol.for('__filmsnaps_preload_guard') boot guard
+  // makes any post-first injection a no-op.
+  const handleLoadingStart = useCallback(() => {
+    navigationReceivedRef.current = true;
+    // Clear pending retries from a previous load/navigation.
+    injectionTimersRef.current.forEach(clearTimeout);
+    injectionTimersRef.current = [];
+
+    if (!injectedScriptValue) return;
+
+    webViewRef.current?.injectJavaScript(injectedScriptValue);
+    const t1 = setTimeout(() => {
+      webViewRef.current?.injectJavaScript(injectedScriptValue);
+    }, 100);
+    const t2 = setTimeout(() => {
+      webViewRef.current?.injectJavaScript(injectedScriptValue);
+    }, 300);
+    injectionTimersRef.current = [t1, t2];
+  }, [injectedScriptValue]);
+
   const isTV = type === "tv";
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Preconnect to top providers when picker opens Ã¢â€â‚¬Ã¢â€â‚¬
@@ -657,7 +721,13 @@ export function VideoWebView({
 
   // â”€â”€ Fetch intro/recap/outro segments when TV episode loads â”€â”€
   useEffect(() => {
-    if (type !== "tv" || !currentSeason || !currentEpisode) {
+    // Per-provider toggle from the registry (skipIntroEnabled). Absent flag
+    // = enabled, so the button still shows for every provider until one opts
+    // out in packages/shared/src/providers/registry.ts.
+    const skipIntro = currentProvider
+      ? isSkipIntroEnabled(currentProvider)
+      : false;
+    if (type !== "tv" || !currentSeason || !currentEpisode || !skipIntro) {
       setIntroSegments(null);
       return;
     }
@@ -717,7 +787,7 @@ export function VideoWebView({
     return () => {
       cancelled = true;
     };
-  }, [type, id, currentSeason, currentEpisode]);
+  }, [type, id, currentSeason, currentEpisode, currentProvider]);
 
   // â”€â”€ Inject/remove skip button in WebView page (works in fullscreen too) â”€â”€
   useEffect(() => {
@@ -843,6 +913,10 @@ export function VideoWebView({
   const unmountSavedRef = useRef(false);
   useEffect(() => {
     return () => {
+      // Clear any pending ad-suppression spray timers.
+      injectionTimersRef.current.forEach(clearTimeout);
+      injectionTimersRef.current = [];
+
       if (unmountSavedRef.current) return;
       unmountSavedRef.current = true;
       const prog = progressRef.current;
@@ -1253,14 +1327,7 @@ export function VideoWebView({
               backgroundColor: colors.playerBg,
             }}
             allowsFullscreenVideo={true}
-            injectedJavaScriptBeforeContentLoaded={
-              currentProvider?.baseUrl
-                ? makeConsolidatedScript(
-                    new URL(currentProvider.baseUrl).hostname,
-                    currentProvider.id,
-                  )
-                : ""
-            }
+            injectedJavaScriptBeforeContentLoaded={injectedScriptValue}
             referrer={currentProvider?.baseUrl || ""}
             setSupportMultipleWindows={false}
             javaScriptCanOpenWindowsAutomatically={false}
@@ -1273,9 +1340,7 @@ export function VideoWebView({
               setAuditHosts(domains);
             }}
             userAgent="Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36"
-            onLoadingStart={(event) => {
-              navigationReceivedRef.current = true;
-            }}
+            onLoadingStart={handleLoadingStart}
             onLoadingFinish={(event) => {
               setLoadState((prev) =>
                 prev.type === "LOADING" || prev.type === "SLOW"
@@ -1314,6 +1379,13 @@ export function VideoWebView({
                   reason: `HTTP ${err.statusCode}: ${err.description || ""}`,
                 });
               }
+            }}
+            onEscapeBlocked={() => {
+              setLoadState({
+                type: "FAILED",
+                reason:
+                  "This source redirected away from the player. Try switching sources.",
+              });
             }}
             onRenderProcessGone={() => {
               setLoadState({ type: "LOADING", enteredAt: Date.now() });
@@ -1375,15 +1447,13 @@ export function VideoWebView({
                   goToNextEpisode();
                   return;
                 }
-                if (
-                  data.type === "player:progress" ||
-                  data.type === "screenscape:progress"
-                ) {
-                  const {
-                    currentTime = 0,
-                    duration = 0,
-                    percent: pct = 0,
-                  } = data.data ?? {};
+                // Reusable progress-save path — shared by the universal
+                // player:progress tracker, screenscape, and VidZee's
+                // PLAYER_EVENT / MEDIA_DATA messages.
+                const applyProgress = (
+                  currentTime: number,
+                  duration: number,
+                ) => {
                   // FIX: Never trust the provider's percent (can be 1.0 at start).
                   // Always compute from currentTime/duration, clamped to [0, 1].
                   // When duration is missing/0, treat progress as 0 so we never
@@ -1426,6 +1496,40 @@ export function VideoWebView({
                       currentEpisode,
                     ).catch(() => {});
                   }
+                };
+
+                if (
+                  data.type === "player:progress" ||
+                  data.type === "screenscape:progress"
+                ) {
+                  const { currentTime = 0, duration = 0 } = data.data ?? {};
+                  applyProgress(currentTime, duration);
+                  return;
+                }
+
+                // VidZee live player events — { event, currentTime, duration }.
+                if (data.type === "PLAYER_EVENT") {
+                  const { currentTime = 0, duration = 0 } = data.data ?? {};
+                  if (duration > 0) applyProgress(currentTime, duration);
+                  return;
+                }
+
+                // VidZee resume store — keyed by tmdb id, carries the last
+                // watched position + season/episode. Seed resume for the current
+                // title only until live progress has started (then the poll /
+                // PLAYER_EVENT take over and this stays deduped out).
+                if (data.type === "MEDIA_DATA") {
+                  const current = data.data?.[String(id)];
+                  if (
+                    current?.progress?.duration &&
+                    progressRef.current.percent === 0
+                  ) {
+                    applyProgress(
+                      current.progress.watched ?? 0,
+                      current.progress.duration,
+                    );
+                  }
+                  return;
                 }
               } catch (e) {}
             }}
