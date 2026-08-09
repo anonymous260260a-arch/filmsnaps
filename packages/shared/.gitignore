@@ -1,6 +1,6 @@
-# The root .gitignore's `scripts/` rule is meant for the monorepo-root scripts/
-# folder only, but it also swallows this package's build-critical scripts/
-# directory (fix-dist-imports.mjs is required by the `build` script, which runs
-# during Netlify's postinstall). Re-include it here so the build works for
-# anyone who checks out the repo.
+# Build-critical scripts/ dir must ship in source archives.
+# Root .gitignore's `scripts/` rule is now anchored to /scripts/ (repo root
+# only), so this nested scripts/ dir is never matched. Kept as an explicit
+# safeguard so a future un-anchoring of the root rule cannot silently drop
+# fix-dist-imports.mjs from EAS/Netlify build archives.
 !scripts/

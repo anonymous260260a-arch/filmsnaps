@@ -1,6 +1,29 @@
 {
   "versions": [
     {
+      "version": "1.0.4",
+      "date": "2026-08-09",
+      "releaseNotes": "v1.0.4 — Desktop watch-security hardening + Screenscape ad-suppression, no-rebuild config prep",
+      "platforms": {
+        "win": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.4-desktop/FilmSnaps-Setup-1.0.4.exe",
+          "size": "114 MB"
+        },
+        "mac": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.4-desktop/FilmSnaps-1.0.4-x64.dmg",
+          "size": "~110 MB"
+        },
+        "mac-arm": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.4-desktop/FilmSnaps-1.0.4-arm64.dmg",
+          "size": "~105 MB"
+        },
+        "linux": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.4-desktop/FilmSnaps-1.0.4.AppImage",
+          "size": "~95 MB"
+        }
+      }
+    },
+    {
       "version": "1.0.3",
       "date": "2026-08-01",
       "releaseNotes": "v1.0.3 — Reliable ad-blocking for provider playback\n\nSecurity — the fix you'll actually feel:\nAd-blocking now holds through the Play click. Previously, ads reappeared right when the provider's video started playing. Root cause: the in-page protection relied on a CDP-injected script that died the moment the provider navigated cross-site (the Play action swaps the renderer process).\n\nReplaced with a session-level preload that runs at document-start in every frame, re-applies itself in each new renderer process, and cannot be removed by the page. Canvas/WebGL fingerprinting spoofed, crypto-miners and background workers blocked, tracking beacons and storage keys filtered, and ad-container elements hidden.\n\nCDP is now a verification layer only — it confirms protections are active in every live frame and logs loudly if anything is missing.\n\nBug fixes:\nRemoved a full-width dark overlay that appeared over the top of Server 1's player (plus a smaller stray overlay on Server 6). These were band-aid divs never intended for Server 1 — the player area is now clean.\n\nUnder the hood:\nFixed a post-build step so the shared security package resolves correctly at runtime (this is what let the preload load). Removed dead code (old video-window path, legacy protection scripts, a stale backup file).",

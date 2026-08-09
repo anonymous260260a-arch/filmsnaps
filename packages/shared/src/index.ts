@@ -55,16 +55,12 @@ export {
   createAsyncStorageAdapter,
   createMemoryAdapter,
 } from "./state/storage";
-export { useWatchlist } from "./state/useWatchlist";
 export { useWatchHistory, buildStorageKey } from "./state/useWatchHistory";
 export type {
   StorageAdapter,
   WatchProgress,
-  Bookmark,
   WatchHistoryMap,
-  BookmarkMap,
 } from "./state/types";
-export type { WatchlistState, WatchlistActions } from "./state/useWatchlist";
 export type {
   WatchHistoryState,
   WatchHistoryActions,
