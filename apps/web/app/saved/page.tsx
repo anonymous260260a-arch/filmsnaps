@@ -49,13 +49,7 @@ export default function SavedPage() {
           <div className="mb-8 rounded-xl border border-white/[0.06] glass-light p-5 text-sm text-muted-foreground flex items-center justify-between">
             <div className="flex items-center gap-3">
               <BookOpen className="h-4 w-4 text-primary" />
-              <span>
-                Saved movies are stored locally.{' '}
-                <Link href="/auth" className="text-primary hover:underline font-medium">
-                  Sign in
-                </Link>{' '}
-                to save permanently.
-              </span>
+              <span>Saved movies are stored locally on this device.</span>
             </div>
             <button
               onClick={() => {

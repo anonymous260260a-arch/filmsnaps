@@ -2,7 +2,6 @@ import "./globals.css";
 import { Inter, Playfair_Display } from "next/font/google";
 import { Providers } from "@/lib/providers";
 import { Toaster } from "@/components/ui/toaster";
-import { AuthProvider } from "@/components/AuthProvider";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { UpdateNotifier } from "@/components/UpdateNotifier";
 import { DesktopAppShell } from "@/components/desktop/DesktopAppShell";
@@ -124,15 +123,13 @@ export default async function RootLayout({
       >
         <ErrorBoundary>
           <Providers>
-            <AuthProvider>
-              <DesktopAppShell>{children}</DesktopAppShell>
-              <Toaster />
-              <UpdateNotifier />
-              {/* First-run Legal & DMCA gate — desktop only (web gates on the
-                  watch page via WebLegalGate). Rendered after the shell so the
-                  overlay stacks above the top bar and immersive fullscreen. */}
-              <DesktopLegalGate />
-            </AuthProvider>
+            <DesktopAppShell>{children}</DesktopAppShell>
+            <Toaster />
+            <UpdateNotifier />
+            {/* First-run Legal & DMCA gate — desktop only (web gates on the
+                watch page via WebLegalGate). Rendered after the shell so the
+                overlay stacks above the top bar and immersive fullscreen. */}
+            <DesktopLegalGate />
           </Providers>
         </ErrorBoundary>
       </body>

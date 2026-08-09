@@ -131,7 +131,7 @@ export function Hero({ movies = [] }: { movies: any[] }) {
                       <div className="flex flex-wrap items-center gap-3">
                         <GlassButton
                           size="lg"
-                          className="gap-2.5 font-bold px-7 py-3 h-auto text-base"
+                          className="gap-2.5 font-bold px-8 py-3.5 h-auto text-base text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] border-0 shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
                           onClick={() => router.push(`/watch/movie/${movie.id}`)}
                         >
                           <Play className="w-5 h-5 fill-current" />
@@ -142,7 +142,7 @@ export function Hero({ movies = [] }: { movies: any[] }) {
                           movie={movie}
                           size="lg"
                           variant="secondary"
-                          className="glass-light px-5 py-3 h-auto text-sm font-medium hover:bg-white/[0.08] transition-all"
+                          className="px-5 py-3 h-auto text-sm font-medium hover:bg-white/[0.08] transition-all"
                         />
 
                         <Link href={`/movie/${movie.id}`}>

@@ -7,24 +7,11 @@ import {
   Search,
   Menu,
   X,
-  Bookmark,
-  User,
-  LogOut,
-  Mail,
   ArrowLeft,
   Download,
   Clock,
 } from "lucide-react";
 import { useWatchlist } from "@/hooks/useWatchlist";
-import { GlassButton } from "@/components/ui/glass-button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { useAuth } from "./AuthProvider";
-import { useToast } from "@/hooks/use-toast";
 import {
   tmdbApi,
   getImageUrl,
@@ -37,18 +24,8 @@ import { useQuery } from "@tanstack/react-query";
 export function Header() {
   const pathname = usePathname();
   const router = useRouter();
-  const {
-    user,
-    signOut,
-    emailVerified,
-    resendVerificationEmail,
-    resetPassword,
-  } = useAuth();
   const { savedMovies } = useWatchlist();
   const [menuOpen, setMenuOpen] = useState(false);
-  const { toast } = useToast();
-  const [isResettingPassword, setIsResettingPassword] = useState(false);
-  const [isResendingVerification, setIsResendingVerification] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedQuery = useDebounce(searchQuery, 300);
@@ -152,22 +129,6 @@ export function Header() {
       document.body.style.overflow = "";
     };
   }, [menuOpen]);
-
-  const handleResetPassword = useCallback(async () => {
-    if (!user?.email || isResettingPassword) return;
-    toast({
-      title: "Auth disabled",
-      description: "Password reset is not available right now.",
-    });
-  }, [user?.email, isResettingPassword, toast]);
-
-  const handleResendVerification = useCallback(async () => {
-    if (!user?.email || isResendingVerification) return;
-    toast({
-      title: "Auth disabled",
-      description: "Email verification is not available right now.",
-    });
-  }, [user?.email, isResendingVerification, toast]);
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
@@ -358,72 +319,6 @@ export function Header() {
                 </div>
               )}
             </button>
-
-            {/* User / Auth */}
-            <div className="ml-3 pl-3 border-l border-white/[0.06]">
-              {user ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <GlassButton
-                      variant="secondary"
-                      size="icon"
-                      className="rounded-full w-9 h-9"
-                      aria-label="Account menu"
-                    >
-                      <User className="h-[18px] w-[18px]" />
-                    </GlassButton>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    className="w-64 glass-light border-white/[0.06]"
-                  >
-                    <div className="px-3 py-2.5 border-b border-white/[0.06]">
-                      <p className="text-sm font-medium truncate text-foreground">
-                        {user.email}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Account
-                      </p>
-                    </div>
-                    <div className="py-1">
-                      <DropdownMenuItem
-                        onClick={handleResetPassword}
-                        disabled={isResettingPassword}
-                        className="text-sm"
-                      >
-                        <Bookmark className="mr-2 h-4 w-4" />
-                        {isResettingPassword ? "Sending..." : "Reset Password"}
-                      </DropdownMenuItem>
-                      {!emailVerified && (
-                        <DropdownMenuItem
-                          onClick={handleResendVerification}
-                          disabled={isResendingVerification}
-                          className="text-sm text-amber-accent focus:text-amber-accent"
-                        >
-                          <Mail className="mr-2 h-4 w-4" />
-                          {isResendingVerification
-                            ? "Sending..."
-                            : "Resend Verification"}
-                        </DropdownMenuItem>
-                      )}
-                      <DropdownMenuItem
-                        onClick={signOut}
-                        className="text-sm text-red-400 focus:text-red-400"
-                      >
-                        <LogOut className="mr-2 h-4 w-4" />
-                        Sign Out
-                      </DropdownMenuItem>
-                    </div>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : (
-                <Link href="/auth">
-                  <GlassButton className="text-sm px-4 py-2 h-auto">
-                    Sign In
-                  </GlassButton>
-                </Link>
-              )}
-            </div>
           </nav>
 
           {/* ── Mobile: Search + Menu buttons ── */}
@@ -598,69 +493,6 @@ export function Header() {
             </Link>
           ))}
         </nav>
-
-        {/* Mobile Auth Section */}
-        <div className="absolute bottom-0 left-0 right-0 p-3 border-t border-white/[0.06]">
-          {user ? (
-            <div className="space-y-1">
-              <div className="px-3 py-2">
-                <p className="text-sm font-medium truncate text-foreground">
-                  {user.email}
-                </p>
-                {!emailVerified && (
-                  <p className="text-xs text-amber-accent flex items-center mt-1">
-                    <Mail className="h-3 w-3 mr-1" />
-                    Email not verified
-                  </p>
-                )}
-              </div>
-              <button
-                onClick={() => {
-                  handleResetPassword();
-                  setMenuOpen(false);
-                }}
-                disabled={isResettingPassword}
-                className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-muted-foreground hover:text-foreground rounded-xl hover:bg-white/[0.04] transition-all disabled:opacity-50"
-              >
-                <Bookmark className="h-4 w-4" />
-                {isResettingPassword ? "Sending..." : "Reset Password"}
-              </button>
-              {!emailVerified && (
-                <button
-                  onClick={() => {
-                    handleResendVerification();
-                    setMenuOpen(false);
-                  }}
-                  disabled={isResendingVerification}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-amber-accent rounded-xl hover:bg-white/[0.04] transition-all disabled:opacity-50"
-                >
-                  <Mail className="h-4 w-4" />
-                  {isResendingVerification
-                    ? "Sending..."
-                    : "Resend Verification"}
-                </button>
-              )}
-              <button
-                onClick={() => {
-                  signOut();
-                  setMenuOpen(false);
-                }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-red-400 rounded-xl hover:bg-white/[0.04] transition-all"
-              >
-                <LogOut className="h-4 w-4" />
-                Sign Out
-              </button>
-            </div>
-          ) : (
-            <Link
-              href="/auth"
-              onClick={() => setMenuOpen(false)}
-              className="flex items-center justify-center px-4 py-3 text-sm font-medium rounded-xl bg-primary/10 text-primary hover:bg-primary/20 transition-all duration-200"
-            >
-              Sign In
-            </Link>
-          )}
-        </div>
       </div>
     </header>
   );

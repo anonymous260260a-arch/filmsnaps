@@ -38,14 +38,19 @@ apps/desktop/release/
 # opennext / cloudflare build output
 .open-next/
 
-# custom scripts
-scripts/
+# custom scripts (repo-root only — anchored so it does NOT swallow nested
+# scripts/ dirs like packages/shared/scripts (fix-dist-imports.mjs) or
+# apps/desktop/scripts, which EAS/Netlify archive walkers would drop)
+/scripts/
 
 # IDE / AI
 .bolt/
 .claude/
 .agents/
 .qwen/
+
+# AI audit scratch output (file dumps, phase notes — not app source)
+.audit/
 
 # typescript
 *.tsbuildinfo
@@ -75,6 +80,4 @@ build_commands.txt
 # pnpm-lock.yaml
 
 # planning / design docs (not part of the app source)
-docs/
-filmsnaps_design_system.html
 apps/feedback/.wrangler

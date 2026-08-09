@@ -53,8 +53,6 @@
       "expo-sharing",
       "expo-updates",
       "expo-video",
-      "expo-task-manager",
-      "expo-background-fetch",
       "expo-sqlite",
       "expo-notifications",
       "./plugins/with-filmsnaps-downloader"

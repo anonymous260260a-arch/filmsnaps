@@ -4,7 +4,6 @@
 // Re-export provider registry from shared package (single source of truth)
 export { PROVIDERS, getProvider, getEnabledProviders, isProtectionEnabled } from '@filmsnaps/shared/providers';
 export type { ProviderDefinition, ProviderProtection } from '@filmsnaps/shared/types';
-export { baseSanitize, stripTrackers } from './common';
 
 // Protection engine
 export {
