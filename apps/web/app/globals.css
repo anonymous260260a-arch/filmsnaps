@@ -3,53 +3,63 @@
 @tailwind utilities;
 
 /* â”€â”€ "Cinematic Void" Design System â”€â”€
- * Exact hex values matching the shared design tokens.
+ * Tokens are HSL triplets — every utility (bg-primary, fill-amber-accent,
+ * text-muted-foreground, ...) compiles to `hsl(var(--x))`, so the values here
+ * must be space-separated `H S% L%` (NOT hex). Hex sources are kept as
+ * comments for reference. Primitive hex sources (#070708 etc.) match the
+ * shared design tokens in @filmsnaps/shared, EXCEPT --secondary: shared keeps
+ * lavender #8B5CF6 (mobile uses it as a real accent), while the web Cinematic
+ * Void theme uses a neutral elevated surface so skeletons/inputs/secondary
+ * buttons stay gray-on-black.
  * Font families: --font-display (Playfair Display), --font-body (Inter)
  */
 @layer base {
   :root {
     /* Core Surfaces */
-    --void: #070708;
-    --surface: #0E0E11;
-    --elevated: #16161A;
-    --subtle: #222226;
+    --void: 240 7% 3%; /* #070708 */
+    --surface: 240 10% 6%; /* #0E0E11 */
+    --elevated: 240 8% 9%; /* #16161A */
+    --subtle: 240 6% 14%; /* #222226 */
 
     /* Background / foreground â€” mapping to shadcn convention */
     --background: var(--void);
-    --foreground: #F4F4F5;
+    --foreground: 240 5% 96%; /* #F4F4F5 */
 
     --card: var(--surface);
-    --card-foreground: #F4F4F5;
+    --card-foreground: 240 5% 96%; /* #F4F4F5 */
 
     --popover: var(--surface);
-    --popover-foreground: #F4F4F5;
+    --popover-foreground: 240 5% 96%; /* #F4F4F5 */
 
     /* Brand & Action Colors â€” Amber Gold */
-    --primary: #D4A237;
-    --primary-foreground: #070708;
-    --primary-dim: #B88B2A;
+    --primary: 41 65% 52%; /* #D4A237 */
+    --primary-foreground: 240 7% 3%; /* #070708 */
+    --primary-dim: 41 63% 44%; /* #B88B2A */
+    --amber-accent: 41 65% 52%; /* #D4A237 */
 
-    /* Soft Lavender â€” bookmark indicators only */
-    --secondary: #8B5CF6;
-    --secondary-foreground: #070708;
+    /* Secondary surface â€” neutral placeholder tone (skeletons, inputs,
+       secondary buttons). Was lavender #8B5CF6 (old theme); the Cinematic
+       Void theme uses neutral grays, so this maps to the elevated surface. */
+    --secondary: 240 8% 9%; /* #16161A */
+    --secondary-foreground: 240 5% 96%; /* #F4F4F5 */
 
-    --success: #4CAF82;
-    --destructive: #E05252;
-    --destructive-foreground: #F4F4F5;
-    --info: #5B9CF6;
+    --success: 153 39% 49%; /* #4CAF82 */
+    --destructive: 0 70% 60%; /* #E05252 */
+    --destructive-foreground: 240 5% 96%; /* #F4F4F5 */
+    --info: 215 90% 66%; /* #5B9CF6 */
 
     /* Muted surfaces */
     --muted: var(--subtle);
-    --muted-foreground: #A1A1AA;
+    --muted-foreground: 240 5% 65%; /* #A1A1AA */
 
     /* Accent matches muted for buttons etc */
     --accent: var(--subtle);
-    --accent-foreground: #F4F4F5;
+    --accent-foreground: 240 5% 96%; /* #F4F4F5 */
 
     /* Borders & Inputs */
     --border: var(--subtle);
     --input: var(--subtle);
-    --ring: #D4A237;
+    --ring: 41 65% 52%; /* #D4A237 */
 
     --radius: 0.75rem;
   }
@@ -63,7 +73,7 @@
 
   body {
     @apply bg-background text-foreground antialiased overflow-x-hidden;
-    background-color: var(--void);
+    background-color: hsl(var(--void));
     color: #F4F4F5;
     font-family: var(--font-body), 'Inter', -apple-system, BlinkMacSystemFont,
       'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans',

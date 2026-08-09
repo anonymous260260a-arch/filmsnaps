@@ -1,197 +1,124 @@
 # FilmSnaps
 
-> Discover, search, and watch movies and TV shows — across **Web**, **Mobile (Android)**, and **Desktop (Windows/macOS/Linux)**.
+> Discover, search, and watch movies and TV shows — across **Web**, **Desktop
+> (Windows/macOS/Linux)**, and **Mobile (Android/iOS)**.
 
-FilmSnaps is a cross-platform streaming discovery app powered by the TMDB API. Browse trending content, search with fuzzy matching, build your watchlist, and stream via secure provider players. Each platform is built native-first with platform-specific security layers for the video player.
+FilmSnaps is a cross-platform streaming-discovery ecosystem powered by the
+TMDB API. Browse trending content, search with fuzzy matching, build a
+watchlist, track watch history, and stream through provider players that are
+hardened against ads, trackers, and popups on every platform.
 
----
-
-## ✨ Features
-
-### 🔍 Smart Search
-
-- Fuzzy title matching with Fuse.js (handles typos, spacing, partial names)
-- Hybrid ranking: fuzzy relevance + popularity + vote score
-- Variant generation: "zombie land" → `Zombieland`, "spider-man" → `Spider Man`
-
-### 📱 Cross-Platform
-
-| Platform    | Stack                                             | Status           |
-| ----------- | ------------------------------------------------- | ---------------- |
-| **Web**     | Next.js 15 (App Router), Tailwind CSS, TypeScript | ✅ Live          |
-| **Mobile**  | Flutter (Android 8.0+)                            | ✅ APK available |
-| **Desktop** | Electron + Next.js                                | ✅ v1.0.0        |
-
-### 🎬 Streaming Player
-
-- **Web**: Proxy iframe with JS protection (popup/navigation blocking)
-- **Mobile**: Flutter WebView with 16-layer JS injection protection
-- **Desktop**: Separate BrowserWindow with **6 native security layers**:
-  1. Isolated session partition (cookies/storage destroyed on close)
-  2. Network-level request filtering (`session.webRequest` — pre-JS)
-  3. Response header injection (CSP, security headers — cannot be stripped)
-  4. Native navigation/popup/redirect blocking (`setWindowOpenHandler`, `will-navigate`)
-  5. JS injection protection script (defense-in-depth)
-  6. Resource watchdog (CPU/memory monitoring, auto-reload on abuse)
-
-### 📋 Watchlist
-
-- Save movies and TV shows
-- Cross-session persistence
-- Badge count in navigation
+This repository is a **pnpm + Turborepo monorepo**: a Next.js web app, an
+Electron desktop app that wraps the web app with a native hardened player, an
+Expo/React Native mobile app, and a feedback portal.
 
 ---
 
-## 🏗 Project Structure
+## Apps
 
-```
-filmsnaps/
-├── apps/
-│   ├── web/                  # Next.js web app (primary UI)
-│   │   ├── app/              # Pages & API routes (App Router)
-│   │   │   ├── download/     # Multi-platform download page
-│   │   │   ├── versions/     # Release history (mobile + desktop)
-│   │   │   ├── watch/        # Video player page
-│   │   │   └── ...
-│   │   ├── components/       # Reusable UI components
-│   │   ├── hooks/            # Custom React hooks
-│   │   └── lib/              # API logic (TMDB, utils)
-│   │
-│   ├── desktop/              # Electron desktop app
-│   │   ├── src/
-│   │   │   ├── main.ts       # Main process (window, menus, IPC)
-│   │   │   ├── preload.ts    # Context bridge API
-│   │   │   ├── updater.ts    # Auto-updater (electron-updater)
-│   │   │   ├── video/        # Secure video window manager
-│   │   │   └── security/     # 6 security layers
-│   │   └── electron-builder.yml
-│   │
-│   ├── mobile/               # Flutter Android app
-│   │   └── ...
-│   │
-│   └── shared/               # Shared configs (provider registry)
-│       └── src/
-│           └── providers.ts  # Streaming provider definitions
-│
-├── packages/                  # Internal workspace packages
-├── pnpm-workspace.yaml
-└── package.json
-```
+| App | Package | Stack | Description |
+| --- | --- | --- | --- |
+| [Web](apps/web/README.md) | `@filmsnaps/web` | Next.js 16 (App Router) + Tailwind | Discovery UI, watch pages, API routes |
+| [Desktop](apps/desktop/README.md) | `@filmsnaps/desktop` | Electron 43 + Next.js standalone | Web UI + native hardened player |
+| [Mobile](apps/mobile/README.md) | `@filmsnaps/mobile` | Expo SDK 55 / React Native 0.83 | Phone app with downloads + native player |
+| [Feedback](apps/feedback/README.md) | `@filmsnaps/feedback` | Next.js 16 + Cloudflare Workers/D1 | Public feedback portal |
+
+## Packages
+
+| Package | Description |
+| --- | --- |
+| `@filmsnaps/shared` | Shared guard scripts, provider registry, types, state, design tokens. |
+| `@filmsnaps/adblock-config` | `blocklist.json` schema + validation. |
+| `@filmsnaps/filter-compiler` | Adblocker engine + mobile pattern export artifacts. |
 
 ---
 
-## 🚀 Getting Started
+## Documentation
+
+- **[Security Architecture](docs/security.md)** — the full security stack: R0–R8
+  rule cascade and L2–L8 desktop layers, mobile native protection, and the
+  `blocklist.json` configuration.
+- **[Architecture](docs/architecture.md)** — repository layout, data flow,
+  builds, and CI.
+- **[Contributing](CONTRIBUTING.md)** — how to set up, develop, add a provider,
+  and ship changes.
+
+---
+
+## Quick start
 
 ### Prerequisites
 
-- **Node.js** v18+
-- **pnpm** (recommended) or npm
-- **TMDB API key** ([get one free](https://www.themoviedb.org/settings/api))
+- **Node.js** ≥ 18
+- **pnpm 10** (`corepack enable` or install directly)
+- A **TMDB API key** ([free](https://www.themoviedb.org/settings/api))
 
-### Web App
+### Install & run
 
 ```bash
-# Install dependencies
+# 1. Install dependencies (builds @filmsnaps/shared via postinstall)
 pnpm install
 
-# Set up environment variables
-cp apps/web/.env.example apps/web/.env
-# Edit .env with your TMDB_API_KEY and other values
+# 2. Configure the TMDB API key
+cp .env.example apps/web/.env.local   # or set TMDB_API_KEY in your shell / .dev.vars
+#   TMDB_API_KEY=your_key
 
-# Start development server
+# 3. Run everything (all apps in dev mode)
 pnpm dev
+
+# Or run one app:
+pnpm dev:web       # http://localhost:3000
+pnpm dev:mobile    # Expo dev server
+pnpm dev:desktop   # Electron (starts the Next.js dev server + app)
 ```
 
-The web app runs at [http://localhost:3000](http://localhost:3000).
-
-### Desktop App (Development)
-
-```bash
-# Run desktop in dev mode (starts the web dev server + Electron)
-cd apps/desktop && pnpm dev
-```
-
-### Desktop App (Production Build)
-
-```bash
-# Build the web standalone bundle AND package the installer
-cd apps/desktop && pnpm dist
-
-# Or build + publish to GitHub Releases:
-# export GH_TOKEN=ghp_xxxxxxxxxxxx
-# pnpm dist:publish
-```
-
-`pnpm dist` builds the web app with `BUILD_FOR_DESKTOP=true` (producing
-`.next/standalone`), then packages it into the installer via electron-builder's
-`extraResources`. The output goes to `apps/desktop/release/`:
-
-- **Windows**: `FilmSnaps-Setup-<version>.exe` (NSIS installer)
-- **macOS**: `FilmSnaps-<version>-x64.dmg` / `FilmSnaps-<version>-arm64.dmg`
-- **Linux**: `FilmSnaps-<version>.AppImage`
+See each app's README for platform-specific setup (native modules, signing,
+build profiles).
 
 ---
 
-## 🔄 Desktop Auto-Updates
+## Common commands
 
-The desktop app uses `electron-updater` to check for new versions on GitHub Releases:
-
-1. **On launch** → silently checks GitHub for a newer version
-2. **Update found** → downloads in background (progress shown in-app)
-3. **Ready** → shows "Restart & Update" button
-4. **User clicks** → app restarts, new version installs
-
-**To publish a new version:**
-
-```bash
-# 1. Bump version in apps/desktop/package.json
-# 2. Build the installer (web standalone is built automatically)
-cd apps/desktop && pnpm dist:publish
-# 3. Tag and push (triggers CI web/mobile builds)
-git tag v1.0.1
-git push origin v1.0.1
-# 4. Update apps/web/public/desktop-versions.json with the new release
-```
+| Command | Purpose |
+| --- | --- |
+| `pnpm build` | Build all apps/packages (Turborepo). |
+| `pnpm lint` | Lint everything. |
+| `pnpm test` | Run the Vitest suites (shared + desktop security). |
+| `pnpm typecheck:desktop` | Typecheck the desktop app. |
+| `pnpm format` | Prettier across the repo. |
+| `pnpm build:filters` | Regenerate adblocker/filter artifacts from `blocklist.json`. |
+| `pnpm cf:deploy` | Deploy the web app to Cloudflare Pages. |
+| `pnpm dist:desktop` | Build the desktop installer. |
 
 ---
 
-## 📱 Download
+## Feature highlights
 
-Get the latest version for your platform:
-
-| Platform    | Download                                             |
-| ----------- | ---------------------------------------------------- |
-| **Android** | [Download APK](https://filmsnaps.com/download)       |
-| **Windows** | [Download Installer](https://filmsnaps.com/download) |
-| **macOS**   | [Download DMG](https://filmsnaps.com/download)       |
-| **Linux**   | [Download AppImage](https://filmsnaps.com/download)  |
-
-All releases are published on [GitHub Releases](https://github.com/anonymous260260a-arch/filmsnaps/releases).
-
----
-
-## 🧰 Tech Stack
-
-| Layer               | Technology                                   |
-| ------------------- | -------------------------------------------- |
-| **Framework**       | Next.js 15 (App Router)                      |
-| **Language**        | TypeScript, JavaScript                       |
-| **Styling**         | Tailwind CSS                                 |
-| **Database / Auth** | Supabase + Firebase                          |
-| **API**             | TMDB (The Movie Database)                    |
-| **Desktop**         | Electron, electron-builder, electron-updater |
-| **Search**          | Fuse.js (fuzzy matching)                     |
-| **Package Manager** | pnpm (workspace monorepo)                    |
-| **Deployment**      | Netlify (web), GitHub Releases (desktop)     |
+- **Smart search** — fuzzy title matching (Fuse.js) with hybrid ranking:
+  fuzzy relevance + popularity + vote score.
+- **Watchlist & history** — save titles, cross-session persistence,
+  continue-watching. Stored locally on-device (no account required — the app is
+  fully anonymous).
+- **Multi-provider player** — provider registry in `@filmsnaps/shared`; each
+  platform mounts embeds with native security layers (see
+  [docs/security.md](docs/security.md)).
+- **Mobile downloads** — SQLite-backed episode/movie downloads with a native
+  downloader.
+- **Feedback portal** — account-free bug reports, feature requests, roadmap,
+  changelog, FAQ.
 
 ---
 
-## 📄 License
+## Releases
 
-MIT License — see [LICENSE](LICENSE) for details.
+- Web: Cloudflare Pages + Netlify (`.github/workflows/`).
+- Desktop: `electron-builder` → GitHub Releases (`.github/workflows/release.yml`).
+- Mobile: EAS build profiles (`apps/mobile/eas.json`,
+  `.github/workflows/mobile.yml`).
 
 ---
 
-<p align="center">
-  Made with ❤️ for movie lovers everywhere.
-</p>
+## License
+
+No license file is currently present in this repository. Contact the maintainers
+before reusing any part of it.

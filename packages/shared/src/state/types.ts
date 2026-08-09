@@ -30,23 +30,15 @@ export interface WatchProgress {
   completed: boolean;
 }
 
-export interface Bookmark {
-  tmdbId: string;
-  mediaType: 'movie' | 'tv';
-  title: string;
-  posterPath: string | null;
-  year: string;
-  addedAt: number;
-}
-
 // ── Storage adapter interface ─────────────────────────────────────
 
 /**
  * Generic key-value storage adapter.
  *
  * Both localStorage (web) and AsyncStorage (mobile) implement this.
- * The app code calls these methods through `useWatchlist` / `useWatchHistory`
- * hooks instead of directly.
+ * The app code calls these methods through `useWatchHistory` instead of
+ * directly. (Web watchlist state is intentionally local — see
+ * `apps/web/hooks/useWatchlist.ts`; mobile uses `apps/mobile/lib/bookmarks.ts`.)
  */
 export interface StorageAdapter {
   getItem(key: string): Promise<string | null>;
@@ -61,4 +53,3 @@ export interface StorageAdapter {
 // ── Watch history map ─────────────────────────────────────────────
 
 export type WatchHistoryMap = Record<string, WatchProgress>;
-export type BookmarkMap = Record<string, Bookmark>;
