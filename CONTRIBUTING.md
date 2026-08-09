@@ -1,302 +1,200 @@
-# 🤝 Contributing to FilmSnaps
+# Contributing to FilmSnaps
 
-Guidelines for adding providers, features, and making changes across web, mobile, and desktop.
+Thanks for helping out! This guide covers how to set up the repo, develop, add
+a provider, and ship changes across web, desktop, and mobile.
+
+## Table of contents
+
+1. [Repository overview](#repository-overview)
+2. [Setting up](#setting-up)
+3. [Development workflow](#development-workflow)
+4. [Project structure](#project-structure)
+5. [Adding a new provider](#adding-a-new-provider)
+6. [Editing `blocklist.json`](#editing-blocklistjson)
+7. [Testing](#testing)
+8. [Code style](#code-style)
+9. [Common pitfalls](#common-pitfalls)
 
 ---
 
-## Table of Contents
+## Repository overview
 
-1. [Project Structure](#project-structure)
-2. [Adding a New Provider](#adding-a-new-provider)
-3. [Provider Types & Security Scripts](#provider-types--security-scripts)
-4. [Platform-Specific Notes](#platform-specific-notes)
-5. [Testing Checklist](#testing-checklist)
-6. [Code Style & Conventions](#code-style--conventions)
-7. [Common Pitfalls](#common-pitfalls)
+FilmSnaps is a pnpm + Turborepo monorepo. Read
+[docs/architecture.md](docs/architecture.md) for the full picture, and
+[docs/security.md](docs/security.md) before touching anything security-related.
 
----
+| Directory | Package | What it is |
+| --- | --- | --- |
+| `apps/web` | `@filmsnaps/web` | Next.js web app (discovery + watch UI). |
+| `apps/desktop` | `@filmsnaps/desktop` | Electron app wrapping the web app + hardened player. |
+| `apps/mobile` | `@filmsnaps/mobile` | Expo / React Native app. |
+| `apps/feedback` | `@filmsnaps/feedback` | Feedback portal (Cloudflare Workers + D1). |
+| `packages/shared` | `@filmsnaps/shared` | Shared guards, provider registry, types, state. |
+| `packages/adblock-config` | `@filmsnaps/adblock-config` | `blocklist.json` schema + validation. |
+| `packages/filter-compiler` | `@filmsnaps/filter-compiler` | Adblock engine + mobile pattern artifacts. |
 
-## Project Structure
+## Setting up
+
+**Prerequisites:** Node ≥ 18, pnpm 10 (`corepack enable`).
+
+```bash
+pnpm install        # installs all workspaces; builds @filmsnaps/shared via postinstall
+```
+
+If you change a filter/blocklist config, regenerate the adblock artifacts:
+
+```bash
+pnpm build:filters  # recompiles compiled-engine.bin + android-adblock-patterns.json
+```
+
+## Development workflow
+
+### Web
+
+```bash
+pnpm dev:web        # http://localhost:3000
+```
+
+Env: `TMDB_API_KEY` (server-only, see `apps/web/README.md`).
+
+### Mobile
+
+```bash
+pnpm dev:mobile     # Expo dev server
+```
+
+Uses the native `player-webview` module and `with-filmsnaps-downloader` plugin —
+native changes need a full native rebuild (`pnpm android` / `pnpm ios`).
+
+### Desktop
+
+```bash
+pnpm dev:desktop    # starts web dev server + Electron
+```
+
+Desktop builds bundle a Next.js **standalone** build and a compiled filter
+engine — see `apps/desktop/README.md`.
+
+### Feedback
+
+```bash
+cd apps/feedback && pnpm dev   # http://localhost:3001
+```
+
+## Project structure
 
 ```
-filmsnaps/
-├── packages/shared/src/providers/   ← Provider registry (SOURCE OF TRUTH)
-│   └── registry.ts
-├── apps/web/                        ← Next.js web app
-│   ├── app/watch/[...id]/WatchClient.jsx
-│   ├── app/api/player/              ← Player proxy
-│   └── lib/movieProviders/
-│       ├── providers.ts             ← Web-specific provider list
-│       └── iframeProviders.ts       ← Iframe provider configs
-├── apps/mobile/                     ← React Native/Expo app
-│   └── components/VideoWebView.tsx  ← WebView with security scripts
-└── apps/desktop/                    ← Electron app
+apps/
+  web/                 Next.js app — app/ (routes + API), components/, lib/
+  desktop/             Electron — src/main.ts, src/preload/, src/security/
+  mobile/              Expo — app/ (routes), components/, lib/, modules/player-webview/
+  feedback/            Next.js + Workers + D1
+packages/
+  shared/              shared logic (security bundles, providers, state)
+  adblock-config/      blocklist.json schema + validation
+  filter-compiler/     engine + pattern export
+blocklist.json         provider + blocking rules (single source of truth)
 ```
 
----
+## Adding a new provider
 
-## Adding a New Provider
+Providers are **only** registered in the shared package — there is no separate
+web/mobile provider list. See `apps/desktop/README.md` and
+`apps/mobile/README.md` for per-platform notes.
 
-### Step 1: Register in Shared Package (REQUIRED)
+### Step 1 — Register in `@filmsnaps/shared`
 
-**File**: `packages/shared/src/providers/registry.ts`
+**File:** `packages/shared/src/providers/registry.ts`
 
-```typescript
+```ts
 {
-  id: 'myprovider',                    // Unique ID (used in URLs & code)
-  name: 'MyProvider',                  // Internal name
-  displayName: 'Server XX',            // Shown in UI (mask real name)
-  baseUrl: 'https://example.com/embed', // Embed base URL
+  id: 'myprovider',                    // unique ID, used in URLs & code
+  name: 'MyProvider',                  // internal name
+  displayName: 'Server XX',            // shown in UI (mask the real name)
+  baseUrl: 'https://example.com',      // embed base
   embed: {
-    movie: (id) => `/movie/${id}`,
-    tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
+    movie: (id: string) => `/embed/movie/${id}`,
+    tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}`,
   },
 }
 ```
 
-### Step 2: Add to Web Provider List
+### Step 2 — Add its domains to `blocklist.json`
 
-**File**: `apps/web/lib/movieProviders/providers.ts`
+Add a `providers[]` entry with `embedDomains` and `cdnDomains`, and any
+`blockHomePaths` for its error-UI "Go Home" links. Run `pnpm build:filters`.
 
-Add the same provider object to the web-specific list.
+### Step 3 — Test on each platform
 
-### Step 3: Add to Iframe Providers (if applicable)
+- **Web** — iframe mounts the embed; check the video plays without 404s.
+- **Desktop** — full R0–R8 cascade + L5 preload. Verify with
+  `FILMSNAPS_AUDIT=1` (see `docs/security.md` → Audit & diagnostics).
+- **Mobile** — native `PlayerWebView` + `shouldInterceptRequest`. Verify no ads,
+  popups, or fullscreen issues.
 
-**File**: `apps/web/lib/movieProviders/iframeProviders.ts`
+### Providers needing custom handling
 
-If the provider uses iframe embedding (most do), add to `iframeProviders` map and `providerConfigs`.
+If the provider doesn't work with the standard pipeline (Cloudflare challenge,
+custom auth), document **why** in the code, add provider-specific handling in
+the mobile `VideoWebView.tsx` / `PlayerWebViewOverlayView.kt` and the desktop
+preload, then test on all platforms. Do **not** weaken shared guards to make a
+provider work — prefer per-provider allowlist entries.
 
-### Step 4: Add to Video Extract (if applicable)
+## Editing `blocklist.json`
 
-**File**: `apps/web/app/api/video-extract/[provider]/route.ts`
+`blocklist.json` is the single source of truth (v4 schema). See
+[docs/security.md](docs/security.md) → Configuration for the sections. After
+editing, run `pnpm build:filters` so the compiled engine and mobile patterns
+regenerate.
 
-If the provider needs server-side video extraction, add to the `PROVIDERS` map.
+**Safety rules:**
 
-### Step 5: Test on Mobile (IMPORTANT)
+- Never put a real video-CDN host in `rules.alwaysBlock` (R5) unless you're
+  sure it never serves content.
+- `allowedCdnHosts` is a **global allowlist** — adding a domain lets it bypass
+  the cascade on every provider.
+- `blockHomePaths` are per-provider deny-lists — append new home-page shapes as
+  discovered.
 
-The mobile WebView has stricter security. Test that:
-1. Video plays without 404 errors
-2. No ad popups appear
-3. Fullscreen works (if provider has its own)
-4. Provider UI elements are accessible
+## Testing
 
----
-
-## Provider Types & Security Scripts
-
-### Type 1: Standard Providers (Default)
-
-**Security Script**: `POPUP_BLOCKER_SCRIPT`
-**Used by**: Most providers (vixsrc, toonstream, etc.)
-
-**Characteristics**:
-- No Cloudflare protection
-- Standard ad injection (popups, overlays, trackers)
-- Works with full ad blocking stack (13 layers)
-
-**What happens automatically**:
-- All 13 security layers applied
-- Navigation chain tracking (5s bootstrap)
-- Overlay ad removal with settings protection
-- Fetch/XHR/iframe interception
-
-### Type 2: Cloudflare-Protected Providers
-
-**Security Script**: `makeCFBypassScript(providerHost)`
-**Used by**: nxsha, chillflix
-
-**Characteristics**:
-- Protected by Cloudflare's challenge-platform
-- Detects WebView environments
-- Uses Next.js App Router (SPA)
-- Needs specific browser fingerprinting to pass challenge
-
-**What you MUST do**:
-1. Add provider ID to the CF check in `VideoWebView.tsx`:
-   ```typescript
-   if (providerId === 'nxsha' || providerId === 'chillflix' || providerId === 'NEWPROVIDER') {
-     ? makeCFBypassScript(new URL(currentProvider.baseUrl).hostname)
-   }
-   ```
-2. Add to `onShouldStartLoadWithRequest` CF allowlist:
-   ```typescript
-   if (providerId === 'nxsha' || providerId === 'chillflix' || providerId === 'NEWPROVIDER') {
-     // Only allow same-origin
-   }
-   ```
-3. Add to fullscreen handling (if provider has fullscreen button)
-4. Add to `onMessage` handler for landscape lock
-
-**Characteristics of CF_BYPASS_SCRIPT**:
-- Cloudflare fingerprint bypass (webdriver, chrome, plugins, WebGL)
-- Blocks `window.open` (popups)
-- Removes non-provider iframes via MutationObserver
-- Does NOT freeze `location` (breaks Next.js routing)
-- Does NOT block `pushState` (breaks client-side navigation)
-- Does NOT block `new Function()` (breaks provider scripts)
-
-### Type 3: Providers Needing Custom Handling
-
-If a provider doesn't fit the above categories:
-
-1. **Document why** in the code comments
-2. **Create a new bypass script** if needed (follow `makeCFBypassScript` pattern)
-3. **Test on all platforms** (web, mobile, desktop)
-4. **Update this documentation**
-
----
-
-## Platform-Specific Notes
-
-### Mobile (React Native WebView)
-
-**File**: `apps/mobile/components/VideoWebView.tsx`
-
-**Key considerations**:
-- WebView environment is detectable by Cloudflare
-- `injectedJavaScriptBeforeContentLoaded` runs before page scripts
-- `onShouldStartLoadWithRequest` catches top-level navigation
-- `onMessage` receives messages from injected JS (e.g., fullscreen events)
-- `expo-screen-orientation` locks rotation for fullscreen
-
-**Adding a new CF-protected provider**:
-1. Add to `makeCFBypassScript` check
-2. Add to `onShouldStartLoadWithRequest` allowlist
-3. Add to `onMessage` handler
-4. Add to height adjustment (if needed for controls)
-5. Add to fullscreen button hiding (if provider has its own)
-6. Add to provider-specific UI cleanup (if needed)
-
-### Web (Next.js)
-
-**File**: `apps/web/app/watch/[...id]/WatchClient.jsx`
-
-**Key considerations**:
-- Iframe loads provider directly (no proxy needed for most)
-- Proxy available at `/api/player/` for problematic providers
-- `onShouldStartLoadWithRequest` not available (browser iframe)
-
-### Desktop (Electron)
-
-**File**: `apps/desktop/`
-
-**Key considerations**:
-- Separate renderer process for security
-- `nodeIntegration: false` enforced
-- Same security scripts as mobile (injected via `executeJavaScript`)
-
----
-
-## Testing Checklist
-
-### New Provider
-- [ ] Registered in `packages/shared/src/providers/registry.ts`
-- [ ] Added to `apps/web/lib/movieProviders/providers.ts`
-- [ ] Added to `apps/web/lib/movieProviders/iframeProviders.ts`
-- [ ] Video plays on web (Chrome, Firefox, Safari)
-- [ ] Video plays on mobile (Android WebView, iOS WKWebView)
-- [ ] Video plays on desktop (Electron)
-- [ ] No ad popups appear
-- [ ] No overlay ads covering video
-- [ ] Fullscreen works (if provider has it)
-- [ ] Provider UI elements accessible (settings, server list, etc.)
-- [ ] No console errors in WebView
-- [ ] No CORS errors in browser console
-
-### Security Changes
-- [ ] Test on standard provider (vixsrc)
-- [ ] Test on CF-protected provider (nxsha/chillflix)
-- [ ] Verify ad blocking still works
-- [ ] Verify navigation blocking still works
-- [ ] Verify provider settings/quality menus still work
-- [ ] Test fullscreen/landscape behavior
-- [ ] Test provider switching mid-session
-
----
-
-## Code Style & Conventions
-
-### JavaScript Security Scripts
-- Use `var` (not `const`/`let`) for compatibility with older WebViews
-- Wrap in IIFE `(function(){ ... })()` to avoid polluting global scope
-- Always `try/catch` individual protections (one failure doesn't break others)
-- Use `console.log('[AB] ...')` for ad-blocking debug messages
-- Comment each protection layer with `// ── Layer N: Description ──`
-
-### TypeScript (React Native)
-- Use `useMemo` for expensive computations (provider lists, URLs)
-- Use `useCallback` for event handlers
-- Use `useRef` for mutable values that don't trigger re-renders
-- Destructure props in function signature
-
-### Provider Registry
-- `id`: lowercase, no spaces (e.g., `'myprovider'`)
-- `displayName`: Human-readable, masked (e.g., `'Server 20'`)
-- `baseUrl`: Include `/embed` suffix if provider uses it
-- `embed.movie`: Return path relative to `baseUrl` (e.g., `/movie/${id}`)
-- `embed.tv`: Return path with season/episode (e.g., `/tv/${id}/${season}/${episode}`)
-
----
-
-## Common Pitfalls
-
-### ❌ Don't: Freeze `location` for CF-protected providers
-```javascript
-// BREAKS Next.js client-side routing
-Object.defineProperty(window, 'location', { ... });
+```bash
+pnpm test           # Vitest suites (shared + desktop security)
+pnpm lint           # Turbo lint across all apps
+pnpm typecheck:desktop   # desktop tsc --noEmit (other apps: cd <app> && pnpm typecheck)
 ```
 
-### ❌ Don't: Block `pushState` for CF-protected providers
-```javascript
-// BREAKS Next.js navigation
-history.pushState = function() { return; };
-```
+Current suites:
 
-### ❌ Don't: Block `new Function()` for CF-protected providers
-```javascript
-// BREAKS provider scripts that use dynamic code generation
-window.Function = function() { return function() {}; };
-```
+- `packages/shared/src/providers/registry.test.ts`
+- `packages/shared/src/security/navigation-home.test.ts`
+- `packages/shared/src/security/playerGuard.test.ts`
+- `apps/desktop/src/security/blocklist.test.ts`
 
-### ✅ Do: Use CF_BYPASS_SCRIPT for Cloudflare providers
-```typescript
-if (providerId === 'nxsha' || providerId === 'chillflix') {
-  makeCFBypassScript(providerHost)
-}
-```
+If you change the R0–R8 cascade or the navigation guard, add/extend tests in
+these files.
 
-### ✅ Do: Test provider switching
-- User might switch from standard → CF-protected mid-session
-- Security script must change correctly
-- WebView remounts with new script
+## Code style
 
-### ✅ Do: Handle provider-specific UI quirks
-- Some providers hide controls in portrait mode → add height adjustment
-- Some providers have install/login buttons → add cleanup
-- Some providers use `intent://` URLs → add to blocklist
+- TypeScript, Prettier-formatted (`pnpm format`).
+- Server-only secrets (e.g. `TMDB_API_KEY`) never referenced from client
+  components.
+- Security code carries a header comment explaining **why** a layer exists and
+  how it fails. Match that style.
+- ESM/CJS boundary: desktop main is CommonJS and never imports `@filmsnaps/*`
+  at runtime — reproduce shared logic there with a comment pointing at the
+  canonical source (see `provider-config.ts`, `navigation-guard.ts`).
 
----
+## Common pitfalls
 
-## Architecture Decisions
-
-### Why Two Security Scripts?
-
-1. **Standard providers**: Full ad blocking is needed. They inject aggressive ads, trackers, and popups. The 13-layer `POPUP_BLOCKER_SCRIPT` handles all of these.
-
-2. **CF-protected providers**: Full ad blocking BREAKS them. They use Next.js App Router which needs `location`, `pushState`, and `new Function()`. We use lightweight bypass + same-origin enforcement instead.
-
-### Why Not Proxy Everything?
-
-Proxying breaks Next.js SPAs because:
-- URL rewriting breaks client-side routing
-- Fetch/XHR interception conflicts with RSC data fetching
-- CORS issues with cross-origin asset loading
-
-Better to load directly and use browser-level security.
-
-### Why `injectedJavaScriptBeforeContentLoaded`?
-
-Runs BEFORE page scripts execute. This means:
-- We override `navigator.webdriver` before Cloudflare checks it
-- We block `window.open` before ads can override our block
-- We freeze `location` before ads can hijack it
+- **Forgetting `pnpm build:filters`** after editing `blocklist.json` — the
+  desktop engine and mobile patterns go stale.
+- **Adding a provider to only one platform.** Registration lives in
+  `@filmsnaps/shared`; each app consumes the same registry.
+- **Weakening guards.** If a provider breaks, investigate the allowlist /
+  per-provider config first — never disable a shared layer.
+- **`.env` / `.dev.vars`** — never commit secrets. `TMDB_API_KEY` was
+  historically committed in `.dev.vars`; if you see it anywhere, untrack it and
+  rotate the key.
+- **Dormant code.** Some infra is intentionally dormant (the web proxy stack,
+  `PROXIED_PROVIDERS = new Set([])`). Don't delete it without an ADR-style note.

@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { Star, Clock, ArrowLeft, Play, Youtube, Download, CloudDownload } from 'lucide-react';
+import { Star, Clock, ArrowLeft, Play, Youtube } from 'lucide-react';
 import { getImageUrl, getTrailerKey } from '@/lib/tmdb';
 import dynamic from 'next/dynamic';
 import { MediaCarousel } from '@/components/MediaCarousel';
@@ -144,24 +144,10 @@ export default function MovieClient({ movie }: { movie: any }) {
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
                     onClick={() => router.push(`/watch/movie/${movie.id}`)}
-                    className="gap-2.5 px-6 py-3 h-auto rounded-full bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-sm shadow-lg shadow-primary/20 transition-all"
+                    className="group gap-2.5 px-7 py-3.5 h-auto rounded-full font-bold text-sm text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
                   >
-                    <Play className="w-4 h-4 fill-current" />
+                    <Play className="w-5 h-5 fill-current" />
                     Watch Now
-                  </Button>
-                  <Button
-                    onClick={() => router.push(`/download/nxsha/movie/${movie.id}`)}
-                    className="gap-2.5 px-5 py-3 h-auto rounded-full border border-primary/50 bg-transparent hover:bg-primary/10 text-primary font-semibold text-sm transition-all"
-                  >
-                    <Download className="w-4 h-4" />
-                    Server 1 DL
-                  </Button>
-                  <Button
-                    onClick={() => router.push(`/download/falix/movie/${movie.id}`)}
-                    className="gap-2.5 px-5 py-3 h-auto rounded-full border border-blue-500/50 bg-transparent hover:bg-blue-500/10 text-blue-500 font-semibold text-sm transition-all"
-                  >
-                    <CloudDownload className="w-4 h-4" />
-                    Falix DL
                   </Button>
                   <SaveButton
                     movie={movie}

@@ -1,5 +1,6 @@
-# The root .gitignore's `scripts/` rule is meant for the monorepo-root scripts/
-# folder only, but it also swallows this package's build-critical scripts/
-# directory (inject-preload-css.js is required by the `build` script). Re-include
-# it here so the release build works for anyone who checks out the repo.
+# Build-critical scripts/ dir must ship in source archives.
+# Root .gitignore's `scripts/` rule is now anchored to /scripts/ (repo root
+# only), so this nested scripts/ dir is never matched. Kept as an explicit
+# safeguard so a future un-anchoring of the root rule cannot silently drop
+# build-provider-preload.mjs from EAS/Netlify archives.
 !scripts/

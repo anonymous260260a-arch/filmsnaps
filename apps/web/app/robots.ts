@@ -6,7 +6,7 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: '*',
         allow: '/',
-        disallow: ['/auth', '/saved', '/auth/callback', '/reset-password'],
+        disallow: ['/saved'],
       },
     ],
     sitemap: 'https://filmsnaps.com/sitemap.xml',

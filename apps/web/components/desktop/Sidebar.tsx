@@ -30,21 +30,11 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Search,
-  LogOut,
-  LogIn,
-  ChevronRight,
   ScrollText,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useChromeStore, toggleSidebarCollapsed } from "./chrome-store";
 import { useWatchlist } from "@/hooks/useWatchlist";
-import { useAuth } from "@/components/AuthProvider";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
 /* ── Electron chrome constants ─────────────────────────────────────────── */
 
@@ -89,10 +79,8 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
   const router = useRouter();
   const { sidebarCollapsed } = useChromeStore();
   const { savedMovies } = useWatchlist();
-  const { user, signOut } = useAuth();
 
   const [isMac, setIsMac] = useState(false);
-  const [acctOpen, setAcctOpen] = useState(false);
   const [tip, setTip] = useState<{
     label: string;
     hint?: string;
@@ -472,110 +460,6 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
           </Link>
         </div>
       )}
-
-      {/* ── Footer: account ── */}
-      <div className="relative border-t border-white/[0.06] p-2">
-        {user ? (
-          <DropdownMenu onOpenChange={setAcctOpen}>
-            <DropdownMenuTrigger asChild>
-              <button
-                onMouseEnter={(e) =>
-                  showTip(user.email ?? "Account", undefined, e.currentTarget)
-                }
-                onMouseLeave={hideTip}
-                className={`group flex w-full items-center gap-2.5 rounded-lg py-2 outline-none
-                  text-zinc-500 transition-colors hover:bg-white/[0.04] hover:text-zinc-200
-                  focus-visible:ring-2 focus-visible:ring-[#D4A237]/50
-                  ${sidebarCollapsed ? "justify-center px-0" : "px-2.5"}`}
-              >
-                <span
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full
-                  bg-[#D4A237]/15 text-xs font-black text-[#D4A237] ring-1 ring-[#D4A237]/20"
-                >
-                  {user.email?.charAt(0).toUpperCase() || "U"}
-                </span>
-                {!sidebarCollapsed && (
-                  <>
-                    <span className="sb-fade min-w-0 flex-1 text-left">
-                      <span className="block truncate text-[12.5px] font-medium text-zinc-300 group-hover:text-zinc-100">
-                        {user.email}
-                      </span>
-                      <span className="block text-[10.5px] text-zinc-600">
-                        Account
-                      </span>
-                    </span>
-                    <ChevronRight
-                      size={14}
-                      className={`shrink-0 text-zinc-600 transition-transform duration-200
-                        ${acctOpen ? "-rotate-90" : "rotate-90"}`}
-                    />
-                  </>
-                )}
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              side="top"
-              align="start"
-              sideOffset={8}
-              className="w-60"
-            >
-              <div className="border-b border-white/[0.06] px-3 py-2.5">
-                <p className="truncate text-sm font-medium text-foreground">
-                  {user.email}
-                </p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  Signed in to FilmSnaps
-                </p>
-              </div>
-              <div className="border-b border-white/[0.06] px-3 py-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Shortcuts
-                </p>
-                <div className="mt-1.5 space-y-1 text-xs text-muted-foreground">
-                  <p className="flex justify-between">
-                    <span>Toggle sidebar</span>
-                    <kbd>{mod}B</kbd>
-                  </p>
-                  <p className="flex justify-between">
-                    <span>Search</span>
-                    <kbd>{mod}K</kbd>
-                  </p>
-                  <p className="flex justify-between">
-                    <span>Jump to section</span>
-                    <kbd>{mod}1–6</kbd>
-                  </p>
-                </div>
-              </div>
-              <div className="py-1">
-                <DropdownMenuItem
-                  onClick={() => signOut()}
-                  className="text-sm text-red-400 focus:text-red-400"
-                >
-                  <LogOut className="mr-2 h-4 w-4" />
-                  Sign Out
-                </DropdownMenuItem>
-              </div>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : (
-          <Link
-            href="/auth"
-            onMouseEnter={(e) => showTip("Sign In", undefined, e.currentTarget)}
-            onMouseLeave={hideTip}
-            className={`group flex items-center gap-3 rounded-lg py-2 text-[13px] font-medium
-              text-[#D4A237] transition-all hover:bg-[#D4A237]/10
-              ${sidebarCollapsed ? "justify-center px-0" : "px-2.5"}`}
-          >
-            <span
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full
-              bg-[#D4A237]/15 ring-1 ring-[#D4A237]/20 transition-transform group-hover:scale-105"
-            >
-              <LogIn size={14} className="text-[#D4A237]" />
-            </span>
-            {!sidebarCollapsed && <span className="sb-fade">Sign In</span>}
-          </Link>
-        )}
-      </div>
 
       {/* collapsed-mode tooltip — fixed-positioned so the nav's scroll container can't clip it */}
       {sidebarCollapsed && tip && (
