@@ -5,6 +5,9 @@ export const metadata = {
   title: "Privacy Policy",
   description:
     "FilmSnaps privacy policy — what data we collect, what stays on your device, and our commitment to user privacy.",
+  alternates: {
+    canonical: "https://filmsnap-pro.netlify.app/privacy",
+  },
 };
 
 export default function PrivacyPage() {

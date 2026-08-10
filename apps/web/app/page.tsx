@@ -39,6 +39,10 @@ export default async function Home() {
     <div className="min-h-screen bg-background text-foreground transition-colors duration-700">
       <Header />
       <main className="pt-16">
+        {/* Single branded h1 for the home page — visually hidden so the hero
+            (an h2) and section titles carry the visual hierarchy while
+            crawlers/ATs still get a clean, keyword-rich top-level heading. */}
+        <h1 className="sr-only">FilmSnaps — Discover Movies &amp; TV Shows</h1>
         <Suspense fallback={<SkeletonHero />}>
           {featuredMovies.length > 0 && <Hero movies={featuredMovies} />}
         </Suspense>

@@ -31,7 +31,7 @@ jobs:
         run: cd apps/web && pnpm build
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
-          NEXT_PUBLIC_SITE_URL: ${{ secrets.SITE_URL || 'https://filmsnaps.com' }}
+          NEXT_PUBLIC_SITE_URL: ${{ secrets.SITE_URL || 'https://filmsnap-pro.netlify.app' }}
 
       - name: Build for Cloudflare
         run: cd apps/web && pnpm cf:build
@@ -70,7 +70,7 @@ jobs:
         run: cd apps/web && pnpm build
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
-          NEXT_PUBLIC_SITE_URL: ${{ secrets.SITE_URL || 'https://filmsnaps.com' }}
+          NEXT_PUBLIC_SITE_URL: ${{ secrets.SITE_URL || 'https://filmsnap-pro.netlify.app' }}
 
       - name: Build for Cloudflare
         run: cd apps/web && pnpm cf:build
@@ -110,7 +110,7 @@ jobs:
         run: cd apps/web && pnpm build
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
-          NEXT_PUBLIC_SITE_URL: ${{ secrets.SITE_URL || 'https://filmsnaps.com' }}
+          NEXT_PUBLIC_SITE_URL: ${{ secrets.SITE_URL || 'https://filmsnap-pro.netlify.app' }}
 
       - name: Build for Cloudflare Worker
         run: pnpm cf:build
