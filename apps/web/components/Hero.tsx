@@ -1,24 +1,24 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import Image from 'next/image';
-import { Play, Info, Star } from 'lucide-react';
-import { GlassButton } from '@/components/ui/glass-button';
-import { SaveButton } from '@/components/SaveButton';
-import { tmdbApi, getImageUrl } from '@/lib/tmdb';
-import { Swiper, SwiperSlide } from 'swiper/react';
-import { Autoplay, EffectFade, Navigation, Pagination } from 'swiper/modules';
-import 'swiper/css';
-import 'swiper/css/effect-fade';
-import 'swiper/css/autoplay';
-import 'swiper/css/navigation';
-import 'swiper/css/pagination';
-import Link from 'next/link';
-import { Button } from './ui/button';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState } from "react";
+import Image from "next/image";
+import { Play, Info, Star } from "lucide-react";
+import { GlassButton } from "@/components/ui/glass-button";
+import { SaveButton } from "@/components/SaveButton";
+import { tmdbApi, getImageUrl } from "@/lib/tmdb";
+import { Swiper, SwiperSlide } from "swiper/react";
+import { Autoplay, EffectFade, Navigation, Pagination } from "swiper/modules";
+import "swiper/css";
+import "swiper/css/effect-fade";
+import "swiper/css/autoplay";
+import "swiper/css/navigation";
+import "swiper/css/pagination";
+import Link from "next/link";
+import { Button } from "./ui/button";
+import { useRouter } from "next/navigation";
 
 function formatRuntime(minutes: number) {
-  if (!minutes) return '';
+  if (!minutes) return "";
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return `${h}h ${m}m`;
@@ -49,8 +49,8 @@ export function Hero({ movies = [] }: { movies: any[] }) {
         modules={[Autoplay, EffectFade, Navigation, Pagination]}
         effect="fade"
         autoplay={{ delay: 6000, disableOnInteraction: false }}
-        navigation={{ nextEl: '.hero-next', prevEl: '.hero-prev' }}
-        pagination={{ clickable: true, el: '.hero-pagination' }}
+        navigation={{ nextEl: ".hero-next", prevEl: ".hero-prev" }}
+        pagination={{ clickable: true, el: ".hero-pagination" }}
         speed={800}
         loop
         className="h-full hero-swiper"
@@ -61,9 +61,12 @@ export function Hero({ movies = [] }: { movies: any[] }) {
       >
         {movies.map((movie, idx) => {
           const title = movie.title || movie.name;
-          const overview = movie.overview || '';
-          const backdrop = getImageUrl(movie.backdrop_path, 'original');
-          const year = (movie.release_date || movie.first_air_date || '').slice(0, 4);
+          const overview = movie.overview || "";
+          const backdrop = getImageUrl(movie.backdrop_path, "original");
+          const year = (movie.release_date || movie.first_air_date || "").slice(
+            0,
+            4,
+          );
           const rating = movie.vote_average || 0;
           const genres = movie.genre_ids || [];
           const runtime = movie.runtime;
@@ -78,12 +81,12 @@ export function Hero({ movies = [] }: { movies: any[] }) {
                     alt={title}
                     fill
                     priority={idx === 0}
-                    loading={idx === 0 ? 'eager' : 'lazy'}
+                    loading={idx === 0 ? "eager" : "lazy"}
                     sizes="100vw"
                     quality={idx === 0 ? 90 : 75}
-                    fetchPriority={idx === 0 ? 'high' : 'auto'}
+                    fetchPriority={idx === 0 ? "high" : "auto"}
                     className={`object-cover brightness-[0.6] ${
-                      idx === activeIndex ? 'animate-ken-burns' : ''
+                      idx === activeIndex ? "animate-ken-burns" : ""
                     }`}
                   />
                 )}
@@ -105,20 +108,26 @@ export function Hero({ movies = [] }: { movies: any[] }) {
                           </span>
                         )}
                         {year && (
-                          <span className="text-sm text-white/60 font-medium">{year}</span>
+                          <span className="text-sm text-white/60 font-medium">
+                            {year}
+                          </span>
                         )}
                         {runtime && (
                           <>
                             <span className="text-white/30">·</span>
-                            <span className="text-sm text-white/60 font-medium">{formatRuntime(runtime)}</span>
+                            <span className="text-sm text-white/60 font-medium">
+                              {formatRuntime(runtime)}
+                            </span>
                           </>
                         )}
                       </div>
 
-                      {/* Title */}
-                      <h1 className="text-4xl sm:text-5xl md:text-7xl font-black tracking-tight text-white text-shadow-hero mb-4 text-balance leading-[1.1]">
+                      {/* Title — h2: the home page owns the single h1 via an
+                          sr-only heading, so hero titles stay in the h2+ range
+                          for a clean document outline. */}
+                      <h2 className="text-4xl sm:text-5xl md:text-7xl font-black tracking-tight text-white text-shadow-hero mb-4 text-balance leading-[1.1]">
                         {title}
-                      </h1>
+                      </h2>
 
                       {/* Overview */}
                       {overview && (
@@ -132,7 +141,9 @@ export function Hero({ movies = [] }: { movies: any[] }) {
                         <GlassButton
                           size="lg"
                           className="gap-2.5 font-bold px-8 py-3.5 h-auto text-base text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] border-0 shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
-                          onClick={() => router.push(`/watch/movie/${movie.id}`)}
+                          onClick={() =>
+                            router.push(`/watch/movie/${movie.id}`)
+                          }
                         >
                           <Play className="w-5 h-5 fill-current" />
                           Watch Now
@@ -169,10 +180,32 @@ export function Hero({ movies = [] }: { movies: any[] }) {
 
       {/* Nav Arrows */}
       <button className="hero-prev absolute top-1/2 left-4 md:left-8 -translate-y-1/2 z-20 w-11 h-11 flex items-center justify-center rounded-full glass-light text-white/60 hover:text-white transition-all duration-300 opacity-0 group-hover:opacity-100 hover:scale-105">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="m15 18-6-6 6-6" />
+        </svg>
       </button>
       <button className="hero-next absolute top-1/2 right-4 md:right-8 -translate-y-1/2 z-20 w-11 h-11 flex items-center justify-center rounded-full glass-light text-white/60 hover:text-white transition-all duration-300 opacity-0 group-hover:opacity-100 hover:scale-105">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="m9 18 6-6-6-6" />
+        </svg>
       </button>
     </section>
   );

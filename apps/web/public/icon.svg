@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Dark rounded-square tile -->
+  <rect width="512" height="512" rx="112" fill="#070708"/>
+  <!-- Film-frame / aperture mark, kept inside the 80% maskable safe zone (80% of 512 = 410 → margins ≥ 51) -->
+  <rect x="116" y="128" width="280" height="256" rx="28" fill="none" stroke="#D4A237" stroke-width="28"/>
+  <!-- Left film sprocket holes -->
+  <rect x="96" y="188" width="20" height="40" rx="6" fill="#D4A237"/>
+  <rect x="96" y="264" width="20" height="40" rx="6" fill="#D4A237"/>
+  <rect x="96" y="340" width="20" height="40" rx="6" fill="#D4A237"/>
+  <!-- Right film sprocket holes -->
+  <rect x="396" y="188" width="20" height="40" rx="6" fill="#D4A237"/>
+  <rect x="396" y="264" width="20" height="40" rx="6" fill="#D4A237"/>
+  <rect x="396" y="340" width="20" height="40" rx="6" fill="#D4A237"/>
+  <!-- Play triangle inside the frame -->
+  <polygon points="232,200 320,256 232,312" fill="#D4A237"/>
+</svg>

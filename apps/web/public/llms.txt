@@ -1,0 +1,24 @@
+# FilmSnaps
+
+> FilmSnaps is a privacy-first streaming-discovery app for movies and TV shows. It does not host content — it links to third-party streaming providers' embed pages inside a sandboxed WebView, blocking ads and trackers at the network level. Everything (watch history, saved titles, downloads, settings) stays on the user's device.
+
+## Key pages
+
+- [Home — trending movies & TV shows](https://filmsnap-pro.netlify.app/)
+- [Browse Movies](https://filmsnap-pro.netlify.app/movie)
+- [Browse TV Shows](https://filmsnap-pro.netlify.app/tv)
+- [Search](https://filmsnap-pro.netlify.app/search)
+- [How Content Works (ad blocking, privacy, FAQ)](https://filmsnap-pro.netlify.app/how-it-works)
+- [Legal & DMCA](https://filmsnap-pro.netlify.app/legal)
+- [Privacy Policy](https://filmsnap-pro.netlify.app/privacy)
+
+## Sitemap
+
+- [https://filmsnap-pro.netlify.app/sitemap.xml](https://filmsnap-pro.netlify.app/sitemap.xml)
+
+## Facts
+
+- FilmSnaps is an open-source project. The repository is at https://github.com/anonymous260260a-arch/filmsnaps
+- Content metadata (posters, backdrops, ratings, cast) is provided by The Movie Database (TMDB).
+- The desktop app is built with Electron; the web app with Next.js; the mobile app with React Native (Expo).
+- FilmSnaps blocks ads and trackers using a layered system: a native network-level engine (Aho-Corasick pattern matching over EasyList/EasyPrivacy/AdGuard-derived lists), cosmetic CSS filtering, runtime guard scripts, anti-anti-adblock scriptlets, and provider-specific rules.
