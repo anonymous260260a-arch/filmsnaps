@@ -1,25 +1,26 @@
-import { Metadata } from 'next';
+import { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: 'My Watchlist - FilmSnaps',
-  description: 'Your saved movies and TV shows watchlist. Access your favorite content anytime on FilmSnaps.',
-  keywords: 'watchlist, saved movies, saved TV shows, my list, favorites',
+  title: "My Watchlist - FilmSnaps",
+  description:
+    "Your saved movies and TV shows watchlist. Access your favorite content anytime on FilmSnaps.",
+  keywords: "watchlist, saved movies, saved TV shows, my list, favorites",
   openGraph: {
-    title: 'My Watchlist - FilmSnaps',
-    description: 'Your saved movies and TV shows watchlist on FilmSnaps.',
-    url: 'https://filmsnaps.com/saved',
-    siteName: 'FilmSnaps',
-    locale: 'en_US',
-    type: 'website',
+    title: "My Watchlist - FilmSnaps",
+    description: "Your saved movies and TV shows watchlist on FilmSnaps.",
+    url: "https://filmsnap-pro.netlify.app/saved",
+    siteName: "FilmSnaps",
+    locale: "en_US",
+    type: "website",
   },
   twitter: {
-    card: 'summary',
-    title: 'My Watchlist - FilmSnaps',
-    description: 'Your saved movies and TV shows watchlist on FilmSnaps.',
-    creator: '@filmsnaps',
+    card: "summary",
+    title: "My Watchlist - FilmSnaps",
+    description: "Your saved movies and TV shows watchlist on FilmSnaps.",
+    creator: "@filmsnaps",
   },
   alternates: {
-    canonical: 'https://filmsnaps.com/saved',
+    canonical: "https://filmsnap-pro.netlify.app/saved",
   },
   robots: {
     index: false,

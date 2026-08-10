@@ -6,7 +6,45 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { UpdateNotifier } from "@/components/UpdateNotifier";
 import { DesktopAppShell } from "@/components/desktop/DesktopAppShell";
 import { DesktopLegalGate } from "@/components/legal/DesktopLegalGate";
+import { JsonLd } from "@/components/JsonLd";
 import { Metadata } from "next";
+
+// ── Site-wide Organization + WebSite structured data ──
+// Rendered once in the root body; gives search engines a stable entity and
+// eligibility for the sitelinks searchbox (targets the /search?q= page).
+const SITE = "https://filmsnap-pro.netlify.app";
+
+const siteSchema = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": `${SITE}/#organization`,
+      name: "FilmSnaps",
+      url: SITE,
+      logo: {
+        "@type": "ImageObject",
+        url: `${SITE}/icon.png`,
+      },
+      sameAs: ["https://github.com/anonymous260260a-arch/filmsnaps"],
+    },
+    {
+      "@type": "WebSite",
+      "@id": `${SITE}/#website`,
+      url: SITE,
+      name: "FilmSnaps",
+      publisher: { "@id": `${SITE}/#organization` },
+      potentialAction: {
+        "@type": "SearchAction",
+        target: {
+          "@type": "EntryPoint",
+          urlTemplate: `${SITE}/search?q={search_term_string}`,
+        },
+        "query-input": "required name=search_term_string",
+      },
+    },
+  ],
+};
 
 const inter = Inter({
   subsets: ["latin"],
@@ -23,7 +61,7 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://filmsnaps.com"),
+  metadataBase: new URL("https://filmsnap-pro.netlify.app"),
   title: {
     default: "FilmSnaps - Discover Movies & TV Shows",
     template: "%s | FilmSnaps",
@@ -50,16 +88,16 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: "https://filmsnaps.com",
+    url: "https://filmsnap-pro.netlify.app",
     siteName: "FilmSnaps",
     title: "FilmSnaps - Discover Movies & TV Shows",
     description:
       "Discover and explore your favorite movies and TV shows on FilmSnaps.",
     images: [
       {
-        url: "/og-image.jpg",
-        width: 1200,
-        height: 630,
+        url: "/og-image.png",
+        width: 1212,
+        height: 640,
         alt: "FilmSnaps - Discover Movies & TV Shows",
       },
     ],
@@ -70,7 +108,7 @@ export const metadata: Metadata = {
     description:
       "Discover and explore your favorite movies and TV shows on FilmSnaps.",
     creator: "@filmsnaps",
-    images: ["/og-image.jpg"],
+    images: ["/og-image.png"],
   },
   robots: {
     index: true,
@@ -84,9 +122,8 @@ export const metadata: Metadata = {
     },
   },
   verification: {
-    // Add your verification codes here when available
-    // google: 'your-google-verification-code',
-    // yandex: 'your-yandex-verification-code',
+    google: "81CnFVUPG59Vs_JhwcTbqn_XLJgnjuyXv3_s6c7Ad-o",
+    // Add other verification codes here when available (e.g. yandex, bing)
   },
 
   // ── PWA / Installable App ──
@@ -121,6 +158,8 @@ export default async function RootLayout({
         className={`${inter.className} ${playfair.className} ${inter.variable} ${playfair.variable}`}
         suppressHydrationWarning
       >
+        {/* Site-wide Organization + WebSite structured data */}
+        <JsonLd data={siteSchema} />
         <ErrorBoundary>
           <Providers>
             <DesktopAppShell>{children}</DesktopAppShell>

@@ -5,6 +5,9 @@ export const metadata = {
   title: "Legal & DMCA",
   description:
     "FilmSnaps Legal & Disclaimer — content notice, no-affiliation statement, educational & security purpose, user responsibility, and warranty disclaimer.",
+  alternates: {
+    canonical: "https://filmsnap-pro.netlify.app/legal",
+  },
 };
 
 export default function LegalPage() {

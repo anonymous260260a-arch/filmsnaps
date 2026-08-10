@@ -16,20 +16,20 @@ Expo/React Native mobile app, and a feedback portal.
 
 ## Apps
 
-| App | Package | Stack | Description |
-| --- | --- | --- | --- |
-| [Web](apps/web/README.md) | `@filmsnaps/web` | Next.js 16 (App Router) + Tailwind | Discovery UI, watch pages, API routes |
-| [Desktop](apps/desktop/README.md) | `@filmsnaps/desktop` | Electron 43 + Next.js standalone | Web UI + native hardened player |
-| [Mobile](apps/mobile/README.md) | `@filmsnaps/mobile` | Expo SDK 55 / React Native 0.83 | Phone app with downloads + native player |
-| [Feedback](apps/feedback/README.md) | `@filmsnaps/feedback` | Next.js 16 + Cloudflare Workers/D1 | Public feedback portal |
+| App                                 | Package               | Stack                              | Description                              |
+| ----------------------------------- | --------------------- | ---------------------------------- | ---------------------------------------- |
+| [Web](apps/web/README.md)           | `@filmsnaps/web`      | Next.js 16 (App Router) + Tailwind | Discovery UI, watch pages, API routes    |
+| [Desktop](apps/desktop/README.md)   | `@filmsnaps/desktop`  | Electron 43 + Next.js standalone   | Web UI + native hardened player          |
+| [Mobile](apps/mobile/README.md)     | `@filmsnaps/mobile`   | Expo SDK 55 / React Native 0.83    | Phone app with downloads + native player |
+| [Feedback](apps/feedback/README.md) | `@filmsnaps/feedback` | Next.js 16 + Cloudflare Workers/D1 | Public feedback portal                   |
 
 ## Packages
 
-| Package | Description |
-| --- | --- |
-| `@filmsnaps/shared` | Shared guard scripts, provider registry, types, state, design tokens. |
-| `@filmsnaps/adblock-config` | `blocklist.json` schema + validation. |
-| `@filmsnaps/filter-compiler` | Adblocker engine + mobile pattern export artifacts. |
+| Package                      | Description                                                           |
+| ---------------------------- | --------------------------------------------------------------------- |
+| `@filmsnaps/shared`          | Shared guard scripts, provider registry, types, state, design tokens. |
+| `@filmsnaps/adblock-config`  | `blocklist.json` schema + validation.                                 |
+| `@filmsnaps/filter-compiler` | Adblocker engine + mobile pattern export artifacts.                   |
 
 ---
 
@@ -79,16 +79,16 @@ build profiles).
 
 ## Common commands
 
-| Command | Purpose |
-| --- | --- |
-| `pnpm build` | Build all apps/packages (Turborepo). |
-| `pnpm lint` | Lint everything. |
-| `pnpm test` | Run the Vitest suites (shared + desktop security). |
-| `pnpm typecheck:desktop` | Typecheck the desktop app. |
-| `pnpm format` | Prettier across the repo. |
-| `pnpm build:filters` | Regenerate adblocker/filter artifacts from `blocklist.json`. |
-| `pnpm cf:deploy` | Deploy the web app to Cloudflare Pages. |
-| `pnpm dist:desktop` | Build the desktop installer. |
+| Command                  | Purpose                                                      |
+| ------------------------ | ------------------------------------------------------------ |
+| `pnpm build`             | Build all apps/packages (Turborepo).                         |
+| `pnpm lint`              | Lint everything.                                             |
+| `pnpm test`              | Run the Vitest suites (shared + desktop security).           |
+| `pnpm typecheck:desktop` | Typecheck the desktop app.                                   |
+| `pnpm format`            | Prettier across the repo.                                    |
+| `pnpm build:filters`     | Regenerate adblocker/filter artifacts from `blocklist.json`. |
+| `pnpm cf:deploy`         | Deploy the web app to Cloudflare Pages.                      |
+| `pnpm dist:desktop`      | Build the desktop installer.                                 |
 
 ---
 
@@ -120,5 +120,6 @@ build profiles).
 
 ## License
 
-No license file is currently present in this repository. Contact the maintainers
-before reusing any part of it.
+This project is licensed under the [GNU General Public License v3.0](LICENSE)
+(GPL-3.0). You may redistribute and/or modify it under the terms of the GPL-3.0;
+see [LICENSE](LICENSE) for the full text.
