@@ -246,6 +246,7 @@ export const DownloadDatabase = {
       startedOnWifi: ["started_on_wifi", (v) => (v ? 1 : 0)],
       updatedAt: ["updated_at", (v) => v],
       fileName: ["file_name", (v) => v],
+      extension: ["extension", (v) => v],
       posterPath: ["poster_path", (v) => v],
     };
 

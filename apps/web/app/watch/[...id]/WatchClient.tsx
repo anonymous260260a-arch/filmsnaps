@@ -552,22 +552,27 @@ function WatchClientContent({
               />
             )}
 
-          {/* ── Desktop: Electron <webview> with R0-R8 session filtering ──
-               Mounted only after the provider session is configured
-               (sessionReady) so the webview can never navigate before the
-               main process has installed per-provider rules + CSP. Uses
-               appliedEmbedUrl (the held URL) so a provider switch never
-               unmounts the singleton and never navigates before rules exist. */}
+          {/* ── Desktop: native WebContentsView (Phase 3 hybrid). Kept MOUNTED
+               for the whole session — even across error/CPU-warning states —
+               because the singleton view must never be torn down by a React
+               gate. Its own visibility (player:set-visible) reconciles with the
+               overlays above, so this error/CPU-warning overlay wins the z-order
+               over the rect when it must. Gates here are mount-vs-not: session
+               ready + a real URL + a non-direct provider decide existence. */}
           {isElectronEnv &&
             sessionReady &&
-            !cpuWarning &&
-            !iframeLoadError &&
             appliedEmbedUrl &&
             currentProvider &&
             !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
-              // NO key — the webview is a singleton (see VideoZone).
               <div className="absolute inset-0 z-10">
+                {/* key on refreshKey ONLY (NOT the provider/episode/season):
+                    safe here (main owns the WebContents — a remount resets the
+                    controller, never tearing the singleton down), but must not
+                    fire on provider/episode/season switches — those navigate in
+                    place via the src effect. Retry bumps refreshKey → remount
+                    → re-open (true reload, clean local state). */}
                 <DesktopSecureWebview
+                  key={`${refreshKey}-electron`}
                   src={appliedEmbedUrl}
                   onLoad={handleIframeLoad}
                   onError={handleIframeError}

@@ -2,22 +2,22 @@
  * Per-provider overrides.
  *
  * CDN allow patterns are now derived from the single source of truth:
- * `blocklist.json` at the project root (via @filmsnaps/adblock-config).
+ * `providers.json` at the project root (via @filmsnaps/adblock-config).
  *
- * This file only maintains overrides for things NOT in blocklist.json:
+ * This file only maintains overrides for things NOT in providers.json:
  *   - `blockPatterns` — extra ad/tracker domains specific to a provider
  *   - `notes` — human-readable comments
  *   - Virtual/internal providers (e.g., "nitro") not in the public list
  *
  * At build time, loadAllOverrides() merges the static definitions below
- * with CDN domains read from blocklist.json, producing the full set.
+ * with CDN domains read from providers.json, producing the full set.
  *
  * Allow patterns become:   @@||domain^$document
  * Block patterns become:   ||domain^$third-party
  */
 
-import { loadBlocklistConfig } from '@filmsnaps/adblock-config';
-import type { ProviderConfig } from '@filmsnaps/adblock-config';
+import { loadBlocklistConfig } from "@filmsnaps/adblock-config";
+import type { ProviderConfig } from "@filmsnaps/adblock-config";
 
 export interface ProviderOverride {
   providerId: string;
@@ -38,95 +38,92 @@ export interface ProviderOverride {
 const STATIC_OVERRIDES: ProviderOverride[] = [
   // ── Server 1: Nxsha ──────────────────────────────────────────
   {
-    providerId: 'nxsha',
-    displayName: 'Nxsha / Server 1',
+    providerId: "nxsha",
+    displayName: "Nxsha / Server 1",
     allowPatterns: [],
     blockPatterns: [],
-    note: 'NXCloud CDN serves from various subdomains; see blocklist.json',
+    note: "NXCloud CDN serves from various subdomains; see blocklist.json",
   },
   // ── Server 2: Peachify ───────────────────────────────────────
   {
-    providerId: 'peachify',
-    displayName: 'Peachify / Server 2',
+    providerId: "peachify",
+    displayName: "Peachify / Server 2",
     allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 3: ScreenScape ────────────────────────────────────
   {
-    providerId: 'screenscape',
-    displayName: 'ScreenScape / Server 3',
+    providerId: "screenscape",
+    displayName: "ScreenScape / Server 3",
     allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 4: NHD Api ────────────────────────────────────────
   {
-    providerId: 'nhdapi',
-    displayName: 'NHD Api / Server 4',
+    providerId: "nhdapi",
+    displayName: "NHD Api / Server 4",
     allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 5: ZxcStream ──────────────────────────────────────
   {
-    providerId: 'zxcstream',
-    displayName: 'ZxcStream / Server 5',
+    providerId: "zxcstream",
+    displayName: "ZxcStream / Server 5",
     allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 6: CinemaOS ───────────────────────────────────────
   {
-    providerId: 'cinemaos',
-    displayName: 'CinemaOS / Server 6',
+    providerId: "cinemaos",
+    displayName: "CinemaOS / Server 6",
     allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 14: VidNest ────────────────────────────────────────
   {
-    providerId: 'vidnest',
-    displayName: 'VidNest / Server 14',
+    providerId: "vidnest",
+    displayName: "VidNest / Server 14",
     allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 18: ChillFlix ─────────────────────────────────────
   {
-    providerId: 'chillflix',
-    displayName: 'ChillFlix / Server 18',
+    providerId: "chillflix",
+    displayName: "ChillFlix / Server 18",
     allowPatterns: [],
     blockPatterns: [],
-    note: 'Multiple TLDs — rotates frequently; see blocklist.json',
+    note: "Multiple TLDs — rotates frequently; see blocklist.json",
   },
   // ── Server 19: TouStream ─────────────────────────────────────
   {
-    providerId: 'toustream',
-    displayName: 'TouStream / Server 19',
+    providerId: "toustream",
+    displayName: "TouStream / Server 19",
     allowPatterns: [],
     blockPatterns: [],
   },
   // ── StreamGuide ──────────────────────────────────────────────
   {
-    providerId: 'streamguide',
-    displayName: 'StreamGuide',
+    providerId: "streamguide",
+    displayName: "StreamGuide",
     allowPatterns: [],
     blockPatterns: [],
   },
   // ── Server 20: VidKing ────────────────────────────────────────
   {
-    providerId: 'vidking',
-    displayName: 'VidKing / Server 20',
+    providerId: "vidking",
+    displayName: "VidKing / Server 20",
     allowPatterns: [],
     blockPatterns: [],
   },
   // ── Nitro HLS Proxy CDN ──────────────────────────────────────
   {
-    providerId: 'nitro',
-    displayName: 'Nitro HLS Proxy',
+    providerId: "nitro",
+    displayName: "Nitro HLS Proxy",
     // "nitro" is a virtual provider not listed in blocklist.json,
     // so its CDN domains are kept here as static overrides.
-    allowPatterns: [
-      'proxy.itsnitrox.tech',
-      'oo.itsnitrox.tech',
-    ],
+    allowPatterns: ["proxy.itsnitrox.tech", "oo.itsnitrox.tech"],
     blockPatterns: [],
-    note: 'HLS video delivery CDN used by streaming providers',
+    note: "HLS video delivery CDN used by streaming providers",
   },
 ];
 
@@ -149,7 +146,7 @@ export function loadAllOverrides(): ProviderOverride[] {
     merged.set(ov.providerId, { ...ov, allowPatterns: [...ov.allowPatterns] });
   }
 
-  // 2. Merge CDN domains from blocklist.json
+  // 2. Merge CDN domains from providers.json (v5; blocklist.json fallback)
   try {
     const blConfig = loadBlocklistConfig();
 
@@ -161,7 +158,9 @@ export function loadAllOverrides(): ProviderOverride[] {
         const embedDomains = provider.embedDomains ?? [];
 
         // Combine embed + CDN domains as allow patterns (both are safe)
-        const domainsFromConfig = [...new Set([...embedDomains, ...cdnDomains])];
+        const domainsFromConfig = [
+          ...new Set([...embedDomains, ...cdnDomains]),
+        ];
 
         if (merged.has(provider.id)) {
           // Merge into existing override — append config domains
@@ -183,7 +182,10 @@ export function loadAllOverrides(): ProviderOverride[] {
       }
     }
   } catch (e) {
-    console.warn('[overrides] Failed to load blocklist.json — using static overrides only:', (e as Error).message);
+    console.warn(
+      "[overrides] Failed to load providers.json — using static overrides only:",
+      (e as Error).message,
+    );
   }
 
   return [...merged.values()];
@@ -192,7 +194,9 @@ export function loadAllOverrides(): ProviderOverride[] {
 /**
  * Get overrides for a specific provider by ID.
  */
-export function getOverrideFor(providerId: string): ProviderOverride | undefined {
+export function getOverrideFor(
+  providerId: string,
+): ProviderOverride | undefined {
   return loadAllOverrides().find((o) => o.providerId === providerId);
 }
 
@@ -204,9 +208,9 @@ export function getOverrideFor(providerId: string): ProviderOverride | undefined
  */
 export function overridesToFilterRules(overrides: ProviderOverride[]): string {
   const lines: string[] = [
-    '! ===== Filmsnaps Provider Overrides =====',
-    '! Generated automatically from per-provider override files',
-    '',
+    "! ===== Filmsnaps Provider Overrides =====",
+    "! Generated automatically from per-provider override files",
+    "",
   ];
 
   for (const ov of overrides) {
@@ -224,10 +228,10 @@ export function overridesToFilterRules(overrides: ProviderOverride[]): string {
       lines.push(`||${pattern}^$third-party`);
     }
 
-    lines.push('');
+    lines.push("");
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 /**
@@ -236,34 +240,62 @@ export function overridesToFilterRules(overrides: ProviderOverride[]): string {
  */
 export function legacyAdPatternsToFilterRules(): string {
   const patterns = [
-    'doubleclick.net', 'googleadservices.com', 'googlesyndication.com',
-    'google-analytics.com', 'googletagmanager.com', 'pagead2.googlesyndication.com',
-    'adnxs.com', 'rubiconproject.com', 'criteo.com', 'criteo.net',
-    'outbrain.com', 'taboola.com', 'revcontent.com',
-    'popads.net', 'popcash.net', 'adsterra.com',
-    'propellerads.com', 'trafficfactory.biz',
-    'histats.com', 'statcounter.com', 'scorecardresearch.com',
-    'amazon-adsystem.com', 'casalemedia.com', 'contextweb.com',
-    'openx.net', 'pubmatic.com', 'sharethrough.com',
-    'media.net', 'advertising.com', 'adap.tv',
-    'moatads.com', 'exdynsrv.com',
-    'exoclick.com', 'juicyads.com', 'plugrush.com',
-    'trafficjunky.com', 'adreactor.com', 'adcash.com',
-    'adhitz.com', 'adpierce.com',
-    'clickadu.com', 'clicksco.net', 'hilltopads.com',
-    '1xlite.com',
-    'cloudflareinsights.com',
+    "doubleclick.net",
+    "googleadservices.com",
+    "googlesyndication.com",
+    "google-analytics.com",
+    "googletagmanager.com",
+    "pagead2.googlesyndication.com",
+    "adnxs.com",
+    "rubiconproject.com",
+    "criteo.com",
+    "criteo.net",
+    "outbrain.com",
+    "taboola.com",
+    "revcontent.com",
+    "popads.net",
+    "popcash.net",
+    "adsterra.com",
+    "propellerads.com",
+    "trafficfactory.biz",
+    "histats.com",
+    "statcounter.com",
+    "scorecardresearch.com",
+    "amazon-adsystem.com",
+    "casalemedia.com",
+    "contextweb.com",
+    "openx.net",
+    "pubmatic.com",
+    "sharethrough.com",
+    "media.net",
+    "advertising.com",
+    "adap.tv",
+    "moatads.com",
+    "exdynsrv.com",
+    "exoclick.com",
+    "juicyads.com",
+    "plugrush.com",
+    "trafficjunky.com",
+    "adreactor.com",
+    "adcash.com",
+    "adhitz.com",
+    "adpierce.com",
+    "clickadu.com",
+    "clicksco.net",
+    "hilltopads.com",
+    "1xlite.com",
+    "cloudflareinsights.com",
   ];
 
   const lines: string[] = [
-    '! ===== Filmsnaps Legacy AD_PATTERNS (fallback) =====',
-    '! These supplement EasyList for domains it may not yet cover',
-    '',
+    "! ===== Filmsnaps Legacy AD_PATTERNS (fallback) =====",
+    "! These supplement EasyList for domains it may not yet cover",
+    "",
   ];
 
   for (const p of patterns) {
     lines.push(`||${p}^$third-party`);
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }

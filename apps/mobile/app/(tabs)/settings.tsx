@@ -21,8 +21,10 @@ import {
   ActivityIndicator,
   Switch,
   Share,
+  Linking,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import { ForwardIcon } from "../../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeNavigation } from "@/lib/navigation";
@@ -250,7 +252,7 @@ export default function SettingsScreen() {
 
   const handleShareApp = useCallback(() => {
     Share.share({
-      message: `🎬 Watch movies & TV shows free on FilmSnaps\nhttps://filmsnaps.app`,
+      message: `🎬 Watch movies & TV shows free on FilmSnaps\nhttps://filmsnap-pro.netlify.app/download`,
     });
   }, []);
 
@@ -290,41 +292,6 @@ export default function SettingsScreen() {
         {/* ── 1. Playback ── */}
         <SectionCard title="Playback">
           <SettingsRow
-            icon="videocam-outline"
-            label="Default Quality"
-            subtitle={
-              settings.defaultQuality === "Auto"
-                ? "Auto (recommended)"
-                : settings.defaultQuality
-            }
-            color={colors.gold}
-            onPress={() => {
-              Alert.alert("Default Quality", "Preferred streaming quality", [
-                {
-                  text: "Auto",
-                  onPress: () => updateSetting("defaultQuality", "Auto"),
-                },
-                {
-                  text: "720p",
-                  onPress: () => updateSetting("defaultQuality", "720p"),
-                },
-                {
-                  text: "1080p",
-                  onPress: () => updateSetting("defaultQuality", "1080p"),
-                },
-                {
-                  text: "4K",
-                  onPress: () => updateSetting("defaultQuality", "4K"),
-                },
-                { text: "Cancel", style: "cancel" },
-              ]);
-            }}
-            right={
-              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
-            }
-          />
-          <Divider />
-          <SettingsRow
             icon="layers-outline"
             label="Home Layout"
             subtitle="Arrange home page sections"
@@ -332,107 +299,6 @@ export default function SettingsScreen() {
             onPress={() => nav.push("/home-layout")}
             right={
               <ForwardIcon width={16} height={16} color={colors.iconMuted} />
-            }
-          />
-          <Divider />
-          <SettingsRow
-            icon="language-outline"
-            label="Subtitle Language"
-            subtitle={settings.subtitleLanguage || "English"}
-            color={colors.gold}
-            onPress={() => {
-              Alert.alert("Subtitle Language", "Preferred subtitle language", [
-                {
-                  text: "English",
-                  onPress: () => updateSetting("subtitleLanguage", "English"),
-                },
-                {
-                  text: "Spanish",
-                  onPress: () => updateSetting("subtitleLanguage", "Spanish"),
-                },
-                {
-                  text: "French",
-                  onPress: () => updateSetting("subtitleLanguage", "French"),
-                },
-                {
-                  text: "German",
-                  onPress: () => updateSetting("subtitleLanguage", "German"),
-                },
-                {
-                  text: "Portuguese",
-                  onPress: () =>
-                    updateSetting("subtitleLanguage", "Portuguese"),
-                },
-                {
-                  text: "Arabic",
-                  onPress: () => updateSetting("subtitleLanguage", "Arabic"),
-                },
-                {
-                  text: "Hindi",
-                  onPress: () => updateSetting("subtitleLanguage", "Hindi"),
-                },
-                { text: "Cancel", style: "cancel" },
-              ]);
-            }}
-            right={
-              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
-            }
-          />
-          <Divider />
-          <SettingsRow
-            icon="text-outline"
-            label="Subtitle Size"
-            subtitle={
-              settings.subtitleFontSize === "small"
-                ? "Small"
-                : settings.subtitleFontSize === "large"
-                  ? "Large"
-                  : "Medium"
-            }
-            color={colors.gold}
-            onPress={() => {
-              Alert.alert("Subtitle Size", "Adjust subtitle text size", [
-                {
-                  text: "Small",
-                  onPress: () => updateSetting("subtitleFontSize", "small"),
-                },
-                {
-                  text: "Medium",
-                  onPress: () => updateSetting("subtitleFontSize", "medium"),
-                },
-                {
-                  text: "Large",
-                  onPress: () => updateSetting("subtitleFontSize", "large"),
-                },
-                { text: "Cancel", style: "cancel" },
-              ]);
-            }}
-            right={
-              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
-            }
-          />
-          <Divider />
-          <SettingsRow
-            icon="play-skip-forward-outline"
-            label="Auto-play Next"
-            subtitle={
-              settings.autoPlayNext
-                ? "On — automatically play next episode"
-                : "Off"
-            }
-            color={colors.gold}
-            right={
-              <Switch
-                value={settings.autoPlayNext}
-                onValueChange={(v) => updateSetting("autoPlayNext", v)}
-                trackColor={{
-                  false: colors.zinc800,
-                  true: "rgba(212,162,55,0.4)",
-                }}
-                thumbColor={
-                  settings.autoPlayNext ? colors.gold : colors.textTertiary
-                }
-              />
             }
           />
           <Divider />
@@ -520,49 +386,6 @@ export default function SettingsScreen() {
                     : colors.textTertiary
                 }
               />
-            }
-          />
-          <Divider />
-          <SettingsRow
-            icon="download-outline"
-            label="Download Quality"
-            subtitle={
-              settings.downloadQuality === "Auto"
-                ? "Auto (recommended)"
-                : settings.downloadQuality === "720p"
-                  ? "720p — smaller files"
-                  : settings.downloadQuality === "4K"
-                    ? "4K — largest files"
-                    : "1080p — balanced"
-            }
-            color={colors.gold}
-            onPress={() => {
-              Alert.alert(
-                "Download Quality",
-                "Preferred quality for downloads",
-                [
-                  {
-                    text: "Auto",
-                    onPress: () => updateSetting("downloadQuality", "Auto"),
-                  },
-                  {
-                    text: "720p",
-                    onPress: () => updateSetting("downloadQuality", "720p"),
-                  },
-                  {
-                    text: "1080p",
-                    onPress: () => updateSetting("downloadQuality", "1080p"),
-                  },
-                  {
-                    text: "4K",
-                    onPress: () => updateSetting("downloadQuality", "4K"),
-                  },
-                  { text: "Cancel", style: "cancel" },
-                ],
-              );
-            }}
-            right={
-              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
             }
           />
           <Divider />
@@ -803,6 +626,107 @@ export default function SettingsScreen() {
             </>
           )}
         </SectionCard>
+
+        {/* ── Contribute ── */}
+        <SectionCard title="Community">
+          <SettingsRow
+            icon="logo-github"
+            label="GitHub Repository"
+            subtitle="View source, report issues, and contribute"
+            color={colors.textPrimary}
+            onPress={() =>
+              Linking.openURL(
+                "https://github.com/anonymous260260a-arch/filmsnaps",
+              )
+            }
+            right={
+              <Ionicons
+                name="open-outline"
+                size={14}
+                color={colors.textTertiary}
+              />
+            }
+          />
+          <Divider />
+          <SettingsRow
+            icon="globe-outline"
+            label="Website"
+            subtitle="filmsnap-pro.netlify.app"
+            color={colors.info}
+            onPress={() => Linking.openURL("https://filmsnap-pro.netlify.app/")}
+            right={
+              <Ionicons
+                name="open-outline"
+                size={14}
+                color={colors.textTertiary}
+              />
+            }
+          />
+        </SectionCard>
+
+        {/* ── Star on GitHub ── */}
+        <View
+          className="mx-4 mb-6 rounded-xl overflow-hidden"
+          style={{
+            backgroundColor: colors.bgElevated,
+            borderWidth: 0.5,
+            borderColor: colors.bgTop,
+            padding: 2,
+          }}
+        >
+          <LinearGradient
+            colors={["rgba(212,162,55,0.15)", "rgba(212,162,55,0.05)"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+          >
+            <View className="items-center py-5">
+              <View
+                className="w-12 h-12 rounded-full items-center justify-center mb-2"
+                style={{ backgroundColor: "rgba(212,162,55,0.18)" }}
+              >
+                <Ionicons name="star" size={24} color={colors.gold} />
+              </View>
+              <Text
+                className="text-sm font-bold text-center mb-1"
+                style={{
+                  color: colors.textPrimary,
+                  fontFamily: "Inter_600SemiBold",
+                }}
+              >
+                Enjoying FilmSnaps?
+              </Text>
+              <Text
+                className="text-xs text-center mb-3 mx-8"
+                style={{ color: colors.textSecondary, lineHeight: 16 }}
+              >
+                If you use and enjoy FilmSnaps, a GitHub star helps others
+                discover the project. It takes one click and means a lot.
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  Linking.openURL(
+                    "https://github.com/anonymous260260a-arch/filmsnaps",
+                  );
+                }}
+                activeOpacity={0.7}
+                className="px-6 py-2 rounded-full"
+                style={{
+                  backgroundColor: colors.gold,
+                }}
+              >
+                <View className="flex-row items-center">
+                  <Ionicons name="star" size={14} color={colors.bg} />
+                  <Text
+                    className="text-xs font-bold ml-1"
+                    style={{ color: colors.bg, fontFamily: "Inter_700Bold" }}
+                  >
+                    Star on GitHub
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </LinearGradient>
+        </View>
 
         {/* ── App Info ── */}
         <View className="items-center py-6">

@@ -26,9 +26,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ForwardIcon } from "../../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeNavigation } from "@/lib/navigation";
+import { useFocusEffect } from "expo-router";
 import { useDownloadList } from "../../lib/download";
 import { getAllBookmarks } from "../../lib/bookmarks";
-import { getAggregatedHistory } from "../../lib/watchHistory";
+import {
+  useWatchHistory,
+  watchHistoryStore,
+} from "../../lib/watchHistoryStore";
 import { tmdbApi } from "../../lib/api";
 import { MediaCard } from "../../components/MediaCard";
 import { ProgressiveImage } from "../../components/ProgressiveImage";
@@ -134,17 +138,18 @@ export default function LibraryScreen() {
     return () => unsub();
   }, []);
 
-  // ── History / Continue Watching ──
-  const [historyEntries, setHistoryEntries] = useState<
-    Array<{
-      latest: WatchProgress;
-      fullyWatched: boolean;
-    }>
-  >([]);
-  const [historyMeta, setHistoryMeta] = useState<Record<string, Movie | null>>(
-    {},
+  // ── History / Continue Watching — subscribe to the local-first singleton ──
+  const { entries: storeHistory } = useWatchHistory();
+  const historyEntries = useMemo(
+    () =>
+      storeHistory as Array<{ latest: WatchProgress; fullyWatched: boolean }>,
+    [storeHistory],
   );
-  const historyLoadedRef = useRef(false);
+  const historyMeta = useMemo(() => {
+    const m: Record<string, Movie | null> = {};
+    for (const e of storeHistory) m[e.latest.tmdbId] = e.meta;
+    return m;
+  }, [storeHistory]);
 
   // ── Bookmarks / Saved ──
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
@@ -156,38 +161,6 @@ export default function LibraryScreen() {
   // ── Refresh ──
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshingRef = useRef(false);
-
-  // ── Load history ──
-  const loadHistory = useCallback(async () => {
-    if (historyLoadedRef.current && !refreshingRef.current) return;
-    try {
-      const agg = await getAggregatedHistory();
-      const sliced = agg.slice(0, 6);
-      setHistoryEntries(sliced);
-      const metaMap: Record<string, Movie | null> = {};
-      await Promise.all(
-        sliced.map(async (entry) => {
-          const id = entry.latest.tmdbId;
-          if (metaMap[id]) return;
-          try {
-            if (entry.latest.mediaType === "tv") {
-              metaMap[id] = (await tmdbApi.getTVDetails(
-                Number(id),
-              )) as unknown as Movie;
-            } else {
-              metaMap[id] = (await tmdbApi.getMovieDetails(
-                Number(id),
-              )) as Movie;
-            }
-          } catch {
-            metaMap[id] = null;
-          }
-        }),
-      );
-      setHistoryMeta((prev) => ({ ...prev, ...metaMap }));
-    } catch {}
-    historyLoadedRef.current = true;
-  }, []);
 
   // ── Load bookmarks ──
   const loadBookmarks = useCallback(async () => {
@@ -220,11 +193,15 @@ export default function LibraryScreen() {
   }, []);
 
   useEffect(() => {
-    loadHistory();
-  }, [loadHistory]);
-  useEffect(() => {
     loadBookmarks();
   }, [loadBookmarks]);
+
+  // Keep history progress fresh after returning from a watch session.
+  useFocusEffect(
+    useCallback(() => {
+      watchHistoryStore.syncProgress().catch(() => {});
+    }, []),
+  );
 
   // ── Pull-to-refresh ──
   const onRefresh = useCallback(async () => {
@@ -232,18 +209,17 @@ export default function LibraryScreen() {
     refreshingRef.current = true;
     setIsRefreshing(true);
 
-    historyLoadedRef.current = false;
     bookmarksLoadedRef.current = false;
-    setHistoryEntries([]);
     setBookmarks([]);
-    loadHistory();
     loadBookmarks();
+    // History is served by the shared store; forceRefresh re-enriches it.
+    watchHistoryStore.forceRefresh().catch(() => {});
 
     setTimeout(() => {
       setIsRefreshing(false);
       refreshingRef.current = false;
     }, 1500);
-  }, [loadHistory, loadBookmarks]);
+  }, [loadBookmarks]);
 
   // ── Derive downloads for preview ──
   const downloadPreviews = useMemo(() => {
@@ -387,7 +363,7 @@ export default function LibraryScreen() {
                       >
                         {poster ? (
                           <ProgressiveImage
-                            uri={getImageUrl(poster, "w185")}
+                            uri={getImageUrl(poster, "w342")}
                             style={{ width: cardWidth, height: cardHeight }}
                             resizeMode="cover"
                           />
@@ -535,13 +511,13 @@ export default function LibraryScreen() {
                       >
                         {meta?.poster_path ? (
                           <ProgressiveImage
-                            uri={getImageUrl(meta.poster_path, "w185")}
+                            uri={getImageUrl(meta.poster_path, "w342")}
                             style={{ width: cardWidth, height: cardHeight }}
                             resizeMode="cover"
                           />
                         ) : task.posterPath ? (
                           <ProgressiveImage
-                            uri={getImageUrl(task.posterPath, "w185")}
+                            uri={getImageUrl(task.posterPath, "w342")}
                             style={{ width: cardWidth, height: cardHeight }}
                             resizeMode="cover"
                           />
@@ -668,7 +644,7 @@ export default function LibraryScreen() {
                       >
                         {poster ? (
                           <ProgressiveImage
-                            uri={getImageUrl(poster, "w185")}
+                            uri={getImageUrl(poster, "w342")}
                             style={{ width: cardWidth, height: cardHeight }}
                             resizeMode="cover"
                           />

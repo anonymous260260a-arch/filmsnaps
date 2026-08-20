@@ -17,10 +17,10 @@
     "clean": "rm -rf dist release"
   },
   "dependencies": {
-    "@cliqz/adblocker": "^1.34.0",
     "@filmsnaps/adblock-config": "workspace:*",
     "@filmsnaps/filter-compiler": "workspace:*",
     "@filmsnaps/shared": "workspace:*",
+    "@ghostery/adblocker": "^2.18.2",
     "electron-updater": "^6.3.0"
   },
   "devDependencies": {

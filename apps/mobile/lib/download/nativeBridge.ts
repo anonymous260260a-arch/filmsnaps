@@ -25,6 +25,8 @@ export interface CompleteEvent {
   taskId: string;
   filePath: string;
   bytesTotal: number; // absolute
+  extension?: string; // authoritative real extension (from HTTP response)
+  fileName?: string; // authoritative base file name (with correct extension)
 }
 
 export interface ErrorEvent {
@@ -74,7 +76,10 @@ export const NativeDownloadBridge = {
   cancel(taskId: string): Promise<void> {
     return FilmsnapsDownloader.cancelDownload(taskId);
   },
-  getAvailableStorage(): Promise<number> {
+  deleteFile(uri: string): Promise<void> {
+    return FilmsnapsDownloader.deleteFile(uri);
+  },
+  getAvailableStorage(): Promise<{ free: number; total: number }> {
     return FilmsnapsDownloader.getAvailableStorage();
   },
   /** Task IDs the native service currently considers active. Used on cold start to

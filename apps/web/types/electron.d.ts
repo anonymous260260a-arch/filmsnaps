@@ -70,6 +70,51 @@ interface ElectronAPI {
   onEscapeBlocked: (
     callback: (event: { url: string; count: number }) => void,
   ) => () => void;
+
+  /**
+   * Player namespace (WebContentsView hybrid). The provider embed renders in a
+   * native WebContentsView owned by main; these bridge methods let the React
+   * renderer drive it. See apps/desktop/src/main.ts openProviderView().
+   */
+  player: {
+    /** Load a provider embed URL into the native view (lazy-creates it). */
+    open: (embedUrl: string) => Promise<void>;
+    /** Hide the view without destroying it (for reuse). */
+    close: () => Promise<void>;
+    /** Position/size the native view over the renderer's black rect. */
+    setBounds: (rect: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }) => Promise<void>;
+    /** Show/hide the native view (hidden while a React overlay covers it). */
+    setVisible: (visible: boolean) => Promise<void>;
+    /** Enter/leave fullscreen for the whole window (the view fills content). */
+    setFullscreen: (fullscreen: boolean) => Promise<void>;
+    /** Reload the current provider page. */
+    reload: () => Promise<void>;
+    /** Get the provider WebContents id (for verification / devtools). */
+    getWebContentsId: () => Promise<number>;
+    /** Subscribe to provider view state changes; returns an unsubscribe fn. */
+    onState: (callback: (state: PlayerViewState) => void) => () => void;
+  };
+}
+
+/** Provider native-view state pushed to the renderer (player:state). */
+interface PlayerViewState {
+  /** did-start-loading fired. */
+  loading: boolean;
+  /** did-finish-load fired (page rendered — hide loading overlay). */
+  loaded: boolean;
+  /** A real load failure (did-fail-load with a non-transient code). */
+  error: string | null;
+  /** did-fail-provisional-load (e.g. ERR_FAILED on the initial hop). */
+  provisionalError: string | null;
+  /** Window fullscreen state (hybrid fullscreen is window-level). */
+  isFullscreen?: boolean;
+  /** Renderer console lines tagged [PROTECTION]/[STREAM-AUDIT]. */
+  audit?: string;
 }
 
 interface Window {

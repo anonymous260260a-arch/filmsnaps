@@ -131,7 +131,8 @@
       "id": "peachify",
       "embedDomains": ["peachify.top"],
       "cdnDomains": ["eat-peach.sbs", "peachify.top"],
-      "enabled": true
+      "enabled": true,
+      "reactSafe": true
     },
     {
       "id": "screenscape",
@@ -163,7 +164,9 @@
       "id": "zxcstream",
       "embedDomains": ["zxcstream.xyz"],
       "cdnDomains": ["test.zxcstream.xyz"],
-      "enabled": true
+      "enabled": true,
+      "reactSafe": true,
+      "disableDevtoolPatch": true
     },
     {
       "id": "cinemaos",

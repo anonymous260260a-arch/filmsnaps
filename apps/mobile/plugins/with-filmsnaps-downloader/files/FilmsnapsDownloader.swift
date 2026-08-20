@@ -111,8 +111,11 @@ class FilmsnapsDownloader: RCTEventEmitter {
         rejecter reject: @escaping RCTPromiseRejectBlock
     ) {
         let url = URL(fileURLWithPath: NSHomeDirectory())
-        let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-        resolve(values?.volumeAvailableCapacityForImportantUsage ?? 0)
+        let free = (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+            .volumeAvailableCapacityForImportantUsage ?? 0
+        let total = (try? url.resourceValues(forKeys: [.volumeTotalCapacityKey]))?
+            .volumeTotalCapacity ?? 0
+        resolve(["free": free, "total": total])
     }
 
     private func sendEventSafe(_ name: String, body: [String: Any]) {

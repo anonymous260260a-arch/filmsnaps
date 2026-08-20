@@ -93,6 +93,8 @@ export interface StatusChange {
   /** Live byte counts at the time of status change — prevents stale store overwrites */
   receivedBytes?: number;
   totalBytes?: number;
+  /** Authoritative real file extension (from the HTTP response) once known */
+  extension?: string;
   /** When true, task was permanently removed — caller should delete from store, not upsert */
   removed?: boolean;
 }

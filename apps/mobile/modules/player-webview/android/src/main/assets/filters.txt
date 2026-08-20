@@ -1,0 +1,189 @@
+! =====================================================================
+! FilmSnaps filters.txt — v5 split config (network + cosmetic layer)
+!
+! Standard uBO / EasyList syntax, compiled by packages/filter-compiler
+! via @ghostery/adblocker (adblock-rs WASM core). Serves as the engine
+! input replacing the old substring allowedCdnHosts / blockedDomains /
+! rules.alwaysBlock from blocklist.json v4.
+!
+! SEMANTICS: every `||domain^` / `@@||domain^` rule is an EXACT host or
+! SUFFIX match (label-boundary anchored by `^`), never a substring.
+! `||cloudfront.net^` matches *.cloudfront.net but NOT evil-cloudfront.net.
+!
+! providers.json carries the app-logic that uBO syntax can't express
+! (video detection, navigation guard, apiIntercepts, cosmeticRules,
+! blockHomePaths, allowServerRedirects). The two files travel together
+! and are signed by the same Ed25519 key.
+! =====================================================================
+
+! ─────────────────────────────────────────────────────────────────────
+! GLOBAL CDN / MEDIA ALLOWLIST
+! Derived from v4 allowedCdnHosts. These hosts must never be blocked —
+! they serve video segments, manifests, subtitles, fonts, and metadata.
+! @@||domain^  (document + xmlhttprequest + media + font + image)
+! ─────────────────────────────────────────────────────────────────────
+@@||akamai.net^$document,xmlhttprequest,media,font,image
+@@||akamaiedge.net^$document,xmlhttprequest,media,font,image
+@@||cloudfront.net^$document,xmlhttprequest,media,font,image
+@@||fastly.net^$document,xmlhttprequest,media,font,image
+@@||fastlylb.net^$document,xmlhttprequest,media,font,image
+@@||vidapi.cloud^$document,xmlhttprequest,media,font,image
+@@||eat-peach.sbs^$document,xmlhttprequest,media,font,image
+@@||opensubtitles.org^$document,xmlhttprequest,media,font,image
+@@||allorigins.win^$document,xmlhttprequest,media,font,image
+@@||cdn.jsdelivr.net^$document,xmlhttprequest,media,font,image
+@@||embedmafia.in^$document,xmlhttprequest,media,font,image
+@@||api.ipify.org^$document,xmlhttprequest,media,font,image
+@@||image.tmdb.org^$document,xmlhttprequest,media,font,image
+@@||api.themoviedb.org^$document,xmlhttprequest,media,font,image
+@@||sub.wyzie.io^$document,xmlhttprequest,media,font,image
+@@||sub.vdrk.site^$document,xmlhttprequest,media,font,image
+@@||fonts.googleapis.com^$document,xmlhttprequest,media,font,image
+@@||fonts.gstatic.com^$document,xmlhttprequest,media,font,image
+@@||appwrite.io^$document,xmlhttprequest,media,font,image
+@@||vjs.zencdn.net^$document,xmlhttprequest,media,font,image
+@@||cache.vdrk.site^$document,xmlhttprequest,media,font,image
+@@||api.theintrodb.org^$document,xmlhttprequest,media,font,image
+@@||gstatic.com^$document,xmlhttprequest,media,font,image
+@@||proxy.itsnitrox.tech^$document,xmlhttprequest,media,font,image
+@@||oo.itsnitrox.tech^$document,xmlhttprequest,media,font,image
+@@||s6p9.urbancreativepoint.site^$document,xmlhttprequest,media,font,image
+@@||east-cloud.v01d.lol^$document,xmlhttprequest,media,font,image
+@@||upcloud.animanga.fun^$document,xmlhttprequest,media,font,image
+@@||megacloud.animanga.fun^$document,xmlhttprequest,media,font,image
+@@||challenges.cloudflare.com^$document,xmlhttprequest,media,font,image
+
+! ─────────────────────────────────────────────────────────────────────
+! PROVIDER EMBED + CDN ALLOWLIST
+! Derived from providers[].embedDomains + providers[].cdnDomains in
+! providers.json. Allowlisted so the provider frame and its CDNs never
+! trip the engine. The "nitro" virtual provider's proxy CDNs are here.
+! ─────────────────────────────────────────────────────────────────────
+@@||web.nxsha.app^$document,xmlhttprequest,media,font,image
+@@||nxcdn.app^$document,xmlhttprequest,media,font,image
+@@||cdn.nxsha.app^$document,xmlhttprequest,media,font,image
+@@||peachify.top^$document,xmlhttprequest,media,font,image
+@@||screenscape.me^$document,xmlhttprequest,media,font,image
+@@||nhdapi.com^$document,xmlhttprequest,media,font,image
+@@||nhdcdn.com^$document,xmlhttprequest,media,font,image
+@@||nhd.video^$document,xmlhttprequest,media,font,image
+@@||zxcstream.xyz^$document,xmlhttprequest,media,font,image
+@@||player.zxcstream.xyz^$document,xmlhttprequest,media,font,image
+@@||test.zxcstream.xyz^$document,xmlhttprequest,media,font,image
+@@||cinemaos.live^$document,xmlhttprequest,media,font,image
+@@||vidnest.fun^$document,xmlhttprequest,media,font,image
+@@||wyzie.io^$document,xmlhttprequest,media,font,image
+@@||vdrk.site^$document,xmlhttprequest,media,font,image
+@@||chillflix.lol^$document,xmlhttprequest,media,font,image
+@@||www.chillflix.lol^$document,xmlhttprequest,media,font,image
+@@||toustream.xyz^$document,xmlhttprequest,media,font,image
+@@||streamguide.cfd^$document,xmlhttprequest,media,font,image
+@@||player.vidzee.wtf^$document,xmlhttprequest,media,font,image
+@@||core.vidzee.wtf^$document,xmlhttprequest,media,font,image
+@@||www.viduki.net^$document,xmlhttprequest,media,font,image
+
+! ─────────────────────────────────────────────────────────────────────
+! REDIRECT-MESH UPSTREAM ALLOWLIST
+! Providers that server-redirect to an upstream mesh (viduki.net,
+! videasy.to) fail the NavGuard bootstrap window unless the target host
+! is allowed. The allowServerRedirects config flag in providers.json
+! adds these to the session at runtime; these rules keep the ENGINE from
+! ever blocking them in the first place. Add new upstream hosts here when
+! a provider adopts a redirect mesh.
+! ─────────────────────────────────────────────────────────────────────
+@@||viduki.net^$document,xmlhttprequest,media,font,image
+@@||videasy.to^$document,xmlhttprequest,media,font,image
+
+! ─────────────────────────────────────────────────────────────────────
+! THIRD-PARTY AD / TRACKER / POPUP BLOCKLIST
+! Derived from v4 blockedDomains + rules.alwaysBlock.domains. `$third-party`
+! keeps first-party (provider-owned) requests untouched.
+! ─────────────────────────────────────────────────────────────────────
+||doubleclick.net^$third-party
+||googleadservices.com^$third-party
+||googlesyndication.com^$third-party
+||google-analytics.com^$third-party
+||pagead2.googlesyndication.com^$third-party
+||adnxs.com^$third-party
+||rubiconproject.com^$third-party
+||criteo.com^$third-party
+||criteo.net^$third-party
+||outbrain.com^$third-party
+||taboola.com^$third-party
+||revcontent.com^$third-party
+||popads.net^$third-party
+||popcash.net^$third-party
+||adsterra.com^$third-party
+||propellerads.com^$third-party
+||trafficfactory.biz^$third-party
+||histats.com^$third-party
+||statcounter.com^$third-party
+||scorecardresearch.com^$third-party
+||amazon-adsystem.com^$third-party
+||casalemedia.com^$third-party
+||contextweb.com^$third-party
+||openx.net^$third-party
+||pubmatic.com^$third-party
+||sharethrough.com^$third-party
+||media.net^$third-party
+||advertising.com^$third-party
+||adap.tv^$third-party
+||moatads.com^$third-party
+||exdynsrv.com^$third-party
+||exoclick.com^$third-party
+||juicyads.com^$third-party
+||plugrush.com^$third-party
+||trafficjunky.com^$third-party
+||adreactor.com^$third-party
+||adcash.com^$third-party
+||adhitz.com^$third-party
+||adpierce.com^$third-party
+||clickadu.com^$third-party
+||clicksco.net^$third-party
+||hilltopads.com^$third-party
+||1xlite.com^$third-party
+||cloudflareinsights.com^$third-party
+||wo.riverlayboy.shop^$third-party
+||hai8g.com^$third-party
+||zoaclachan.cyou^$third-party
+||florian.sorrilylivyershape.cyou^$third-party
+||ag.phrymaphytic.com^$third-party
+||my.rtmark.net^$third-party
+||s.click.aliexpress.com^$third-party
+||developdomicile.com^$third-party
+
+! Label-anchored blocklist — full-domain rules with suffix matching. These
+! match the EXACT host or its subdomains at a label boundary and never match
+! a benign host that merely CONTAINS the string (the old substring
+! vulnerability).
+!
+! NOTE: v4 carried two bare labels ("frowstyambler", "qpon") with unknown TLDs.
+! @ghostery/adblocker treats a bare label as inert (no rule matches), so they
+! cannot be carried forward verbatim — if the real TLD is identified later,
+! add the full-domain rule. adk2.com was a full domain in v4 and is kept as-is.
+||adk2.com^$third-party
+
+! ─────────────────────────────────────────────────────────────────────
+! POPUP / SCRIPT PATH BLOCKLIST
+! Derived from v4 rules.alwaysBlock.pathPatterns. uBO `$script` rules
+! with a path anchor — catch popunder/track/ad scripts by URL path.
+! ─────────────────────────────────────────────────────────────────────
+||*/pop.js^$script,third-party
+||*/popunder.js^$script,third-party
+||*/track.php^$script,third-party
+||*/ad.php^$script,third-party
+||*/banner.*^$script,third-party
+||*$script,third-party,domain=*.*&path=/^(.*\.wasm)$/
+
+! ─────────────────────────────────────────────────────────────────────
+! GENERIC COSMETIC — defensive UI blocking
+! These run through the engine's cosmetic layer and supplement each
+! provider's cosmeticRules in providers.json (applied via injectCosmetics).
+! ─────────────────────────────────────────────────────────────────────
+##div[class*="ad-container"]
+##div[class*="banner-ad"]
+##div[class*="popup-overlay"]
+##div[id*="ad-overlay"]
+##div[id*="popup-ad"]
+##div[style*="z-index: 9999"]:has(> a[target="_blank"])
+##a[target="_blank"][style*="display: none"]

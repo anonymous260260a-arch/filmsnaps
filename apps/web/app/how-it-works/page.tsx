@@ -58,14 +58,18 @@ const FAQS: {
   {
     question: "Does FilmSnaps collect my personal data?",
     answerText:
-      "No. FilmSnaps does not collect, store, or transmit any personal data to external servers. Everything — your watch history, saved content, downloads, and settings — stays on your device. There are no analytics SDKs, no tracking pixels, and no telemetry. For full details, see the Privacy Policy in Settings.",
+      "No. FilmSnaps does not collect, store, or transmit any personal data to external servers. Your watch history, watchlist, and settings stay on your device and are removed when you uninstall the app. Offline downloads are the one exception: on Android 10 and later they are written to your device's shared Downloads folder so any video player can open them, which also means they remain on the device after you uninstall FilmSnaps. There are no analytics SDKs, no tracking pixels, and no telemetry. For full details, see the Privacy Policy in Settings.",
     answer: (
       <Body>
         <Bold>No.</Bold> FilmSnaps does not collect, store, or transmit any
-        personal data to external servers. Everything — your watch history,
-        saved content, downloads, and settings — stays on your device. There are
-        no analytics SDKs, no tracking pixels, and no telemetry. For full
-        details, see the Privacy Policy in Settings.
+        personal data to external servers. Your watch history, watchlist, and
+        settings stay on your device and are removed when you uninstall the app.
+        Offline downloads are the one exception: on Android 10 and later they
+        are written to your device&apos;s shared Downloads folder so any video
+        player can open them, which also means they remain on the device after
+        you uninstall FilmSnaps. There are no analytics SDKs, no tracking
+        pixels, and no telemetry. For full details, see the Privacy Policy in
+        Settings.
       </Body>
     ),
   },
@@ -238,6 +242,21 @@ export default function HowItWorksPage() {
             <Bullet text="Has no access to your device data, cookies, or app storage" />
             <Bullet text="Is destroyed when you leave the player, leaving no traces" />
             <Bullet text="Supports fullscreen playback, subtitles, and audio track selection" />
+          </SectionItem>
+
+          <SectionItem value="downloads" title="Downloads & Offline Viewing">
+            <Body>
+              FilmSnaps lets you download movies and episodes to watch offline.
+              Downloads are saved directly to your device&apos;s shared storage
+              so they&apos;re easy to find and play later — even outside
+              FilmSnaps.
+            </Body>
+            <Bullet text="On Android 10 and later, files are saved to your device's Downloads folder (in a Filmsnaps subfolder) — no permission prompt" />
+            <Bullet text="Downloaded videos appear in your system Downloads app and can be opened in any player, such as VLC, via “Open with”" />
+            <Bullet text="Inside FilmSnaps, downloads play through the built-in player and are listed on the Downloads screen, where you can delete them" />
+            <Bullet text="Because they live in shared storage, downloads stay on your device even after you uninstall the app" />
+            <Bullet text="Your watch history, watchlist, and settings are app-private and are removed when you uninstall — only offline downloads remain" />
+            <Bullet text="On older Android versions downloads are kept inside the app and are only visible within FilmSnaps" />
           </SectionItem>
 
           <SectionItem value="adblock" title="Ad Blocking Technology">

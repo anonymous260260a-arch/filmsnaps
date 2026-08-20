@@ -306,16 +306,6 @@ function AppContent() {
           }}
         />
         <Stack.Screen
-          name="download2/[...id]"
-          options={{
-            headerShown: false,
-            animation: "slide_from_bottom",
-            presentation: "fullScreenModal",
-            gestureEnabled: false,
-            contentStyle: { backgroundColor: colors.playerBg },
-          }}
-        />
-        <Stack.Screen
           name="person/[id]"
           options={{
             headerShown: false,

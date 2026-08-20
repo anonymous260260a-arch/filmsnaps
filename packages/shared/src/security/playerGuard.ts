@@ -14,6 +14,45 @@
 
 import { buildAllScriptlets, getProviderScriptlets } from "./scriptlets";
 
+/**
+ * Surgical `disable-devtool` `type=4` (FuncToString) neutralizer.
+ *
+ * zxcstream (Source 5) inlines the `theajack/disable-devtool` library. Its
+ * `FuncToString` detector defines a trap function whose `.toString` increments a
+ * counter, then calls its cached `console.log(trapFn)`. In an Android WebView the
+ * native logging bridge serializes every `console.log` argument, which calls the
+ * trap's `.toString` and drives the counter ≥ 2 → a false-positive `type=4`
+ * "devtools open" loop (it then tries to redirect to 404.html, which our NavGuard
+ * blocks, so it retries forever).
+ *
+ * This IIFE is injected at `document_start` (BEFORE the provider's bundle inits
+ * disable-devtool, so the cached `log` is this wrapper). It intercepts
+ * `console.log`, and for any argument that is a function with an OWN (trap)
+ * `.toString`, it temporarily swaps in the native `Function.prototype.toString`
+ * so the native bridge serializes it harmlessly, then restores it. The trap's
+ * counter never increments → the detector sees "devtools closed" and stops.
+ *
+ * Zero global pollution: `Function.prototype.toString` is never overridden, so
+ * React/Next.js hydration is unaffected. (Expert consultation, 2026-08-15.)
+ */
+export const DEVTOOL_CONSOLE_MASK_SCRIPT = `(function(){
+  var origLog = console.log;
+  var wrapper = function(){
+    if (arguments.length > 0 && typeof arguments[0] === 'function') {
+      var fn = arguments[0];
+      if (Object.prototype.hasOwnProperty.call(fn, 'toString')) {
+        var customToString = fn.toString;
+        fn.toString = Function.prototype.toString;
+        try { return origLog.apply(this, arguments); }
+        finally { fn.toString = customToString; }
+      }
+    }
+    return origLog.apply(this, arguments);
+  };
+  wrapper.toString = function(){ return "function log() { [native code] }"; };
+  console.log = wrapper;
+})();`;
+
 // ── Default ad/tracker patterns (fallback when no config injected) ──
 //
 // These cover the most common ad/tracker domains from EasyList that are
@@ -1202,14 +1241,26 @@ export function buildAllScriptsWithScriptlets(
   providerId?: string,
   blockedDomains?: string[],
   apiIntercepts?: ApiInterceptRule[],
+  skipGuard?: boolean,
 ): string {
   const baseScriptlets = buildAllScriptlets();
   const providerScriptlets = providerId
     ? getProviderScriptlets(providerId)
     : [];
 
+  // V6: reactSafe providers (peachify / Next.js). The disable-devtool
+  // neutralization in buildGuardScript globally overrides Object.defineProperty,
+  // Location/window.location, innerHTML, Document.write, and seals window.open.
+  // Those overrides are what disable-devtool's OWN detectors flag as
+  // "tampering" (type=4), and they break peachify's React video player. For
+  // reactSafe providers we skip the guard entirely and keep only the safe
+  // uBO ad-block scriptlets (which do not touch native prototypes). Video
+  // detection itself is native (session-trust / cdn-allowlist), so skipping
+  // the guard does not affect stream finding.
   return [
-    buildGuardScript(providerHostname, blockedDomains, apiIntercepts),
+    skipGuard
+      ? ""
+      : buildGuardScript(providerHostname, blockedDomains, apiIntercepts),
     baseScriptlets,
     ...providerScriptlets,
     buildContentReadyScript(),

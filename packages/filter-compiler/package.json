@@ -26,11 +26,14 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "compile": "node dist/compile.js",
-    "compile:dev": "tsx src/compile.ts"
+    "compile:dev": "tsx src/compile.ts",
+    "sign:gen-key": "tsx src/sign-config-cli.ts gen-key",
+    "sign": "tsx src/sign-config-cli.ts sign",
+    "sign:verify": "tsx src/sign-config-cli.ts verify"
   },
   "dependencies": {
-    "@cliqz/adblocker": "^1.34.0",
-    "@filmsnaps/adblock-config": "workspace:*"
+    "@filmsnaps/adblock-config": "workspace:*",
+    "@ghostery/adblocker": "^2.18.2"
   },
   "devDependencies": {
     "@types/node": "^22",

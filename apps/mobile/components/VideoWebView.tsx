@@ -26,7 +26,14 @@ import {
   getEnabledProviders,
   getImageUrl,
   isSkipIntroEnabled,
+  isUiEnabled,
+  getProgressMode,
+  getResumeMode,
   buildAllScriptsWithScriptlets,
+  DEVTOOL_CONSOLE_MASK_SCRIPT,
+  PlaybackEngine,
+  buildEpisodeKey,
+  MEDIA_HOOK_SCRIPT,
 } from "@filmsnaps/shared";
 import type { ProviderDefinition } from "@filmsnaps/shared";
 import * as ScreenOrientation from "expo-screen-orientation";
@@ -41,7 +48,7 @@ import { fetchIntroSegments, getActiveSkipSegment } from "../lib/introDetect";
 import type { IntroDbResponse } from "../lib/introDetect";
 import { tmdbApi } from "../lib/api";
 import { getNextEpisode } from "../lib/tvUtils";
-import { clearAllState } from "../modules/player-webview";
+import { clearAllState, getConfigVersion } from "../modules/player-webview";
 import { providerConfigs, generateProviderSnippet } from "./providerConfig";
 import { PlayerControlOverlay } from "./player/PlayerControlOverlay";
 import { EpisodeRail } from "./player/EpisodeRail";
@@ -59,6 +66,7 @@ import { useSettings } from "../lib/settings";
 function makeConsolidatedScript(
   providerHost: string,
   providerId?: string,
+  skipGuard?: boolean,
 ): string {
   const providerConfig = providerId ? providerConfigs[providerId] : undefined;
 
@@ -77,11 +85,28 @@ function makeConsolidatedScript(
   // API intercepts (screenscape's /api/ads/cycles ad-window poll) so the
   // fetch/XHR monkey-patch returns a synthetic response before the request
   // leaves the WebView — Level-2 parity with desktop.
+  //
+  // IMPORTANT (expert review): the 3rd arg (blockedDomains) is intentionally
+  // EMPTY. Domain/network blocking belongs in the NATIVE engine
+  // (shouldInterceptRequest → AdblockEngine + R6 domain-blocklist), which is
+  // faster, lower-memory, and cannot be bypassed by a JS fetch()/XHR polyfill.
+  // Keeping a second hardcoded JS blocklist would (a) miss OTA filters.txt
+  // updates (the bundle is frozen in the APK) and (b) guarantee config drift.
+  // The JS bundle therefore only does what native CANNOT: popup patching,
+  // provider-API synthetic intercepts, anti-adblock-detector stripping, and
+  // cosmetic DOM sweeping.
   const sharedScript = buildAllScriptsWithScriptlets(
     providerHost,
     providerId,
-    undefined,
+    [],
     apiIntercepts,
+    // V6: skip the disable-devtool guard ONLY for providers whose Next.js
+    // player loops on type=4 when the guard tampers with native methods.
+    // peachify is reactSafe (guard deferred to post-hydration for #418), but
+    // its guard is RE-ENABLED — it does not loop. zxcstream is the only one
+    // that must skip the guard. Timing (doc-start vs post-hydration) is driven
+    // separately by the `reactSafe` flag on the provider, NOT by skipGuard.
+    skipGuard,
   );
 
   // Append per-provider cosmetic CSS
@@ -99,6 +124,91 @@ ${sharedScript
 ${providerSnippet}
 })();
 true;`;
+}
+
+/**
+ * Q4 (expert perf consult follow-up 2026-08-18): minify the injected guard
+ * bundle before it goes into the WebView. The ~50KB string from
+ * makeConsolidatedScript carries readable indentation plus single-line and
+ * block comments (our own scripts in @filmsnaps/shared + providerConfig.ts).
+ * V8 still has to parse that whitespace/comment bloat at document_start, which
+ * costs ~30–50ms of JS-compile time on low-end Android — pure latency on the
+ * t2→t3 (provider-ready) gap with zero security benefit.
+ *
+ * IMPORTANT: a naive regex single-line-comment strip is UNSAFE here —
+ * providerConfig.ts embeds single-quoted CSS selector strings containing
+ * protocol URLs, and stripping from the double-slash would corrupt those URLs.
+ * So this is a state-aware scanner: it preserves single/double/back-tick string
+ * literals (including escaped chars) byte-for-byte and only strips comments in
+ * CODE state. Horizontal whitespace is collapsed to one space; newlines are
+ * preserved so automatic-semicolon-insertion can never be defeated. The
+ * injected scripts are parenthesized IIFEs, so ASI is not relied upon across
+ * newlines anyway. There are no regex literals in the bundle, so the scanner
+ * never mis-classifies a regex as a comment.
+ */
+function minifyGuardScript(src: string): string {
+  let out = "";
+  const n = src.length;
+  let i = 0;
+  while (i < n) {
+    const c = src[i];
+    // line comment (code state only)
+    if (c === "/" && src[i + 1] === "/") {
+      i += 2;
+      while (i < n && src[i] !== "\n") i++;
+      continue;
+    }
+    // block comment (code state only) — collapse to a single space so
+    // `a/*x*/b` never merges into `ab`.
+    if (c === "/" && src[i + 1] === "*") {
+      i += 2;
+      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i += 2; // skip closing */
+      out += " ";
+      continue;
+    }
+    // string / template literal — preserve verbatim, including escapes
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      out += c;
+      i++;
+      while (i < n) {
+        const ch = src[i];
+        out += ch;
+        if (ch === "\\") {
+          if (i + 1 < n) {
+            out += src[i + 1];
+            i += 2;
+            continue;
+          }
+          i++;
+          break;
+        }
+        if (ch === quote) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    // horizontal whitespace → single space (newlines preserved below)
+    if (c === " " || c === "\t" || c === "\r") {
+      out += " ";
+      i++;
+      while (i < n && (src[i] === " " || src[i] === "\t" || src[i] === "\r"))
+        i++;
+      continue;
+    }
+    if (c === "\n") {
+      out += "\n";
+      i++;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
 }
 
 /**
@@ -292,12 +402,54 @@ export function VideoWebView({
   const [startAtTime, setStartAtTime] = useState<number>(0);
   const lastSavePctRef = useRef<number>(0);
 
+  // ── PlaybackEngine: single source of truth for progress + intro/next-episode
+  // lifecycle (the watch-progress redesign). One engine per watch session;
+  // every time source funnels into engine.ingest() and the UI derives from its
+  // state. Initialized lazily so it exists before the first onMessage fires.
+  const engineRef = useRef<PlaybackEngine | null>(null);
+  if (!engineRef.current) {
+    engineRef.current = new PlaybackEngine(
+      buildEpisodeKey(type, id, season, episode),
+      0,
+    );
+  }
+  // Latest updateOverlays callback (stable subscription reads this ref so it
+  // never closes over stale render-scope values).
+  const updateOverlaysRef = useRef<
+    ((s: ReturnType<PlaybackEngine["getState"]>) => void) | null
+  >(null);
+  // Mirror refs for values the mount-once subscription needs. Assigned to their
+  // current values further down (after those values are declared).
+  const introSegmentsRef = useRef<IntroDbResponse | null>(null);
+  const providerRef = useRef<ProviderDefinition | undefined>(undefined);
+  const seasonRef = useRef<number | undefined>(undefined);
+  const episodeRef = useRef<number | undefined>(undefined);
+  const typeRef = useRef(type);
+  const idRef = useRef(id);
+  // Next-episode arming bookkeeping — binds the button to episode identity so
+  // it can never leak to the next episode (the reported "stuck button" bug).
+  const armedEpisodeRef = useRef<string>("");
+  const prevPctRef = useRef(0);
+  const lastSaveAtRef = useRef(0);
+  // type/id are stable props — mirror them immediately.
+  typeRef.current = type;
+  idRef.current = id;
+
+  // ── Subscribe to the engine once (mount). The callback reads updateOverlaysRef
+  // so it always invokes the latest closure (no stale render-scope values). ──
+  useEffect(() => {
+    if (!engineRef.current) return;
+    const unsub = engineRef.current.subscribe((s) => {
+      updateOverlaysRef.current?.(s);
+    });
+    return unsub;
+  }, []);
+
   // Ã¢â€â‚¬Ã¢â€â‚¬ Unified load state machine Ã¢â€â‚¬Ã¢â€â‚¬
   type LoadState =
     | { type: "LOADING"; enteredAt: number }
     | { type: "SLOW"; enteredAt: number }
     | { type: "PLAYING" }
-    | { type: "STALLED"; enteredAt: number }
     | { type: "FAILED"; reason: string; isCloudflare?: boolean };
 
   const [loadState, setLoadState] = useState<LoadState>({
@@ -306,11 +458,20 @@ export function VideoWebView({
   });
 
   const [resumeChipText, setResumeChipText] = useState<string | null>(null);
-  const [slideInReady, setSlideInReady] = useState(false);
-  useEffect(() => {
-    const timer = setTimeout(() => setSlideInReady(true), 350);
-    return () => clearTimeout(timer);
-  }, []);
+
+  // ── Q1 (expert perf consult 2026-08-17): load-at-t0 ──
+  // The old `slideInReady` state withheld `source.uri` for a fixed 350 ms so
+  // the player could "slide in" before the provider was contacted. That gated
+  // the *network trigger* behind a *visual animation* — ~300 ms of pure dead
+  // air before DNS/TLS/embed fetch even started. We now start loading at t=0
+  // (the moment the route mounts) and let the existing LOADING state + blur
+  // backdrop cover the load, exactly as before. The container-opacity fade the
+  // expert suggested is intentionally NOT done here: this player's WebView is a
+  // window-overlay attached to android.R.id.content (bypassing Fabric), so its
+  // visibility is driven natively by the anchor, not by an RN opacity — an RN
+  // fade would not hide it and could flash. The latency win is achieved by
+  // starting the load immediately; the visual during load is unchanged.
+  const watchMountMs = useRef<number>(Date.now()).current;
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ LOADING → SLOW transition (6s) Ã¢â€â‚¬Ã¢â€â‚¬
   const slowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -334,38 +495,13 @@ export function VideoWebView({
   }, [loadState.type]);
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Stall watchdog: check every 2s for progress stalling (8s threshold) Ã¢â€â‚¬Ã¢â€â‚¬
-  const stallWatchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  useEffect(() => {
-    if (loadState.type !== "PLAYING") {
-      if (stallWatchdogRef.current) {
-        clearInterval(stallWatchdogRef.current);
-        stallWatchdogRef.current = null;
-      }
-      return;
-    }
-    let lastTime = progressRef.current.currentTime;
-    let stallSec = 0;
-    stallWatchdogRef.current = setInterval(() => {
-      const ct = progressRef.current.currentTime;
-      if (ct <= 0) return;
-      if (ct === lastTime) {
-        stallSec += 2;
-        if (stallSec >= 8) {
-          setLoadState({ type: "STALLED", enteredAt: Date.now() });
-        }
-      } else {
-        stallSec = 0;
-        // If we recovered from STALLED, go back to PLAYING
-        setLoadState((prev) =>
-          prev.type === "STALLED" ? { type: "PLAYING" } : prev,
-        );
-      }
-      lastTime = ct;
-    }, 2000);
-    return () => {
-      if (stallWatchdogRef.current) clearInterval(stallWatchdogRef.current);
-    };
-  }, [loadState.type === "PLAYING" || loadState.type === "STALLED"]);
+  // ── Stall watchdog: REMOVED (2026-08-18) ──
+  // The progress protocol (fs:progress) carries only currentTime/duration, with
+  // no paused/buffering flag. A frozen currentTime is indistinguishable between
+  // (a) a dead source, (b) an intentional pause, and (c) a transient rebuffer —
+  // so any threshold false-positives on normal pause/buffer. The STALLED state
+  // and its "Source not responding" toast were removed. Real failures are still
+  // surfaced via the SLOW→FAILED path below.
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ SLOW → FAILED transition (15s total without recovery) Ã¢â€â‚¬Ã¢â€â‚¬
   const slowFailGenRef = useRef(0);
@@ -396,9 +532,7 @@ export function VideoWebView({
   const [introSegments, setIntroSegments] = useState<IntroDbResponse | null>(
     null,
   );
-  const introCheckTimerRef = useRef<ReturnType<typeof setInterval> | null>(
-    null,
-  );
+  introSegmentsRef.current = introSegments;
   const skipBtnInjectedRef = useRef(false);
 
   // â”€â”€ Next Episode button state (injected as floating button in WebView at 95%) â”€â”€
@@ -408,7 +542,6 @@ export function VideoWebView({
   } | null>(null);
   const nextEpBtnInjectedRef = useRef(false);
   const nextEpFetchingRef = useRef(false);
-  const nextEpWatchRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const providers = useMemo(() => getEnabledProviders(), []);
 
@@ -528,76 +661,194 @@ export function VideoWebView({
   const [showEpPicker, setShowEpPicker] = useState(false);
   const [currentSeason, setCurrentSeason] = useState<number>(season ?? 1);
   const [currentEpisode, setCurrentEpisode] = useState<number>(episode ?? 1);
+  seasonRef.current = currentSeason;
+  episodeRef.current = currentEpisode;
 
-  // Ã¢â€â‚¬Ã¢â€â‚¬ Load watch history on mount to determine resume point Ã¢â€â‚¬Ã¢â€â‚¬
-  const historyLoadedRef = useRef(false);
+  const episodeKey = useMemo(
+    () => buildEpisodeKey(type, id, currentSeason, currentEpisode),
+    [type, id, currentSeason, currentEpisode],
+  );
+
+  // ── Auto-resume on OPEN (mount only) ──
+  // When the show first opens, land the user on the most-relevant episode
+  // (the one getResumePoint picks — last watched / next after a completed one).
+  // This runs ONCE per mount and must NOT re-run on in-player episode changes,
+  // otherwise an explicit "I want ep 3" click would be overridden back to the
+  // most-recently-watched episode. The actual per-episode seek is applied by
+  // the second effect below.
+  const didAutoResumeRef = useRef(false);
   useEffect(() => {
-    if (historyLoadedRef.current) return;
-    historyLoadedRef.current = true;
+    if (didAutoResumeRef.current) return;
+    didAutoResumeRef.current = true;
     (async () => {
       try {
-        if (type === "tv") {
-          const resume = await getResumePoint(
-            id,
-            "tv",
-            currentSeason,
-            currentEpisode,
-          );
-          if (resume) {
-            if (resume.season != null && resume.episode != null) {
-              setCurrentSeason(resume.season);
-              setCurrentEpisode(resume.episode);
-            }
-            if (resume.currentTime > 5 && !resume.completed) {
-              startAtRef.current = resume.currentTime;
-              setStartAtTime(resume.currentTime);
-              // Show resume chip
-              const mins = Math.floor(resume.currentTime / 60);
-              const secs = Math.floor(resume.currentTime % 60);
-              setResumeChipText(
-                `Resuming from ${mins}:${secs.toString().padStart(2, "0")}`,
-              );
-              setTimeout(() => setResumeChipText(null), 3000);
-              if (pageLoadedRef.current) {
-                seekTo(resume.currentTime);
-              }
-            }
-          }
-        } else {
-          // Movie: fetch movie progress directly
-          const progress = await getProgress(id, "movie");
-          if (progress && progress.currentTime > 5 && !progress.completed) {
-            startAtRef.current = progress.currentTime;
-            setStartAtTime(progress.currentTime);
-            const mins = Math.floor(progress.currentTime / 60);
-            const secs = Math.floor(progress.currentTime % 60);
-            setResumeChipText(
-              `Resuming from ${mins}:${secs.toString().padStart(2, "0")}`,
-            );
-            setTimeout(() => setResumeChipText(null), 3000);
-          }
+        const resume =
+          type === "tv"
+            ? await getResumePoint(id, "tv", currentSeason, currentEpisode)
+            : await getProgress(id, "movie");
+        if (
+          resume &&
+          resume.season != null &&
+          resume.episode != null &&
+          type === "tv" &&
+          !resume.completed &&
+          (resume.season !== currentSeason || resume.episode !== currentEpisode)
+        ) {
+          // Only switch episodes on open — never during in-player navigation.
+          setCurrentSeason(resume.season);
+          setCurrentEpisode(resume.episode);
         }
       } catch (e) {
-        console.warn("[WatchHistory] âœ” Resume check error:", e);
+        console.warn("[WatchHistory] Auto-resume check error:", e);
       }
     })();
-  }, [type, id, currentSeason, currentEpisode]);
+  }, []);
+
+  // ── Seed the engine for the CURRENTLY SELECTED episode ──
+  // Runs on every episode / provider change so switching servers or episodes
+  // re-applies the right resume position. It reads ONLY the selected episode's
+  // own progress (getProgress — no fallback to other episodes), so an explicit
+  // episode switch always plays that episode (from its own resume, if any, else
+  // from 0). engine.setEpisode also opens a 10 s settle window for
+  // resume:'none' providers so an unpredictable self-resume can't fight us.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resume =
+          type === "tv"
+            ? await getProgress(id, "tv", currentSeason, currentEpisode)
+            : await getProgress(id, "movie");
+        if (cancelled) return;
+        let resumeSeconds = 0;
+        // resume:'none' providers (e.g. screenscape) manage their OWN resume;
+        // seeding startAt would double-seek and fight them. We still load the
+        // engine resume point below so progress tracking + the backward-clamp
+        // settle window work, but we don't drive the native seek for them.
+        const canSeedSeek = getResumeMode(currentProvider) !== "none";
+        if (
+          resume &&
+          resume.currentTime > 5 &&
+          !resume.completed &&
+          canSeedSeek
+        ) {
+          resumeSeconds = resume.currentTime;
+          startAtRef.current = resumeSeconds;
+          setStartAtTime(resumeSeconds);
+          const mins = Math.floor(resumeSeconds / 60);
+          const secs = Math.floor(resumeSeconds % 60);
+          setResumeChipText(
+            `Resuming from ${mins}:${secs.toString().padStart(2, "0")}`,
+          );
+          setTimeout(() => setResumeChipText(null), 3000);
+        } else {
+          // No applicable resume for THIS episode — start from 0 so we never
+          // carry a stale startAt into the embed URL / native seek of a
+          // different episode (that was the "switched to ep 3 but still resumed
+          // ep 2" bug).
+          resumeSeconds = 0;
+          startAtRef.current = 0;
+          setStartAtTime(0);
+        }
+        // (Re)create the engine state for this episode with the resume point.
+        engineRef.current?.setEpisode(episodeKey, resumeSeconds);
+      } catch (e) {
+        console.warn("[WatchHistory] Resume seed error:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [episodeKey, providerId]);
 
   const currentProvider = providers.find((p) => p.id === providerId);
+  providerRef.current = currentProvider;
 
-  // DIAGNOSTIC (ad-suppression expert consult V2 §2.3): log the injected-script
-  // length at render time. If this logs length 0 / provider null, the native
-  // side receives "" and skips addDocumentStartJavaScript (the empty-string
-  // prop-timing theory) — no native release needed, gate the render instead.
-  const injectedScriptValue = currentProvider?.baseUrl
-    ? makeConsolidatedScript(
-        new URL(currentProvider.baseUrl).hostname,
-        currentProvider.id,
-      )
-    : "";
+  // V6: peachify (#418) fix — reactSafe providers (Next.js) must NOT receive the
+  // heavy guard bundle at document_start (it breaks React 18 hydration). The
+  // bundle is instead deferred to injectedJavaScriptAfterLoad (post-hydration)
+  // and NO disable-devtool neutralization runs at doc-start (native side). The
+  // post-hydration bundle keeps ad-block scriptlets but skips the guard.
+  const reactSafe = currentProvider?.reactSafe === true;
+
+  // Source 5 / zxcstream disable-devtool `type=4` loop — expert consultation
+  // (2026-08-15): the loop is the FuncToString detector in zxcstream's inlined
+  // `theajack/disable-devtool` lib, falsely tripped by the Android WebView native
+  // console-serialization bridge. The fix is the surgical `console.log` mask
+  // (DEVTOOL_CONSOLE_MASK_SCRIPT) injected at document_start, which defeats the
+  // detector without touching `Function.prototype.toString` (React hydration is
+  // safe). With the mask in place, full RN injection is re-enabled for zxcstream.
+  // `disableInjection` remains as a one-line fallback: if the loop ever returns,
+  // set `disableInjection: true` on the provider to force both props empty.
+  const suppressInjection = currentProvider?.disableInjection === true;
+  const devtoolPatchScript =
+    !suppressInjection && currentProvider?.disableDevtoolPatch === true
+      ? DEVTOOL_CONSOLE_MASK_SCRIPT
+      : "";
+
+  // Q5 (expert perf consult 2026-08-17): memoize the guard bundle.
+  // `makeConsolidatedScript` builds a ~50KB string (buildAllScriptsWithScriptlets
+  // + provider snippet). Previously it was rebuilt on EVERY render — including
+  // every progress tick and overlay toggle — burning JS-thread CPU during the
+  // exact window we want to be fast (and risking frame drops during the slide-in).
+  // It only depends on the selected provider + its injection flags, plus the
+  // OTA config version (defensive invalidation — see note below), so we memoize
+  // it per provider switch. The injected JS bundle is compiled into the app
+  // (from @filmsnaps/shared + providerConfig.ts); today the OTA config
+  // (providers.json/filters.txt) feeds the *native* engine, not this bundle — so
+  // `configVersion` is a zero-cost defensive hook that guarantees correctness if
+  // a future feature starts injecting OTA-driven rules into the bundle.
+  //
+  // Q4 (expert follow-up 2026-08-18): the memo output is minified via
+  // minifyGuardScript() to shave V8's document_start parse time.
+  const [configVersion, setConfigVersion] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    getConfigVersion()
+      .then((v) => {
+        if (alive) setConfigVersion(v);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const injectedScriptValue = useMemo(() => {
+    if (!currentProvider?.baseUrl) return "";
+    const raw = makeConsolidatedScript(
+      new URL(currentProvider.baseUrl).hostname,
+      currentProvider.id,
+      // V6 (2026-08-15): zxcstream no longer needs to skip the guard. The
+      // `disableDevtoolPatch` console.log mask defeats the FuncToString
+      // (type=4) detector at document_start, so the full guard + scriptlets
+      // bundle can run (post-hydration, via reactSafe). Re-enabling the guard
+      // restores the ad-blocking protection that was previously disabled to
+      // stop the loop. All providers now run the guard unless a provider
+      // explicitly opts out via its own flag.
+      false,
+    );
+    return minifyGuardScript(raw);
+  }, [providerId, reactSafe, suppressInjection, configVersion]);
   console.log(
-    `[VideoWebView] script length at render: ${injectedScriptValue.length}, provider: ${currentProvider?.id ?? "null"}`,
+    `[VideoWebView] script length (memoized+minified): ${injectedScriptValue.length}, provider: ${currentProvider?.id ?? "null"}, reactSafe: ${reactSafe}, disableInjection: ${suppressInjection}, devtoolPatch: ${devtoolPatchScript.length > 0}, configVersion: ${configVersion}`,
   );
+
+  // App media hook for `progress: 'app'` providers (nxsha / zxcstream /
+  // cinemaos / videasy / etc.) — reads the page's own <video> at ~1 Hz and
+  // posts `fs:progress`. Injected into the SAME timing slot as the guard
+  // bundle so it survives the provider's own lifecycle. Native providers don't
+  // emit nothing, so they don't need it (and we avoid a redundant 1 Hz poll).
+  const mediaHookScript =
+    !suppressInjection && getProgressMode(currentProvider) === "app"
+      ? MEDIA_HOOK_SCRIPT
+      : "";
+
+  // The guard bundle + media hook share one timing slot. reactSafe providers
+  // get it at document_start suppressed and instead receive it post-hydration.
+  const docStartScript = reactSafe ? "" : injectedScriptValue + mediaHookScript;
+  const afterLoadScript = reactSafe
+    ? injectedScriptValue + mediaHookScript
+    : "";
 
   // Ad-suppression spray (expert V4 §4A): re-inject the full bundle at page
   // start via the proven main-thread `injectJavaScript` ref, then retry at
@@ -607,22 +858,32 @@ export function VideoWebView({
   // poll. The bundle's Symbol.for('__filmsnaps_preload_guard') boot guard
   // makes any post-first injection a no-op.
   const handleLoadingStart = useCallback(() => {
+    // Q6 (expert perf consult): RN-side waterfall marker. Native t0/t1/t2 are
+    // logged in PlayerWebViewOverlayView; this gives t0-from-mount on the JS
+    // side so the two log streams can be correlated in logcat.
+    console.log(
+      `[WATERFALL] RN: onLoadingStart at ${Date.now() - watchMountMs}ms from watch-mount`,
+    );
     navigationReceivedRef.current = true;
     // Clear pending retries from a previous load/navigation.
     injectionTimersRef.current.forEach(clearTimeout);
     injectionTimersRef.current = [];
 
-    if (!injectedScriptValue) return;
+    if (!docStartScript) return;
+    // V6: reactSafe providers get the bundle post-hydration via
+    // injectedJavaScriptAfterLoad — suppress the doc-start spray (it would
+    // re-inject at document_start and break Next.js hydration #418).
+    if (reactSafe) return;
 
-    webViewRef.current?.injectJavaScript(injectedScriptValue);
+    webViewRef.current?.injectJavaScript(docStartScript);
     const t1 = setTimeout(() => {
-      webViewRef.current?.injectJavaScript(injectedScriptValue);
+      webViewRef.current?.injectJavaScript(docStartScript);
     }, 100);
     const t2 = setTimeout(() => {
-      webViewRef.current?.injectJavaScript(injectedScriptValue);
+      webViewRef.current?.injectJavaScript(docStartScript);
     }, 300);
     injectionTimersRef.current = [t1, t2];
-  }, [injectedScriptValue]);
+  }, [docStartScript]);
 
   const isTV = type === "tv";
 
@@ -789,48 +1050,10 @@ export function VideoWebView({
     };
   }, [type, id, currentSeason, currentEpisode, currentProvider]);
 
-  // â”€â”€ Inject/remove skip button in WebView page (works in fullscreen too) â”€â”€
-  useEffect(() => {
-    if (type !== "tv" || !introSegments) {
-      if (skipBtnInjectedRef.current) {
-        removePageSkipBtn(webViewRef);
-        skipBtnInjectedRef.current = false;
-      }
-      return;
-    }
-
-    // Clear any old timer
-    if (introCheckTimerRef.current) {
-      clearInterval(introCheckTimerRef.current);
-    }
-
-    introCheckTimerRef.current = setInterval(() => {
-      const ct = progressRef.current.currentTime;
-      if (ct <= 0) return; // Not playing yet
-
-      const active = getActiveSkipSegment(introSegments, ct);
-      if (active) {
-        // Inject on every tick — the page may have removed it (DOM refresh, ad, etc.)
-        // injectPageSkipBtn's inline guard prevents duplicates if button still exists
-        injectPageSkipBtn(webViewRef, active.segment.end_sec, active.label);
-        skipBtnInjectedRef.current = true;
-      } else if (!active && skipBtnInjectedRef.current) {
-        removePageSkipBtn(webViewRef);
-        skipBtnInjectedRef.current = false;
-      }
-    }, 500);
-
-    return () => {
-      if (introCheckTimerRef.current) {
-        clearInterval(introCheckTimerRef.current);
-        introCheckTimerRef.current = null;
-      }
-      if (skipBtnInjectedRef.current) {
-        removePageSkipBtn(webViewRef);
-        skipBtnInjectedRef.current = false;
-      }
-    };
-  }, [type, currentSeason, currentEpisode, introSegments]);
+  // ── Skip-Intro button: now event-driven from the PlaybackEngine (see
+  // updateOverlaysFromEngine). The old 500 ms poll was removed — the engine
+  // emits on every 1 Hz media-hook sample / native progress message, which is
+  // exactly the right cadence and cannot leak state across episodes.
 
   const handleClose = useCallback(() => {
     restorePortrait();
@@ -938,74 +1161,29 @@ export function VideoWebView({
     };
   }, [id, type, providerId, isTV, currentSeason, currentEpisode]);
 
-  // Ã¢â€â‚¬Ã¢â€â‚¬ Next Episode button — poll at 95% and inject floating button in WebView Ã¢â€â‚¬Ã¢â€â‚¬
-  useEffect(() => {
-    if (!isTV) {
-      if (nextEpWatchRef.current) {
-        clearInterval(nextEpWatchRef.current);
-        nextEpWatchRef.current = null;
-      }
-      if (nextEpBtnInjectedRef.current) {
-        removeNextEpisodeBtn(webViewRef);
-        nextEpBtnInjectedRef.current = false;
-      }
-      return;
-    }
-
-    nextEpWatchRef.current = setInterval(() => {
-      const pct = progressRef.current.percent;
-      if (pct < 0.95) return;
-
-      // Reach 95% — stop polling
-      if (nextEpWatchRef.current) {
-        clearInterval(nextEpWatchRef.current);
-        nextEpWatchRef.current = null;
-      }
-
-      // Fetch next episode info once
-      if (nextEpFetchingRef.current) return;
-      nextEpFetchingRef.current = true;
-
-      (async () => {
-        try {
-          const { nextSeason, nextEpisode } = await getNextEpisode(
-            id,
-            currentSeason,
-            currentEpisode,
-          );
-          setNextEpInfo({ season: nextSeason, episode: nextEpisode });
-          // Only inject if it's actually a different episode
-          if (nextSeason !== currentSeason || nextEpisode !== currentEpisode) {
-            injectNextEpisodeBtn(webViewRef);
-            nextEpBtnInjectedRef.current = true;
-          }
-        } catch (e) {
-          console.warn("[NextEp] Failed to fetch next episode:", e);
-        }
-      })();
-    }, 2000);
-
-    return () => {
-      if (nextEpWatchRef.current) {
-        clearInterval(nextEpWatchRef.current);
-        nextEpWatchRef.current = null;
-      }
-      if (nextEpBtnInjectedRef.current) {
-        removeNextEpisodeBtn(webViewRef);
-        nextEpBtnInjectedRef.current = false;
-      }
-      nextEpFetchingRef.current = false;
-    };
-  }, [isTV, id, currentSeason, currentEpisode]);
+  // ── Next-Episode button: now event-driven from the PlaybackEngine (see
+  // updateOverlaysFromEngine). The old 2 s poll is removed — the engine only
+  // arms the button when the playhead genuinely advanced forward to >= 95% this
+  // session, and binds the button to the episode key so it can never stay stuck
+  // on the next episode.
 
   // â”€â”€ Switch to next episode when user taps the floating button â”€â”€
   const goToNextEpisode = useCallback(() => {
     if (!nextEpInfo) return;
+    // Tear down the next-episode affordance immediately so it can't appear to
+    // "stay" while the new episode loads. The engine is re-seeded for the new
+    // episode by the seed effect (episodeKey change), which resets
+    // maxForwardPercent — so the button cannot re-arm until the new episode is
+    // genuinely watched to the end again.
+    if (nextEpBtnInjectedRef.current) {
+      removeNextEpisodeBtn(webViewRef);
+      nextEpBtnInjectedRef.current = false;
+    }
+    armedEpisodeRef.current = "";
+    nextEpFetchingRef.current = false;
+    setNextEpInfo(null);
     setCurrentSeason(nextEpInfo.season);
     setCurrentEpisode(nextEpInfo.episode);
-    setNextEpInfo(null);
-    nextEpBtnInjectedRef.current = false;
-    nextEpFetchingRef.current = false;
     setMountGen((g) => g + 1);
     setLoadState({ type: "LOADING", enteredAt: Date.now() });
   }, [nextEpInfo]);
@@ -1094,10 +1272,130 @@ export function VideoWebView({
   }
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Resume chip helper Ã¢â€â‚¬Ã¢â€â‚¬
+  // ── updateOverlaysFromEngine ─────────────────────────────────────
+  // Single place that turns PlaybackEngine state into (a) throttled storage
+  // saves, (b) the Skip-Intro page button, and (c) the Next-Episode page
+  // button. Called on every engine emit. This REPLACES the old 500 ms intro
+  // poll and 2 s next-episode poll — both were timer-driven and leaked state
+  // across episodes. Now everything is event-driven and episode-bound.
+  function updateOverlaysFromEngine(
+    state: ReturnType<PlaybackEngine["getState"]>,
+  ): void {
+    // (1) Mirror into progressRef so the unchanged stall/pause watchers keep working.
+    progressRef.current = {
+      currentTime: state.currentTime,
+      duration: state.duration,
+      percent: state.percent,
+    };
+
+    const provider = providerRef.current;
+    const isTV = typeRef.current === "tv";
+    const id = idRef.current;
+
+    // (2) Throttled save (replaces the per-message applyProgress save path).
+    const now = Date.now();
+    const pctDiff = state.percent - lastSavePctRef.current;
+    const threshold = state.percent > 0.9 ? 0.02 : 0.05;
+    if (
+      state.currentTime > 5 &&
+      (pctDiff >= threshold || state.percent >= 0.95) &&
+      now - lastSaveAtRef.current > 3000
+    ) {
+      lastSavePctRef.current = state.percent;
+      lastSaveAtRef.current = now;
+      saveProgress({
+        tmdbId: id,
+        mediaType: typeRef.current,
+        providerId: provider?.id,
+        currentTime: state.currentTime,
+        duration: state.duration,
+        percent: state.percent,
+        season: isTV ? seasonRef.current : undefined,
+        episode: isTV ? episodeRef.current : undefined,
+        updatedAt: now,
+        completed: state.percent >= 0.95,
+      }).catch(() => {});
+    }
+    if (isTV && prevPctRef.current < 0.95 && state.percent >= 0.95) {
+      markCompleted(id, "tv", seasonRef.current, episodeRef.current).catch(
+        () => {},
+      );
+    }
+    prevPctRef.current = state.percent;
+
+    // (3) Skip-Intro button — event-driven from engine.currentTime.
+    if (
+      isTV &&
+      introSegmentsRef.current &&
+      provider &&
+      isUiEnabled(provider, "intro")
+    ) {
+      const active = getActiveSkipSegment(
+        introSegmentsRef.current,
+        state.currentTime,
+      );
+      if (active && !skipBtnInjectedRef.current) {
+        injectPageSkipBtn(webViewRef, active.segment.end_sec, active.label);
+        skipBtnInjectedRef.current = true;
+      } else if (!active && skipBtnInjectedRef.current) {
+        removePageSkipBtn(webViewRef);
+        skipBtnInjectedRef.current = false;
+      }
+    } else if (skipBtnInjectedRef.current) {
+      removePageSkipBtn(webViewRef);
+      skipBtnInjectedRef.current = false;
+    }
+
+    // (4) Next-Episode button — episode-bound state machine (the "stuck button" fix).
+    // The button only arms when the playhead genuinely advanced forward to >= 95%
+    // this session (engine.canArmNextEpisode), never when a resume/seek landed us
+    // there. On any episode change the engine resets maxForwardPercent, so the
+    // button cannot re-arm until the new episode is watched to the end again.
+    if (isTV && provider && isUiEnabled(provider, "nextEpisode")) {
+      if (state.episodeKey !== armedEpisodeRef.current) {
+        // Episode changed → tear down any armed/visible button for the old one.
+        if (nextEpBtnInjectedRef.current) {
+          removeNextEpisodeBtn(webViewRef);
+          nextEpBtnInjectedRef.current = false;
+        }
+        armedEpisodeRef.current = state.episodeKey;
+        nextEpFetchingRef.current = false;
+        setNextEpInfo(null);
+      }
+      if (
+        engineRef.current?.canArmNextEpisode() &&
+        !nextEpFetchingRef.current
+      ) {
+        nextEpFetchingRef.current = true;
+        const s = seasonRef.current;
+        const e = episodeRef.current;
+        getNextEpisode(id, s, e)
+          .then(({ nextSeason, nextEpisode }) => {
+            // Changed again while we were fetching — abort.
+            if (state.episodeKey !== armedEpisodeRef.current) return;
+            setNextEpInfo({ season: nextSeason, episode: nextEpisode });
+            if (
+              (nextSeason !== s || nextEpisode !== e) &&
+              !nextEpBtnInjectedRef.current
+            ) {
+              injectNextEpisodeBtn(webViewRef);
+              nextEpBtnInjectedRef.current = true;
+            }
+          })
+          .catch(() => {
+            nextEpFetchingRef.current = false;
+          });
+      }
+    } else if (nextEpBtnInjectedRef.current) {
+      removeNextEpisodeBtn(webViewRef);
+      nextEpBtnInjectedRef.current = false;
+    }
+  }
+  // Keep the mount-once subscription pointed at the latest closure.
+  updateOverlaysRef.current = updateOverlaysFromEngine;
+
   const isLoadingState =
     loadState.type === "LOADING" || loadState.type === "SLOW";
-  const isPlaybackState =
-    loadState.type === "PLAYING" || loadState.type === "STALLED";
   const isErrorState = loadState.type === "FAILED";
 
   return (
@@ -1320,14 +1618,22 @@ export function VideoWebView({
           <PlayerWebView
             key={webViewKey}
             ref={webViewRef}
-            source={{ uri: slideInReady ? watchUrl : "" }}
+            source={{ uri: watchUrl }}
             style={{
               width: "100%",
               height: "100%",
               backgroundColor: colors.playerBg,
             }}
             allowsFullscreenVideo={true}
-            injectedJavaScriptBeforeContentLoaded={injectedScriptValue}
+            injectedJavaScriptBeforeContentLoaded={
+              suppressInjection
+                ? ""
+                : (devtoolPatchScript ? devtoolPatchScript + "\n" : "") +
+                  docStartScript
+            }
+            injectedJavaScriptAfterLoad={
+              suppressInjection ? "" : afterLoadScript
+            }
             referrer={currentProvider?.baseUrl || ""}
             setSupportMultipleWindows={false}
             javaScriptCanOpenWindowsAutomatically={false}
@@ -1342,6 +1648,9 @@ export function VideoWebView({
             userAgent="Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36"
             onLoadingStart={handleLoadingStart}
             onLoadingFinish={(event) => {
+              console.log(
+                `[WATERFALL] RN: onLoadingFinish at ${Date.now() - watchMountMs}ms from watch-mount`,
+              );
               setLoadState((prev) =>
                 prev.type === "LOADING" || prev.type === "SLOW"
                   ? { type: "PLAYING" }
@@ -1398,6 +1707,9 @@ export function VideoWebView({
                   return;
                 }
                 if (data.type === "cf:content-ready") {
+                  console.log(
+                    `[WATERFALL] RN: t3 cf:content-ready at ${Date.now() - watchMountMs}ms from watch-mount`,
+                  );
                   setLoadState({ type: "PLAYING" });
                   navigationReceivedRef.current = true;
                   pageLoadedRef.current = true;
@@ -1447,84 +1759,53 @@ export function VideoWebView({
                   goToNextEpisode();
                   return;
                 }
-                // Reusable progress-save path — shared by the universal
-                // player:progress tracker, screenscape, and VidZee's
-                // PLAYER_EVENT / MEDIA_DATA messages.
-                const applyProgress = (
+                // All native progress sources funnel into the single
+                // PlaybackEngine ingest path. The engine computes percent,
+                // enforces monotonic forward progress, drives the settle window,
+                // and (via its subscription) throttles saves + markCompleted +
+                // the intro / next-episode affordances. We never trust the
+                // provider's own percent — only its raw currentTime/duration.
+                const ingestProgress = (
                   currentTime: number,
                   duration: number,
                 ) => {
-                  // FIX: Never trust the provider's percent (can be 1.0 at start).
-                  // Always compute from currentTime/duration, clamped to [0, 1].
-                  // When duration is missing/0, treat progress as 0 so we never
-                  // falsely mark an episode as completed at 5%.
-                  const newPct =
-                    duration > 30 ? Math.min(currentTime / duration, 1) : 0;
-                  const prevPct = progressRef.current.percent;
-                  if (newPct >= prevPct) {
-                    progressRef.current = {
-                      currentTime,
-                      duration,
-                      percent: newPct,
-                    };
-                  }
-                  if (currentTime > 5) {
-                    const pctDiff = newPct - lastSavePctRef.current;
-                    // Tighter throttle for the final 10%: save every tick near completion
-                    const threshold = newPct > 0.9 ? 0.02 : 0.05;
-                    if (pctDiff >= threshold || newPct >= 0.95) {
-                      lastSavePctRef.current = newPct;
-                      saveProgress({
-                        tmdbId: id,
-                        mediaType: type,
-                        providerId,
-                        currentTime,
-                        duration,
-                        percent: newPct,
-                        season: isTV ? currentSeason : undefined,
-                        episode: isTV ? currentEpisode : undefined,
-                        updatedAt: Date.now(),
-                        completed: newPct >= 0.95,
-                      }).catch(() => {});
-                    }
-                  }
-                  if (isTV && prevPct < 0.95 && newPct >= 0.95) {
-                    markCompleted(
-                      id,
-                      "tv",
-                      currentSeason,
-                      currentEpisode,
-                    ).catch(() => {});
-                  }
+                  engineRef.current?.ingest(currentTime, duration);
                 };
+
+                // App media-hook (progress: 'app' providers) — reads the
+                // cross-origin <video> at ~1 Hz and posts here.
+                if (data.type === "fs:progress") {
+                  const { currentTime = 0, duration = 0 } = data.data ?? {};
+                  ingestProgress(currentTime, duration);
+                  return;
+                }
 
                 if (
                   data.type === "player:progress" ||
                   data.type === "screenscape:progress"
                 ) {
                   const { currentTime = 0, duration = 0 } = data.data ?? {};
-                  applyProgress(currentTime, duration);
+                  ingestProgress(currentTime, duration);
                   return;
                 }
 
                 // VidZee live player events — { event, currentTime, duration }.
                 if (data.type === "PLAYER_EVENT") {
                   const { currentTime = 0, duration = 0 } = data.data ?? {};
-                  if (duration > 0) applyProgress(currentTime, duration);
+                  if (duration > 0) ingestProgress(currentTime, duration);
                   return;
                 }
 
-                // VidZee resume store — keyed by tmdb id, carries the last
-                // watched position + season/episode. Seed resume for the current
-                // title only until live progress has started (then the poll /
-                // PLAYER_EVENT take over and this stays deduped out).
+                // VidZee / viduki resume store — keyed by tmdb id. Seed resume
+                // for the current title only until live progress has started
+                // (then the native events take over).
                 if (data.type === "MEDIA_DATA") {
                   const current = data.data?.[String(id)];
                   if (
                     current?.progress?.duration &&
-                    progressRef.current.percent === 0
+                    engineRef.current?.getState().percent === 0
                   ) {
-                    applyProgress(
+                    ingestProgress(
                       current.progress.watched ?? 0,
                       current.progress.duration,
                     );

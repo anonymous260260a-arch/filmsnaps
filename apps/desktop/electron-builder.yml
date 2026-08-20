@@ -32,6 +32,17 @@ extraResources:
     to: filter-engine/compiled-engine.bin
   - from: ../../packages/filter-compiler/build/android-adblock-patterns.json
     to: filter-engine/android-adblock-patterns.json
+  # v5 split config (OTA-signed). providers.json.sig + the public key let the
+  # app verify any OTA update before applying. filters.txt feeds the engine.
+  - from: ../../providers.json
+    to: providers.json
+  - from: ../../providers.json.sig
+    to: providers.json.sig
+  - from: ../../filters.txt
+    to: filters.txt
+  - from: ../../.keys/filmsnaps-ed25519.pub
+    to: filter-engine/filmsnaps-ed25519.pub
+  # Legacy v4 (mobile-facing; desktop reads v5 first, falls back to this).
   - from: ../../blocklist.json
     to: blocklist.json
   - from: ../web/.next/standalone

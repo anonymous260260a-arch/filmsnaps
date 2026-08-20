@@ -10,7 +10,7 @@ a provider, and ship changes across web, desktop, and mobile.
 3. [Development workflow](#development-workflow)
 4. [Project structure](#project-structure)
 5. [Adding a new provider](#adding-a-new-provider)
-6. [Editing `blocklist.json`](#editing-blocklistjson)
+6. [Editing `providers.json` + `filters.txt` (v5)](#editing-providersjson--filterstxt-v5)
 7. [Testing](#testing)
 8. [Code style](#code-style)
 9. [Common pitfalls](#common-pitfalls)
@@ -23,15 +23,17 @@ FilmSnaps is a pnpm + Turborepo monorepo. Read
 [docs/architecture.md](docs/architecture.md) for the full picture, and
 [docs/security.md](docs/security.md) before touching anything security-related.
 
-| Directory | Package | What it is |
-| --- | --- | --- |
-| `apps/web` | `@filmsnaps/web` | Next.js web app (discovery + watch UI). |
-| `apps/desktop` | `@filmsnaps/desktop` | Electron app wrapping the web app + hardened player. |
-| `apps/mobile` | `@filmsnaps/mobile` | Expo / React Native app. |
-| `apps/feedback` | `@filmsnaps/feedback` | Feedback portal (Cloudflare Workers + D1). |
-| `packages/shared` | `@filmsnaps/shared` | Shared guards, provider registry, types, state. |
-| `packages/adblock-config` | `@filmsnaps/adblock-config` | `blocklist.json` schema + validation. |
-| `packages/filter-compiler` | `@filmsnaps/filter-compiler` | Adblock engine + mobile pattern artifacts. |
+| Directory                  | Package                      | What it is                                               |
+| -------------------------- | ---------------------------- | -------------------------------------------------------- |
+| `apps/web`                 | `@filmsnaps/web`             | Next.js web app (discovery + watch UI).                  |
+| `apps/desktop`             | `@filmsnaps/desktop`         | Electron app wrapping the web app + hardened player.     |
+| `apps/mobile`              | `@filmsnaps/mobile`          | Expo / React Native app.                                 |
+| `apps/feedback`            | `@filmsnaps/feedback`        | Feedback portal (Cloudflare Workers + D1).               |
+| `packages/shared`          | `@filmsnaps/shared`          | Shared guards, provider registry, types, state.          |
+| `packages/adblock-config`  | `@filmsnaps/adblock-config`  | v5 `providers.json` + `filters.txt` schema + validation. |
+| `packages/filter-compiler` | `@filmsnaps/filter-compiler` | `@ghostery/adblocker` engine + mobile pattern export.    |
+
+---
 
 ## Setting up
 
@@ -46,6 +48,8 @@ If you change a filter/blocklist config, regenerate the adblock artifacts:
 ```bash
 pnpm build:filters  # recompiles compiled-engine.bin + android-adblock-patterns.json
 ```
+
+---
 
 ## Development workflow
 
@@ -81,6 +85,8 @@ engine — see `apps/desktop/README.md`.
 cd apps/feedback && pnpm dev   # http://localhost:3001
 ```
 
+---
+
 ## Project structure
 
 ```
@@ -91,16 +97,17 @@ apps/
   feedback/            Next.js + Workers + D1
 packages/
   shared/              shared logic (security bundles, providers, state)
-  adblock-config/      blocklist.json schema + validation
-  filter-compiler/     engine + pattern export
-blocklist.json         provider + blocking rules (single source of truth)
+  adblock-config/      providers.json + filters.txt v5 schema + validation
+  filter-compiler/     @ghostery/adblocker engine + mobile pattern export
+providers.json          v5 config (providers) — single source of truth, Ed25519-signed
+providers.json.sig      Ed25519 signature over providers.json
+filters.txt             v5 config (uBO/EasyList rules)
+blocklist.json          legacy v4 fallback (backward compat)
 ```
 
-## Adding a new provider
+---
 
-Providers are **only** registered in the shared package — there is no separate
-web/mobile provider list. See `apps/desktop/README.md` and
-`apps/mobile/README.md` for per-platform notes.
+## Adding a new provider
 
 ### Step 1 — Register in `@filmsnaps/shared`
 
@@ -115,22 +122,88 @@ web/mobile provider list. See `apps/desktop/README.md` and
   embed: {
     movie: (id: string) => `/embed/movie/${id}`,
     tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}`,
-  },
+  }
 }
 ```
 
-### Step 2 — Add its domains to `blocklist.json`
+### Step 2 — Add its domains to `providers.json` (v5)
 
-Add a `providers[]` entry with `embedDomains` and `cdnDomains`, and any
-`blockHomePaths` for its error-UI "Go Home" links. Run `pnpm build:filters`.
+**File:** `providers.json` (repo root, schema v5)
 
-### Step 3 — Test on each platform
+```json
+{
+  "version": 5,
+  "providers": [
+    {
+      "id": "myprovider",
+      "embedDomains": ["example.com", "www.example.com"],
+      "cdnDomains": ["cdn.example.com"],
+      "enabled": true,
+      "allowServerRedirects": false,
+      "blockHomePaths": ["/go-home"],
+      "apiIntercepts": [],
+      "cosmeticRules": [],
+      "adblockDisabled": false
+    }
+  ],
+  "providerProfiles": {
+    "example.com": {
+      "scripts": ["https://example.com/script.js"],
+      "iframes": ["https://cdn.example.com/frame.html"],
+      "images": ["https://example.com/image.png"]
+    }
+  },
+  "navigationGuard": {
+    "universalBlockPaths": ["/"]
+  },
+  "rules": {
+    "videoDetection": {
+      "extensions": [".mp4", ".m3u8", ".ts"],
+      "pathPatterns": ["seg-", "init-", "chunk-"],
+      "enableSessionTrust": true,
+      "trustTTLMs": 900000
+    },
+    "alwaysBlock": {
+      "domains": [],
+      "pathPatterns": []
+    }
+  }
+}
+```
+
+### Step 3 — Add `filters.txt` entries (optional, for ad blocking)
+
+**File:** `filters.txt` (repo root)
+
+Standard uBO/EasyList syntax. Example rules:
+
+```
+@@||example.com^              # allowlist the embed domain
+||google-analytics.com^$3p   # block 3rd-party trackers
+##.ad-banner                  # cosmetic rule
+```
+
+### Step 4 — Regenerate compiler artifacts
+
+```bash
+pnpm build:filters  # rebuilds compiled-engine.bin + android-adblock-patterns.json
+```
+
+### Step 5 — Test on each platform
 
 - **Web** — iframe mounts the embed; check the video plays without 404s.
 - **Desktop** — full R0–R8 cascade + L5 preload. Verify with
   `FILMSNAPS_AUDIT=1` (see `docs/security.md` → Audit & diagnostics).
 - **Mobile** — native `PlayerWebView` + `shouldInterceptRequest`. Verify no ads,
   popups, or fullscreen issues.
+
+### Step 6 — Sign the config (for OTA)
+
+Run the signing step to generate `providers.json.sig`:
+
+```bash
+pnpm sign:providers  # Ed25519-signs providers.json; .key in .keys/ (gitignored), .pub committed
+```
 
 ### Providers needing custom handling
 
@@ -140,12 +213,24 @@ the mobile `VideoWebView.tsx` / `PlayerWebViewOverlayView.kt` and the desktop
 preload, then test on all platforms. Do **not** weaken shared guards to make a
 provider work — prefer per-provider allowlist entries.
 
-## Editing `blocklist.json`
+---
 
-`blocklist.json` is the single source of truth (v4 schema). See
-[docs/security.md](docs/security.md) → Configuration for the sections. After
-editing, run `pnpm build:filters` so the compiled engine and mobile patterns
-regenerate.
+## Editing `providers.json` + `filters.txt` (v5)
+
+> The v5 config lives in `providers.json` (app logic) + `filters.txt` (uBO
+> syntax), both Ed25519-signed (`providers.json.sig`). A legacy `blocklist.json`
+> (v4) is kept for backward compatibility.
+
+**Workflow:**
+
+1. Edit `providers.json` (add/update provider entries, allowlists, nav-guard,
+   apiIntercepts, cosmetics, `allowServerRedirects`).
+2. Edit `filters.txt` (uBO/EasyList rules — exact/suffix matching only, e.g.
+   `@@||cloudfront.net^`, `||doubleclick.net^$3p`, `##.ad-banner`).
+3. Run `pnpm build:filters` — regenerates `compiled-engine.bin` (desktop) and
+   `android-adblock-patterns.json` (mobile).
+4. Run `pnpm sign:providers` — Ed25519-signs `providers.json` → `providers.json.sig`.
+5. Commit all four files. OTA clients will pull and verify the updated config.
 
 **Safety rules:**
 
@@ -155,6 +240,11 @@ regenerate.
   the cascade on every provider.
 - `blockHomePaths` are per-provider deny-lists — append new home-page shapes as
   discovered.
+- `allowServerRedirects: true` is only for redirect-mesh providers (vidsrc→viduki.net,
+  videasy→videasy.to). Enabling it on a non-redirect provider could let an ad
+  redirect through.
+
+---
 
 ## Testing
 
@@ -174,6 +264,8 @@ Current suites:
 If you change the R0–R8 cascade or the navigation guard, add/extend tests in
 these files.
 
+---
+
 ## Code style
 
 - TypeScript, Prettier-formatted (`pnpm format`).
@@ -185,10 +277,14 @@ these files.
   at runtime — reproduce shared logic there with a comment pointing at the
   canonical source (see `provider-config.ts`, `navigation-guard.ts`).
 
+---
+
 ## Common pitfalls
 
-- **Forgetting `pnpm build:filters`** after editing `blocklist.json` — the
-  desktop engine and mobile patterns go stale.
+- **Forgetting `pnpm build:filters`** after editing `providers.json` or
+  `filters.txt` — the desktop engine and mobile patterns go stale.
+- **Forgetting `pnpm sign:providers`** after editing `providers.json` — OTA
+  clients will reject the unsigned config and keep the last-known-good version.
 - **Adding a provider to only one platform.** Registration lives in
   `@filmsnaps/shared`; each app consumes the same registry.
 - **Weakening guards.** If a provider breaks, investigate the allowlist /

@@ -12,7 +12,12 @@ class PlayerWebviewModule : Module() {
 
     // Warm up Chromium renderer process at module init
     OnCreate {
-      appContext.reactContext?.let { PlayerWebViewOverlayView.warmupRenderer(it) }
+      appContext.reactContext?.let { ctx ->
+        PlayerWebViewOverlayView.warmupRenderer(ctx)
+        // Q7: pre-parse the adblock trie at launch so the first watch open
+        // doesn't pay the parse cost on the hot path.
+        PlayerWebViewOverlayView.warmupAdblockEngine(ctx)
+      }
     }
 
     // Window-Overlay WebView — attaches the real WebView to the Activity window,
@@ -42,8 +47,8 @@ class PlayerWebviewModule : Module() {
         view.userAgent = value
       }
 
-      Prop("injectedJavaScriptAfterLoad") { view: PlayerWebViewOverlayView, value: String ->
-        view.injectedJavaScriptAfterLoad = value
+      Prop("injectedJavaScriptAfterLoad") { view: PlayerWebViewOverlayView, value: String? ->
+        view.injectedJavaScriptAfterLoad = value ?: ""
       }
 
       Prop("allowsFullscreenVideo") { _: PlayerWebViewOverlayView, _: Boolean -> }
@@ -86,6 +91,12 @@ class PlayerWebviewModule : Module() {
       // storage context. This clears any global CookieManager/WebStorage
       // state that survives individual WebView destruction.
       clearWebViewState()
+    }
+
+    // Expose the active OTA config version to RN so the JS guard bundle memo
+    // (VideoWebView.tsx) can invalidate defensively when the config changes.
+    AsyncFunction("getConfigVersion") {
+      BlocklistConfigLoader.getConfigVersion()
     }
   }
 

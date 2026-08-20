@@ -30,7 +30,7 @@ import Animated, {
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 
 interface LoadState {
-  type: "LOADING" | "SLOW" | "PLAYING" | "STALLED" | "FAILED";
+  type: "LOADING" | "SLOW" | "PLAYING" | "FAILED";
   enteredAt?: number;
   reason?: string;
   isCloudflare?: boolean;
@@ -90,7 +90,6 @@ export function PlayerControlOverlay({
       return "Starting stream…";
     }
     if (loadState.type === "SLOW") return "Taking longer than usual";
-    if (loadState.type === "STALLED") return "Source not responding";
     return "";
   };
 
@@ -309,18 +308,6 @@ export function PlayerControlOverlay({
                 </TouchableOpacity>
               </View>
             )}
-          </View>
-        </View>
-      )}
-
-      {/* ── STALLED chip (floating over video) ── */}
-      {loadState.type === "STALLED" && (
-        <View className="absolute top-16 left-0 right-0 z-20 items-center pointer-events-none">
-          <View className="bg-black/70 rounded-full px-4 py-2 flex-row items-center border border-red-500/20">
-            <ActivityIndicator size="small" color={colors.error} />
-            <Text className="text-red-400 text-xs font-semibold ml-2">
-              Source not responding
-            </Text>
           </View>
         </View>
       )}

@@ -425,62 +425,23 @@
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // 2. COSMETIC CSS — injected as soon as <head>/<html> exists, via
-  //    MutationObserver. Re-injects if the page removes our <style>.
-  //    CSS is statically embedded (sandboxed preload has no fs access).
+  // 2. COSMETIC CSS — injected as part of the document's HTML bytes at
+  //    document-start by the preload mechanism (L5/L6) and/or the HTML-bytes
+  //    injection layer (L8 via addScriptToEvaluateOnNewDocument). The CSS is
+  //    part of the document's BYTES, so there is no IPC, no timing window,
+  //    no hostname ambiguity, and no fail-open path (V5 Gap A — the primary
+  //    fix). No MutationObserver needed — CSS injected at bytes level persists
+  //    for the document lifetime and cannot be "removed" by DOM scripts without
+  //    also removing the entire injected script block, which the GUARD sentinel
+  //    prevents.
   // ═══════════════════════════════════════════════════════════════
 
-  const COSMETIC_CSS: string = /* __FS_COSMETIC_CSS__ */ "";
-
-  function injectCSS() {
-    if (!COSMETIC_CSS) return;
-    try {
-      if (document.getElementById("__fs_cosmetic")) return;
-      const style = document.createElement("style");
-      style.id = "__fs_cosmetic";
-      style.textContent = COSMETIC_CSS;
-      (document.head || document.documentElement).appendChild(style);
-    } catch {
-      /* best-effort */
-    }
-  }
-
-  function bootstrapCosmetic() {
-    try {
-      if (document.documentElement) {
-        injectCSS();
-        // Watch for removal by the page — re-inject.
-        const cssGuard = new MutationObserver(() => {
-          if (
-            document.documentElement &&
-            !document.getElementById("__fs_cosmetic")
-          ) {
-            injectCSS();
-          }
-        });
-        cssGuard.observe(document.documentElement, {
-          childList: true,
-          subtree: true,
-        });
-      } else {
-        // Document not ready yet (document-start) — wait for <html>.
-        const obs = new MutationObserver(() => {
-          if (document.documentElement) {
-            injectCSS();
-            obs.disconnect();
-          }
-        });
-        obs.observe(document, { childList: true });
-      }
-    } catch {
-      /* best-effort */
-    }
-  }
-
-  if (typeof document !== "undefined") {
-    bootstrapCosmetic();
-    registerHook("cosmetic-css");
-  }
+  // The COSMETIC_CSS constant is baked into the compiled provider-preload.js at
+  // build time by scripts/build-provider-preload.mjs, which runs
+  // buildAllScriptsWithScriptlets(). It is part of the document's HTML bytes,
+  // injected before first paint. No runtime MutationObserver is needed.
+  // If __FS_COSMETIC_CSS__ is empty, no cosmetic CSS was compiled in — the
+  // static CSS from the HTML injection layer (L8) covers the common cases.
 
   // ═══════════════════════════════════════════════════════════════
   // 3. STORAGE KEY INTERCEPTION — block tracking persistence.
