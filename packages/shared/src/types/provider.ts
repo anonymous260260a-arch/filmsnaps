@@ -20,6 +20,12 @@ export interface ProviderDefinition {
   name: string;
   /** Friendly name shown in the UI dropdown. Falls back to `name` if not set */
   displayName?: string;
+  /**
+   * Short tagline shown next to the display name in server pickers
+   * (rendered as a distinct pill, e.g. "Multi-lang · Fast").
+   * Kept separate from `displayName` so the name stays clean.
+   */
+  note?: string;
   /** Priority for ordering in the UI dropdown. Lower = higher. Defaults to 999 */
   order?: number;
   /** Base URL of the provider */
@@ -74,6 +80,44 @@ export interface ProviderDefinition {
   allowedOrigins?: string[];
 
   /**
+   * V6: marks a provider as a React/Next.js (hydration-sensitive) app.
+   *
+   * When true, the heavy shared guard bundle is deferred to onPageFinished
+   * (post-hydration) and only a MINIMAL disable-devtool redirect blocker runs
+   * at document_start (no global native-patch, no <style> injection, no
+   * innerHTML blank-block). This is required for peachify, whose Next.js
+   * hydration throws React error #418 when the full bundle runs at doc-start.
+   * Default: false. Native side mirrors this via providers.json
+   * providers[].reactSafe.
+   */
+  reactSafe?: boolean;
+
+  /**
+   * Skip ALL React-Native JS injection (injectedJavaScriptBeforeContentLoaded,
+   * injectedJavaScriptAfterLoad, and the handleLoadingStart ref spray) for this
+   * provider. Used for zxcstream (Source 5), whose in-page disable-devtool
+   * detector spams a `type=4` "no devtool access" warning in an infinite loop
+   * whenever our bundle overrides native methods (the uBO scriptlets patch
+   * Object.defineProperty / addEventListener / setInterval, which disable-devtool
+   * flags as tampering). With injection fully disabled the loop stops and the
+   * stream still plays, because video detection (shouldInterceptRequest →
+   * session-trust / cdn-allowlist / media-range) and network ad-blocking
+   * (AdblockEngine) are NATIVE and live outside this RN bundle. Default: false.
+   */
+  disableInjection?: boolean;
+
+  /**
+   * Inject the surgical `disable-devtool` `type=4` (FuncToString) neutralizer at
+   * `document_start`. zxcstream (Source 5) inlines `theajack/disable-devtool`,
+   * whose FuncToString detector is falsely tripped by the Android WebView native
+   * console-serialization bridge. The mask wraps `console.log` so the trap's
+   * counter never increments. Set per-provider (not global) so only affected
+   * providers pay for it. Default: false. Native side mirrors this via
+   * providers.json providers[].disableDevtoolPatch.
+   */
+  disableDevtoolPatch?: boolean;
+
+  /**
    * Positioned overlay divs that cover known ad elements on the provider's page.
    *
    * Same-Origin Policy prevents us from reaching into the cross-origin iframe
@@ -100,13 +144,57 @@ export interface ProviderDefinition {
   forDownloadOnly?: boolean;
 
   /**
+   * @deprecated Use `capabilities.ui.intro` instead. Kept for backward
+   * compatibility — when both are present, `capabilities.ui.intro` wins.
    * Enable the Skip Intro / Skip Recap overlay button for this provider's
-   * player. The button is injected into the provider iframe by the mobile
-   * watch page, so it only matters on mobile (the web app has no skip-intro
-   * button). Absent = enabled (matches current behavior where every provider
-   * gets the button).
+   * player. Absent = enabled.
    */
   skipIntroEnabled?: boolean;
+
+  /**
+   * Per-provider playback capability matrix (the "flexible toggles" the
+   * watch-progress redesign requires). Lets us turn intro / next-episode /
+   * watch-progress on or off for any provider from config, not code, and
+   * declares how each provider feeds time + resume.
+   *
+   * Any field left undefined falls back to the documented default, so we
+   * don't have to touch every provider at once.
+   */
+  capabilities?: ProviderCapabilities;
+}
+
+/**
+ * How each provider feeds playback data + which UI affordances it gets.
+ *
+ * - `progress`:
+ *     - `'native'` — provider posts playback events itself (peachify's
+ *       PLAYER_EVENT, screenscape's watch-history, vidnest/viduki's
+ *       MEDIA_DATA). No in-page poller needed.
+ *     - `'app'` — provider emits NOTHING. The app injects a lightweight
+ *       main-frame media hook (MutationObserver + 1 Hz poll) that reads the
+ *       cross-origin `<video>` currentTime/duration and posts `fs:progress`.
+ *     - `'none'` — don't track progress at all.
+ * - `resume`:
+ *     - `'url'` — app passes a start position via the embed URL (`?startAt=`
+ *       / `?progress=`). App is authoritative; provider must NOT self-resume.
+ *     - `'postMessage'` — app seeks via injected JS after content-ready
+ *       (used for providers with no resume param).
+ *     - `'none'` — provider self-resumes unpredictably; app applies a settle
+ *       window and ignores backward drift rather than fighting it.
+ * - `ui` — which RN overlay buttons the watch page renders. Each defaults
+ *   to `true`.
+ */
+export interface ProviderCapabilities {
+  /** How the app obtains live currentTime/duration. Default `'native'`. */
+  progress?: "native" | "app" | "none";
+  /** How resume is applied. Default `'postMessage'`. */
+  resume?: "url" | "postMessage" | "none";
+  /** Which overlay buttons to render. Each absent = enabled. */
+  ui?: {
+    intro?: boolean;
+    nextEpisode?: boolean;
+    watchProgress?: boolean;
+  };
 }
 
 /**

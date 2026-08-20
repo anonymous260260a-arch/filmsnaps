@@ -22,6 +22,7 @@ import {
   LayoutAnimation,
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
+import { useQuery } from "@tanstack/react-query";
 import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -175,9 +176,6 @@ export default function FalixDownloadScreen() {
     };
   }, [(rawParams.id ?? []).join(",")]);
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<FalixData | null>(null);
   const [selectedSeason, setSelectedSeason] = useState<number>(1);
   const [expandedEpisodes, setExpandedEpisodes] = useState<
     Record<number, boolean>
@@ -187,33 +185,41 @@ export default function FalixDownloadScreen() {
   const { enqueue } = useDownloadInfra();
   const { all: downloads } = useDownloadList();
 
-  // ── Fetch data from Falix API ──
+  // ── Fetch data from Falix API (cached via react-query) ──
+  // The response is cached per (type, id) and reused on re-open / back-nav,
+  // so the page renders instantly from cache instead of reloading every time.
+  const {
+    data: falixData,
+    isLoading: falixLoading,
+    isError: falixIsError,
+    error: falixError,
+  } = useQuery<FalixData | null>({
+    queryKey: ["falix", "detail", params.type, params.id],
+    queryFn: async () => {
+      if (!params.id) return null;
+      const res = await fetch(`${FALIX_API_BASE}/api/id/${params.id}`);
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      return (await res.json()) as FalixData;
+    },
+    enabled: !!params.id,
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const data = falixData ?? null;
+  const loading = falixLoading;
+  const error =
+    falixIsError && falixError
+      ? falixError instanceof Error
+        ? falixError.message
+        : String(falixError)
+      : null;
+
+  // Default the selected season once falix data arrives.
   useEffect(() => {
-    let cancelled = false;
-    async function fetchData() {
-      if (!params.id) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`${FALIX_API_BASE}/api/id/${params.id}`);
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        const json = await res.json();
-        if (cancelled) return;
-        setData(json);
-        if (json.type === "tv" && json.seasons?.length > 0) {
-          setSelectedSeason(json.seasons[0].season_number);
-        }
-      } catch (e: any) {
-        if (!cancelled) setError(e.message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+    if (data?.type === "tv" && data.seasons?.length > 0) {
+      setSelectedSeason(data.seasons[0].season_number);
     }
-    fetchData();
-    return () => {
-      cancelled = true;
-    };
-  }, [params.id, params.type]);
+  }, [data]);
 
   // ── Build download URL ──
   const buildDownloadUrl = (fileId: string, fileName: string): string => {
@@ -225,7 +231,8 @@ export default function FalixDownloadScreen() {
   const downloadFile = useCallback(
     (fileId: string, fileName: string, quality: string) => {
       const url = buildDownloadUrl(fileId, fileName);
-      const filename = `${data?.title || "video"}-${quality}.${fileName.split(".").pop() || "mkv"}`;
+      const ext = fileName.split(".").pop() || "mkv";
+      const filename = `${data?.title || "video"}-${quality}.${ext}`;
 
       enqueue({
         url,
@@ -237,6 +244,7 @@ export default function FalixDownloadScreen() {
         title: data?.title,
         season: params.season,
         episode: params.episode,
+        extension: ext,
       });
     },
     [params.id, params.type, params.season, params.episode, data, enqueue],
@@ -303,7 +311,8 @@ export default function FalixDownloadScreen() {
           onPress: () => {
             for (const { episode, file } of bulkDownloadInfo.fileSelections) {
               const url = buildDownloadUrl(file.id, file.name);
-              const filename = `${data?.title || "video"}-S${String(selectedSeason).padStart(2, "0")}E${String(episode.episode_number).padStart(2, "0")}-${file.quality}.${file.name.split(".").pop() || "mkv"}`;
+              const ext = file.name.split(".").pop() || "mkv";
+              const filename = `${data?.title || "video"}-S${String(selectedSeason).padStart(2, "0")}E${String(episode.episode_number).padStart(2, "0")}-${file.quality}.${ext}`;
 
               enqueue({
                 url,
@@ -315,6 +324,7 @@ export default function FalixDownloadScreen() {
                 title: data?.title,
                 season: selectedSeason,
                 episode: episode.episode_number,
+                extension: ext,
               });
             }
           },
@@ -1059,9 +1069,14 @@ export default function FalixDownloadScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 140 }}
       >
-        {/* Header */}
+        {/* Header — offset below the status bar (insets.top) so the back btn and
+            Downloads link never overlap the phone's top bar */}
         <View
-          style={{ paddingHorizontal: 16, paddingTop: 24, paddingBottom: 16 }}
+          style={{
+            paddingHorizontal: 16,
+            paddingTop: insets.top + 12,
+            paddingBottom: 16,
+          }}
         >
           <View
             style={{

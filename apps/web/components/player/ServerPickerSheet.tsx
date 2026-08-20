@@ -34,7 +34,7 @@ export function ServerPickerSheet({
   selectedId,
   providers: externalProviders,
 }: ServerPickerSheetProps) {
-  const { minimal } = usePlayer();
+  const { minimal, setOverlayActive } = usePlayer();
   const [isOpen, setIsOpen] = useState(false);
 
   const providers = useMemo(
@@ -77,6 +77,11 @@ export function ServerPickerSheet({
       document.body.style.overflow = "";
     };
   }, [isOpen]);
+
+  // Sync sheet open state with overlayActive so the native view hides.
+  useEffect(() => {
+    setOverlayActive(isOpen);
+  }, [isOpen, setOverlayActive]);
 
   const handleSelect = useCallback(
     (p: ProviderDefinition) => {
@@ -203,12 +208,23 @@ export function ServerPickerSheet({
                     />
 
                     {/* Name */}
-                    <span
-                      className={`flex-1 text-sm font-semibold ${
-                        isActive ? "text-[#D4A237]" : "text-[#F4F4F5]"
-                      }`}
-                    >
-                      {p.displayName || p.name}
+                    <span className="flex-1 min-w-0">
+                      <span
+                        className={`block text-sm font-semibold truncate ${
+                          isActive ? "text-[#D4A237]" : "text-[#F4F4F5]"
+                        }`}
+                      >
+                        {p.displayName || p.name}
+                      </span>
+                      {p.note && (
+                        <span
+                          className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full
+                          bg-[#D4A237]/15 text-[#D4A237] text-[9px] font-bold
+                          border border-[#D4A237]/30"
+                        >
+                          {p.note}
+                        </span>
+                      )}
                     </span>
 
                     {/* Latency */}

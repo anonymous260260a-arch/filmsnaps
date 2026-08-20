@@ -16,28 +16,30 @@ Expo/React Native mobile app, and a feedback portal.
 
 ## Apps
 
-| App                                 | Package               | Stack                              | Description                              |
-| ----------------------------------- | --------------------- | ---------------------------------- | ---------------------------------------- |
-| [Web](apps/web/README.md)           | `@filmsnaps/web`      | Next.js 16 (App Router) + Tailwind | Discovery UI, watch pages, API routes    |
-| [Desktop](apps/desktop/README.md)   | `@filmsnaps/desktop`  | Electron 43 + Next.js standalone   | Web UI + native hardened player          |
-| [Mobile](apps/mobile/README.md)     | `@filmsnaps/mobile`   | Expo SDK 55 / React Native 0.83    | Phone app with downloads + native player |
-| [Feedback](apps/feedback/README.md) | `@filmsnaps/feedback` | Next.js 16 + Cloudflare Workers/D1 | Public feedback portal                   |
+| App                                 | Package               | Stack                              | Description                                              |
+| ----------------------------------- | --------------------- | ---------------------------------- | -------------------------------------------------------- |
+| [Web](apps/web/README.md)           | `@filmsnaps/web`      | Next.js 16 (App Router) + Tailwind | Discovery UI, watch pages, API routes                    |
+| [Desktop](apps/desktop/README.md)   | `@filmsnaps/desktop`  | Electron 43 + Next.js standalone   | Web UI + native hardened player (WebContentsView hybrid) |
+| [Mobile](apps/mobile/README.md)     | `@filmsnaps/mobile`   | Expo SDK 55 / React Native 0.83    | Phone app with downloads + native player                 |
+| [Feedback](apps/feedback/README.md) | `@filmsnaps/feedback` | Next.js 16 + Cloudflare Workers/D1 | Public feedback portal                                   |
 
 ## Packages
 
-| Package                      | Description                                                           |
-| ---------------------------- | --------------------------------------------------------------------- |
-| `@filmsnaps/shared`          | Shared guard scripts, provider registry, types, state, design tokens. |
-| `@filmsnaps/adblock-config`  | `blocklist.json` schema + validation.                                 |
-| `@filmsnaps/filter-compiler` | Adblocker engine + mobile pattern export artifacts.                   |
+| Package                      | Description                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------ |
+| `@filmsnaps/shared`          | Shared guard scripts, provider registry, types, state, design tokens.                |
+| `@filmsnaps/adblock-config`  | v5 `providers.json` + `filters.txt` schema + validation + Ed25519 OTA config loader. |
+| `@filmsnaps/filter-compiler` | Adblocker engine (@ghostery/adblocker WASM) + mobile pattern export.                 |
 
 ---
 
 ## Documentation
 
 - **[Security Architecture](docs/security.md)** — the full security stack: R0–R8
-  rule cascade and L2–L8 desktop layers, mobile native protection, and the
-  `blocklist.json` configuration.
+  rule cascade and L2–L8 desktop layers, mobile native protection, WebContentsView hybrid,
+  and the `providers.json` + `filters.txt` v5 configuration.
+- **[Security Expert Review](docs/security-expert-review.md)** — external expert review
+  and implementation status.
 - **[Architecture](docs/architecture.md)** — repository layout, data flow,
   builds, and CI.
 - **[Contributing](CONTRIBUTING.md)** — how to set up, develop, add a provider,
@@ -79,16 +81,17 @@ build profiles).
 
 ## Common commands
 
-| Command                  | Purpose                                                      |
-| ------------------------ | ------------------------------------------------------------ |
-| `pnpm build`             | Build all apps/packages (Turborepo).                         |
-| `pnpm lint`              | Lint everything.                                             |
-| `pnpm test`              | Run the Vitest suites (shared + desktop security).           |
-| `pnpm typecheck:desktop` | Typecheck the desktop app.                                   |
-| `pnpm format`            | Prettier across the repo.                                    |
-| `pnpm build:filters`     | Regenerate adblocker/filter artifacts from `blocklist.json`. |
-| `pnpm cf:deploy`         | Deploy the web app to Cloudflare Pages.                      |
-| `pnpm dist:desktop`      | Build the desktop installer.                                 |
+| Command                  | Purpose                                                                      |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| `pnpm build`             | Build all apps/packages (Turborepo).                                         |
+| `pnpm lint`              | Lint everything.                                                             |
+| `pnpm test`              | Run the Vitest suites (shared + desktop security).                           |
+| `pnpm typecheck:desktop` | Typecheck the desktop app.                                                   |
+| `pnpm format`            | Prettier across the repo.                                                    |
+| `pnpm build:filters`     | Regenerate adblocker/filter artifacts from `providers.json` + `filters.txt`. |
+| `pnpm sign:providers`    | Sign `providers.json` with Ed25519 for OTA.                                  |
+| `pnpm cf:deploy`         | Deploy the web app to Cloudflare Pages.                                      |
+| `pnpm dist:desktop`      | Build the desktop installer.                                                 |
 
 ---
 
@@ -102,6 +105,11 @@ build profiles).
 - **Multi-provider player** — provider registry in `@filmsnaps/shared`; each
   platform mounts embeds with native security layers (see
   [docs/security.md](docs/security.md)).
+- **Native hardened desktop player** — WebContentsView hybrid (Electron 43), L8 `Page.addScriptToEvaluateOnNewDocument` HTML-bytes injection (replaces disabled CDP-Fetch that dropped renderer headers → Cloudflare 403),
+  `@ghostery/adblocker` (adblock-rs WASM), session trust with MIME-based 15-min TTL, `allowServerRedirects` for redirect-mesh providers.
+- **Native hardened mobile player** — `PlayerWebView` native Expo module with `shouldInterceptRequest` filtering (Aho-Corasick unified trie), Ed25519-verified OTA config with ring-buffer rollback, 3×-failure watchdog, NavGuard server-redirect fix, session trust with 15-min TTL, and cosmetic rules from config.
+- **Signed OTA config** — `providers.json` + `filters.txt` v5, Ed25519-signed, ring-buffer rollback (3 configs),
+  3×-failure watchdog with local `heal-events.log` on both desktop and mobile.
 - **Mobile downloads** — SQLite-backed episode/movie downloads with a native
   downloader.
 - **Feedback portal** — account-free bug reports, feature requests, roadmap,

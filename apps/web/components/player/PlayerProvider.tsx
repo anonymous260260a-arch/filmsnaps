@@ -44,6 +44,8 @@ export interface PlayerProviderState {
   contentId: string;
   /** Whether the page is in minimal/embedded mode */
   minimal: boolean;
+  /** Whether ANY React overlay is open that must sit above the native view (server dropdown, CPU warning, error state, loading). */
+  overlayActive: boolean;
 }
 
 export interface PlayerProviderActions {
@@ -59,6 +61,8 @@ export interface PlayerProviderActions {
   toggleFullscreen: () => void;
   goToNextEpisode: () => void;
   goToPrevEpisode: () => void;
+  /** Signal that a React overlay (server dropdown, CPU warning, error, loading) is open/closed so the native view can hide/show. */
+  setOverlayActive: (active: boolean) => void;
 }
 
 type PlayerContextValue = PlayerProviderState & PlayerProviderActions;
@@ -97,15 +101,38 @@ export function PlayerProvider({
   const [iframeLoadError, setIframeLoadError] = useState(false);
   const [buffering, setBuffering] = useState(false);
   const [playerReady, setPlayerReady] = useState(false);
+  const [overlayActive, setOverlayActive] = useState(false);
   const refreshKeyRef = useRef(0);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Fullscreen listener
+  // Fullscreen listener. In Electron the provider embed renders in a NATIVE
+  // WebContentsView (Phase 3 hybrid) that sits above the DOM, so fullscreen
+  // must be WINDOW-level (player:fullscreen → mainWindow.setFullScreen), not
+  // DOM documentElement.requestFullscreen (which fullscreens only the Next.js
+  // page and leaves the native view un-fullscreened). In the web, DOM
+  // fullscreen is correct. The renderer tracks window fullscreen state pushed
+  // from main via player:state (isFullscreen), falling back to
+  // document.fullscreenElement when not in Electron.
+  const isElectron = !!(
+    typeof window !== "undefined" && window.electronAPI?.isDesktop
+  );
+
   useEffect(() => {
     const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    const unsubscribe = isElectron
+      ? window.electronAPI?.player.onState((state) => {
+          // player:state carries isFullscreen on fullscreen transitions.
+          if (typeof (state as any).isFullscreen === "boolean") {
+            setIsFullscreen((state as any).isFullscreen);
+          }
+        })
+      : undefined;
     document.addEventListener("fullscreenchange", onFsChange);
-    return () => document.removeEventListener("fullscreenchange", onFsChange);
-  }, []);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFsChange);
+      unsubscribe?.();
+    };
+  }, [isElectron]);
 
   const refreshIframe = useCallback(() => {
     refreshKeyRef.current += 1;
@@ -113,12 +140,18 @@ export function PlayerProvider({
   }, []);
 
   const toggleFullscreen = useCallback(() => {
-    if (!document.fullscreenElement) {
+    if (isElectron) {
+      const api = window.electronAPI;
+      if (!api) return;
+      // window.electronAPI.player.setFullscreen drives mainWindow.setFullScreen;
+      // the current state is tracked in the context (isFullscreen).
+      api.player.setFullscreen(!isFullscreen);
+    } else if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => {});
     } else {
       document.exitFullscreen();
     }
-  }, []);
+  }, [isElectron, isFullscreen]);
 
   const goToNextEpisode = useCallback(() => {
     setActiveEpisode((prev) => Math.min(prev + 1, maxEpisodeCount));
@@ -141,6 +174,7 @@ export function PlayerProvider({
     mediaType,
     contentId,
     minimal,
+    overlayActive,
     setSelectedProvider,
     setSelectedSeason,
     setActiveEpisode,
@@ -153,6 +187,7 @@ export function PlayerProvider({
     toggleFullscreen,
     goToNextEpisode,
     goToPrevEpisode,
+    setOverlayActive,
   };
 
   return (

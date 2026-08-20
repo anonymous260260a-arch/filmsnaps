@@ -15,18 +15,18 @@ is registered in the proxy allowlist.
 
 ## What is in scope (all in `apps/web`)
 
-| Path | Lines | Purpose |
-| --- | --- | --- |
-| `lib/movieProviders/protection.ts` | ~940 | Runtime protection script generation + HTML/CSS rewriting. |
-| `lib/movieProviders/tlsFetch.ts` | ~450 | TLS-fingerprinting HTTP client (`fetch` with browser-like TLS/JA3). |
-| `lib/movieProviders/flareSolverr.ts` | ~270 | Headless-browser Cloudflare challenge solver (Docker service, `FLARESOLVERR_URL`). |
-| `lib/movieProviders/cloudflareDetect.ts` | ~145 | Detect whether a response is a Cloudflare challenge page. |
-| `lib/movieProviders/cspBuilder.ts` | ~160 | CSP header builder for proxied pages. |
-| `app/api/player/[provider]/route.ts` | — | Proxy entry: fetches embed page, runs filter engine, injects protection. |
-| `app/api/player/[provider]/[...path]/route.ts` | — | Asset proxy (rewrites resource URLs through the filter engine). |
-| `app/api/player/[provider]/asset/route.ts` | — | Single-asset proxy variant. |
-| `app/api/[provider]/[...asset]/route.ts` | — | Generic asset proxy fallback. |
-| `app/api/player/falix/route.ts` | — | Falix-specific player route. |
+| Path                                           | Lines | Purpose                                                                            |
+| ---------------------------------------------- | ----- | ---------------------------------------------------------------------------------- |
+| `lib/movieProviders/protection.ts`             | ~940  | Runtime protection script generation + HTML/CSS rewriting.                         |
+| `lib/movieProviders/tlsFetch.ts`               | ~450  | TLS-fingerprinting HTTP client (`fetch` with browser-like TLS/JA3).                |
+| `lib/movieProviders/flareSolverr.ts`           | ~270  | Headless-browser Cloudflare challenge solver (Docker service, `FLARESOLVERR_URL`). |
+| `lib/movieProviders/cloudflareDetect.ts`       | ~145  | Detect whether a response is a Cloudflare challenge page.                          |
+| `lib/movieProviders/cspBuilder.ts`             | ~160  | CSP header builder for proxied pages.                                              |
+| `app/api/player/[provider]/route.ts`           | —     | Proxy entry: fetches embed page, runs filter engine, injects protection.           |
+| `app/api/player/[provider]/[...path]/route.ts` | —     | Asset proxy (rewrites resource URLs through the filter engine).                    |
+| `app/api/player/[provider]/asset/route.ts`     | —     | Single-asset proxy variant.                                                        |
+| `app/api/[provider]/[...asset]/route.ts`       | —     | Generic asset proxy fallback.                                                      |
+| `app/api/player/falix/route.ts`                | —     | Falix-specific player route.                                                       |
 
 **Total: ~2,000 lines of dormant-but-intact code.**
 
@@ -66,7 +66,7 @@ requested.
    redirect for Cloudflare-protected pages).
 2. Add the provider id(s) to `PROXIED_PROVIDERS` in `WatchClient.tsx`.
 3. Ensure the provider is registered in `packages/shared/src/providers/registry.ts`
-   and has a `blocklist.json` entry (see `docs/security.md`).
+   and has a `providers.json` entry (see `docs/security.md`).
 
 ## Alternatives considered
 

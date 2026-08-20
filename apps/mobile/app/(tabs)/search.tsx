@@ -105,8 +105,22 @@ export default function SearchScreen() {
     [selectedGenreIds, sortBy, page],
   );
 
-  const movieFilterResult = useFilteredMovies(movieParams);
-  const tvFilterResult = useFilteredTVShows(tvParams);
+  // Only fetch the discover queries when there is actually something to load:
+  // a genre is selected, a media-type filter is active, or a search is running.
+  // Without this, the hooks fire a "discover with no filters" request on every
+  // mount (even when nothing is selected), flipping isLoading true and briefly
+  // painting the skeleton loader over the empty state.
+  const movieEnabled =
+    !isSearching &&
+    hasFilters &&
+    (mediaTypeFilter === "movie" || mediaTypeFilter === "all");
+  const tvEnabled =
+    !isSearching &&
+    hasFilters &&
+    (mediaTypeFilter === "tv" || mediaTypeFilter === "all");
+
+  const movieFilterResult = useFilteredMovies(movieParams, movieEnabled);
+  const tvFilterResult = useFilteredTVShows(tvParams, tvEnabled);
 
   // ── Determine active data source ──
   const isFilterMode = isSearching || hasFilters;
@@ -292,7 +306,10 @@ export default function SearchScreen() {
   const itemHeight = useMemo(() => itemWidth * 1.5 + 40, [itemWidth]);
 
   // ── Loading state (first page only) ──
+  // Gated on isFilterMode so that an unselected, empty search page (nothing
+  // typed, no filters) never shows the skeleton — there is nothing to load.
   const isFirstLoad =
+    isFilterMode &&
     page === 1 &&
     (isSearching
       ? searchResult.isLoading

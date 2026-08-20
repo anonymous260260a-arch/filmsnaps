@@ -1,6 +1,6 @@
 {
-  "latestVersion": "1.0.7",
-  "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v1.0.7/filmsnaps-v1.0.7.apk",
-  "releaseNotes": "New VidZee provider · ad-blocking engine degenerate-pattern fix (VidZee streams no longer blocked) · Screenscape ad-suppression V5 (stale-anchor API payload, storage seeding, document-start cosmetics) · Provider home-page escape guard (stay in the player) · Swipe-based tab navigation.",
+  "latestVersion": "2.0.0",
+  "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.0.0/filmsnaps-v2.0.0.apk",
+  "releaseNotes": "v2.0.0 — Desktop security architecture overhaul · Android provider redirect fixes · Settings Community section + Star on GitHub · Download engine v2 + feedback portal",
   "versionsUrl": "https://filmsnap-pro.netlify.app/versions"
 }

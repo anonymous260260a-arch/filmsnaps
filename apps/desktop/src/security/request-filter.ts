@@ -33,7 +33,6 @@ import {
   initUrlSubstringFilter,
   getSubstringFilterStats,
 } from "./url-substring-filter";
-import { registerHtmlInjection } from "./html-injector";
 import { addGlobalCdnAllowlistDomains } from "./provider-config";
 import type { SessionTrustManager } from "./session-trust";
 
@@ -217,13 +216,15 @@ export function createProviderSession(providerId?: string): Session {
     );
   }
 
-  // ── Network-layer HTML protection injection ──
-  // THE WHOLE-PAGE GUARANTEE: bake the protection script into every HTML
-  // document at the network layer, so coverage does not depend on the preload
-  // mechanism reaching every frame (programmatic frames, about:blank/srcdoc).
-  // Must be registered before the session's first request — arming here at
-  // startup (before any webview exists) closes the window by construction.
-  registerHtmlInjection(providerSession);
+  // ── Network-layer HTML protection injection (L8) ──
+  // THE WHOLE-PAGE GUARANTEE. L8 now runs on the provider webview's CDP
+  // debugger session (provider-security.ts attachProviderSecurity → Fetch
+  // domain), NOT session.protocol.handle — the protocol-handle form dropped
+  // renderer-context headers on re-issue → Cloudflare 403 (expert V8), so it
+  // was DISABLED. The CDP-Fetch form pauses html Document responses in the
+  // renderer's network stack and rewrites them with the original headers, so
+  // coverage no longer depends on the preload mechanism reaching every frame
+  // (programmatic frames, about:blank/srcdoc). Armed per-webview on attach.
 
   // ── Provider preload (PRIMARY in-page security) ──
   // The session-level preload runs at document-start in the main frame AND
@@ -412,26 +413,64 @@ function setupRequestFilter(session: Session, providerId?: string): void {
 // ── Session trust tracking ──────────────────────────────────────────────────
 
 /**
+ * Extract the Content-Type from a webRequest headers object (case-insensitive
+ * — Electron normalizes keys to lowercase but some providers' headers arrive
+ * mixed-case). Returns undefined when absent.
+ */
+function pickContentType(
+  responseHeaders?: Record<string, string[]>,
+): string | undefined {
+  if (!responseHeaders) return undefined;
+  const ct = responseHeaders["content-type"] ?? responseHeaders["Content-Type"];
+  return ct && ct.length > 0 ? ct[0] : undefined;
+}
+
+/**
  * Track responses to build session trust (R0).
  * When a response has video content-type or URL patterns,
  * the host is trusted for subsequent requests.
  */
 function setupTrustTracking(session: Session): void {
-  // Check responses for video content indicators
+  // ── Phase 2c: onHeadersReceived-side trust acquisition ──
+  // Trust a host as soon as the RESPONSE HEADERS identify video content,
+  // before the body is even downloaded. A .m3u8 manifest fetched by the player
+  // is a fetch-type request that MUST be allowed to reach the engine; waiting
+  // for onCompleted (body fully received) is too late for a sequence where the
+  // manifest's own subsequent segments are fetched immediately. The MIME
+  // sniffer is the authority here (mime-sniffer.isVideoResponse) — a real
+  // video server labels its responses video/*, dash+xml, mpegurl, or a
+  // corroborated octet-stream.
+  //
+  // NOTE: this handler runs IN ADDITION to setupSecurityHeaders' own
+  // onHeadersReceived (they stack — each listener is invoked per response).
+  session.webRequest.onHeadersReceived(
+    { urls: ["*://*/*"] },
+    (details, callback) => {
+      try {
+        const trustManager = trustManagers.get(session);
+        if (trustManager) {
+          const ct = pickContentType(details.responseHeaders);
+          const trusted = checkResponseForTrust(trustManager, details.url, ct);
+          if (trusted) {
+            console.log(
+              `[SecurityFilter] Trust added (headers): ${new URL(details.url).hostname} (Content-Type: ${ct ?? "(none)"})`,
+            );
+          }
+        }
+      } catch {
+        // Trust acquisition is best-effort — never break a response over it.
+      }
+      callback({});
+    },
+  );
+
+  // Check responses for video content indicators (body-level fallback)
   session.webRequest.onCompleted({ urls: ["*://*/*"] }, (details) => {
     const trustManager = trustManagers.get(session);
     if (!trustManager) return;
 
     // Get the Content-Type from response headers
-    let contentType: string | undefined;
-    if (details.responseHeaders) {
-      const ctHeader =
-        details.responseHeaders["content-type"] ||
-        details.responseHeaders["Content-Type"];
-      if (ctHeader && ctHeader.length > 0) {
-        contentType = ctHeader[0];
-      }
-    }
+    const contentType = pickContentType(details.responseHeaders);
 
     // Check if this response indicates video content
     const trusted = checkResponseForTrust(
@@ -618,8 +657,9 @@ export function setupSecurityHeaders(session: Session): void {
         // Intentionally permissive — provider players need inline scripts/eval.
         // Real protection comes from the R0-R8 cascade (onBeforeRequest),
         // the navigation guard (will-navigate / will-redirect), and the
-        // network-layer HTML injection (html-injector.ts) which inlines the
-        // protection script at the top of <head>.
+        // CDP-Fetch network-layer HTML injection (L8, html-injector.ts) which
+        // inlines the protection script at the top of <head> in the renderer's
+        // own network stack (no header drop → no Cloudflare 403).
         //
         // NOTE: no script-src directive. A script-src would gate the injected
         // protection <script> on 'unsafe-inline' (or a nonce) — a spec-change

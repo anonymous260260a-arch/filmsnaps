@@ -1,17 +1,27 @@
 /**
- * Guide — How to use FilmSnaps, play downloaded videos, use VLC for MKV,
- * change audio tracks, and more.
+ * Guide — focused help for FilmSnaps mobile.
+ *
+ * Purpose:
+ *  1. Choosing and switching playback sources (servers).
+ *  2. Downloading and playing back your downloads.
+ *  3. Switching audio tracks in downloaded videos (via VLC).
+ *
+ * Reachable from Settings → "How to Use", and deep-linked from the player's
+ * source picker (`?section=sources`). Section anchors are stable so in-app
+ * links keep scrolling to the right help.
  */
 
 import React, { useCallback, useRef, useEffect } from "react";
 import { View, Text, ScrollView, Linking, Alert, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { TouchableOpacity } from "react-native";
 import { BackIcon } from "../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
-import { TouchableOpacity } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useSafeNavigation } from "@/lib/navigation";
 import { colors } from "../theme/colors";
+
+type SectionId = "sources" | "downloads" | "play-downloads" | "audio";
 
 export default function GuideScreen() {
   const nav = useSafeNavigation();
@@ -19,21 +29,20 @@ export default function GuideScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const { section } = useLocalSearchParams<{ section?: string }>();
 
-  // Section layout tracking (y-offset per sectionId)
+  // y-offset of each section, captured via onLayout so we can scroll-to-section.
   const sectionLayouts = useRef<Record<string, number>>({});
 
-  const handleSectionLayout = useCallback((sectionId: string, y: number) => {
-    sectionLayouts.current[sectionId] = y;
+  const handleSectionLayout = useCallback((id: string, y: number) => {
+    sectionLayouts.current[id] = y;
   }, []);
 
-  // Scroll to section on mount if hash provided
+  // Scroll to a deep-linked section on mount.
   useEffect(() => {
-    if (section && sectionLayouts.current[section]) {
+    const id = section as SectionId | undefined;
+    if (id && sectionLayouts.current[id] != null) {
+      const y = sectionLayouts.current[id];
       setTimeout(() => {
-        const y = sectionLayouts.current[section];
-        if (y != null) {
-          scrollRef.current?.scrollTo({ y, animated: true });
-        }
+        scrollRef.current?.scrollTo({ y, animated: true });
       }, 300);
     }
   }, [section]);
@@ -74,137 +83,93 @@ export default function GuideScreen() {
           style={{ backgroundColor: colors.gold }}
         />
 
-        {/* ── Getting Started ── */}
+        {/* ── Playback sources ── */}
         <GuideSection
-          icon="compass-outline"
-          title="Getting Started"
-          sectionId="getting-started"
-          onLayout={handleSectionLayout}
-        >
-          <GuideStep
-            number={1}
-            text="Open FilmSnaps and browse or search for your favorite movies and TV shows."
-          />
-          <GuideStep
-            number={2}
-            text="Tap on any title to view details, available streaming sources, and related content."
-          />
-          <GuideStep
-            number={3}
-            text="Use the bottom tabs to switch between Home, Search, and Settings."
-          />
-        </GuideSection>
-
-        {/* ── Watching Content ── */}
-        <GuideSection
-          icon="play-circle-outline"
-          title="Watching Content"
+          icon="server-outline"
+          title="Choosing & Switching Sources"
           sectionId="sources"
           onLayout={handleSectionLayout}
         >
-          <GuideStep
-            number={1}
-            text={'Open a movie or TV show and tap "Watch" to start streaming.'}
-          />
-          <GuideStep
-            number={2}
-            text="If multiple sources are available, the top one in your source order is tried first."
-          />
-          <GuideStep
-            number={3}
-            text="Use the player controls to play, pause, seek, or go fullscreen."
-          />
-          <GuideNote text="For TV shows, select the season and episode before starting playback." />
-        </GuideSection>
-
-        {/* ── Downloading Content ── */}
-        <GuideSection
-          icon="download-outline"
-          title="Downloading Content"
-          sectionId="downloading"
-          onLayout={handleSectionLayout}
-        >
-          <GuideStep
-            number={1}
-            text="Open a movie or TV show and tap the download button next to a supported source."
-          />
-          <GuideStep
-            number={2}
-            text="Choose your preferred quality (higher quality = larger file)."
-          />
-          <GuideStep
-            number={3}
-            text="Track download progress from the gold indicator at the bottom of the screen, or open the Downloads page."
-          />
-          <GuideStep
-            number={4}
-            text="Once complete, tap the download to play in-app or view the file."
-          />
-          <GuideNote text="Download over Wi-Fi to save mobile data. You can enable download over cellular in your settings." />
-        </GuideSection>
-
-        {/* ── Watching Your Downloads ── */}
-        <GuideSection
-          icon="play-outline"
-          title="Watching Your Downloads"
-          sectionId="watch-downloads"
-          onLayout={handleSectionLayout}
-        >
           <GuideParagraph>
-            Completed downloads can be played directly in the app — tap any
-            completed download in your Downloads list to start playback with
-            full controls.
+            FilmSnaps can stream from several providers. When you open a movie
+            or show, the source listed at the bottom of the player ("source
+            pill") is the one being used right now.
           </GuideParagraph>
-          <GuideStep
-            number={1}
-            text="Open the Downloads page from the Library tab or the gold download indicator."
-          />
-          <GuideStep
-            number={2}
-            text="Tap a completed download to play it in-app (recommended)."
-          />
-          <GuideStep
-            number={3}
-            text="For MKV files with advanced audio tracks, use VLC instead (see next section)."
-          />
-          <GuideNote text="In-app playback supports most formats. For MKV with multiple audio tracks, VLC gives you full control." />
-        </GuideSection>
 
-        {/* ── Playing MKV Files with VLC ── */}
-        <GuideSection
-          icon="videocam-outline"
-          title="Playing MKV Files with VLC (Advanced)"
-          sectionId="vlc"
-          onLayout={handleSectionLayout}
-        >
-          <GuideParagraph>
-            Some downloaded files (especially MKV) contain high-quality video
-            with multiple audio tracks and subtitle streams. For these files,
-            you can use <GuideLink text="VLC for Mobile" /> — a free,
-            open-source media player with full codec support.
-          </GuideParagraph>
-          <GuideSubStep
+          <GuideStep
             number={1}
-            text="Install VLC for Mobile from your app store (free, no ads)."
-          />
-          <GuideSubStep
-            number={2}
             text={
-              'Open VLC and navigate to the "Files" or "Downloads" section.'
+              "While playing, tap the source pill at the bottom of the player" +
+              " — or swipe up on it — to open the source list."
             }
           />
-          <GuideSubStep
+          <GuideStep
+            number={2}
+            text="The checkmark shows your currently active source. Tap any other source to switch."
+          />
+          <GuideStep
             number={3}
-            text="Find your downloaded file (tap Downloads in FilmSnaps to see the file location)."
+            text="Switching sources restarts playback from the last position you reached on that source."
           />
-          <GuideSubStep
+          <GuideStep
             number={4}
-            text="Tap the file in VLC to play with full codec support."
+            text={
+              "Can't connect to a source? While loading, the 'Source not responding'" +
+              " message shows a 'Choose a source' button — tap it to pick another."
+            }
           />
-          <GuideNote text="VLC is only needed for MKV files with advanced features. Most downloads play fine in-app." />
+          <GuideNote text="You can set a preferred source in Settings → Default Source. If it isn't available, the next best source is used automatically." />
         </GuideSection>
 
-        {/* ── Changing Audio Tracks ── */}
+        {/* ── Downloading ── */}
+        <GuideSection
+          icon="download-outline"
+          title="Downloading"
+          sectionId="downloads"
+          onLayout={handleSectionLayout}
+        >
+          <GuideStep
+            number={1}
+            text="On a title's details page, tap the download button on a supported source."
+          />
+          <GuideStep
+            number={2}
+            text="Higher quality means a larger file. Keep Screen On while downloading."
+          />
+          <GuideStep
+            number={3}
+            text="Watch progress on the gold download indicator at the bottom of the tab bar, or open Library → Downloads."
+          />
+          <GuideStep
+            number={4}
+            text="When a download finishes, it's saved to your device's Downloads folder and appears in the Downloads list with a green check."
+          />
+          <GuideNote text="Download over Wi-Fi where possible. Enable 'Download over Cellular' in Settings to allow it on mobile data." />
+        </GuideSection>
+
+        {/* ── Playing downloads ── */}
+        <GuideSection
+          icon="play-outline"
+          title="Playing Your Downloads"
+          sectionId="play-downloads"
+          onLayout={handleSectionLayout}
+        >
+          <GuideStep
+            number={1}
+            text="Open Library → Downloads and tap any completed download to play it in-app."
+          />
+          <GuideStep
+            number={2}
+            text="Files stored as MKV play in-app, but for full codec support and audio/subtitle track control, open them in VLC (see the VLC button on each download)."
+          />
+          <GuideStep
+            number={3}
+            text="Downloads stay on your device after closing the app — they play offline anytime."
+          />
+          <GuideNote text="You can share or delete a download from its row in the Downloads list." />
+        </GuideSection>
+
+        {/* ── Audio tracks ── */}
         <GuideSection
           icon="volume-high-outline"
           title="Changing Audio Tracks"
@@ -212,35 +177,39 @@ export default function GuideScreen() {
           onLayout={handleSectionLayout}
         >
           <GuideParagraph>
-            Videos with multiple audio tracks (different languages, commentary,
-            or 5.1 surround) let you switch between them during playback:
+            Filmsnaps plays downloads in-app, but the in-app player doesn't
+            expose per-track audio selection. For videos with multiple audio
+            tracks (different languages, commentary, or surround), open the file
+            in VLC instead, which gives full audio-track control.
           </GuideParagraph>
+
           <GuideStep
             number={1}
-            text="While playing a video in VLC, tap the screen to show the on-screen controls."
+            text="On a completed download in Library → Downloads, tap the VLC button."
           />
           <GuideStep
             number={2}
-            text="Tap the audio / speaker icon to open the audio track selector."
+            text={
+              "During playback in VLC, tap the screen to show the controls, then" +
+              " tap the speaker / audio icon."
+            }
           />
           <GuideStep
             number={3}
-            text="Choose your preferred audio track from the list."
+            text="Select your preferred track from the list. VLC remembers your choice for that file."
           />
-          <GuideNote text="VLC remembers your audio track preference for each file." />
-        </GuideSection>
-
-        {/* ── Tips ── */}
-        <GuideSection
-          icon="bulb-outline"
-          title="Tips"
-          sectionId="tips"
-          onLayout={handleSectionLayout}
-        >
-          <Tip text="Use the gold download indicator at the bottom of the tab bar to check active downloads at a glance." />
-          <Tip text="You can set a default streaming source in Settings → Default Source." />
-          <Tip text="Visit the Downloads page from the Library tab to manage or share completed files." />
-          <Tip text="Completed downloads are stored on your device and can be watched offline anytime." />
+          <GuideNote text="If the VLC button isn't shown, the download plays in-app only — it has a single audio track or isn't an MKV." />
+          <GuideLink
+            text="Get VLC for Mobile"
+            url={
+              Platform.select({
+                android:
+                  "https://play.google.com/store/apps/details?id=org.videolan.vlc",
+                ios: "https://apps.apple.com/app/vlc-for-mobile/id650377962",
+                default: "https://www.videolan.org/vlc/",
+              }) ?? undefined
+            }
+          />
         </GuideSection>
       </ScrollView>
     </View>
@@ -320,23 +289,6 @@ function GuideStep({ number, text }: { number: number; text: string }) {
   );
 }
 
-function GuideSubStep({ number, text }: { number: number; text: string }) {
-  return (
-    <View className="flex-row items-start mb-1.5">
-      <Text
-        className="text-[10px] font-bold mr-2 mt-0.5"
-        style={{ color: colors.gold }}
-      >{`0${number}`}</Text>
-      <Text
-        className="text-sm leading-5 flex-1"
-        style={{ color: colors.textSecondary }}
-      >
-        {text}
-      </Text>
-    </View>
-  );
-}
-
 function GuideParagraph({ children }: { children: React.ReactNode }) {
   return (
     <Text
@@ -350,25 +302,24 @@ function GuideParagraph({ children }: { children: React.ReactNode }) {
 
 function GuideLink({ text, url }: { text: string; url?: string }) {
   const handlePress = useCallback(() => {
-    const target =
-      url ||
-      Platform.select({
-        android:
-          "https://play.google.com/store/apps/details?id=org.videolan.vlc",
-        ios: "https://apps.apple.com/app/vlc-for-mobile/id650377962",
-        default: "https://www.videolan.org/vlc/",
-      });
-    Linking.openURL(target!).catch(() => Alert.alert("Could not open link"));
+    if (!url) return;
+    Linking.openURL(url).catch(() => Alert.alert("Could not open link"));
   }, [url]);
 
   return (
-    <Text
-      className="text-sm"
-      style={{ color: colors.gold, textDecorationLine: "underline" }}
+    <TouchableOpacity
       onPress={handlePress}
+      className="self-start mt-1"
+      activeOpacity={0.7}
+      accessibilityRole="link"
     >
-      {text}
-    </Text>
+      <Text
+        className="text-sm"
+        style={{ color: colors.gold, textDecorationLine: "underline" }}
+      >
+        {text}
+      </Text>
+    </TouchableOpacity>
   );
 }
 
@@ -384,22 +335,6 @@ function GuideNote({ text }: { text: string }) {
       <Text
         className="text-xs leading-4 flex-1"
         style={{ color: colors.textTertiary }}
-      >
-        {text}
-      </Text>
-    </View>
-  );
-}
-
-function Tip({ text }: { text: string }) {
-  return (
-    <View className="flex-row items-start mb-2">
-      <Text className="text-xs mr-2 mt-0.5" style={{ color: colors.gold }}>
-        ✦
-      </Text>
-      <Text
-        className="text-sm leading-5 flex-1"
-        style={{ color: colors.textSecondary }}
       >
         {text}
       </Text>

@@ -210,6 +210,15 @@ export function ServerDropdown({
                 >
                   {p.displayName || p.name}
                 </p>
+                {p.note && (
+                  <span
+                    className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full
+                    bg-[#D4A237]/15 text-[#D4A237] text-[9px] font-bold
+                    border border-[#D4A237]/30"
+                  >
+                    {p.note}
+                  </span>
+                )}
               </div>
 
               {/* Latency */}

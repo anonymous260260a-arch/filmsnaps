@@ -11,21 +11,22 @@ pages with sandboxed provider embeds.
 - **Search:** Fuse.js (fuzzy title matching).
 - **Deploys:** Cloudflare Pages (OpenNext, `cf:build`/`cf:deploy`) and Netlify
   (`netlify.toml`, `.github/workflows/netlify.yml`).
+- **Desktop player bridge:** `DesktopSecureWebview.tsx` (IPC to Electron `WebContentsView`).
 
 ## Layout
 
 ```
 app/
-  api/                    API routes (tmdb, player proxy, blocklist, stream, video-extract)
+  api/                    API routes (tmdb, player proxy, video-extract, stream)
   download/               Download landing page
   exp/                    Experimental pages (showbox/watch)
   history/  saved/  search/  movie/[id]/  tv/[id]/  person/[id]/
-  watch/[...id]/          Watch page
+  watch/[...id]/          Watch page (DesktopSecureWebview + React overlays)
   legal/  privacy/  how-it-works/  versions/
 components/
   ui/                     Button, input, dialog, etc.
-  player/                 DesktopSecureWebview, etc.
-  watch/                  Watch page components
+  player/                 DesktopSecureWebview, PlayerProvider, ServerPickerSheet, VideoZone
+  watch/                  Watch page components (ServerDropdown, etc.)
 lib/
   tmdb.ts                 TMDB client (client-safe)
   tmdb.server.ts          TMDB client (server-only, reads TMDB_API_KEY)
@@ -35,11 +36,11 @@ lib/
 
 ## Environment
 
-| Variable | Where used |
-| --- | --- |
-| `TMDB_API_KEY` | Server-only: `lib/tmdb.server.ts`, `app/api/tmdb/[...tmdb]/route.ts`. |
-| `NEXT_PUBLIC_SITE_URL` | Canonical site URL for links/SEO. |
-| `BLOCKLIST_CONFIG_URL` | Optional: host your own `blocklist.json` on a CDN. |
+| Variable               | Where used                                                            |
+| ---------------------- | --------------------------------------------------------------------- |
+| `TMDB_API_KEY`         | Server-only: `lib/tmdb.server.ts`, `app/api/tmdb/[...tmdb]/route.ts`. |
+| `NEXT_PUBLIC_SITE_URL` | Canonical site URL for links/SEO.                                     |
+| `BLOCKLIST_CONFIG_URL` | Optional: host your own `providers.json` + `filters.txt` on a CDN.    |
 
 Copy `.env.example` (repo root) to `apps/web/.env.local` and fill in
 `TMDB_API_KEY`. The key is **server-only** — never expose it client-side.
@@ -69,6 +70,18 @@ The web app is **fully anonymous** — there is no sign-in, no accounts, and no
 auth code. Watchlist and watch-history are stored locally on-device
 (localStorage). The old no-op `AuthProvider`, `/auth`, and `/reset-password`
 scaffolding was removed (see [ADR 0002](../../docs/adr/0002-auth-removal.md)).
+
+## Desktop Player Integration
+
+The web app renders the **React player UI** (VideoZone, ServerDropdown, PlayerControlOverlay).
+In Electron desktop, the provider embed loads in a native `WebContentsView` (not iframe):
+
+- `DesktopSecureWebview.tsx` reserves a rect and syncs bounds via `player:set-bounds` IPC
+- React overlays (server dropdown, CPU warning, error) drive `overlayActive` → `player:set-visible=false`
+- Fullscreen: `PlayerProvider.toggleFullscreen` → IPC `player:setFullscreen` → window-level fullscreen
+- All security layers run in Electron main process on the native view
+
+See [Desktop README](../desktop/README.md#webcontentsview-hybrid-phase-3) for architecture.
 
 ## Note on the provider proxy
 

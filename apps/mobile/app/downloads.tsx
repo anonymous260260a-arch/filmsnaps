@@ -23,12 +23,12 @@ import {
   Platform,
   Linking,
   Animated,
+  NativeModules,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackIcon } from "../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeNavigation } from "@/lib/navigation";
-import * as Sharing from "expo-sharing";
 import {
   useDownloadList,
   useDownload,
@@ -340,13 +340,13 @@ function TaskRow({ taskId }: { taskId: string }) {
               icon="play-circle-outline"
               label="VLC"
               color={colors.gold}
-              onPress={() => openInVLC(fileUri)}
+              onPress={() => openInVLC(fileUri, task.extension)}
             />
             <TaskAction
               icon="share-outline"
               label="Share"
               color={colors.info}
-              onPress={() => handleShare(fileUri, fileName)}
+              onPress={() => handleShare(fileUri, fileName, task.extension)}
             />
             <TaskAction
               icon="trash-outline"
@@ -489,25 +489,59 @@ function SectionRow({
   );
 }
 
-// ── Share / VLC / Delete handlers (unchanged from original) ──
+// ── Share / VLC / Delete handlers ──
 
-async function handleShare(fileUri: string | null, fileName: string) {
-  if (!fileUri) return;
+// Map a download extension to a concrete MIME type so the system chooser
+// resolves the right players (VLC, MX Player, etc.). "video/*" is too vague
+// and occasionally yields no matches; being specific makes the chooser reliable.
+function mimeForExtension(ext?: string): string {
+  switch ((ext || "").toLowerCase()) {
+    case "mkv":
+      return "video/x-matroska";
+    case "webm":
+      return "video/webm";
+    case "m4v":
+      return "video/mp4";
+    case "mov":
+      return "video/quicktime";
+    case "avi":
+      return "video/x-msvideo";
+    case "flv":
+      return "video/x-flv";
+    case "3gp":
+      return "video/3gpp";
+    case "ts":
+      return "video/mp2t";
+    default:
+      return "video/mp4";
+  }
+}
+
+const FilmsnapsDownloader = NativeModules.FilmsnapsDownloader;
+
+async function handleShare(
+  fileUri: string | null,
+  fileName: string,
+  extension?: string,
+) {
+  if (!fileUri || !FilmsnapsDownloader) return;
   try {
-    const isAvailable = await Sharing.isAvailableAsync();
-    if (!isAvailable) {
-      Alert.alert(
-        "Sharing unavailable",
-        "Sharing is not available on this device.",
-      );
-      return;
-    }
-    await Sharing.shareAsync(fileUri, {
-      mimeType: "video/mp4",
-      dialogTitle: `Share ${fileName}`,
-    });
+    // The file lives in the system Downloads collection as a real MediaStore
+    // `content://media/external/downloads/...` URI that our app owns. We hand
+    // that RAW URI to a native intent + FLAG_GRANT_READ_URI_PERMISSION — no copy,
+    // no expo-sharing (which only accepts file:// and falsely reported
+    // "VLC not installed" for every content:// URI).
+    await FilmsnapsDownloader.shareWithChooser(
+      fileUri,
+      mimeForExtension(extension),
+      `Share ${fileName}`,
+    );
   } catch (e: any) {
-    Alert.alert("Share failed", e.message);
+    if (e?.code === "NO_APP_FOUND") {
+      Alert.alert("No app found", "No application can share this file type.");
+    } else {
+      Alert.alert("Share failed", e?.message ?? "Unknown error");
+    }
   }
 }
 
@@ -522,36 +556,41 @@ function handleDelete(task: DownloadTask, onDelete: () => void) {
   );
 }
 
-async function openInVLC(fileUri: string | null) {
-  if (!fileUri) return;
+async function openInVLC(fileUri: string | null, extension?: string) {
+  if (!fileUri || !FilmsnapsDownloader) return;
   try {
-    if (Platform.OS === "android") {
-      const path = fileUri.replace(/^file:\/\//, "");
-      const intentUrl = `intent://${path}#Intent;package=org.videolan.vlc;action=android.intent.action.VIEW;type=video/*;end`;
-      await Linking.openURL(intentUrl);
-    } else {
-      await Linking.openURL(`vlc://${fileUri}`);
-    }
-  } catch {
-    Alert.alert(
-      "VLC Not Installed",
-      "VLC for Mobile is required. Would you like to install it?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Install",
-          onPress: () =>
-            Linking.openURL(
-              Platform.select({
-                android:
-                  "https://play.google.com/store/apps/details?id=org.videolan.vlc",
-                ios: "https://apps.apple.com/app/vlc-for-mobile/id650377962",
-                default: "https://www.videolan.org/vlc/",
-              })!,
-            ),
-        },
-      ],
+    // Open the RAW MediaStore content:// URI in a player via the system chooser.
+    // Our app inserted the MediaStore row, so it owns it and can grant read
+    // access (FLAG_GRANT_READ_URI_PERMISSION) to whichever player the user picks.
+    // This replaces expo-sharing, which rejected content:// and misreported the
+    // failure as "VLC Not Installed".
+    await FilmsnapsDownloader.openWithChooser(
+      fileUri,
+      mimeForExtension(extension),
+      "Open with",
     );
+  } catch (e: any) {
+    if (e?.code === "NO_APP_FOUND") {
+      const installUrl = Platform.select({
+        android:
+          "https://play.google.com/store/apps/details?id=org.videolan.vlc",
+        ios: "https://apps.apple.com/app/vlc-for-mobile/id650377962",
+        default: "https://www.videolan.org/vlc/",
+      });
+      Alert.alert(
+        "VLC Not Installed",
+        "VLC for Mobile is required. Would you like to install it?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Install",
+            onPress: () => Linking.openURL(installUrl!),
+          },
+        ],
+      );
+    } else {
+      Alert.alert("Could not open", e?.message ?? "Unknown error");
+    }
   }
 }
 
@@ -575,17 +614,16 @@ export default function DownloadsScreen() {
 
   // Storage meter
   const [storageInfo, setStorageInfo] = useState<{
-    available: number;
-    used: number;
+    free: number;
+    total: number;
   } | null>(null);
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
         const storage = manager.getStorageManager();
-        const used = await storage.getUsedSpace();
-        const free = await storage.getFreeSpace();
-        if (!cancelled) setStorageInfo({ available: free, used });
+        const info = await storage.getStorageInfo();
+        if (!cancelled) setStorageInfo({ free: info.free, total: info.total });
       } catch {}
     }
     load();
@@ -716,23 +754,22 @@ export default function DownloadsScreen() {
       </View>
 
       {/* Storage meter */}
-      {storageInfo && (
+      {storageInfo && storageInfo.total > 0 && (
         <View className="mx-5 mb-2">
           <View className="flex-row items-center justify-between mb-1">
             <Text className="text-zinc-500 text-[10px]">
-              {formatBytes(storageInfo.available)} free of{" "}
-              {formatBytes(storageInfo.available + storageInfo.used)}
+              {formatBytes(storageInfo.free)} free of{" "}
+              {formatBytes(storageInfo.total)}
             </Text>
             {(() => {
-              const pct =
-                storageInfo.available + storageInfo.used > 0
-                  ? storageInfo.used /
-                    (storageInfo.available + storageInfo.used)
+              const usedPct =
+                storageInfo.total > 0
+                  ? (storageInfo.total - storageInfo.free) / storageInfo.total
                   : 0;
               const color =
-                pct > 0.9
+                usedPct > 0.9
                   ? colors.error
-                  : pct > 0.8
+                  : usedPct > 0.8
                     ? colors.amber
                     : colors.successGreen;
               return (
@@ -743,7 +780,8 @@ export default function DownloadsScreen() {
                     fontFamily: "Inter_600SemiBold",
                   }}
                 >
-                  {Math.round((1 - pct) * 100)}% free
+                  {Math.round((storageInfo.free / storageInfo.total) * 100)}%
+                  free
                 </Text>
               );
             })()}
@@ -756,18 +794,18 @@ export default function DownloadsScreen() {
               className="h-full rounded-full"
               style={{
                 width: `${Math.min(
-                  (storageInfo.used /
-                    Math.max(storageInfo.available + storageInfo.used, 1)) *
+                  ((storageInfo.total - storageInfo.free) /
+                    Math.max(storageInfo.total, 1)) *
                     100,
                   100,
                 )}%`,
                 backgroundColor: (() => {
-                  const pct =
-                    storageInfo.used /
-                    Math.max(storageInfo.available + storageInfo.used, 1);
-                  return pct > 0.9
+                  const usedPct =
+                    (storageInfo.total - storageInfo.free) /
+                    Math.max(storageInfo.total, 1);
+                  return usedPct > 0.9
                     ? colors.error
-                    : pct > 0.8
+                    : usedPct > 0.8
                       ? colors.amber
                       : colors.successGreen;
                 })(),

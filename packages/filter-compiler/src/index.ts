@@ -9,10 +9,10 @@
  * Mobile: loads from serialized buffer at app init
  */
 
-import { FiltersEngine, Request } from '@cliqz/adblocker';
-import { readFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { FiltersEngine, Request } from "@ghostery/adblocker";
+import { readFileSync, existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -21,7 +21,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export interface MatchResult {
   blocked: boolean;
   matchedRule?: string;
-  category: 'network' | 'cosmetic' | 'allowlist' | 'none';
+  category: "network" | "cosmetic" | "allowlist" | "none";
 }
 
 export interface FilterEngineOptions {
@@ -40,7 +40,7 @@ let _enginePath: string | null = null;
  * Get the default engine path relative to this package's build directory.
  */
 export function getDefaultEnginePath(): string {
-  return join(__dirname, '..', 'build', 'compiled-engine.bin');
+  return join(__dirname, "..", "build", "compiled-engine.bin");
 }
 
 /**
@@ -49,7 +49,9 @@ export function getDefaultEnginePath(): string {
  * In Node.js environments, reads the serialized engine from disk.
  * In browser/mobile, pass a pre-deserialized engine via options.
  */
-export async function loadFilterEngine(options?: FilterEngineOptions): Promise<FiltersEngine> {
+export async function loadFilterEngine(
+  options?: FilterEngineOptions,
+): Promise<FiltersEngine> {
   if (_engine) return _engine;
 
   if (options?.engine) {
@@ -62,7 +64,7 @@ export async function loadFilterEngine(options?: FilterEngineOptions): Promise<F
   if (!existsSync(enginePath)) {
     throw new Error(
       `Filter engine not found at: ${enginePath}. ` +
-      'Run `pnpm compile` in packages/filter-compiler first.',
+        "Run `pnpm compile` in packages/filter-compiler first.",
     );
   }
 
@@ -111,7 +113,7 @@ export function matchUrl(
     const request = Request.fromRawDetails({
       url,
       sourceUrl,
-      type: (type ?? 'other') as any,
+      type: (type ?? "other") as any,
     });
 
     // Run through @cliqz/adblocker engine
@@ -121,27 +123,27 @@ export function matchUrl(
       return {
         blocked: true,
         matchedRule: `redirect: ${JSON.stringify(match.redirect.contentType)}`,
-        category: 'network',
+        category: "network",
       };
     }
 
     if (match.match) {
       return {
         blocked: true,
-        matchedRule: match.filter?.toString() || 'filter match',
-        category: 'network',
+        matchedRule: match.filter?.toString() || "filter match",
+        category: "network",
       };
     }
 
     // URL was explicitly allowed (exception rule)
     if (match.exception) {
-      return { blocked: false, category: 'allowlist' };
+      return { blocked: false, category: "allowlist" };
     }
 
-    return { blocked: false, category: 'none' };
+    return { blocked: false, category: "none" };
   } catch {
     // If URL parsing or matching fails, don't block (safety)
-    return { blocked: false, category: 'none' };
+    return { blocked: false, category: "none" };
   }
 }
 
@@ -155,7 +157,11 @@ export function isAllowlisted(
   sourceUrl: string,
 ): boolean {
   try {
-    const request = Request.fromRawDetails({ url, sourceUrl, type: 'document' });
+    const request = Request.fromRawDetails({
+      url,
+      sourceUrl,
+      type: "document",
+    });
     const match = engine.match(request);
     return match.exception !== undefined;
   } catch {
@@ -173,10 +179,7 @@ export function isAllowlisted(
  * @param pageUrl - The URL of the page being loaded
  * @returns CSS string to inject into the page
  */
-export function getCosmeticCSS(
-  engine: FiltersEngine,
-  pageUrl: string,
-): string {
+export function getCosmeticCSS(engine: FiltersEngine, pageUrl: string): string {
   try {
     const parsedUrl = new URL(pageUrl);
     const cosmetics = engine.getCosmeticsFilters({
@@ -188,18 +191,18 @@ export function getCosmeticCSS(
       getExtendedRules: false,
       getRulesFromDOM: false,
       getRulesFromHostname: true,
-      hidingStyle: '{ display: none !important; }',
+      hidingStyle: "{ display: none !important; }",
     });
 
-    const css = cosmetics?.styles || '';
+    const css = cosmetics?.styles || "";
 
     if (css) {
       return `/* Filmsnaps Adblocker — Cosmetic CSS */\n${css}`;
     }
 
-    return '';
+    return "";
   } catch {
-    return '';
+    return "";
   }
 }
 
@@ -215,6 +218,7 @@ export function getEngineStats(engine: FiltersEngine): {
   return {
     networkFilters: filters.networkFilters.length,
     cosmeticFilters: filters.cosmeticFilters.length,
-    totalFilters: filters.networkFilters.length + filters.cosmeticFilters.length,
+    totalFilters:
+      filters.networkFilters.length + filters.cosmeticFilters.length,
   };
 }

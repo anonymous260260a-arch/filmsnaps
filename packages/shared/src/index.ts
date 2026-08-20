@@ -6,7 +6,11 @@ export type {
   CrewMember,
   PersonCredit,
 } from "./types/movie";
-export type { ProviderDefinition, ProviderProtection } from "./types/provider";
+export type {
+  ProviderDefinition,
+  ProviderProtection,
+  ProviderCapabilities,
+} from "./types/provider";
 
 // ── Providers ──
 export {
@@ -15,6 +19,9 @@ export {
   getEnabledProviders,
   isProtectionEnabled,
   isSkipIntroEnabled,
+  isUiEnabled,
+  getProgressMode,
+  getResumeMode,
 } from "./providers/registry";
 export {
   checkProviderHealth,
@@ -74,9 +81,15 @@ export {
   buildProgressTrackerScript,
   buildAllScripts,
   buildAllScriptsWithScriptlets,
+  DEVTOOL_CONSOLE_MASK_SCRIPT,
   DEFAULT_AD_FULL_PATTERNS,
   DEFAULT_AD_SHORT_PATTERNS,
 } from "./security/playerGuard";
+
+// ── Playback (watch-progress engine + app media hook) ──
+export { PlaybackEngine, buildEpisodeKey } from "./playback/engine";
+export type { PlaybackState, PlaybackListener } from "./playback/engine";
+export { MEDIA_HOOK_SCRIPT, buildMediaHookScript } from "./playback/mediaHook";
 export type {
   ApiInterceptRule,
   CosmeticRuleBundle,

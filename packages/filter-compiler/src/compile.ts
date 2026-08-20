@@ -2,40 +2,46 @@
  * Filter List Compiler — CLI entry point.
  *
  * Fetches EasyList, EasyPrivacy, AdGuard, and uBlock Origin filter lists,
- * merges with Filmsnaps' per-provider overrides and legacy AD_PATTERNS,
- * compiles them into an optimized engine via @cliqz/adblocker,
- * and writes the serialized result to build/compiled-engine.bin.
+ * merges with FilmSnaps' local filters.txt (v5 split config), per-provider
+ * overrides and legacy AD_PATTERNS, compiles them into an optimized engine
+ * via @ghostery/adblocker, and writes the serialized result to
+ * build/compiled-engine.bin.
  *
  * Run:  node dist/compile.js   (from packages/filter-compiler)
  *
  * Designed to run in CI (daily) or as a pre-commit hook.
  */
 
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { FiltersEngine } from '@cliqz/adblocker';
-import { loadAllOverrides, overridesToFilterRules, legacyAdPatternsToFilterRules } from './overrides/index.js';
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { FiltersEngine } from "@ghostery/adblocker";
+import { loadFiltersTxt } from "@filmsnaps/adblock-config";
+import {
+  loadAllOverrides,
+  overridesToFilterRules,
+  legacyAdPatternsToFilterRules,
+} from "./overrides/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ── Filter list URLs ──────────────────────────────────────────────
 const FILTER_LISTS = [
   // EasyList — primary ad blocking
-  'https://easylist.to/easylist/easylist.txt',
+  "https://easylist.to/easylist/easylist.txt",
   // EasyPrivacy — tracking protection
-  'https://easylist.to/easylist/easyprivacy.txt',
+  "https://easylist.to/easylist/easyprivacy.txt",
   // AdGuard Base — supplements EasyList
-  'https://filters.adtidy.org/extension/ublock/filters/2_optimized.txt',
+  "https://filters.adtidy.org/extension/ublock/filters/2_optimized.txt",
   // uBlock Unbreak — reduces false positives
-  'https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/unbreak.txt',
+  "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/unbreak.txt",
   // uBlock Badware — blocks malware-hosting domains
-  'https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/badware.txt',
+  "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/badware.txt",
 ];
 
 // ── Cosmetic-only filters (for elements that need CSS hiding) ──────
 const COSMETIC_FILTERS = [
-  '! Filmsnaps custom cosmetic filters',
+  "! Filmsnaps custom cosmetic filters",
   '##div[class*="ad-container"]',
   '##div[class*="banner-ad"]',
   '##div[class*="popup-overlay"]',
@@ -65,30 +71,32 @@ async function fetchWithRetry(url: string, retries = 2): Promise<string> {
         await new Promise((r) => setTimeout(r, 2000));
       } else {
         console.warn(`  [FAILED] ${url}: ${err.message}`);
-        return ''; // return empty rather than crashing
+        return ""; // return empty rather than crashing
       }
     }
   }
-  return '';
+  return "";
 }
 
 // ── Main ───────────────────────────────────────────────────────────
 
 async function main() {
-  console.log('[FilterCompiler] Starting compilation...');
+  console.log("[FilterCompiler] Starting compilation...");
   console.log(`[FilterCompiler] Filter lists: ${FILTER_LISTS.length}`);
 
   // 1. Fetch all remote filter lists sequentially (avoids Node 24 undici assertion bug)
-  console.log('[FilterCompiler] Fetching filter lists...');
+  console.log("[FilterCompiler] Fetching filter lists...");
   const fetchedContents: string[] = [];
   for (const url of FILTER_LISTS) {
-    console.log(`  Fetching: ${url.split('/').pop()}`);
+    console.log(`  Fetching: ${url.split("/").pop()}`);
     const content = await fetchWithRetry(url);
     fetchedContents.push(content);
   }
 
   const fetchedCount = fetchedContents.filter((c) => c.length > 0).length;
-  console.log(`[FilterCompiler] Fetched ${fetchedCount}/${FILTER_LISTS.length} lists`);
+  console.log(
+    `[FilterCompiler] Fetched ${fetchedCount}/${FILTER_LISTS.length} lists`,
+  );
 
   // 2. Generate local override rules
   const overrides = loadAllOverrides();
@@ -96,19 +104,37 @@ async function main() {
 
   const overrideRules = overridesToFilterRules(overrides);
   const legacyRules = legacyAdPatternsToFilterRules();
-  const cosmeticRules = COSMETIC_FILTERS.join('\n');
+  const cosmeticRules = COSMETIC_FILTERS.join("\n");
+
+  // 2b. Local v5 split config: filters.txt (uBO/EasyList). This replaces the
+  // old substring allowedCdnHosts/blockedDomains/alwaysBlock — the engine
+  // now consumes exact/suffix rules straight from the shipped config.
+  const filtersTxt = loadFiltersTxt();
+  if (filtersTxt) {
+    const lineCount = filtersTxt
+      .split("\n")
+      .filter((l) => l.trim() !== "" && !l.startsWith("!")).length;
+    console.log(
+      `[FilterCompiler] Loaded filters.txt (${lineCount} active rules)`,
+    );
+  } else {
+    console.warn(
+      "[FilterCompiler] filters.txt not found — compiling without the v5 split config",
+    );
+  }
 
   // 3. Combine ALL filter text into one big string
   const combinedFilters = [
     ...fetchedContents,
+    filtersTxt ?? "",
     overrideRules,
     legacyRules,
     cosmeticRules,
-  ].join('\n\n');
+  ].join("\n\n");
 
   // 4. Parse everything with FiltersEngine.parse()
   //    (fromLists() expects only URLs, not raw filter text)
-  console.log('[FilterCompiler] Compiling filter engine...');
+  console.log("[FilterCompiler] Compiling filter engine...");
 
   const engine = FiltersEngine.parse(combinedFilters, {
     enableMutationObserver: false,
@@ -123,36 +149,41 @@ async function main() {
   const serializedBuffer = Buffer.from(serialized);
 
   // 6. Write output files
-  const buildDir = join(__dirname, '..', 'build');
+  const buildDir = join(__dirname, "..", "build");
   if (!existsSync(buildDir)) {
     mkdirSync(buildDir, { recursive: true });
   }
 
   // Write serialized engine (binary)
-  const enginePath = join(buildDir, 'compiled-engine.bin');
+  const enginePath = join(buildDir, "compiled-engine.bin");
   writeFileSync(enginePath, serializedBuffer);
-  console.log(`[FilterCompiler] Written: ${enginePath} (${(serializedBuffer.length / 1024).toFixed(1)} KB)`);
+  console.log(
+    `[FilterCompiler] Written: ${enginePath} (${(serializedBuffer.length / 1024).toFixed(1)} KB)`,
+  );
 
   // Write a JSON metadata file
-  const metaPath = join(buildDir, 'compiled-filters.json');
+  const metaPath = join(buildDir, "compiled-filters.json");
   const filters = engine.getFilters();
   const meta = {
-    version: new Date().toISOString().slice(0, 10).replace(/-/g, ''),
+    version: new Date().toISOString().slice(0, 10).replace(/-/g, ""),
     compiledAt: new Date().toISOString(),
     engineSizeBytes: serializedBuffer.length,
     engineSizeKB: (serializedBuffer.length / 1024).toFixed(1),
     filterLists: FILTER_LISTS,
+    includedFiltersTxt: filtersTxt !== null,
     providerOverrides: overrides.length,
     totalNetworkFilters: filters.networkFilters.length,
     totalCosmeticFilters: filters.cosmeticFilters.length,
   };
   writeFileSync(metaPath, JSON.stringify(meta, null, 2));
   console.log(`[FilterCompiler] Written: ${metaPath}`);
-  console.log(`[FilterCompiler] Stats: ${meta.totalNetworkFilters} network filters, ${meta.totalCosmeticFilters} cosmetic filters`);
-  console.log('[FilterCompiler] Compilation complete.');
+  console.log(
+    `[FilterCompiler] Stats: ${meta.totalNetworkFilters} network filters, ${meta.totalCosmeticFilters} cosmetic filters`,
+  );
+  console.log("[FilterCompiler] Compilation complete.");
 }
 
 main().catch((err) => {
-  console.error('[FilterCompiler] Fatal error:', err);
+  console.error("[FilterCompiler] Fatal error:", err);
   process.exit(1);
 });

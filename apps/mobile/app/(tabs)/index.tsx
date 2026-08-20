@@ -33,8 +33,12 @@ import {
 } from "../../hooks/useTMDB";
 import { tmdbApi } from "../../lib/api";
 import { useDownloadList } from "../../lib/download";
-import { getAggregatedHistory } from "../../lib/watchHistory";
+import {
+  useWatchHistory,
+  watchHistoryStore,
+} from "../../lib/watchHistoryStore";
 import { getImageUrl, PROVIDERS } from "@filmsnaps/shared";
+import { useFocusEffect } from "expo-router";
 import type { Movie } from "@filmsnaps/shared";
 import type { WatchProgress } from "../../lib/watchHistory";
 import type { Announcement } from "../../lib/announcements";
@@ -87,17 +91,19 @@ export default function HomeScreen() {
     isLoading: loadingPopular,
   } = usePopularMovies();
 
-  // ── History entries (must be declared before useMoreLikeThis) ──
-  const [historyEntries, setHistoryEntries] = useState<
-    Array<{
-      latest: WatchProgress;
-      fullyWatched: boolean;
-    }>
-  >([]);
-  const [historyMeta, setHistoryMeta] = useState<Record<string, Movie | null>>(
-    {},
+  // ── History — subscribe to the local-first singleton (no local load state).
+  // The store owns hydration + TMDB enrichment and survives unmounts, so the
+  // home screen just renders whatever it currently holds. ──
+  const { entries: storeHistory } = useWatchHistory();
+  const historyEntries = useMemo(
+    () => storeHistory.slice(0, 6),
+    [storeHistory],
   );
-  const historyLoadedRef = useRef(false);
+  const historyMeta = useMemo(() => {
+    const m: Record<string, Movie | null> = {};
+    for (const e of storeHistory) m[e.latest.tmdbId] = e.meta;
+    return m;
+  }, [storeHistory]);
 
   // ── Announcements (loaded with lowest priority, never blocks UI) ──
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -135,7 +141,7 @@ export default function HomeScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // ── Settings ──
-  const { settings } = useSettings();
+  const { settings, loaded: settingsLoaded } = useSettings();
   const { active: activeDownloads, completed: completedDownloads } =
     useDownloadList();
 
@@ -153,44 +159,14 @@ export default function HomeScreen() {
     [activeDownloads.length, bottomPadding],
   );
 
-  const loadHistory = useCallback(async () => {
-    if (historyLoadedRef.current) return;
-    try {
-      const agg = await getAggregatedHistory();
-      // Take last 6 for the home page
-      const sliced = agg.slice(0, 6);
-      setHistoryEntries(sliced);
-      // Fetch TMDB metadata
-      const metaMap: Record<string, Movie | null> = {};
-      await Promise.all(
-        sliced.map(async (entry) => {
-          const id = entry.latest.tmdbId;
-          if (metaMap[id]) return;
-          try {
-            if (entry.latest.mediaType === "tv") {
-              metaMap[id] = (await tmdbApi.getTVDetails(
-                Number(id),
-              )) as unknown as Movie;
-            } else {
-              metaMap[id] = (await tmdbApi.getMovieDetails(
-                Number(id),
-              )) as Movie;
-            }
-          } catch {
-            metaMap[id] = null;
-          }
-        }),
-      );
-      setHistoryMeta((prev) => ({ ...prev, ...metaMap }));
-      historyLoadedRef.current = true;
-    } catch (e) {
-      console.warn("[Home] loadHistory failed:", e);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadHistory();
-  }, [loadHistory]);
+  // Keep the store's progress in sync after returning from a watch session
+  // (the player saved new progress to AsyncStorage). Fire-and-forget; the store
+  // re-reads local progress and enriches any missing metadata in the background.
+  useFocusEffect(
+    useCallback(() => {
+      watchHistoryStore.syncProgress().catch(() => {});
+    }, []),
+  );
 
   // ── Fetch announcements (lowest priority — deferred until after main data) ──
   useEffect(() => {
@@ -224,15 +200,12 @@ export default function HomeScreen() {
     refreshing.current = true;
     setIsRefreshing(true);
 
-    historyLoadedRef.current = false;
-    setHistoryEntries([]);
-
     // Wait for actual completion instead of a hardcoded timeout
     await Promise.allSettled([
       refetchMovies(),
       refetchTV(),
       refetchPopular(),
-      loadHistory(),
+      watchHistoryStore.forceRefresh(),
     ]);
 
     // Also refresh announcements in background
@@ -243,7 +216,15 @@ export default function HomeScreen() {
 
     setIsRefreshing(false);
     refreshing.current = false;
-  }, [refetchMovies, refetchTV, refetchPopular, loadHistory]);
+  }, [refetchMovies, refetchTV, refetchPopular]);
+
+  // ── Remove a single Continue Watching item (mutates the shared store) ──
+  const handleRemoveHistoryItem = useCallback(
+    (tmdbId: string, mediaType: "movie" | "tv") => {
+      watchHistoryStore.removeItem(tmdbId, mediaType).catch(() => {});
+    },
+    [],
+  );
 
   // ── Navigation ──
   const handleSeeAllTrendingMovies = useCallback(() => {
@@ -290,13 +271,13 @@ export default function HomeScreen() {
   );
 
   // ── Memoised section ordering ──
+  // Render exactly the sections the user has in their homeRowOrder, in that
+  // order. Sections removed from the layout no longer render (previously they
+  // were sorted to the bottom with `?? 999` and still appeared). Unknown IDs
+  // in the stored order are ignored.
   const orderedSections = useMemo(() => {
-    const order: Record<string, number> = {};
-    settings.homeRowOrder.forEach((id: string, i: number) => {
-      order[id] = i;
-    });
-    return Object.keys(SECTION_CONFIG).sort(
-      (a, b) => (order[a] ?? 999) - (order[b] ?? 999),
+    return settings.homeRowOrder.filter((id) =>
+      Object.prototype.hasOwnProperty.call(SECTION_CONFIG, id),
     );
   }, [settings.homeRowOrder]);
 
@@ -374,16 +355,17 @@ export default function HomeScreen() {
           ) : null;
 
         case "continue-watching":
+          // Rendered immediately once the store has entries — no DeferredContent
+          // gap, so it paints in the same frame as Trending and never "pops in".
           return historyEntries.length > 0 ? (
-            <DeferredContent fallback={null} delayMs={400}>
-              <ContinueWatchingSection
-                historyEntries={historyEntries}
-                historyMeta={historyMeta}
-                nav={nav}
-                SCREEN_WIDTH={SCREEN_WIDTH}
-                providerLabelMap={PROVIDER_LABELS}
-              />
-            </DeferredContent>
+            <ContinueWatchingSection
+              historyEntries={historyEntries}
+              historyMeta={historyMeta}
+              nav={nav}
+              SCREEN_WIDTH={SCREEN_WIDTH}
+              providerLabelMap={PROVIDER_LABELS}
+              onRemoveItem={handleRemoveHistoryItem}
+            />
           ) : null;
 
         case "popular-movies":
@@ -439,8 +421,14 @@ export default function HomeScreen() {
     ],
   );
 
-  // ── Skeleton (full-screen when all three queries first load) ──
-  if (loadingMovies && loadingTV && loadingPopular) {
+  // ── Skeleton (full-screen on first load) ──
+  // Gated on settingsLoaded too: the home row ORDER is restored from
+  // AsyncStorage asynchronously, so without this the sections would first
+  // paint in the default (trending-first) order and then swap to the user's
+  // saved order (e.g. Continue Watching on top) — a visible flicker. Holding
+  // the skeleton until settings are hydrated guarantees the first visible
+  // frame is already in the correct order.
+  if (!settingsLoaded || (loadingMovies && loadingTV && loadingPopular)) {
     return (
       <View
         className="flex-1 bg-void"
@@ -728,6 +716,7 @@ interface ContinueWatchingSectionProps {
   nav: ReturnType<typeof useSafeNavigation>;
   SCREEN_WIDTH: number;
   providerLabelMap: Record<string, string>;
+  onRemoveItem: (tmdbId: string, mediaType: "movie" | "tv") => void;
 }
 
 function ContinueWatchingSection({
@@ -736,6 +725,7 @@ function ContinueWatchingSection({
   nav,
   SCREEN_WIDTH,
   providerLabelMap,
+  onRemoveItem,
 }: ContinueWatchingSectionProps) {
   const cardWidth = (SCREEN_WIDTH - 48) / 3;
   const cardHeight = cardWidth * 1.5;
@@ -786,7 +776,7 @@ function ContinueWatchingSection({
                 {/* Poster image */}
                 {poster ? (
                   <ProgressiveImage
-                    uri={getImageUrl(poster, "w185")}
+                    uri={getImageUrl(poster, "w342")}
                     style={{
                       width: cardWidth,
                       height: cardHeight,
@@ -806,6 +796,32 @@ function ContinueWatchingSection({
                     />
                   </View>
                 )}
+
+                {/* Per-item remove — overlays the poster, stops propagation so
+                    tapping it doesn't also open the title. */}
+                <TouchableOpacity
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    onRemoveItem(p.tmdbId, p.mediaType);
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  activeOpacity={0.7}
+                  style={{
+                    position: "absolute",
+                    top: 6,
+                    right: 6,
+                    width: 24,
+                    height: 24,
+                    borderRadius: 12,
+                    backgroundColor: "rgba(0,0,0,0.6)",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${title} from continue watching`}
+                >
+                  <Ionicons name="close" size={14} color={colors.textPrimary} />
+                </TouchableOpacity>
 
                 {/* Progress bar — 4px, themed */}
                 <View

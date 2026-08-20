@@ -1,5 +1,5 @@
 /**
- * Filter Service — @cliqz/adblocker engine for URL-level ad/tracker/popup
+ * Filter Service — @ghostery/adblocker engine for URL-level ad/tracker/popup
  * blocking in server-side proxy routes.
  *
  * The engine is loaded at module import time (top-level side effect), not
@@ -13,17 +13,18 @@
  *   DEBUG=filmsnaps:filter pnpm dev:web
  */
 
-import { FiltersEngine, Request } from '@cliqz/adblocker';
-import { readFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { FiltersEngine, Request } from "@ghostery/adblocker";
+import { readFileSync, existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // ── Debug logging ──────────────────────────────────────────────────
 
-const DEBUG = typeof process !== 'undefined' && process.env?.DEBUG === 'filmsnaps:filter';
+const DEBUG =
+  typeof process !== "undefined" && process.env?.DEBUG === "filmsnaps:filter";
 
 function debugLog(...args: any[]) {
-  if (DEBUG) console.log('[FilterEngine]', ...args);
+  if (DEBUG) console.log("[FilterEngine]", ...args);
 }
 
 let _matchCount = 0;
@@ -34,7 +35,7 @@ let _blockCount = 0;
 export interface FilterMatchResult {
   blocked: boolean;
   matchedRule?: string;
-  source: 'engine' | 'legacy' | 'none';
+  source: "engine" | "legacy" | "none";
 }
 
 // ── Engine cache (globalThis to survive module re-evaluation) ───────
@@ -52,12 +53,20 @@ globalThis.__filmsnapsFilterLoaded ??= false;
 function loadEngine(): FiltersEngine | null {
   const paths = [
     // Hardcoded absolute path
-    'M:/filmsnaps-main/packages/filter-compiler/build/compiled-engine.bin',
+    "M:/filmsnaps-main/packages/filter-compiler/build/compiled-engine.bin",
     // join from process.cwd()
-    join(process.cwd(), '..', '..', 'packages', 'filter-compiler', 'build', 'compiled-engine.bin'),
+    join(
+      process.cwd(),
+      "..",
+      "..",
+      "packages",
+      "filter-compiler",
+      "build",
+      "compiled-engine.bin",
+    ),
   ];
 
-  let enginePath = '';
+  let enginePath = "";
   for (const p of paths) {
     if (existsSync(p)) {
       enginePath = p;
@@ -66,7 +75,9 @@ function loadEngine(): FiltersEngine | null {
   }
 
   if (!enginePath) {
-    console.warn('[FilterService] Engine binary not found. Run: pnpm compile:filters');
+    console.warn(
+      "[FilterService] Engine binary not found. Run: pnpm compile:filters",
+    );
     return null;
   }
 
@@ -79,7 +90,7 @@ function loadEngine(): FiltersEngine | null {
     );
     return engine;
   } catch (err) {
-    console.error('[FilterService] Error loading engine:', err);
+    console.error("[FilterService] Error loading engine:", err);
     return null;
   }
 }
@@ -124,7 +135,7 @@ export function matchFilterUrl(
     const request = Request.fromRawDetails({
       url,
       sourceUrl,
-      type: (type ?? 'other') as any,
+      type: (type ?? "other") as any,
     });
 
     const match = engine.match(request);
@@ -134,26 +145,36 @@ export function matchFilterUrl(
     if (match.redirect) {
       _blockCount++;
       const rule = `redirect: ${JSON.stringify(match.redirect.contentType)}`;
-      debugLog('BLOCKED (redirect)  type=%s  url=%s  rule=%s', type || 'other', url, rule);
-      return { blocked: true, matchedRule: rule, source: 'engine' };
+      debugLog(
+        "BLOCKED (redirect)  type=%s  url=%s  rule=%s",
+        type || "other",
+        url,
+        rule,
+      );
+      return { blocked: true, matchedRule: rule, source: "engine" };
     }
 
     if (match.match) {
       _blockCount++;
-      const rule = match.filter?.toString() || 'filter match';
-      debugLog('BLOCKED (match)     type=%s  url=%s  rule=%s', type || 'other', url, rule);
-      return { blocked: true, matchedRule: rule, source: 'engine' };
+      const rule = match.filter?.toString() || "filter match";
+      debugLog(
+        "BLOCKED (match)     type=%s  url=%s  rule=%s",
+        type || "other",
+        url,
+        rule,
+      );
+      return { blocked: true, matchedRule: rule, source: "engine" };
     }
 
     if (match.exception) {
-      debugLog('ALLOWED (exception)  type=%s  url=%s', type || 'other', url);
-      return { blocked: false, source: 'engine' };
+      debugLog("ALLOWED (exception)  type=%s  url=%s", type || "other", url);
+      return { blocked: false, source: "engine" };
     }
 
-    debugLog('PASS (no match)  type=%s  url=%s', type || 'other', url);
-    return { blocked: false, source: 'engine' };
+    debugLog("PASS (no match)  type=%s  url=%s", type || "other", url);
+    return { blocked: false, source: "engine" };
   } catch (err) {
-    debugLog('ERROR matching  url=%s  err=%s', url, err);
+    debugLog("ERROR matching  url=%s  err=%s", url, err);
     return null;
   }
 }
@@ -166,7 +187,11 @@ export function isUrlAllowlisted(url: string, sourceUrl: string): boolean {
   if (!engine) return false;
 
   try {
-    const request = Request.fromRawDetails({ url, sourceUrl, type: 'document' });
+    const request = Request.fromRawDetails({
+      url,
+      sourceUrl,
+      type: "document",
+    });
     const match = engine.match(request);
     return match.exception !== undefined;
   } catch {
@@ -179,7 +204,7 @@ export function isUrlAllowlisted(url: string, sourceUrl: string): boolean {
  */
 export function getFilterCosmeticCSS(pageUrl: string): string {
   const engine = getEngine();
-  if (!engine) return '';
+  if (!engine) return "";
 
   try {
     const parsedUrl = new URL(pageUrl);
@@ -192,12 +217,12 @@ export function getFilterCosmeticCSS(pageUrl: string): string {
       getExtendedRules: false,
       getRulesFromDOM: false,
       getRulesFromHostname: true,
-      hidingStyle: '{ display: none !important; }',
+      hidingStyle: "{ display: none !important; }",
     });
 
-    return cosmetics?.styles || '';
+    return cosmetics?.styles || "";
   } catch {
-    return '';
+    return "";
   }
 }
 

@@ -96,6 +96,41 @@ export interface ElectronAPI {
   onEscapeBlocked: (
     callback: (event: { url: string; count: number }) => void,
   ) => () => void;
+
+  /**
+   * Player namespace (WebContentsView hybrid). The provider embed renders in a
+   * native WebContentsView owned by main; these bridge methods let the React
+   * renderer drive it (open/close/bounds/visibility/fullscreen/reload/state).
+   */
+  player: {
+    open: (embedUrl: string) => Promise<void>;
+    close: () => Promise<void>;
+    setBounds: (rect: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }) => Promise<void>;
+    setVisible: (visible: boolean) => Promise<void>;
+    setFullscreen: (fullscreen: boolean) => Promise<void>;
+    reload: () => Promise<void>;
+    getWebContentsId: () => Promise<number>;
+    onState: (callback: (state: PlayerViewState) => void) => () => void;
+  };
+}
+
+/**
+ * Provider native-view state pushed to the renderer (main → player:state).
+ * Mirrors the type in apps/web/types/electron.d.ts — keep in sync.
+ */
+interface PlayerViewState {
+  loading: boolean;
+  loaded: boolean;
+  error: string | null;
+  provisionalError: string | null;
+  /** Window fullscreen state (hybrid fullscreen is window-level). */
+  isFullscreen?: boolean;
+  audit?: string;
 }
 
 // Read version from package.json at build time
@@ -174,5 +209,30 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => {
       ipcRenderer.removeListener("provider:escape-blocked", listener);
     };
+  },
+
+  player: {
+    open: (embedUrl: string) => ipcRenderer.invoke("player:open", embedUrl),
+    close: () => ipcRenderer.invoke("player:close"),
+    setBounds: (rect: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }) => ipcRenderer.invoke("player:set-bounds", rect),
+    setVisible: (visible: boolean) =>
+      ipcRenderer.invoke("player:set-visible", visible),
+    setFullscreen: (fullscreen: boolean) =>
+      ipcRenderer.invoke("player:fullscreen", fullscreen),
+    reload: () => ipcRenderer.invoke("player:reload"),
+    getWebContentsId: () => ipcRenderer.invoke("player:get-webcontents-id"),
+    onState: (callback: (state: PlayerViewState) => void) => {
+      const listener = (_event: unknown, state: PlayerViewState) =>
+        callback(state);
+      ipcRenderer.on("player:state", listener);
+      return () => {
+        ipcRenderer.removeListener("player:state", listener);
+      };
+    },
   },
 });

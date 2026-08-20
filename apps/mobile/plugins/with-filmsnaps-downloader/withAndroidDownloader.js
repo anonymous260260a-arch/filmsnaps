@@ -28,6 +28,7 @@ function withAndroidDownloader(config) {
         "FilmsnapsDownloadModule.kt",
         "FilmsnapsDownloadPackage.kt",
         "FilmsnapsDownloadService.kt", // NEW — the ForegroundService
+        "OfflineFileProvider.kt", // NEW — zero-copy bridge for MediaStore playback
       ];
 
       for (const file of filesToCopy) {
@@ -137,6 +138,28 @@ function withAndroidDownloader(config) {
         });
         console.log(
           "[with-filmsnaps-downloader] ForegroundService registered in manifest ✓",
+        );
+      }
+
+      // Expert: register the OfflineFileProvider (zero-copy MediaStore playback bridge)
+      if (!application.provider) {
+        application.provider = [];
+      }
+      const existingProviders = (application.provider || []).map(
+        (p) => p.$?.["android:name"],
+      );
+      const providerName = ".download.OfflineFileProvider";
+      if (!existingProviders.includes(providerName)) {
+        application.provider.push({
+          $: {
+            "android:name": providerName,
+            "android:authorities": "com.filmsnaps.offline",
+            "android:exported": "false",
+            "android:grantUriPermissions": "true",
+          },
+        });
+        console.log(
+          "[with-filmsnaps-downloader] OfflineFileProvider registered in manifest ✓",
         );
       }
     }

@@ -17,11 +17,21 @@
  * video, or to media-type requests. Non-media requests (script, image, xhr,
  * document) to a video-trusted host fall through to R1-R8 and get filtered.
  *
- * Trust TTL: 60 seconds (resets on each verified video response).
+ * Trust TTL (Phase 2c): 15 minutes by default (sliding — resets on each
+ * verified video response), configurable via rules.videoDetection.trustTTLMs
+ * (provider-config getTrustTTLMs). Raised from 60s so pausing a movie for a
+ * few minutes doesn't expire trust and block the next segment.
+ *
+ * Verification authority (Phase 2c): Content-Type MIME is the authoritative
+ * signal (mime-sniffer.isVideoResponse). The disguised-URL regex + extension
+ * checks remain as DETECTION HINTS for responses whose MIME was not observed.
+ *
  * Trust is cleared when the video window closes or provider changes.
  */
 
 // ── Types ───────────────────────────────────────────────────────────────────
+
+import { isVideoResponse, isDisguisedMediaUrl } from "./mime-sniffer";
 
 export interface TrustEntry {
   hostname: string;
@@ -34,11 +44,19 @@ export interface TrustEntry {
 export interface VideoDetectionRule {
   extensions: string[];
   pathPatterns: string[];
+  /** Sliding trust TTL in ms (rules.videoDetection.trustTTLMs; default 15min). */
+  trustTTLMs?: number;
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const TRUST_TTL_MS = 60 * 1000; // 60 seconds (was 5 minutes)
+/**
+ * Default trust TTL (sliding). 15 minutes (Phase 2c) — raised from 60s so a
+ * paused movie (2+ min) doesn't expire trust and block the next segment. The
+ * SessionTrustManager constructor takes a configurable override from
+ * rules.videoDetection.trustTTLMs.
+ */
+const DEFAULT_TRUST_TTL_MS = 15 * 60 * 1000;
 
 // Resource types that are themselves media — a trusted entry always covers
 // these regardless of path (they are the video segments/manifests themselves).
@@ -66,29 +84,13 @@ const DEFAULT_VIDEO_EXTENSIONS = [
   "key",
 ];
 
-/**
- * Disguised HLS/DASH segments — providers serve video segments with non-video
- * extensions (.woff2, .png, .css, .js) to evade adblockers that match on
- * .ts/.m4s/.mp4. The path still follows HLS packaging conventions
- * (seg-N / init-N / chunk-N / part-N). Ported from mobile's
- * PlayerWebViewOverlayView.DISGUISED_MEDIA_REGEX.
- *
- * Matches:  /v4/np/lnhlsj/seg-1-f1-v1.woff2
- *           /v4/np/lnhlsj/init-f1-a1.woff
- *           /{cdn}/{session}/chunk-3-video.png
- *           /{cdn}/{session}/part-2-data.css
- * Non-match: /fonts/inter/Inter-Regular.woff2  (no seg/init/chunk/part prefix)
- *           /css/main.css
- */
-const DISGUISED_MEDIA_REGEX =
-  /(seg|init|chunk|part)(-\d{1,4})?(-[a-zA-Z0-9]+)*\.(woff2?|png|jpg|jpeg|gif|svg|css|js)(\?.*)?$/i;
-
 // ── SessionTrustManager ─────────────────────────────────────────────────────
 
 export class SessionTrustManager {
   private trustedHosts = new Map<string, TrustEntry>();
   private videoExtensions: string[];
   private pathPatterns: RegExp[];
+  private ttlMs: number;
 
   constructor(detectionRules?: VideoDetectionRule) {
     this.videoExtensions =
@@ -96,6 +98,13 @@ export class SessionTrustManager {
     this.pathPatterns = (detectionRules?.pathPatterns ?? []).map(
       (p) => new RegExp(p, "i"),
     );
+    // Phase 2c: trust TTL is configurable (rules.videoDetection.trustTTLMs),
+    // defaulting to 15 minutes.
+    this.ttlMs =
+      typeof detectionRules?.trustTTLMs === "number" &&
+      detectionRules.trustTTLMs > 0
+        ? detectionRules.trustTTLMs
+        : DEFAULT_TRUST_TTL_MS;
   }
 
   /**
@@ -114,43 +123,40 @@ export class SessionTrustManager {
   ): boolean {
     if (!url || !hostname) return false;
 
-    // 1. Check Content-Type header (most reliable when available)
-    if (contentType) {
-      const ct = contentType.toLowerCase();
-      if (
-        ct.includes("video/") ||
-        ct.includes("application/dash+xml") ||
-        ct.includes("application/vnd.apple.mpegurl") ||
-        ct.includes("application/x-mpegurl") ||
-        ct.includes("octet-stream") // Often used for .ts segments
-      ) {
+    // 1. MIME is the AUTHORITY (Phase 2c): video/*, DASH, HLS, mpegurl are
+    // video regardless of URL shape; octet-stream corroborates when the URL
+    // (disguised segment or explicit extension) agrees. A real video server
+    // does not label its segments text/html — so a text/html response with a
+    // video-ish URL is NOT trusted.
+    if (isVideoResponse(url, contentType, this.videoExtensions)) {
+      this.addTrust(hostname, this.getPathPrefix(url));
+      return true;
+    }
+
+    // 2. Check URL extension (DETECTION HINT — only when no authoritative
+    // MIME was observed; when a non-video MIME was observed, trust is refused
+    // even if the extension looks video-ish).
+    if (contentType == null) {
+      const pathname = this.getPathname(url);
+      const ext = this.getExtension(pathname);
+      if (ext && this.videoExtensions.includes(ext)) {
         this.addTrust(hostname, this.getPathPrefix(url));
+        return true;
+      }
+
+      // 2b. Disguised HLS/DASH segments (V5 Q6 port) — a .woff2/.png/.css/.js
+      // URL with HLS packaging structure (seg-/init-/chunk-/part-) IS video.
+      // Only ADDS trust — never removes — so it can't cause playback regression.
+      if (isDisguisedMediaUrl(url)) {
+        this.addTrust(hostname, this.getPathPrefix(url));
+        console.log(
+          `[SecurityFilter] Trust added: ${hostname} (disguised media segment: ${this.getPathname(url).slice(-60)})`,
+        );
         return true;
       }
     }
 
-    // 2. Check URL extension
-    const pathname = this.getPathname(url);
-    const ext = this.getExtension(pathname);
-    if (ext && this.videoExtensions.includes(ext)) {
-      this.addTrust(hostname, this.getPathPrefix(url));
-      return true;
-    }
-
-    // 2b. Disguised HLS/DASH segments (V5 Q6 port) — a .woff2/.png/.css/.js
-    // URL with HLS packaging structure (seg-/init-/chunk-/part-) IS video. Trust
-    // the host so these segments aren't blocked by R4/R5 (which match on
-    // non-video extensions). Only ADDS trust — never removes — so it can't
-    // cause playback regression.
-    if (DISGUISED_MEDIA_REGEX.test(pathname)) {
-      this.addTrust(hostname, this.getPathPrefix(url));
-      console.log(
-        `[SecurityFilter] Trust added: ${hostname} (disguised media segment: ${pathname.slice(-60)})`,
-      );
-      return true;
-    }
-
-    // 3. Check URL against path patterns
+    // 3. Check URL against path patterns (provider-configured)
     for (const regex of this.pathPatterns) {
       if (regex.test(url)) {
         this.addTrust(hostname, this.getPathPrefix(url));
@@ -184,7 +190,7 @@ export class SessionTrustManager {
     if (!entry) return false;
 
     const age = Date.now() - entry.lastVerifiedAt;
-    if (age > TRUST_TTL_MS) {
+    if (age > this.ttlMs) {
       // Expired — remove and return false
       this.trustedHosts.delete(lower);
       return false;
@@ -288,7 +294,7 @@ export class SessionTrustManager {
     const valid: TrustEntry[] = [];
 
     for (const entry of this.trustedHosts.values()) {
-      if (now - entry.lastVerifiedAt <= TRUST_TTL_MS) {
+      if (now - entry.lastVerifiedAt <= this.ttlMs) {
         valid.push(entry);
       }
     }
@@ -399,7 +405,7 @@ export function looksLikeVideoRequest(
   if (ext && videoExtensions.includes(ext.toLowerCase())) return true;
 
   // Disguised HLS/DASH segments (.woff2/.png/.css/.js with seg-/init-/chunk-/…)
-  if (DISGUISED_MEDIA_REGEX.test(pathname)) return true;
+  if (isDisguisedMediaUrl(url)) return true;
 
   // Provider path patterns
   if (detectionRules?.pathPatterns) {

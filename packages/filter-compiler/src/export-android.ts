@@ -16,7 +16,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FiltersEngine } from "@cliqz/adblocker";
+import { FiltersEngine } from "@ghostery/adblocker";
+import { writeBinaryTrie } from "./binary-trie";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const buildDir = join(__dirname, "..", "build");
@@ -31,14 +32,38 @@ const enginePath = join(buildDir, "compiled-engine.bin");
 // the same map from this emitted file so it blocks any page-facing
 // script/iframe/image whose host isn't in the provider's profile — exactly like
 // mobile Rule 5 — without hardcoding any hostname in source.
+const repoProvidersPath = join(__dirname, "..", "..", "..", "providers.json");
 const repoBlocklistPath = join(__dirname, "..", "..", "..", "blocklist.json");
-const providerProfiles: Record<string, string[]> = existsSync(repoBlocklistPath)
-  ? (JSON.parse(readFileSync(repoBlocklistPath, "utf8")).providerProfiles ?? {})
-  : {};
-console.log(
-  `[ExportAndroid] Loaded providerProfiles from ${repoBlocklistPath}: ` +
-    `${Object.keys(providerProfiles).length} providers`,
-);
+
+// V5: Load from providers.json (preferred), fallback to blocklist.json (v4 compat)
+let providerProfiles: Record<string, string[]> = {};
+let providerApiIntercepts: Record<string, any[]> = {};
+let providerCosmeticRules: Record<string, string[]> = {};
+
+const loadPath = existsSync(repoProvidersPath)
+  ? repoProvidersPath
+  : repoBlocklistPath;
+if (existsSync(loadPath)) {
+  const config = JSON.parse(readFileSync(loadPath, "utf8"));
+  providerProfiles = config.providerProfiles ?? {};
+  // V5: Extract apiIntercepts and cosmeticRules per provider
+  if (config.providers) {
+    for (const provider of config.providers) {
+      if (provider.apiIntercepts?.length) {
+        providerApiIntercepts[provider.id] = provider.apiIntercepts;
+      }
+      if (provider.cosmeticRules?.length) {
+        providerCosmeticRules[provider.id] = provider.cosmeticRules;
+      }
+    }
+  }
+  console.log(
+    `[ExportAndroid] Loaded from ${loadPath}: ` +
+      `${Object.keys(providerProfiles).length} providerProfiles, ` +
+      `${Object.keys(providerApiIntercepts).length} apiIntercepts, ` +
+      `${Object.keys(providerCosmeticRules).length} cosmeticRules`,
+  );
+}
 
 // ── Load engine ─────────────────────────────────────────────────────
 
@@ -181,8 +206,22 @@ for (const filter of networkFilters) {
   // Reference: export-android Expert Review §5.2 Q4
   if (text.startsWith("/") && text.includes("/")) {
     regexRules++;
-    // Find closing / (next / after the first char)
-    const endSlash = text.indexOf("/", 1);
+    // uBO regex filters are delimited by '/': /pattern/flags or /pattern/$options.
+    // The pattern is between the OPENING '/' and the LAST UNESCAPED '/' that
+    // precedes any '$' options. Escaped '\/' inside the pattern MUST NOT be
+    // treated as a delimiter — the old code used indexOf("/", 1) (first '/'
+    // after the opening), which broke on patterns containing escaped slashes,
+    // leaving a trailing '|' (empty alternation) that matches EVERY url and
+    // over-blocks first-party assets.
+    const optIdx = text.indexOf("$");
+    const bodyEnd = optIdx === -1 ? text.length : optIdx;
+    let endSlash = -1;
+    for (let i = bodyEnd - 1; i > 0; i--) {
+      if (text[i] === "/" && text[i - 1] !== "\\") {
+        endSlash = i;
+        break;
+      }
+    }
     if (endSlash === -1) continue;
     const pattern = text.slice(1, endSlash);
     // Extract a constant substring hint: sequences of non-regex-metachar
@@ -191,10 +230,19 @@ for (const filter of networkFilters) {
     const hintMatch = pattern.match(/[a-zA-Z0-9._\/-]{4,}/);
     if (hintMatch) {
       const hint = hintMatch[0].toLowerCase();
+      // Validate: the regex must COMPILE and must NOT match the empty string.
+      // A degenerate pattern (e.g. trailing '|' / empty alternation) matches()
+      // "" and would therefore block EVERY request that reaches the engine.
+      let valid = false;
+      try {
+        const re = new RegExp(pattern);
+        valid = !re.test("");
+      } catch {
+        valid = false;
+      }
+      if (!valid) continue;
       if (!regexTriggers.has(hint)) regexTriggers.set(hint, new Set());
-      // Clean up options from the text if present
-      const cleanOpts = text.replace(/\$[^,]+(?:,[^,]+)*$/, "");
-      regexTriggers.get(hint)!.add(cleanOpts);
+      regexTriggers.get(hint)!.add(pattern);
     }
     continue;
   }
@@ -292,6 +340,8 @@ const patterns = {
     ),
   },
   providerProfiles,
+  providerApiIntercepts,
+  providerCosmeticRules,
   cosmetic: cosmeticSelectors,
   stats: {
     totalNetworkFilters: networkFilters.length,

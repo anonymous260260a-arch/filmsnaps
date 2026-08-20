@@ -245,13 +245,32 @@ export function ServerPickerSheet({
                   </View>
 
                   <View className="flex-1">
-                    <Text
-                      className={`text-base font-semibold ${
-                        isActive ? "text-amber-400" : "text-zinc-200"
-                      }`}
-                    >
-                      {getDisplayName(p)}
-                    </Text>
+                    <View className="flex-row items-center flex-wrap gap-x-2 gap-y-1">
+                      <Text
+                        className={`text-base font-semibold ${
+                          isActive ? "text-amber-400" : "text-zinc-200"
+                        }`}
+                      >
+                        {getDisplayName(p)}
+                      </Text>
+                      {p.note && (
+                        <View
+                          className="px-2 py-0.5 rounded-full"
+                          style={{
+                            backgroundColor: "rgba(212,162,55,0.15)",
+                            borderWidth: 1,
+                            borderColor: "rgba(212,162,55,0.30)",
+                          }}
+                        >
+                          <Text
+                            className="text-[10px] font-bold"
+                            style={{ color: "#D4A237" }}
+                          >
+                            {p.note}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                     <Text className="text-zinc-600 text-xs mt-0.5">
                       {isActive ? "Currently active" : "Tap to switch"}
                     </Text>

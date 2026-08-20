@@ -32,6 +32,7 @@ import { colors } from "../theme/colors";
 import { AudioTrackPicker } from "./player/AudioTrackPicker";
 import { SubtitlePicker } from "./player/SubtitlePicker";
 import { saveProgress } from "../lib/watchHistory";
+import { toPlayableUri } from "../lib/download/offlineUri";
 
 interface HevcPlayerProps {
   videoUrl: string;
@@ -70,7 +71,7 @@ export function HevcPlayer({
   const playerRef = useRef<VideoPlayer | null>(null);
 
   // Create video player
-  const player = useVideoPlayer(videoUrl, (playerInstance) => {
+  const player = useVideoPlayer(toPlayableUri(videoUrl), (playerInstance) => {
     playerInstance.loop = false;
     playerRef.current = playerInstance;
 

@@ -34,6 +34,7 @@ import {
   getNativeDownloadDir,
 } from "./fsCompat";
 import { buildFileName, sanitizeForNative } from "./fileNameUtils";
+import { PermissionsAndroid, Platform } from "react-native";
 
 // ─── Constants ───
 const RETRY_DELAYS = [5_000, 15_000, 60_000];
@@ -116,7 +117,9 @@ export class DownloadManager {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.adapter = new NativeDownloaderAdapter();
     this.networkPolicy = new NetworkAwarePolicy(this.config.networkPolicy);
-    this.storage = new StorageManager();
+    // Bridge real device free-space (native StatFs / volumeAvailableCapacity)
+    // into the storage check so downloads aren't rejected with "0B free".
+    this.storage = new StorageManager(() => this.adapter.getAvailableStorage());
 
     // Network change handler (FIX 5: debounced to avoid 5x spam on startup)
     this.networkPolicy.onChange((canDownload, isWifi) => {
@@ -172,7 +175,7 @@ export class DownloadManager {
           // Genuinely still running (service survived; e.g. JS reload without force-stop).
           // Re-attach so the manager can receive further events for it, but do NOT touch
           // its status — it's correct as-is.
-          this.reattachToLiveTask(task.id);
+          this.reattachToLiveTask(task);
           continue;
         }
 
@@ -197,6 +200,12 @@ export class DownloadManager {
       // Also verify anything the DB thinks is "completed" actually still has its file
       for (const task of dbTasks) {
         if (task.status !== "completed" || !task.fileUri) continue;
+        // MediaStore / provider content:// URIs cannot be stat'd by expo-file-system's
+        // File API (it returns exists:false for them), so a real file would be falsely
+        // flagged "missing on disk" on every app reopen. Trust our own MediaStore rows
+        // here — matching handleNativeDone, which skips the fsCompat check for
+        // content:// URIs. Only legacy file:// downloads are verified this way.
+        if (task.fileUri.startsWith("content://")) continue;
         const info = await getInfoAsync(task.fileUri);
         if (!info.exists) {
           const corrected: DownloadTask = {
@@ -211,6 +220,33 @@ export class DownloadManager {
             updatedAt: Date.now(),
           });
         }
+      }
+
+      // Self-heal (pre-fix regression): any task marked "failed" with the exact
+      // "File missing on disk" error AND a content:// URI was a false positive from
+      // the old verification path (expo-file-system cannot stat MediaStore URIs, so
+      // getInfoAsync returned exists:false even for a present file). That precise
+      // error string is produced ONLY by the verification loop above — a genuine
+      // download failure carries an HTTP/network message instead — so restoring it
+      // to "completed" is safe: our MediaStore rows are authoritative for content://
+      // and the file is genuinely present (it shows in the gallery).
+      for (const task of dbTasks) {
+        if (task.status !== "failed" || !task.fileUri) continue;
+        if (!task.fileUri.startsWith("content://")) continue;
+        if (task.error !== "File missing on disk") continue;
+        const corrected: DownloadTask = {
+          ...task,
+          status: "completed",
+          error: undefined,
+          updatedAt: Date.now(),
+        };
+        corrections.push(corrected);
+        await DownloadDatabase.update({
+          id: task.id,
+          status: "completed",
+          error: undefined,
+          updatedAt: Date.now(),
+        });
       }
 
       if (corrections.length > 0 && this.store) {
@@ -231,6 +267,117 @@ export class DownloadManager {
       this.processQueue();
     } catch (err) {
       logger.error("Manager initialization failed:", err);
+    }
+  }
+
+  /**
+   * Re-attach JS callbacks to a task that is genuinely still running in the
+   * native ForegroundService (service survived a JS reload without force-stop).
+   *
+   * This is the cold-start reconciliation path: on initialize(), if the DB says
+   * "downloading" and the service confirms the task is live, we must register
+   * progress/complete/error listeners so events flowing from the already-running
+   * service reach the store. Unlike download()/resumeDownload(), this does NOT
+   * call start/resume on the native side — it only registers callbacks via
+   * adapter.attachToRunningTask().
+   */
+  private reattachToLiveTask(task: DownloadTask): void {
+    const uniqueSuffix =
+      task.season != null && task.episode != null
+        ? `S${String(task.season).padStart(2, "0")}E${String(task.episode).padStart(2, "0")}`
+        : task.id.slice(0, 20);
+    const fileName = sanitizeForNative(
+      buildFileName(task.fileName, task.extension, uniqueSuffix),
+    );
+
+    // Initialize trackers so progress emits correctly until complete.
+    const tracker = new SpeedTracker();
+    this.speedTrackers.set(task.id, tracker);
+    this.liveReceived.set(task.id, task.receivedBytes || 0);
+    this.liveTotal.set(task.id, task.totalBytes || 0);
+
+    const taskId = task.id;
+    let lastDbWrite = 0;
+    let lastEmit = 0;
+
+    // attachToRunningTask only registers callbacks — it does not start/resume
+    // on the native side. The service is already running this task.
+    const instance = this.adapter.attachToRunningTask(
+      taskId,
+      {
+        onProgress: (received: number, total: number) => {
+          if (!this.activeInstances.has(taskId)) return;
+          this.liveReceived.set(taskId, received);
+          if (total > 0) this.liveTotal.set(taskId, total);
+          tracker.update(received);
+
+          const now = Date.now();
+          if (now - lastEmit >= PROGRESS_EMIT_INTERVAL) {
+            lastEmit = now;
+            const speed = tracker.getSpeed();
+            const resolvedTotal =
+              total > 0 ? total : (this.liveTotal.get(taskId) ?? 0);
+            const remaining = Math.max(0, resolvedTotal - received);
+            this.emitProgress({
+              taskId,
+              receivedBytes: received,
+              totalBytes: resolvedTotal,
+              speed,
+              eta: tracker.getEta(remaining),
+            });
+          }
+
+          if (now - lastDbWrite >= DB_WRITE_INTERVAL) {
+            lastDbWrite = now;
+            DownloadDatabase.update({
+              id: taskId,
+              receivedBytes: received,
+              totalBytes: total > 0 ? total : undefined,
+              updatedAt: now,
+            }).catch(() => {});
+          }
+        },
+        onDone: (filePath, bytesTotal, realExt, realFileName) =>
+          this.handleNativeDone(
+            taskId,
+            filePath,
+            bytesTotal,
+            realExt,
+            realFileName,
+          ),
+        onError: (error: Error) => this.handleNativeError(task, error),
+      },
+      fileName,
+    );
+
+    this.activeInstances.set(taskId, instance);
+    logger.debug("Manager reattachToLiveTask: callbacks registered", taskId);
+  }
+
+  /**
+   * Compute how many bytes were already written to the partial (app-private)
+   * temp file for a task the DB thinks is "downloading" but the native
+   * ForegroundService no longer tracks (force-stop / crash / OS kill). Used
+   * during initialization to set a correct resume offset.
+   *
+   * The native downloader writes directly to the same path `startDownload`
+   * computes (`getNativeDownloadDir() + safeName`, no `.part` suffix), so we
+   * reconstruct that exact name and stat it. Returns 0 if nothing is on disk.
+   */
+  private async statPartialFileBytes(task: DownloadTask): Promise<number> {
+    const uniqueSuffix =
+      task.season != null && task.episode != null
+        ? `S${String(task.season).padStart(2, "0")}E${String(task.episode).padStart(2, "0")}`
+        : task.id.slice(0, 20);
+    const fileName = sanitizeForNative(
+      buildFileName(task.fileName, task.extension, uniqueSuffix),
+    );
+    const filePath = this.adapter.getDestinationPath(fileName);
+    try {
+      const info = await getInfoAsync(filePath);
+      return info.exists ? info.size : 0;
+    } catch {
+      return 0;
     }
   }
 
@@ -444,6 +591,9 @@ export class DownloadManager {
       let lastDbWrite = 0;
       let lastEmit = 0;
 
+      // Android 13+: ensure the foreground progress notification can be shown.
+      await this.ensureNotificationPermission();
+
       // ── FIX: Capture the real DownloadInstance from adapter.resumeDownload
       // which has proper pause/cancel methods (markTaskDead + NativeDownloadBridge.cancel + deleteFile).
       const realInstance = await this.adapter.resumeDownload(
@@ -487,7 +637,14 @@ export class DownloadManager {
               }).catch(() => {});
             }
           },
-          onDone: (filePath) => this.handleNativeDone(taskId, filePath),
+          onDone: (filePath, bytesTotal, realExt, realFileName) =>
+            this.handleNativeDone(
+              taskId,
+              filePath,
+              bytesTotal,
+              realExt,
+              realFileName,
+            ),
           onError: (error) => this.handleNativeError(task, error),
         },
       );
@@ -624,6 +781,11 @@ export class DownloadManager {
     }
 
     this.cleanup(taskId);
+    // Delete the physical file (MediaStore content:// or legacy app-private file).
+    const task = await DownloadDatabase.getById(taskId);
+    if (task?.fileUri) {
+      deleteFile(task.fileUri);
+    }
     await DownloadDatabase.delete(taskId);
     this.emitStatus({ taskId, status: "cancelled", removed: true });
     this.notifyQueue();
@@ -748,6 +910,32 @@ export class DownloadManager {
   // START DOWNLOAD
   // ═══════════════════════════════════════════════════════════
 
+  /**
+   * Android 13+ (API 33+) requires the POST_NOTIFICATIONS runtime permission for
+   * the foreground download notification to be visible — otherwise the system
+   * silently hides it (or places it in the background section) even though the
+   * download itself succeeds. Request it just-in-time, once, when a download
+   * actually starts. PermissionsAndroid.request only prompts the first time;
+   * later calls resolve to the existing decision, so per-start-call is safe.
+   */
+  private async ensureNotificationPermission(): Promise<void> {
+    if (Platform.OS !== "android") return;
+    if (Platform.Version < 33) return;
+    try {
+      const granted = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+      );
+      if (!granted) {
+        await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+        );
+      }
+    } catch {
+      // Non-fatal: if the prompt can't be shown the download still works; the
+      // OS may just hide the notification.
+    }
+  }
+
   private async startDownload(task: DownloadTask): Promise<void> {
     const taskId = task.id;
     logger.debug("Manager startDownload", {
@@ -775,6 +963,9 @@ export class DownloadManager {
 
     // Ensure download directory exists
     ensureDirectory(getNativeDownloadDir());
+
+    // Android 13+: ensure the foreground progress notification can be shown.
+    await this.ensureNotificationPermission();
 
     // Update DB with fileUri (Bug F fix: persist fileUri at start time)
     await DownloadDatabase.update({
@@ -841,8 +1032,19 @@ export class DownloadManager {
         }
       },
 
-      onDone: (finalPath: string) => {
-        this.handleNativeDone(taskId, finalPath);
+      onDone: (
+        finalPath: string,
+        bytesTotal?: number,
+        realExt?: string,
+        realFileName?: string,
+      ) => {
+        this.handleNativeDone(
+          taskId,
+          finalPath,
+          bytesTotal,
+          realExt,
+          realFileName,
+        );
       },
 
       onError: (error: Error) => {
@@ -880,6 +1082,9 @@ export class DownloadManager {
   private async handleNativeDone(
     taskId: string,
     filePath: string,
+    bytesTotal?: number,
+    realExt?: string,
+    realFileName?: string,
   ): Promise<void> {
     logger.debug("Manager handleNativeDone", { taskId, filePath });
 
@@ -909,10 +1114,37 @@ export class DownloadManager {
         return;
       }
 
-      // Normalize the native file path
-      const resolvedPath = filePath.startsWith("file://")
+      // MediaStore (content://) URIs come straight from the native completion
+      // event after the temp file was copied into MediaStore. expo-file-system
+      // cannot stat content:// URIs, so we trust the bytesTotal the native event
+      // already carried (the copy succeeded before onComplete fired) and skip
+      // the fsCompat existence check entirely.
+      const isMediaStoreUri = filePath.startsWith("content://");
+      const resolvedPath = isMediaStoreUri
         ? filePath
-        : `file://${filePath}`;
+        : filePath.startsWith("file://")
+          ? filePath
+          : `file://${filePath}`;
+
+      if (isMediaStoreUri) {
+        const actualSize = bytesTotal ?? task?.totalBytes ?? 0;
+        if (actualSize === 0 && task) {
+          await this.failTask(
+            task,
+            "Downloaded file size unknown after MediaStore completion",
+          );
+          return;
+        }
+        await this.completeTask(
+          taskId,
+          resolvedPath,
+          actualSize,
+          task?.totalBytes ?? actualSize,
+          realExt,
+          realFileName,
+        );
+        return;
+      }
 
       // ── Bug A fix: verify file using fsCompat (never throws) ──
       const info = await getInfoAsync(resolvedPath);
@@ -947,6 +1179,8 @@ export class DownloadManager {
                 calculatedPath,
                 altInfo.size,
                 task.totalBytes ?? altInfo.size,
+                realExt,
+                realFileName,
               );
               return;
             }
@@ -972,6 +1206,8 @@ export class DownloadManager {
         resolvedPath,
         actualSize,
         task?.totalBytes ?? actualSize,
+        realExt,
+        realFileName,
       );
     } catch (error) {
       logger.error("Manager handleNativeDone: unexpected error:", error);
@@ -993,8 +1229,28 @@ export class DownloadManager {
     filePath: string,
     fileSize: number,
     totalBytes: number,
+    realExt?: string,
+    realFileName?: string,
   ): Promise<void> {
-    logger.debug("Manager completeTask", { taskId, filePath, size: fileSize });
+    logger.debug("Manager completeTask", {
+      taskId,
+      filePath,
+      size: fileSize,
+      realExt,
+      realFileName,
+    });
+
+    // The native service is authoritative for the extension (any server can serve
+    // any extension), so prefer its realExt. We deliberately do NOT overwrite the
+    // enqueued fileName here — JS chose it for the user-facing display name; the
+    // native side only knows the final renamed base name. For file:// paths we can
+    // read the real base name as a fallback when native didn't send one.
+    const basename = filePath.startsWith("file://")
+      ? (filePath.split("/").pop() ?? "")
+      : "";
+    const dot = basename.lastIndexOf(".");
+    const derivedExt =
+      realExt ?? (dot > 0 ? basename.slice(dot + 1).toLowerCase() : undefined);
 
     await DownloadDatabase.update({
       id: taskId,
@@ -1003,6 +1259,7 @@ export class DownloadManager {
       receivedBytes: fileSize,
       totalBytes: totalBytes > 0 ? totalBytes : fileSize,
       resumeData: null,
+      ...(derivedExt ? { extension: derivedExt } : {}),
       updatedAt: Date.now(),
     });
 
@@ -1012,6 +1269,7 @@ export class DownloadManager {
       fileUri: filePath,
       receivedBytes: fileSize,
       totalBytes: totalBytes > 0 ? totalBytes : fileSize,
+      ...(derivedExt ? { extension: derivedExt } : {}),
     });
 
     // Clean up tracking

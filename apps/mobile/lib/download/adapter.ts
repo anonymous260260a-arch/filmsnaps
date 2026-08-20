@@ -59,9 +59,10 @@ export interface IDownloaderAdapter {
   supportsBackground(): boolean;
 
   /**
-   * Get available storage space in bytes
+   * Get available storage space in bytes.
+   * Returns both `free` (available/usable) and `total` (device capacity).
    */
-  getAvailableStorage(): Promise<number>;
+  getAvailableStorage(): Promise<{ free: number; total: number }>;
 
   /**
    * Clean up resources
