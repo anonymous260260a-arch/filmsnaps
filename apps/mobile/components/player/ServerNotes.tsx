@@ -119,15 +119,6 @@ const SERVER_NOTES: Record<string, ServerNote> = {
       "Use the server picker to switch if unavailable.",
     ],
   },
-  vidsync: {
-    title: "Using VidSync",
-    icon: "sync-outline",
-    lines: [
-      "Supports auto-play and auto-next for TV shows.",
-      "Default server is CINEDUB-2 for multi-audio content.",
-      "Available on both mobile and web platforms.",
-    ],
-  },
 };
 
 // ── Fallback note for unlisted providers ──

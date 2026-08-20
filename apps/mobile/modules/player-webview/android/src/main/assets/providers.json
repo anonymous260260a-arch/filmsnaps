@@ -1,0 +1,406 @@
+{
+  "version": 7,
+  "allowedCdnHosts": [
+    "akamai.net",
+    "akamaiedge.net",
+    "cloudfront.net",
+    "fastly.net",
+    "fastlylb.net",
+    "vidapi.cloud",
+    "eat-peach.sbs",
+    "opensubtitles.org",
+    "allorigins.win",
+    "cdn.jsdelivr.net",
+    "embedmafia.in",
+    "api.ipify.org",
+    "image.tmdb.org",
+    "api.themoviedb.org",
+    "sub.wyzie.io",
+    "sub.vdrk.site",
+    "fonts.googleapis.com",
+    "fonts.gstatic.com",
+    "appwrite.io",
+    "vjs.zencdn.net",
+    "cache.vdrk.site",
+    "api.theintrodb.org",
+    "gstatic.com",
+    "proxy.itsnitrox.tech",
+    "oo.itsnitrox.tech",
+    "s6p9.urbancreativepoint.site",
+    "east-cloud.v01d.lol",
+    "upcloud.animanga.fun",
+    "megacloud.animanga.fun",
+    "challenges.cloudflare.com",
+    "flagsapi.com"
+  ],
+  "blockedDomains": [
+    "fj.topperanlases.com",
+    "wz.afgodscarpe.com",
+    "llvpn.com",
+    "google-analytics.com",
+    "cosedcost.com",
+    "caulkedwhys.shop",
+    "vulturkipskin.cfd"
+  ],
+  "blockedUrls": [],
+  "providerProfiles": {
+    "web.nxsha.app": ["web.nxsha.app", "workers.dev", "cloudfront.net"],
+    "peachify.top": [
+      "peachify.top",
+      "eat-peach.sbs",
+      "workers.dev",
+      "theintrodb.org",
+      "flagcdn.com",
+      "fonts.googleapis.com",
+      "gstatic.com",
+      "cloudfront.net"
+    ],
+    "screenscape.me": [
+      "screenscape.me",
+      "googletagmanager.com",
+      "fonts.googleapis.com",
+      "gstatic.com"
+    ],
+    "www.chillflix.lol": [
+      "www.chillflix.lol",
+      "vidapi.cloud",
+      "cloudfront.net"
+    ],
+    "chillflix.lol": ["chillflix.lol", "vidapi.cloud", "cloudfront.net"],
+    "vidnest.fun": [
+      "vidnest.fun",
+      "workers.dev",
+      "wyzie.io",
+      "vdrk.site",
+      "cloudfront.net",
+      "themoviedb.org",
+      "image.tmdb.org",
+      "east-cloud.v01d.lol",
+      "upcloud.animanga.fun",
+      "megacloud.animanga.fun",
+      "proxy.itsnitrox.tech",
+      "oo.itsnitrox.tech"
+    ],
+    "nhdapi.com": ["nhdapi.com", "cloudfront.net"],
+    "zxcstream.xyz": [
+      "zxcstream.xyz",
+      "test.zxcstream.xyz",
+      "player.zxcstream.xyz",
+      "cloudfront.net"
+    ],
+    "player.vidzee.wtf": [
+      "player.vidzee.wtf",
+      "core.vidzee.wtf",
+      "cloudfront.net"
+    ]
+  },
+  "providerRootHosts": [
+    "web.nxsha.app",
+    "nxcdn.app",
+    "cdn.nxsha.app",
+    "peachify.top",
+    "stats.peachify.top",
+    "screenscape.me",
+    "www.googletagmanager.com",
+    "nhdapi.com",
+    "zxcstream.xyz",
+    "test.zxcstream.xyz",
+    "player.zxcstream.xyz",
+    "cinemaos.live",
+    "www.chillflix.lol",
+    "chillflix.lol",
+    "vidapi.cloud",
+    "vidnest.fun",
+    "wyzie.io",
+    "vdrk.site",
+    "toustream.xyz",
+    "streamguide.cfd",
+    "player.vidzee.wtf",
+    "core.vidzee.wtf"
+  ],
+  "rules": {
+    "videoDetection": {
+      "extensions": [
+        "m3u8",
+        "mpd",
+        "ts",
+        "m4s",
+        "mp4",
+        "webm",
+        "mkv",
+        "m4v",
+        "3gp",
+        "cmfv",
+        "cmfa",
+        "aac",
+        "key"
+      ],
+      "pathPatterns": [
+        "^/(embed|movie|tv|watch|player|tou)/\\d+/.*(\\.(m3u8|mpd|mp4))",
+        "^/[a-zA-Z0-9_-]{20,}/(master|index|playlist|manifest)\\.(m3u8|mpd)"
+      ],
+      "enableSessionTrust": true,
+      "trustTTLMs": 900000
+    },
+    "alwaysBlock": {
+      "domains": [
+        "doubleclick.net",
+        "googleadservices.com",
+        "googlesyndication.com",
+        "google-analytics.com",
+        "pagead2.googlesyndication.com",
+        "adnxs.com",
+        "rubiconproject.com",
+        "criteo.com",
+        "criteo.net",
+        "outbrain.com",
+        "taboola.com",
+        "revcontent.com",
+        "popads.net",
+        "popcash.net",
+        "adsterra.com",
+        "propellerads.com",
+        "trafficfactory.biz",
+        "histats.com",
+        "statcounter.com",
+        "scorecardresearch.com",
+        "amazon-adsystem.com",
+        "casalemedia.com",
+        "contextweb.com",
+        "openx.net",
+        "pubmatic.com",
+        "sharethrough.com",
+        "media.net",
+        "advertising.com",
+        "adap.tv",
+        "moatads.com",
+        "exdynsrv.com",
+        "exoclick.com",
+        "juicyads.com",
+        "plugrush.com",
+        "trafficjunky.com",
+        "adreactor.com",
+        "adcash.com",
+        "adhitz.com",
+        "adpierce.com",
+        "clickadu.com",
+        "clicksco.net",
+        "hilltopads.com",
+        "1xlite.com",
+        "cloudflareinsights.com",
+        "wo.riverlayboy.shop",
+        "hai8g.com",
+        "zoaclachan.cyou",
+        "florian.sorrilylivyershape.cyou",
+        "ag.phrymaphytic.com",
+        "my.rtmark.net",
+        "s.click.aliexpress.com",
+        "developdomicile.com",
+        "frowstyambler",
+        "qpon",
+        "adk2.com"
+      ],
+      "pathPatterns": [
+        "/pop\\.js",
+        "/popunder\\.js",
+        "/track\\.php",
+        "/ad\\.php",
+        "/banner\\.",
+        "\\.wasm"
+      ]
+    }
+  },
+  "navigationGuard": {
+    "universalBlockPaths": ["/"],
+    "shallowDepthThreshold": 1
+  },
+  "providers": [
+    {
+      "id": "nxsha",
+      "embedDomains": ["web.nxsha.app"],
+      "cdnDomains": [
+        "nxcdn.app",
+        "cdn.nxsha.app",
+        "proxy.itsnitrox.tech",
+        "oo.itsnitrox.tech"
+      ],
+      "enabled": true,
+      "cosmeticRules": [
+        "button:has(svg.lucide-list){display:none!important}",
+        "button[title=\"Crop to Fill\"]{display:none!important}",
+        "div[class*=\"right-3\"][class*=\"top-1/2\"][class*=\"z-30\"]{display:none!important}"
+      ]
+    },
+    {
+      "id": "peachify",
+      "embedDomains": ["peachify.top"],
+      "cdnDomains": ["eat-peach.sbs", "peachify.top"],
+      "enabled": true,
+      "docStartBundle": false,
+      "reactSafe": true
+    },
+    {
+      "id": "screenscape",
+      "embedDomains": ["screenscape.me"],
+      "cdnDomains": [],
+      "enabled": true,
+      "blockHomePaths": ["/", "/home", "/trending"],
+      "apiIntercepts": [
+        {
+          "match": "/api/ads/cycles",
+          "methods": ["GET", "POST"],
+          "synthetic": {
+            "primary": {
+              "ok": true,
+              "anchorMs": "@@NOW@@"
+            },
+            "fallback": {
+              "anchorMs": "@@NOW@@",
+              "source": "fallback"
+            },
+            "fallbackCondition": "source=fallback"
+          }
+        }
+      ],
+      "cosmeticRules": [
+        "button[aria-label^=\"Ads window ends\"]{display:none!important}",
+        "button[title^=\"Ads window ends\"]{display:none!important}",
+        "div[aria-label^=\"Ads window ends\"]{display:none!important}",
+        "span[aria-label^=\"Ads window ends\"]{display:none!important}",
+        "div:has(> a[href=\"https://screenscape.fun\"]){display:none!important}",
+        "a[href=\"https://screenscape.fun\"]{display:none!important}",
+        "a[href=\"https://screenscape.fun\"] + *{display:none!important}",
+        "button[title^=\"Download Sources\"]{display:none!important}",
+        "button[title^=\"Switch server and open Telegram\"]{display:none!important}",
+        "div:has(> button[aria-label=\"Dismiss\"]){display:none!important}"
+      ]
+    },
+    {
+      "id": "nhdapi",
+      "embedDomains": ["nhdapi.com"],
+      "cdnDomains": ["nhdcdn.com", "nhd.video"],
+      "enabled": true
+    },
+    {
+      "id": "zxcstream",
+      "embedDomains": [
+        "player.zxcstream.xyz",
+        "zxcstream.xyz",
+        "zxcstream.icu"
+      ],
+      "cdnDomains": ["test.zxcstream.xyz", "player.zxcstream.xyz"],
+      "enabled": true,
+      "reactSafe": true,
+      "disableDevtoolPatch": true
+    },
+    {
+      "id": "cinemaos",
+      "embedDomains": ["cinemaos.live"],
+      "cdnDomains": [],
+      "enabled": true
+    },
+    {
+      "id": "vidnest",
+      "embedDomains": ["vidnest.fun"],
+      "cdnDomains": [
+        "wyzie.io",
+        "vdrk.site",
+        "east-cloud.v01d.lol",
+        "upcloud.animanga.fun",
+        "megacloud.animanga.fun",
+        "proxy.itsnitrox.tech",
+        "oo.itsnitrox.tech"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "chillflix",
+      "embedDomains": ["www.chillflix.lol", "chillflix.lol"],
+      "blockHomePaths": ["/", "/home", "/trending"],
+      "cdnDomains": ["vidapi.cloud"],
+      "enabled": true
+    },
+    {
+      "id": "toustream",
+      "embedDomains": ["toustream.xyz"],
+      "cdnDomains": [],
+      "enabled": true
+    },
+    {
+      "id": "vidking",
+      "embedDomains": ["www.vidking.net"],
+      "cdnDomains": [],
+      "enabled": true
+    },
+    {
+      "id": "streamguide",
+      "embedDomains": ["streamguide.cfd"],
+      "cdnDomains": [],
+      "enabled": true
+    },
+    {
+      "id": "vidzee",
+      "embedDomains": ["player.vidzee.wtf"],
+      "cdnDomains": ["core.vidzee.wtf"],
+      "enabled": true
+    },
+    {
+      "id": "vidsrc",
+      "embedDomains": ["www.viduki.net"],
+      "cdnDomains": [],
+      "enabled": true,
+      "allowServerRedirects": true,
+      "note": "direct to viduki.net (was redirect-mesh from vidsrc.wtf)"
+    },
+    {
+      "id": "vidsrc2",
+      "embedDomains": ["www.viduki.net"],
+      "cdnDomains": [],
+      "enabled": true,
+      "allowServerRedirects": true,
+      "reactSafe": true,
+      "disableDevtoolPatch": true,
+      "note": "direct to viduki.net (was redirect-mesh from vidsrc.wtf)"
+    },
+    {
+      "id": "vidsrc3",
+      "embedDomains": ["www.viduki.net"],
+      "cdnDomains": [],
+      "enabled": true,
+      "allowServerRedirects": true,
+      "note": "direct to viduki.net (was redirect-mesh from vidsrc.wtf)"
+    },
+    {
+      "id": "vidsrc4",
+      "embedDomains": ["www.viduki.net"],
+      "cdnDomains": [],
+      "enabled": true,
+      "allowServerRedirects": true,
+      "note": "direct to viduki.net (was redirect-mesh from vidsrc.wtf)"
+    },
+    {
+      "id": "vidsrc5",
+      "embedDomains": ["www.viduki.net"],
+      "cdnDomains": [],
+      "enabled": true,
+      "allowServerRedirects": true,
+      "note": "direct to viduki.net (was redirect-mesh from vidsrc.su)"
+    },
+    {
+      "id": "vidsrc6",
+      "embedDomains": ["www.viduki.net"],
+      "cdnDomains": [],
+      "enabled": true,
+      "allowServerRedirects": true,
+      "note": "direct to viduki.net (was redirect-mesh from vidsrc-embed.ru)"
+    },
+    {
+      "id": "videasy",
+      "embedDomains": ["player.videasy.net", "player.videasy.to", "videasy.to"],
+      "cdnDomains": [],
+      "enabled": true,
+      "allowServerRedirects": true,
+      "note": "redirect-mesh: player.videasy.net -> videasy.to before the player page"
+    }
+  ]
+}

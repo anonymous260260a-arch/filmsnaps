@@ -131,6 +131,56 @@ export const providerConfigs: Record<string, ProviderConfig> = {
       },
     ],
   },
+  cinemaos: {
+    // Right-side player-tools rail (server/source picker, details,
+    // "Switch to Classic UI", "Hide player tools"). Same Tailwind rail as
+    // nxsha — hide the wrapper so all four buttons disappear together.
+    cssRules: [
+      'div[class*="right-3"][class*="top-1/2"][class*="z-30"]{display:none!important}',
+      // Subtitle button — rendered in TWO places: the main control bar (no
+      // title, captions icon, data-settings-trigger) AND the settings dialog
+      // (title="Subtitle: …"). We must NOT use a blanket data-settings-trigger
+      // selector: Quality ("Quality: 4K") and Server ("Server: …") triggers
+      // share that attribute and must stay visible. Instead target the subtitle
+      // by its unique captions-icon SVG path (the speech-bubble-with-tail,
+      // which neither Quality's <line>s nor Server's <rect>s contain).
+      'button:has(svg path[d^="M21 15a2 2 0 0 1-2 2H7l-4 4V5"]){display:none!important}',
+      // Try-Febbox-4K button — same two variants. The control-bar variant has
+      // no title (just a <span>4K</span>); the dialog variant has title=
+      // "Try Febbox 4K". Both carry data-settings-trigger. Quality/Server
+      // triggers have an <svg>, NOT a <span>, so :has(span) isolates the 4K
+      // button without touching them.
+      'button[data-settings-trigger="true"]:has(span){display:none!important}',
+      // Fallback (dialog-only) title matches — harmless redundancy with the
+      // icon/span rules above, kept in case a render exposes a title.
+      'button[title^="Subtitle:" i]{display:none!important}',
+      'button[title^="Try Febbox 4K" i]{display:none!important}',
+      // Watch Party: a control-button whose label ("Watch Party") lives in a
+      // SIBLING tooltip div — keyword sweeping can't reach the button. Target
+      // it by its lucide-users icon (the 4K button has no svg, so this is
+      // unique). :has() is legal inside a <style> tag (CSS channel).
+      "button.control-button:has(svg.lucide-users){display:none!important}",
+      // Menu (group/row) items: Picture in Picture / Cast / Download. Their
+      // labels live inside the button (a <span>) but the settings DIALOG that
+      // contains them also contains those words — so a keyword sweep would
+      // match the DIALOG wrapper <div> and blank the whole dialog. Target
+      // each button precisely by its unique lucide icon via :has() instead.
+      // :has() is legal inside a <style> tag (CSS channel) but NOT in
+      // querySelectorAll, so these live ONLY here, never in hideSelectors.
+      "button:has(svg.lucide-picture-in-picture2){display:none!important}",
+      "button:has(svg.lucide-cast){display:none!important}",
+      "button:has(svg.lucide-download){display:none!important}",
+    ],
+    hideSelectors: [
+      'div[class*="right-3"][class*="top-1/2"][class*="z-30"]',
+      'button[title="Player sources"]',
+      'button[title="Details"]',
+      'button[title="Switch to Classic UI"]',
+      'button[title="Hide player tools"]',
+      'button[title^="Subtitle:" i]',
+      'button[title^="Try Febbox 4K" i]',
+    ],
+  },
 };
 
 /**

@@ -9,7 +9,12 @@ import { getNativeDownloadDir, deleteFile } from "./fsCompat";
 
 interface PerTaskCallbacks {
   onProgress?: (receivedBytes: number, totalBytes: number) => void;
-  onDone?: (filePath: string) => void;
+  onDone?: (
+    filePath: string,
+    bytesTotal?: number,
+    realExt?: string,
+    realFileName?: string,
+  ) => void;
   onError?: (error: Error) => void;
 }
 
@@ -59,7 +64,7 @@ export class NativeDownloaderAdapter {
         if (this.deadTasks.has(e.taskId)) return;
         const cb = this.activeCallbacks.get(e.taskId);
         this.activeCallbacks.delete(e.taskId);
-        cb?.onDone?.(e.filePath);
+        cb?.onDone?.(e.filePath, e.bytesTotal, e.extension, e.fileName);
       }),
     );
 
@@ -117,7 +122,12 @@ export class NativeDownloaderAdapter {
     headers?: Record<string, string>;
     externalId?: string;
     onProgress?: (receivedBytes: number, totalBytes: number) => void;
-    onDone?: (filePath: string) => void;
+    onDone?: (
+      filePath: string,
+      bytesTotal?: number,
+      realExt?: string,
+      realFileName?: string,
+    ) => void;
     onError?: (error: Error) => void;
   }): Promise<DownloadInstance> {
     const id =
@@ -146,7 +156,12 @@ export class NativeDownloaderAdapter {
     offsetBytes: number,
     options: {
       onProgress?: (receivedBytes: number, totalBytes: number) => void;
-      onDone?: (filePath: string) => void;
+      onDone?: (
+        filePath: string,
+        bytesTotal?: number,
+        realExt?: string,
+        realFileName?: string,
+      ) => void;
       onError?: (error: Error) => void;
     },
   ): Promise<DownloadInstance> {
@@ -169,11 +184,11 @@ export class NativeDownloaderAdapter {
     return true;
   }
 
-  async getAvailableStorage(): Promise<number> {
+  async getAvailableStorage(): Promise<{ free: number; total: number }> {
     try {
       return await NativeDownloadBridge.getAvailableStorage();
     } catch {
-      return 0;
+      return { free: 0, total: 0 };
     }
   }
 
@@ -196,7 +211,12 @@ export class NativeDownloaderAdapter {
     taskId: string,
     callbacks: {
       onProgress?: (receivedBytes: number, totalBytes: number) => void;
-      onDone?: (filePath: string) => void;
+      onDone?: (
+        filePath: string,
+        bytesTotal?: number,
+        realExt?: string,
+        realFileName?: string,
+      ) => void;
       onError?: (error: Error) => void;
     },
     fileName: string,

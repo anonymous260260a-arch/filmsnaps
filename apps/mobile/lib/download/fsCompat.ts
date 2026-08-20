@@ -1,5 +1,6 @@
 import { File, Directory, Paths } from "expo-file-system";
 import { Platform } from "react-native";
+import { NativeDownloadBridge } from "./nativeBridge";
 
 /**
  * Fixes Bug 5: SDK 55 removed the default export / `getInfoAsync` free function from
@@ -25,6 +26,12 @@ export function getInfoAsync(uri: string): FileInfo {
 
 export function deleteFile(uri: string): void {
   try {
+    // MediaStore / provider URIs can't be deleted via the expo-file-system File
+    // API — they must go through ContentResolver.delete on the native side.
+    if (uri.startsWith("content://")) {
+      NativeDownloadBridge.deleteFile(uri).catch(() => {});
+      return;
+    }
     const file = new File(uri);
     if (file.exists) file.delete();
   } catch {

@@ -2,8 +2,8 @@
 
 Electron app for Windows/macOS/Linux. Wraps the Next.js web app as a local
 standalone server and provides a **hardened native player**: provider embeds
-load in a `<webview>` on an isolated session partition with the full R0–R8
-rule cascade and L2–L8 security layers.
+load in a **`WebContentsView` (hybrid)** on an isolated session partition with
+the full R0–R8 rule cascade and L2–L8 security layers.
 
 ## Stack
 
@@ -12,29 +12,31 @@ rule cascade and L2–L8 security layers.
   `.next/standalone`) spawned as a local server on a free localhost port.
 - **electron-builder** for installers; **electron-updater** for auto-updates
   from GitHub Releases.
-- **`@cliqz/adblocker`** FiltersEngine (compiled by `@filmsnaps/filter-compiler`)
-  for network-level ad blocking.
+- **`@ghostery/adblocker`** FiltersEngine (adblock-rs WASM core, compiled by
+  `@filmsnaps/filter-compiler`) for network-level ad blocking.
 
 ## Layout
 
 ```
 src/
-  main.ts                     Main process: window, IPC, webview lockdown, L4/L7/L7b attach
-  preload.ts                  Main window preload (context bridge)
+  main.ts                     Main process: window, IPC, WebContentsView lifecycle, L4/L7/L7b/L8 attach
+  preload.ts                  Main window preload (context bridge + player:* IPC)
   preload/
     provider-preload.ts       Session-level provider preload (L5/L6) — PRIMARY in-page protection
   security/
     rule-cascade.ts           R0–R8 blocking decision-maker
-    session-trust.ts          Path-scoped session trust (R0) + video detection
-    request-filter.ts         webRequest filter, CSP headers (L3), provider session lifecycle
-    navigation-guard.ts       L4 nav/popup/redirect guard + home-escape guard
-    provider-security.ts      L7 CDP verification + L7b fail-closed frame sweep
-    html-injector.ts          L8 network HTML injection — currently DISABLED
+    session-trust.ts          Path-scoped session trust (R0) + MIME-based trust + 15-min TTL
+    request-filter.ts         webRequest filter, CSP headers (L3), provider session lifecycle, onHeadersReceived MIME trust
+    navigation-guard.ts       L4 nav/popup/redirect guard + home-escape + allowServerRedirects
+    provider-security.ts      L7 CDP verification + L7b fail-closed frame sweep + Page.addScriptToEvaluateOnNewDocument
+    html-injector.ts          L8 CDP-Fetch HTML injection (doc_start, preserves headers, fail-closed)
     cosmetic-filter.ts        Engine-derived cosmetic CSS/scriptlets (L6)
-    filter-engine.ts          @cliqz/adblocker singleton
-    provider-config.ts        blocklist.json loader (CJS replica of @filmsnaps/adblock-config)
+    filter-engine.ts          @ghostery/adblocker singleton
+    provider-config.ts        providers.json v5 loader + OTA config (CJS replica)
+    ota-config.ts             OTA fetch + ring-buffer rollback + 3×-failure watchdog + heal-events.log
     blocklist.ts              Legacy flat blocklist fallback (R7)
     url-substring-filter.ts   Mobile-parity substring trie (R4b)
+    structural-warnings.ts    Startup structural checks (Widevine, MutationObserver, pop-under)
 scripts/
   build-web.mjs               Builds the web standalone bundle
   build-provider-preload.mjs  Bakes the shared guard bundle into provider-preload.js
@@ -73,7 +75,7 @@ Output goes to `apps/desktop/release/`:
 - **Linux:** `FilmSnaps-<version>.AppImage`
 
 Production builds bundle: the web standalone build (`extraResources`), the
-compiled filter engine, and `blocklist.json`.
+compiled filter engine, `providers.json`, `filters.txt`, `providers.json.sig`, and Ed25519 public key.
 
 ## Security
 
@@ -82,18 +84,31 @@ This app is where the strongest defenses live. Read the full walkthrough in
 
 - **R0–R8 rule cascade** (`security/rule-cascade.ts`) — every provider request
   passes through it at the Chromium network layer, before any page JS runs.
-- **L5 session preload** — the load-bearing in-page protection, delivered at
+- **L5 session preload** (`session.registerPreloadScript({ type: 'frame' })`) — the load-bearing in-page protection, delivered at
   document-start in every frame, surviving cross-site navigation.
 - **L4 navigation guard** — popups, cross-host navigation, redirects, and
-  home-page escapes blocked in the main process.
-- **L8 is disabled** — `html-injector.ts` protocol interception is a V8
-  diagnostic; re-arming is one line, but see the file for why it's off.
+  home-page escapes blocked in the main process. **`allowServerRedirects`** for redirect-mesh providers.
+- **L8 CDP-Fetch HTML injection** — rewrites every HTML response at `document_start` via CDP `Fetch` domain,
+  preserves renderer headers (no Cloudflare 403), fail-closed 403 on injection failure.
+- **Session trust (R0)** — MIME-type sniffing on `onHeadersReceived`, 15-min sliding TTL, path-scoped.
+- **OTA config v5** — `providers.json` + `filters.txt` Ed25519-signed, ring-buffer rollback (3 configs),
+  3×-failure watchdog, local `heal-events.log`.
+- **Structural warnings** — `enableWidevine`, MutationObserver bookkeeping, pop-under detection at startup.
 
 ### Audit diagnostics
 
 Run the app with `FILMSNAPS_AUDIT=1` (allow-side request log) or
 `FILMSNAPS_AUDITNET=1` (CDP network header samples) to trace exactly what the
 security stack allowed/blocked.
+
+## WebContentsView Hybrid (Phase 3)
+
+- Main owns a **single `WebContentsView`** (lazily created on first `player:open`, reused for app lifetime).
+- Renderer reserves a black rect (`DesktopSecureWebview.tsx`); `ResizeObserver` → IPC `player:set-bounds`.
+- Native view sits **above** the rect; React overlays (server dropdown, CPU warning, error) drive `player:set-visible=false` via `overlayActive`.
+- Provider stays **main frame** → `will-navigate`/`will-redirect`/`did-fail-load` work unchanged.
+- Fullscreen: `toggleFullscreen` → IPC `player:setFullscreen` → `mainWindow.setFullScreen()` + `providerViewFitToContent()`.
+- Security stack (`navigation-guard`, `provider-security`, `provider-preload`) attaches to `view.webContents` — view-agnostic.
 
 ## Auto-updates
 

@@ -20,6 +20,7 @@ import {
   Menu,
   ipcMain,
   shell,
+  WebContentsView,
   webContents,
 } from "electron";
 import { join } from "path";
@@ -47,6 +48,16 @@ import {
   verifyPreloadInFrames,
 } from "./security/provider-security";
 import { registerCosmeticFilterIPC } from "./security/cosmetic-filter";
+import {
+  startOtaConfigLoop,
+  stopOtaConfigLoop,
+  recordProviderFailure,
+  recordProviderSuccess,
+} from "./security/ota-config";
+import {
+  auditProviderSessionWarnings,
+  auditPreloadObserverBookkeeping,
+} from "./security/structural-warnings";
 
 // ── Constants ──
 
@@ -74,6 +85,34 @@ let currentProviderSession: ReturnType<typeof createProviderSession> | null =
   null;
 let currentProviderId: string | null = null;
 
+// ── Provider WebContentsView (Phase 3 hybrid migration) ─────────────
+// A single native WebContentsView owns the provider embed. Created lazily on
+// the first player:open, reused for the app lifetime (mirrors the old
+// singleton <webview> invariant — no React key, no remount race). The security
+// stack (nav guard L4, CDP-Fetch L8, session preload L5/L6, verifyPreloadInFrames)
+// attaches to view.webContents — the WebContents API is view-agnostic, so no
+// security module changes. The React renderer reserves a black rect and drives
+// bounds/visibility/fullscreen/load via the player:* IPC bridge (preload.ts).
+let providerView: WebContentsView | null = null;
+let providerViewAttached = false;
+/** The URL the view is currently showing (for reload). */
+let providerViewUrl = "";
+/** Guard state for the persistent view — re-pointed per provider switch. */
+let providerViewGuard: {
+  updateConfig: (next: Parameters<typeof applyNavigationGuard>[1]) => void;
+} | null = null;
+/** True once the view's webContents had its one-time security attach. */
+let providerViewSecurityAttached = false;
+/** Whether the renderer currently wants the view visible (overlay state). */
+let providerViewVisible = true;
+/** The last bounds main applied (used to re-apply on fullscreen/resize). */
+let providerViewBounds: Electron.Rectangle = {
+  x: 0,
+  y: 0,
+  width: 0,
+  height: 0,
+};
+
 // Pre-seed CDN domain set from blocklist.json, built at startup.
 // Used to pre-fill session trust so CDNs are R0-allowed from first request.
 const preSeededCdnDomains: Set<string> =
@@ -99,7 +138,8 @@ function createMainWindow(): void {
       nodeIntegration: false,
       sandbox: false, // The main app needs Node.js for IPC; provider content uses sandbox
       webSecurity: true,
-      webviewTag: true, // Enable <webview> tag for inline provider playback
+      // webviewTag intentionally NOT set — the provider embed now renders in a
+      // native WebContentsView (Phase 3 hybrid), not a <webview> tag.
     },
   });
 
@@ -174,8 +214,48 @@ function createMainWindow(): void {
   createProviderSession();
   console.log("[Main] Provider session pre-created with R0-R8 filters");
 
+  // Structural warnings (Phase 2e) — surface likely security-drift without
+  // changing behavior. Gated to FILMSNAPS_AUDIT=1 so production stays quiet
+  // (the console.warn inside is only emitted when auditing).
+  if (process.env.FILMSNAPS_AUDIT === "1") {
+    // Widevine is NOT enabled on the provider session by design (the
+    // will-attach-webview lockdown sets no enableWidevine, and the partition
+    // is cache:false). Electron's Session has no readable widevineVersion
+    // flag, so this is audited as "disabled" today; if a future change enables
+    // Widevine in createProviderSession/webPreferences, add an explicit
+    // source-of-truth boolean there and thread it through this call.
+    auditProviderSessionWarnings({
+      sessionWidevineEnabled: false,
+      providerId: getCurrentBlockingProviderId() ?? undefined,
+    });
+    try {
+      const { readFileSync } = require("fs");
+      const { join } = require("path");
+      const preloadPath = join(
+        __dirname,
+        "..",
+        "preload",
+        "provider-preload.js",
+      );
+      auditPreloadObserverBookkeeping(readFileSync(preloadPath, "utf8"));
+    } catch (e) {
+      console.warn(
+        "[Structural] Could not read preload for observer audit:",
+        e,
+      );
+    }
+  }
+
+  // OTA config loop — verify + apply the signed v5 config on launch and
+  // every 2h, with ring-buffer rollback + 3×-failure watchdog auto-heal.
+  startOtaConfigLoop();
+  app.on("before-quit", () => stopOtaConfigLoop());
+
   // Register provider session IPC handlers (inline webview)
   registerProviderSessionIPC();
+
+  // Register the player:* IPC handlers (WebContentsView hybrid — Phase 3)
+  registerPlayerViewIPC();
 
   // Register the engine-derived cosmetic filter IPC (Pillar B) — the preload's
   // DOM sweeper posts class/id/href tokens here and gets the engine's cosmetic
@@ -194,8 +274,25 @@ function createMainWindow(): void {
 
   // Save window state on changes + push maximize state to the renderer
   // so the custom title bar can swap its maximize/restore icon live.
-  mainWindow.on("resize", () => saveWindowState(mainWindow!));
+  mainWindow.on("resize", () => {
+    saveWindowState(mainWindow!);
+    // DO NOT call providerViewFitToContent() here — it would fill the view to
+    // the whole window content bounds, overwriting the renderer-driven rect
+    // bounds and covering the server pill/dropdown. Renderer owns bounds
+    // outside fullscreen via player:set-bounds (ResizeObserver).
+  });
   mainWindow.on("move", () => saveWindowState(mainWindow!));
+  mainWindow.on("enter-full-screen", () => {
+    providerViewFitToContent();
+    sendPlayerFullscreenState();
+  });
+  mainWindow.on("leave-full-screen", () => {
+    // Restore the last renderer-driven rect bounds on exiting fullscreen.
+    if (providerView && providerViewAttached) {
+      providerView.setBounds(providerViewBounds);
+    }
+    sendPlayerFullscreenState();
+  });
   mainWindow.on("maximize", () => {
     saveWindowState(mainWindow!);
     mainWindow?.webContents.send("window:maximized-changed", true);
@@ -249,147 +346,23 @@ function createMainWindow(): void {
     }
   });
 
-  // ── Webview security: partition lockdown + nav guard + CDP VERIFICATION ──
-  // The provider <webview> is the only guest this app mounts. We validate its
-  // partition, harden its webPreferences, and attach the main-process navigation
-  // guard (L4). The PRIMARY in-page protection (L5/L6 — protection script +
-  // cosmetic CSS at document-start in every frame) is delivered by the SESSION-
-  // LEVEL PRELOAD (session.setPreloads in request-filter.ts), which survives
-  // cross-site navigations that CDP cannot. CDP here is verification-only.
-  // NOTE: single live webview assumption — a pending-embed slot is sufficient today.
-  let pendingEmbedUrl: string | null = null;
-
-  mainWindow.webContents.on(
-    "will-attach-webview",
-    (event, webPreferences, params) => {
-      // 1. Partition validation — ONLY the provider partition is allowed.
-      if ((params.partition ?? "") !== "persist:filmsnaps-provider") {
-        console.warn(
-          `[Main] Rejected webview with non-provider partition: ${params.partition}`,
-        );
-        event.preventDefault();
-        return;
-      }
-
-      // 2. Lockdown webPreferences (main-process enforced, cannot be overridden
-      //    by renderer-provided webpreferences).
-      //
-      // contextIsolation:false + nodeIntegrationInSubFrames:true are REQUIRED for
-      // the session-level provider preload (set via session.setPreloads) to run in
-      // the page's MAIN WORLD at document-start in EVERY frame (main + OOPIF), so
-      // its prototype overrides (canvas/WebGL spoofing, worker/sendBeacon blocking)
-      // take effect. This is safe because sandbox:true strips Node APIs from the
-      // preload scope — the page never gains require/process access.
-      webPreferences.nodeIntegration = false;
-      webPreferences.contextIsolation = false; // preload must share the main world
-      webPreferences.sandbox = true; // Node APIs still stripped
-      webPreferences.webSecurity = true;
-      webPreferences.nodeIntegrationInSubFrames = true; // preload in every OOPIF
-      webPreferences.nodeIntegrationInWorker = false;
-      webPreferences.allowRunningInsecureContent = false;
-      webPreferences.experimentalFeatures = false;
-      // NOTE: no webPreferences.allowPopups — popups are denied by the nav guard's
-      // setWindowOpenHandler (L4) + the renderer's new-window preventDefault. The
-      // webview element must NOT carry the allowpopups attribute (its mere presence
-      // enables popups even when false).
-      // Do NOT set webPreferences.preload here — the session-level preload
-      // already covers it; setting both can cause double-execution.
-      delete (webPreferences as any).preload;
-      delete (webPreferences as any).additionalArguments;
-
-      // 3. Capture the embed URL for did-attach-webview (guest webContents is
-      //    not available until attach completes).
-      pendingEmbedUrl = params.src ?? null;
-    },
-  );
-
-  // 50ms debounce: React's hydration double-mount briefly creates two webview
-  // elements (one is destroyed) — wait for the dust to settle so L4/L7 attach to
-  // the surviving guest instead of one that dies 50ms later. Harmless delay: the
-  // session preload (L5/L6) runs at document-start regardless.
-  let attachTimer: NodeJS.Timeout | null = null;
-  mainWindow.webContents.on("did-attach-webview", (_event, guest) => {
-    if (attachTimer) clearTimeout(attachTimer);
-    attachTimer = setTimeout(() => {
-      if (guest.isDestroyed()) return;
-      const providerId = getCurrentBlockingProviderId();
-      const embedUrl = pendingEmbedUrl || guest.getURL();
-      const allowed = computeProviderAllowedDomains(providerId, embedUrl);
-
-      // AUDIT — surface renderer-side logs to main-process stdout so a
-      // FILMSNAPS_AUDIT=1 run reveals what the protection bundle intercepted
-      // and, critically (expert V5), when/how a stream dies BEFORE it reaches
-      // onBeforeRequest / the ReqLog. The webview guest's console-message fires
-      // here in main with the page's console lines.
-      if (process.env.FILMSNAPS_AUDIT === "1") {
-        // `guest` here IS the guest WebContents (Electron's did-attach-webview
-        // hands us the guest's webContents directly).
-        // Electron 42: pass the console-message args via the Event object
-        // (the positional-args form is deprecated).
-        guest.on(
-          "console-message",
-          (_e: unknown, level: number, message: string) => {
-            if (
-              message.includes("[PROTECTION]") ||
-              message.includes("[STREAM-AUDIT]")
-            ) {
-              console.log(`[Webview console][lvl${level}] ${message}`);
-            }
-          },
-        );
-      }
-
-      // L4 — main-process navigation/popup/redirect guard. Includes the
-      // path-level home-page escape guard (provider error-UI "Go Home" →
-      // provider.com/, which host-level checks can't catch). Config comes from
-      // blocklist.json (navigationGuard.universalBlockPaths + providers[].blockHomePaths).
-      const {
-        getProviderBlockHomePaths,
-        getUniversalBlockPaths,
-      } = require("./security/provider-config");
-      const blockHomePaths = getProviderBlockHomePaths(providerId);
-      const universalBlockPaths = getUniversalBlockPaths();
-      applyNavigationGuard(guest, {
-        providerUrl: embedUrl || "",
-        requestedEmbedUrl: embedUrl || "",
-        blockHomePaths,
-        universalBlockPaths,
-        additionalAllowedHosts: Array.from(allowed),
-        onBlocked: (type, url) =>
-          console.warn(`[NavGuard] Blocked ${type}: ${url.slice(0, 120)}`),
-        // Escalate after the single auto-reload: tell the renderer to show the
-        // source-unavailable / error UI (never the provider's home page).
-        onEscaped: (count, url) => {
-          if (mainWindow?.isDestroyed()) return;
-          mainWindow?.webContents.send("provider:escape-blocked", {
-            url,
-            count,
-          });
-        },
-      });
-
-      // L7 — CDP verification layer: probes each live frame to confirm the
-      // session preload (L5/L6) is active. Does NOT inject — the preload does.
-      attachProviderSecurity(guest, { providerId, embedUrl });
-
-      // L7b — FAIL-CLOSED per-frame protection verification (no CDP):
-      // sweeps every committed frame for the preload guard sentinel, injects
-      // the protection bundle into about:blank/srcdoc/blob/data frames (the
-      // coverage holes both the session preload and L8 miss), and — if a
-      // committed frame is unprotected — stops THAT frame only (never the
-      // whole webview, which previously broke initial load). The user's
-      // contract is "security must apply every time, no matter what" — a
-      // brief error is preferable to a silent security failure.
-      verifyPreloadInFrames(guest, {
-        onFailClosed: (frameUrl) => {
-          if (guest.isDestroyed()) return;
-          console.warn(
-            `[Main] FAIL-CLOSED: protection absent in ${frameUrl.slice(0, 120)} — frame stopped`,
-          );
-        },
-      });
-    }, 50);
-  });
+  // ── Provider embed: WebContentsView (Phase 3 hybrid) ──────────────────────
+  // The provider embed no longer renders in a <webview> tag (webviewTag is not
+  // set on this window). Instead a single native WebContentsView is created
+  // lazily by ensureProviderView() on the first player:open IPC and reused for
+  // the app lifetime. All of the security layers that used to attach in the
+  // old will-attach-webview / did-attach-webview handlers now attach directly
+  // to view.webContents in ensureProviderView():
+  //   - L4 nav guard (applyNavigationGuard) — re-pointed per provider switch
+  //   - L7 CDP verification + L8 CDP-Fetch injection (attachProviderSecurity)
+  //   - L7b fail-closed per-frame sweep (verifyPreloadInFrames)
+  //   - OTA watchdog (did-fail-load → recordProviderFailure) + recordProviderSuccess
+  //   - console-message AUDIT forwarding (Electron 42 Event form, not positional)
+  // The session-level preload (L5/L6) + R0-R8 webRequest filters (L2) + CSP (L3)
+  // are partition-keyed and apply automatically because the view uses the same
+  // 'persist:filmsnaps-provider' partition as createProviderSession().
+  // NOTE: no 50ms debounce needed — the view's WebContents exists synchronously
+  // at construction, so there is no React hydration double-mount race.
 
   // Remove native menu bar — app uses its own header navigation
   Menu.setApplicationMenu(null);
@@ -405,7 +378,440 @@ function createMainWindow(): void {
   }
 
   mainWindow.on("closed", () => {
+    // Release the provider view (and its webContents) with the window.
+    if (providerView && !providerView.webContents.isDestroyed()) {
+      try {
+        providerView.webContents.close();
+      } catch {
+        /* already gone */
+      }
+    }
+    providerView = null;
+    providerViewAttached = false;
+    providerViewGuard = null;
+    providerViewSecurityAttached = false;
     mainWindow = null;
+  });
+}
+
+// ── Provider WebContentsView (Phase 3 hybrid) ───────────────────────
+
+/**
+ * Forward a provider-view state update to the renderer (player:state).
+ * The renderer's DesktopSecureWebview maps these to its loading/error UI.
+ */
+function sendPlayerState(partial: Partial<PlayerViewStateMain>): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const state: PlayerViewStateMain = {
+    loading: _playerState.loading,
+    loaded: _playerState.loaded,
+    error: _playerState.error,
+    provisionalError: _playerState.provisionalError,
+    ...partial,
+  };
+  Object.assign(_playerState, partial);
+  mainWindow.webContents.send("player:state", state);
+}
+
+/** Main-process mirror of the renderer's PlayerViewState (preload.ts). */
+interface PlayerViewStateMain {
+  loading: boolean;
+  loaded: boolean;
+  error: string | null;
+  provisionalError: string | null;
+  /** Window fullscreen state (hybrid fullscreen is window-level). */
+  isFullscreen?: boolean;
+  audit?: string;
+}
+
+const _playerState: PlayerViewStateMain = {
+  loading: false,
+  loaded: false,
+  error: null,
+  provisionalError: null,
+  isFullscreen: false,
+};
+
+/** Reset the renderer-facing player state (on close / new provider). */
+function resetPlayerState(): void {
+  _playerState.loading = false;
+  _playerState.loaded = false;
+  _playerState.error = null;
+  _playerState.provisionalError = null;
+}
+
+/** Push the window's current fullscreen state to the renderer. */
+function sendPlayerFullscreenState(): void {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  sendPlayerState({ isFullscreen: win.isFullScreen() });
+}
+
+/**
+ * Ensure the provider view exists (created lazily on the first player:open).
+ * Mirrors the old singleton <webview> invariant — ONE WebContents owned by
+ * main, reused for the app lifetime. The security stack attaches ONCE here:
+ * nav guard (L4), CDP verification + L8 Fetch injection + fail-closed sweep
+ * (attachProviderSecurity + verifyPreloadInFrames) — all on view.webContents.
+ */
+function ensureProviderView(): WebContentsView | null {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return null;
+
+  // Reuse existing view if it exists (even if detached) — avoids re-attach
+  // cost and leaked WebContents on hide/show cycles.
+  if (providerView && !providerView.webContents.isDestroyed()) {
+    if (!providerViewAttached) {
+      win.contentView.addChildView(providerView);
+      providerView.setBounds(providerViewBounds);
+      providerView.setVisible(providerViewVisible);
+      providerViewAttached = true;
+    }
+    return providerView;
+  }
+
+  if (providerView && providerViewAttached) return providerView;
+
+  // Lazy-create on first use. webPreferences:
+  //   - partition: the SAME persistent provider partition the session filters
+  //     + registered frame preload live on (request-filter.ts createProviderSession).
+  //   - NO preload here — the session registerPreloadScript(type:'frame') covers
+  //     it; setting one would double-execute (see the will-attach-webview note).
+  //   - contextIsolation:false + nodeIntegrationInSubFrames:true REQUIRED for
+  //     the session preload to run in the main world of every frame (same
+  //     reasoning as the old webview lockdown). sandbox:true strips Node.
+  const view = new WebContentsView({
+    webPreferences: {
+      partition: "persist:filmsnaps-provider",
+      sandbox: true,
+      contextIsolation: false,
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: true,
+      webSecurity: true,
+    },
+  });
+
+  providerView = view;
+  win.contentView.addChildView(view);
+  view.setVisible(providerViewVisible);
+  view.setBounds(providerViewBounds);
+  providerViewAttached = true;
+
+  const wc = view.webContents;
+  const providerId = getCurrentBlockingProviderId();
+
+  // ── Forward load/error/audit state to the renderer (player:state) ──
+  wc.on("did-start-loading", () => {
+    sendPlayerState({ loading: true });
+  });
+  wc.on("did-stop-loading", () => {
+    sendPlayerState({ loading: false });
+  });
+  wc.on("did-finish-load", () => {
+    sendPlayerState({ loaded: true, loading: false, error: null });
+    if (providerId) recordProviderSuccess(providerId);
+  });
+  wc.on("did-fail-load", (_e, code, desc, _url, isMainFrame) => {
+    if (!isMainFrame) return;
+    // ERR_ABORTED (-3) = superseded navigation / stop() — not a real failure.
+    if (code === -3) return;
+    if (desc && recordProviderFailure(providerId ?? "", desc)) {
+      // OTA watchdog reverted config — reload so the healed config applies.
+      console.warn(
+        `[Main] OTA watchdog reverted config after ${desc} — reloading embed`,
+      );
+      void wc.loadURL(providerViewUrl);
+      return;
+    }
+    sendPlayerState({ error: desc || "Failed to load" });
+  });
+  wc.on("did-fail-provisional-load", (_e, code, desc, url, isMainFrame) => {
+    if (!isMainFrame) return;
+    if (code === -3) return; // superseded — transient
+    // A provisional failure on the initial server hop (redirect-mesh) is often
+    // transient — the embed may redirect to the real player host. The renderer
+    // shows an error only if no load completes shortly after.
+    console.warn(
+      `[Main] Provider provisional load failed ${code} ${desc} ${url.slice(0, 100)}`,
+    );
+    sendPlayerState({ provisionalError: desc || "Failed to load" });
+  });
+  wc.on("console-message", (event) => {
+    // Electron 42: the new Event form carries message/level (string).
+    const { message, level } = event;
+    if (
+      message.includes("[PROTECTION]") ||
+      message.includes("[STREAM-AUDIT]")
+    ) {
+      console.log(`[ProviderView console][${level}] ${message}`);
+      sendPlayerState({ audit: message });
+    }
+  });
+
+  // ── L4 nav guard — installed ONCE, re-pointed per provider switch ──
+  const {
+    getProviderBlockHomePaths,
+    getUniversalBlockPaths,
+    getAllowServerRedirects,
+  } = require("./security/provider-config");
+  const allowed = computeProviderAllowedDomains(providerId, providerViewUrl);
+  const guard = applyNavigationGuard(wc, {
+    providerUrl: providerViewUrl,
+    requestedEmbedUrl: providerViewUrl,
+    blockHomePaths: getProviderBlockHomePaths(providerId ?? ""),
+    universalBlockPaths: getUniversalBlockPaths(),
+    allowServerRedirects: getAllowServerRedirects(providerId ?? ""),
+    additionalAllowedHosts: Array.from(allowed),
+    onBlocked: (type, url) =>
+      console.warn(`[NavGuard] Blocked ${type}: ${url.slice(0, 120)}`),
+    onEscaped: (count, url) => {
+      if (mainWindow?.isDestroyed()) return;
+      mainWindow?.webContents.send("provider:escape-blocked", { url, count });
+    },
+  });
+  providerViewGuard = { updateConfig: guard.updateConfig };
+
+  // ── CDP verification + L8 Fetch injection + fail-closed frame sweep ──
+  attachProviderSecurity(wc, { providerId, embedUrl: providerViewUrl });
+  verifyPreloadInFrames(wc, {
+    onFailClosed: (frameUrl) => {
+      if (wc.isDestroyed()) return;
+      console.warn(
+        `[Main] FAIL-CLOSED: protection absent in ${frameUrl.slice(0, 120)} — frame stopped`,
+      );
+    },
+  });
+
+  wc.once("destroyed", () => {
+    providerViewAttached = false;
+    providerViewGuard = null;
+    providerViewSecurityAttached = false;
+  });
+
+  providerViewSecurityAttached = true;
+  console.log(
+    `[Main] Provider WebContentsView created (wc ${wc.id}), security attached`,
+  );
+  return view;
+}
+
+/** Load a provider embed URL into the persistent view (lazy-creates it). */
+function openProviderView(embedUrl: string): void {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+
+  // Clear session storage between provider switches to prevent residual state
+  // (cookies, auth tokens, ad-tracking state) from the previous provider from
+  // persisting into the new provider's session. This prevents: auth failures,
+  // cross-provider tracking, and memory leaks from accumulated DOM tokens.
+  void clearProviderStorage();
+
+  // Set the URL FIRST so ensureProviderView() (which reads providerViewUrl for
+  // the initial nav-guard config) sees the real embed URL even on first create.
+  providerViewUrl = embedUrl;
+
+  const view = ensureProviderView();
+  if (!view) return;
+
+  // Re-point the nav guard for this provider (URL/hosts/redirect policy).
+  const providerId = getCurrentBlockingProviderId();
+  const {
+    getProviderBlockHomePaths,
+    getUniversalBlockPaths,
+    getAllowServerRedirects,
+  } = require("./security/provider-config");
+  const allowed = computeProviderAllowedDomains(providerId, embedUrl);
+  providerViewGuard?.updateConfig({
+    providerUrl: embedUrl,
+    requestedEmbedUrl: embedUrl,
+    blockHomePaths: getProviderBlockHomePaths(providerId ?? ""),
+    universalBlockPaths: getUniversalBlockPaths(),
+    allowServerRedirects: getAllowServerRedirects(providerId ?? ""),
+    additionalAllowedHosts: Array.from(allowed),
+    onBlocked: (type, url) =>
+      console.warn(`[NavGuard] Blocked ${type}: ${url.slice(0, 120)}`),
+    onEscaped: (count, url) => {
+      if (mainWindow?.isDestroyed()) return;
+      mainWindow?.webContents.send("provider:escape-blocked", { url, count });
+    },
+  });
+
+  resetPlayerState();
+  sendPlayerState({ loading: true });
+  // Do NOT force the view visible here — the renderer drives visibility via
+  // player:set-visible (overlay-aware). The native view draws over ALL DOM, so
+  // force-showing it would cover a React overlay (loading/error/CPU warning/
+  // server dropdown) that must win. The view keeps its current visibility;
+  // DesktopSecureWebview shows it when no overlay is active.
+  view.webContents.loadURL(embedUrl).catch((err) => {
+    console.warn(`[Main] player:open loadURL failed:`, err);
+    sendPlayerState({ error: String(err?.message ?? err) });
+  });
+}
+
+/** Hide + detach the view (reusable; webContents survives for reuse). */
+function closeProviderView(): void {
+  if (!providerView || !mainWindow) return;
+  // Exit fullscreen if active — a hidden view has no business keeping the
+  // window in fullscreen mode (e.g., user hits Escape to close overlay).
+  if (mainWindow.isFullScreen()) {
+    mainWindow.setFullScreen(false);
+  }
+  try {
+    if (providerViewAttached)
+      mainWindow.contentView.removeChildView(providerView);
+  } catch {
+    /* view not attached */
+  }
+  providerViewAttached = false;
+  providerViewVisible = false;
+  resetPlayerState();
+}
+
+/** Position the view over the renderer's black rect (integers required). */
+function setProviderBounds(rect: Electron.Rectangle): void {
+  const win = mainWindow;
+  if (win && win.isFullScreen()) return; // main owns bounds during fullscreen
+  providerViewBounds = {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
+  providerView?.setBounds(providerViewBounds);
+}
+
+/** Clear session storage (cookies, localStorage, IndexedDB, cache) between provider switches.
+ *  This prevents residual state from the previous provider (cookies, auth tokens,
+ *  residual ad-tracking state) from persisting into the new provider's session,
+ *  which can cause: auth failures, cross-provider tracking, and memory leaks from
+ *  accumulated DOM tokens. Called at the start of openProviderView() before the
+ *  new URL loads. */
+async function clearProviderStorage(): Promise<void> {
+  if (!providerView || !providerView.webContents) return;
+  try {
+    await providerView.webContents.session.clearStorageData();
+    await providerView.webContents.session.clearCache();
+    console.log(
+      "[Main] Session storage cleared between provider switches (provider: " +
+        getCurrentBlockingProviderId() +
+        ")",
+    );
+  } catch (err) {
+    // Best-effort — if the view isn't attached yet, skip.
+    console.warn("[Main] Failed to clear session storage:", err);
+  }
+}
+
+/**
+ * Show/hide the view. The renderer hides it whenever a React overlay (loading,
+ * error, CPU warning, server dropdown) must render above the rect — the native
+ * view draws over the entire DOM, so hiding is the only way an overlay wins the
+ * z-order. When fully hidden we also removeChildView so it never captures input.
+ */
+function setProviderVisible(visible: boolean): void {
+  providerViewVisible = visible;
+  if (!providerView || !mainWindow) return;
+  if (visible) {
+    if (!providerViewAttached) {
+      mainWindow.contentView.addChildView(providerView);
+      providerViewAttached = true;
+      // Re-apply the last-known bounds: setBounds on a DETACHED view is a no-op
+      // (the renderer keeps calling player:set-bounds while hidden via the
+      // ResizeObserver), so the bounds must be re-applied once the view is back
+      // in the contentView or it would appear at stale/zero size.
+      providerView.setBounds(providerViewBounds);
+    }
+    providerView.setVisible(true);
+  } else {
+    providerView.setVisible(false);
+    if (providerViewAttached) {
+      try {
+        mainWindow.contentView.removeChildView(providerView);
+      } catch {
+        /* view not attached */
+      }
+      providerViewAttached = false;
+    }
+  }
+}
+
+/**
+ * Fullscreen the whole window (the view fills the content area). Electron has
+ * no view-only fullscreen; we fullscreen the frameless window and re-apply
+ * bounds on enter/leave-full-screen (see registerProviderViewWindowHandlers).
+ */
+function setProviderFullscreen(fullscreen: boolean): void {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  if (win.isFullScreen() !== fullscreen) {
+    win.setFullScreen(fullscreen);
+    // enter-full-screen / leave-full-screen events push the state to the
+    // renderer (they also re-apply the view bounds). macOS fullscreen is
+    // async — the event is the authoritative signal.
+  } else {
+    sendPlayerFullscreenState();
+  }
+}
+
+/**
+ * Fill the view to the whole window — used ONLY on fullscreen transitions. In
+ * normal (windowed) mode the RENDERER owns the bounds: it measures its player
+ * rect via ResizeObserver and pushes player:set-bounds continuously, including
+ * on window resize. Filling the content bounds here outside fullscreen would
+ * overwrite the rect bounds and expand the native view over the entire page
+ * (covering the server pill/dropdown and every other control) — the bug that
+ * hid the server selector beneath the webview.
+ */
+function providerViewFitToContent(): void {
+  const win = mainWindow;
+  if (!providerView || !win || win.isDestroyed()) return;
+  if (!win.isFullScreen()) return; // renderer owns bounds outside fullscreen
+  const cb = win.getContentBounds();
+  setProviderBounds({
+    x: cb.x,
+    y: cb.y,
+    width: cb.width,
+    height: cb.height,
+  });
+}
+
+/** Register the player:* IPC handlers (WebContentsView hybrid). */
+function registerPlayerViewIPC(): void {
+  ipcMain.handle("player:open", (_e, embedUrl: string) => {
+    openProviderView(String(embedUrl ?? ""));
+    return { success: true };
+  });
+  ipcMain.handle("player:close", () => {
+    closeProviderView();
+    return { success: true };
+  });
+  let boundsDebounceTimeout: NodeJS.Timeout | null = null;
+
+  ipcMain.handle("player:set-bounds", (_e, rect: Electron.Rectangle) => {
+    if (boundsDebounceTimeout) clearTimeout(boundsDebounceTimeout);
+    boundsDebounceTimeout = setTimeout(() => {
+      setProviderBounds(rect ?? { x: 0, y: 0, width: 0, height: 0 });
+      boundsDebounceTimeout = null;
+    }, 16); // ~60fps throttling — prevents IPC thrash on window drag/resize
+    return { success: true };
+  });
+  ipcMain.handle("player:set-visible", (_e, visible: boolean) => {
+    setProviderVisible(!!visible);
+    return { success: true };
+  });
+  ipcMain.handle("player:fullscreen", (_e, fullscreen: boolean) => {
+    setProviderFullscreen(!!fullscreen);
+    return { success: true };
+  });
+  ipcMain.handle("player:reload", () => {
+    if (providerView && !providerView.webContents.isDestroyed()) {
+      providerView.webContents.reload();
+    }
+    return { success: true };
+  });
+  ipcMain.handle("player:get-webcontents-id", () => {
+    return providerView?.webContents.id ?? -1;
   });
 }
 
@@ -633,6 +1039,37 @@ async function startNextServer(): Promise<void> {
 // ── App Lifecycle ──
 
 app.whenReady().then(() => {
+  // ── Pre-warm @ghostery/adblocker (adblock-rs WASM) ──────────────────────
+  // The compiled-engine.bin (~7MB) deserializes asynchronously. Doing this
+  // during appReady (instead of on first provider click) means the engine is
+  // warm in memory before the user can trigger a provider load, eliminating
+  // the ~50-200ms cold-start freeze that would otherwise block UI responsiveness.
+  // The engine singleton is stored globally so all R4 handlers share one warm
+  // instance instead of deserializing separately.
+  try {
+    const { deserialize } = require("@ghostery/adblocker");
+    const { readFileSync } = require("fs");
+    const { join } = require("path");
+    const enginePath = join(__dirname, "..", "build", "compiled-engine.bin");
+    const engineBuffer = readFileSync(enginePath);
+    (async () => {
+      const engine = await deserialize(engineBuffer);
+      // Store on globalThis so the renderer and main R4 handlers share it.
+      // The engine is idempotent — deserialize is safe to call once.
+      globalThis["filmsnapsFiltersEngine"] = engine;
+      console.log(
+        "[Main] @ghostery/adblocker WASM engine pre-warmed (deserialized, " +
+          (engine ? "ready" : "null") +
+          ")",
+      );
+    })();
+  } catch (err) {
+    console.warn(
+      "[Main] @ghostery/adblocker pre-warm failed (continuing without it):",
+      err,
+    );
+  }
+
   // Kick off the filter-engine load BEFORE creating the main window so the
   // 7MB engine deserializes in parallel with window setup instead of blocking
   // the event loop for ~50-200ms. R4's onBeforeRequest awaits this same

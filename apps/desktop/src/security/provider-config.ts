@@ -1,23 +1,32 @@
 /**
  * FilmSnaps Desktop — Provider Configuration Loader
  *
- * Loads blocklist.json (per-provider CDN domains, embed domains, profiles)
- * from the project root. This is a CJS-compatible replica of the ESM
- * @filmsnaps/adblock-config loader.
+ * Loads the v5 split config (providers.json + filters.txt) with Ed25519
+ * signature verification. providers.json carries per-provider CDN domains,
+ * embed domains, profiles, navigation guard, video detection. filters.txt
+ * carries the uBO/EasyList engine rules. The two travel together and are
+ * signed by the same Ed25519 key (providers.json.sig).
  *
- * blocklist.json structure (version 2):
- *   - allowedCdnHosts: global CDN allowlist
- *   - blockedDomains: always-blocked domains
+ * For backward compatibility during the desktop-first rollout, blocklist.json
+ * (v4) is still resolved when providers.json is absent.
+ *
+ * providers.json structure (version 5):
+ *   - allowedCdnHosts: global CDN allowlist (v1 compat — v5 uses filters.txt)
+ *   - blockedDomains: always-blocked domains (v1 compat)
  *   - providerProfiles: per-provider domain mappings
  *   - providerRootHosts: known provider embed/root hosts
- *   - rules.alwaysBlock: domains + path patterns
- *   - rules.videoDetection: extensions + path patterns for trust
- *   - providers[]: per-provider embed/cdn domains, enabled flags
+ *   - rules.alwaysBlock: domains + path patterns (v1/v2 compat)
+ *   - rules.videoDetection: extensions + path patterns for trust (+ trustTTLMs)
+ *   - providers[]: per-provider embed/cdn domains, enabled flags,
+ *                  allowServerRedirects, blockHomePaths, apiIntercepts
+ *   - navigationGuard: universal block paths
+ *   - signature / publicKey: Ed25519 OTA integrity
  */
 
 import { readFileSync, existsSync, watch } from "fs";
 import { join, dirname, resolve } from "path";
 import { app } from "electron";
+import { verify as cryptoVerify } from "crypto";
 
 // ── Types (mirrored from @filmsnaps/adblock-config) ─────────────────────────
 
@@ -25,11 +34,23 @@ export interface VideoDetectionConfig {
   extensions: string[];
   pathPatterns: string[];
   enableSessionTrust: boolean;
+  /** V5: sliding trust TTL in ms (default 900000 = 15 min). */
+  trustTTLMs?: number;
 }
 
 export interface AlwaysBlockConfig {
   domains: string[];
   pathPatterns: string[];
+}
+
+export interface ApiInterceptRule {
+  match: string;
+  methods?: string[];
+  synthetic?: {
+    primary?: Record<string, unknown>;
+    fallback?: Record<string, unknown>;
+    fallbackCondition?: string;
+  };
 }
 
 export interface ProviderConfig {
@@ -43,9 +64,16 @@ export interface ProviderConfig {
   /**
    * Provider home/list paths that escape the player frame ("Go Home" on an
    * error UI → provider.com/). Additive deny-list — append new shapes as
-   * discovered. Single source of truth = blocklist.json providers[].blockHomePaths.
+   * discovered. Single source of truth = providers.json providers[].blockHomePaths.
    */
   blockHomePaths?: string[];
+  /** V5: allow the provider's own initial server redirect during the NavGuard
+   *  bootstrap window (redirect-mesh upstreams: viduki.net, videasy.to). */
+  allowServerRedirects?: boolean;
+  /** V5: API synthetic-interception rules (screenscape /api/ads/cycles). */
+  apiIntercepts?: ApiInterceptRule[];
+  /** V5: CSS cosmetic rules applied via injectCosmetics. */
+  cosmeticRules?: string[];
 }
 
 export interface NavigationGuardConfig {
@@ -67,6 +95,10 @@ export interface BlocklistConfig {
   };
   navigationGuard?: NavigationGuardConfig;
   providers?: ProviderConfig[];
+  /** V5: Ed25519 signature over the canonical JSON bytes (OTA integrity). */
+  signature?: string;
+  /** V5: hex-encoded Ed25519 public key that must verify `signature`. */
+  publicKey?: string;
 }
 
 // ── Singleton state ─────────────────────────────────────────────────────────
@@ -74,34 +106,113 @@ export interface BlocklistConfig {
 let _config: BlocklistConfig | null = null;
 let _configPath: string | null = null;
 
-// ── Path resolution ─────────────────────────────────────────────────────────
+// ── V5 Ed25519 OTA integrity ────────────────────────────────────────────────
+// The app must never apply a providers.json it did not author. OTA updates are
+// signed with a key whose PUBLIC half ships with the app. Verification uses
+// Node's crypto (Ed25519 one-shot verify — no digest).
+
+// Embedded public key. In dev, also allow a .keys/filmsnaps-ed25519.pub in the
+// repo so local edits + re-signs round-trip. In production, prefer the public
+// key shipped via extraResources (process.resourcesPath/filter-engine/).
+const EMBEDDED_PUBLIC_KEY = "";
+function resolvePublicKeyPath(): string | null {
+  if ((app as any).isPackaged) {
+    const p = join(
+      process.resourcesPath,
+      "filter-engine",
+      "filmsnaps-ed25519.pub",
+    );
+    return existsSync(p) ? p : null;
+  }
+  const devKey = join(dirname(__dirname), ".keys", "filmsnaps-ed25519.pub");
+  if (existsSync(devKey)) return devKey;
+  const repoKey = findProjectRoot(join(__dirname, ".."));
+  if (repoKey) {
+    const p = join(repoKey, ".keys", "filmsnaps-ed25519.pub");
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
 
 /**
- * Walk up from a directory looking for blocklist.json.
+ * Verify the Ed25519 signature of a config JSON's bytes against the public key.
+ * @param json raw bytes exactly as loaded (the signature is over canonical bytes)
+ * @param signatureB64 base64 signature from providers.json.sig
+ */
+export function verifyConfigSignature(
+  json: Buffer,
+  signatureB64: string,
+): boolean {
+  const keyPath = resolvePublicKeyPath();
+  if (!keyPath) return false;
+  try {
+    const publicKey = readFileSync(keyPath);
+    // Ed25519 has no digest — use the one-shot verify (null algorithm derives
+    // from the key). createVerify('ed25519') throws ERR_CRYPTO_INVALID_DIGEST.
+    return cryptoVerify(
+      null,
+      json,
+      publicKey,
+      Buffer.from(signatureB64, "base64"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Verify a providers.json file's signature against its .sig sibling.
+ * @param jsonPath absolute path to the JSON config
+ * @returns true when the .sig exists and verifies
+ */
+export function verifyConfigFileSignature(jsonPath: string): boolean {
+  const sigPath = `${jsonPath}.sig`;
+  if (!existsSync(sigPath)) return false;
+  try {
+    const json = readFileSync(jsonPath);
+    const sig = readFileSync(sigPath, "utf-8");
+    return verifyConfigSignature(json, sig.trim());
+  } catch {
+    return false;
+  }
+}
+
+// ── Path resolution ─────────────────────────────────────────────────────────
+
+const CONFIG_CANDIDATES = ["providers.json", "blocklist.json"];
+
+/**
+ * Walk up from a directory looking for a config file (providers.json
+ * preferred, blocklist.json fallback).
  */
 function findProjectRoot(dir: string): string | null {
   const candidate = resolve(dir);
-  if (existsSync(join(candidate, "blocklist.json"))) return candidate;
+  for (const name of CONFIG_CANDIDATES) {
+    if (existsSync(join(candidate, name))) return candidate;
+  }
   const parent = dirname(candidate);
   if (parent === candidate) return null;
   return findProjectRoot(parent);
 }
 
 /**
- * Resolve the path to blocklist.json.
+ * Resolve the path to the config JSON (providers.json preferred, blocklist.json
+ * fallback).
  * Dev: walk up from dist/ to repo root
  * Prod: from process.resourcesPath (extraResources)
  */
 function resolveConfigPath(): string {
   if ((app as any).isPackaged) {
-    return join(process.resourcesPath, "blocklist.json");
+    return join(process.resourcesPath, "providers.json");
   }
 
   // Dev: walk up from __dirname (dist/security/) to repo root
   let dir = dirname(__dirname);
   for (let i = 0; i < 10; i++) {
-    if (existsSync(join(dir, "blocklist.json")))
-      return join(dir, "blocklist.json");
+    for (const name of CONFIG_CANDIDATES) {
+      const candidate = join(dir, name);
+      if (existsSync(candidate)) return candidate;
+    }
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
@@ -109,11 +220,11 @@ function resolveConfigPath(): string {
 
   // Try cwd
   const root = findProjectRoot(process.cwd());
-  if (root) return join(root, "blocklist.json");
+  if (root) return join(root, CONFIG_CANDIDATES[0]);
 
   // Last resort: relative to package root
   const pkgRoot = findProjectRoot(join(__dirname, ".."));
-  if (pkgRoot) return join(pkgRoot, "blocklist.json");
+  if (pkgRoot) return join(pkgRoot, CONFIG_CANDIDATES[0]);
 
   return "";
 }
@@ -121,7 +232,7 @@ function resolveConfigPath(): string {
 // ── Loading ─────────────────────────────────────────────────────────────────
 
 /**
- * Load and cache blocklist.json.
+ * Load and cache the config JSON (providers.json, fallback blocklist.json).
  * Returns null if not found.
  */
 export function loadBlocklistConfig(): BlocklistConfig | null {
@@ -129,7 +240,7 @@ export function loadBlocklistConfig(): BlocklistConfig | null {
 
   const path = resolveConfigPath();
   if (!path || !existsSync(path)) {
-    console.warn("[ProviderConfig] blocklist.json not found at resolved paths");
+    console.warn("[ProviderConfig] providers.json not found at resolved paths");
     return null;
   }
 
@@ -137,9 +248,12 @@ export function loadBlocklistConfig(): BlocklistConfig | null {
     const raw = readFileSync(path, "utf-8");
     _config = JSON.parse(raw) as BlocklistConfig;
     _configPath = path;
+    const isV5 = _config.version >= 5;
     console.log(
-      `[ProviderConfig] Loaded: ${path} (${_config.providers?.length || 0} providers, ` +
-        `${_config.allowedCdnHosts?.length || 0} CDN hosts)`,
+      `[ProviderConfig] Loaded: ${path} (v${_config.version}, ` +
+        `${_config.providers?.length || 0} providers, ` +
+        `${_config.allowedCdnHosts?.length || 0} CDN hosts, ` +
+        `${isV5 ? "signed" : "legacy v4"})`,
     );
 
     // Start watching for changes so edits take effect without restart
@@ -147,13 +261,13 @@ export function loadBlocklistConfig(): BlocklistConfig | null {
 
     return _config;
   } catch (err) {
-    console.error("[ProviderConfig] Failed to parse blocklist.json:", err);
+    console.error("[ProviderConfig] Failed to parse providers.json:", err);
     return null;
   }
 }
 
 /**
- * Watch blocklist.json for changes and auto-reload.
+ * Watch the config for changes and auto-reload.
  */
 let watcherInitialized = false;
 function startFileWatcher(path: string): void {
@@ -163,12 +277,12 @@ function startFileWatcher(path: string): void {
   try {
     watch(path, (eventType) => {
       if (eventType === "change") {
-        console.log("[ProviderConfig] blocklist.json changed — reloading");
+        console.log("[ProviderConfig] providers.json changed — reloading");
         reloadConfig();
       }
     });
   } catch (err) {
-    console.warn("[ProviderConfig] Failed to watch blocklist.json:", err);
+    console.warn("[ProviderConfig] Failed to watch providers.json:", err);
   }
 }
 
@@ -457,6 +571,42 @@ export function getAlwaysBlockPathPatterns(): string[] {
 export function getVideoDetectionConfig(): VideoDetectionConfig | null {
   const config = loadBlocklistConfig();
   return config?.rules?.videoDetection ?? null;
+}
+
+/**
+ * Get the sliding trust TTL (ms) from rules.videoDetection.trustTTLMs.
+ * Defaults to 900000 (15 min) when unset — the v5 default.
+ */
+export function getTrustTTLMs(): number {
+  return getVideoDetectionConfig()?.trustTTLMs ?? 900_000;
+}
+
+/**
+ * Should the provider's own initial server redirect (301/302/307/308 during
+ * the NavGuard bootstrap window) be allowed? Redirect-mesh providers
+ * (vidsrc → viduki.net, videasy → videasy.to) need this true or they ERR_FAIL.
+ */
+export function getAllowServerRedirects(providerId: string): boolean {
+  return getProviderProfile(providerId)?.allowServerRedirects === true;
+}
+
+/**
+ * API synthetic-interception rules for a provider (screenscape /api/ads/cycles).
+ * These are injected by the security layer to short-circuit ad-orchestrator
+ * APIs that are not safe to let through.
+ */
+export function getProviderApiIntercepts(
+  providerId: string,
+): ApiInterceptRule[] {
+  return getProviderProfile(providerId)?.apiIntercepts ?? [];
+}
+
+/**
+ * Per-provider CSS cosmetic rules (provider chrome to hide, e.g. ad-window
+ * badges, download-source buttons). Applied via injectCosmetics.
+ */
+export function getProviderCosmeticRules(providerId: string): string[] {
+  return getProviderProfile(providerId)?.cosmeticRules ?? [];
 }
 
 /**

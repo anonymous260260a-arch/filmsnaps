@@ -1,11 +1,11 @@
 /**
- * FilmSnaps Desktop — @cliqz/adblocker Filter Engine
+ * FilmSnaps Desktop — @ghostery/adblocker Filter Engine
  *
  * CJS-compatible singleton wrapper around FiltersEngine (Aho-Corasick-based).
  * Loads the serialized engine binary that the filter-compiler package produces.
  *
  * Module compatibility:
- *   - @cliqz/adblocker ships CJS — imported via require()
+ *   - @ghostery/adblocker ships CJS — imported via require()
  *   - @filmsnaps/filter-compiler is ESM — bridged via dynamic import() when needed
  *
  * Path resolution:
@@ -104,7 +104,7 @@ export function initFilterEngine(): Promise<any | null> {
     }
 
     try {
-      const { FiltersEngine } = require("@cliqz/adblocker");
+      const { FiltersEngine } = require("@ghostery/adblocker");
       const buffer = readFileSync(enginePath);
       _engine = FiltersEngine.deserialize(new Uint8Array(buffer));
       const stats = getEngineStats();
@@ -173,7 +173,7 @@ export function loadFilterEngineSync(): any | null {
   }
 
   try {
-    const { FiltersEngine } = require("@cliqz/adblocker");
+    const { FiltersEngine } = require("@ghostery/adblocker");
     const buffer = readFileSync(enginePath);
     _engine = FiltersEngine.deserialize(new Uint8Array(buffer));
     const stats = getEngineStats();
@@ -221,7 +221,7 @@ export function matchUrl(
   if (!_engine) return { blocked: false, category: "none" };
 
   try {
-    const { Request } = require("@cliqz/adblocker");
+    const { Request } = require("@ghostery/adblocker");
     const request = Request.fromRawDetails({
       url,
       sourceUrl,
@@ -358,7 +358,7 @@ export function isAllowlisted(url: string, sourceUrl: string): boolean {
   if (!_engine) return false;
 
   try {
-    const { Request } = require("@cliqz/adblocker");
+    const { Request } = require("@ghostery/adblocker");
     const request = Request.fromRawDetails({
       url,
       sourceUrl,

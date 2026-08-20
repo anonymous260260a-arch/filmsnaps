@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -18,15 +18,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { tmdbApi } from "../lib/api";
 import { MediaCard } from "../components/MediaCard";
 import { ProgressiveImage } from "../components/ProgressiveImage";
-import {
-  getAllProgress,
-  getAggregatedHistory,
-  clearAllProgress,
-  clearProgress,
-} from "../lib/watchHistory";
+import { clearAllProgress } from "../lib/watchHistory";
+import { useWatchHistory, watchHistoryStore } from "../lib/watchHistoryStore";
 import { getImageUrl } from "@filmsnaps/shared";
 import { EmptyState } from "../components/EmptyState";
-import type { Movie } from "@filmsnaps/shared";
 import type { WatchProgress } from "../lib/watchHistory";
 
 import { colors } from "../theme/colors";
@@ -151,64 +146,52 @@ export default function HistoryScreen() {
   const queryClient = useQueryClient();
   const { width: SCREEN_WIDTH } = useWindowDimensions();
 
-  const [entries, setEntries] = useState<
-    Array<{
-      latest: WatchProgress;
-      episodeCount: number;
-      fullyWatched: boolean;
-    }>
-  >([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [metadata, setMetadata] = useState<Record<string, Movie | null>>({});
+  // Subscribe to the local-first singleton. It survives this route's unmount,
+  // so returning to /history never re-fetches or flashes a skeleton — the list
+  // is already resolved (stale-then-revalidate if a background refresh runs).
+  const { entries, isHydrated, isRefreshing } = useWatchHistory();
   const [displayCount, setDisplayCount] = useState(10);
-  const loadedRef = useRef(false);
 
-  const loadHistory = useCallback(async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
-    else if (!loadedRef.current) setLoading(true);
-    try {
-      const agg = await getAggregatedHistory();
-      setEntries(agg);
-
-      // Fetch TMDB metadata for each unique ID
-      const metaMap: Record<string, Movie | null> = { ...metadata };
-      const fetchPromises = agg
-        .filter((e) => !metaMap[e.latest.tmdbId])
-        .map(async (entry) => {
-          try {
-            const id = entry.latest.tmdbId;
-            if (entry.latest.mediaType === "tv") {
-              const data = await tmdbApi.getTVDetails(Number(id));
-              metaMap[id] = data as unknown as Movie;
-            } else {
-              const data = await tmdbApi.getMovieDetails(Number(id));
-              metaMap[id] = data as Movie;
-            }
-          } catch {
-            metaMap[entry.latest.tmdbId] = null;
-          }
-        });
-      await Promise.all(fetchPromises);
-      setMetadata({ ...metaMap });
-      loadedRef.current = true;
-    } catch (e) {
-      console.warn("[History] Load failed:", e);
-    }
-    setLoading(false);
-    setRefreshing(false);
-  }, []);
-
-  // Reload whenever the screen gains focus
+  // Keep progress fresh after returning from a watch session (the player saved
+  // new progress to AsyncStorage). Stale-then-revalidate: the list is already
+  // shown, the store just updates percent/completed in the background.
   useFocusEffect(
     useCallback(() => {
-      loadHistory();
-    }, [loadHistory]),
+      watchHistoryStore.syncProgress().catch(() => {});
+    }, []),
   );
 
   const itemWidth = useMemo(
     () => (SCREEN_WIDTH - PADDING * 2 - GAP * (NUM_COLUMNS - 1)) / NUM_COLUMNS,
     [SCREEN_WIDTH],
+  );
+
+  const handleRemoveItem = useCallback(
+    (item: WatchProgress) => {
+      const id = item.tmdbId;
+      const entry = entries.find((e) => e.latest.tmdbId === id);
+      const title =
+        entry?.meta != null
+          ? item.mediaType === "tv"
+            ? entry.meta.name
+            : entry.meta.title
+          : `ID: ${id}`;
+      Alert.alert(
+        "Remove from History",
+        `Remove "${title}" from your history?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Remove",
+            style: "destructive",
+            onPress: () => {
+              watchHistoryStore.removeItem(id, item.mediaType).catch(() => {});
+            },
+          },
+        ],
+      );
+    },
+    [entries],
   );
 
   const handleItemPress = useCallback(
@@ -259,7 +242,7 @@ export default function HistoryScreen() {
     return `${pct}%`;
   };
 
-  if (loading) {
+  if (!isHydrated) {
     return <HistorySkeleton />;
   }
 
@@ -314,9 +297,9 @@ export default function HistoryScreen() {
           onEndReachedThreshold={0.5}
           refreshControl={
             <RefreshControl
-              refreshing={refreshing}
+              refreshing={isRefreshing}
               onRefresh={() => {
-                loadHistory(true);
+                watchHistoryStore.forceRefresh().catch(() => {});
               }}
               tintColor={colors.gold}
               colors={[colors.gold]}
@@ -346,7 +329,9 @@ export default function HistoryScreen() {
                         text: "Clear All",
                         style: "destructive",
                         onPress: () =>
-                          clearAllProgress().then(() => loadHistory()),
+                          clearAllProgress().then(() =>
+                            watchHistoryStore.syncProgress().catch(() => {}),
+                          ),
                       },
                     ],
                   );
@@ -370,7 +355,7 @@ export default function HistoryScreen() {
           ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
           renderItem={({ item }) => {
             const p = item.latest;
-            const meta = metadata[p.tmdbId];
+            const meta = item.meta;
             const title =
               (p.mediaType === "tv" ? meta?.name : meta?.title) ??
               `ID: ${p.tmdbId}`;
@@ -386,11 +371,37 @@ export default function HistoryScreen() {
                 className="flex-row bg-elevated rounded-xl overflow-hidden"
                 style={{ backgroundColor: colors.bgCard }}
               >
+                {/* Per-item remove */}
+                <TouchableOpacity
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    handleRemoveItem(p);
+                  }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${title} from history`}
+                  style={{
+                    position: "absolute",
+                    top: 6,
+                    right: 6,
+                    zIndex: 2,
+                    width: 24,
+                    height: 24,
+                    borderRadius: 12,
+                    backgroundColor: "rgba(0,0,0,0.6)",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="close" size={14} color={colors.textPrimary} />
+                </TouchableOpacity>
+
                 {/* Poster */}
                 <View style={{ width: 68, height: 102 }}>
                   {poster ? (
                     <ProgressiveImage
-                      uri={getImageUrl(poster, "w185")}
+                      uri={getImageUrl(poster, "w342")}
                       style={{ width: "100%", height: "100%" }}
                       resizeMode="cover"
                     />

@@ -22,6 +22,7 @@ import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.URL
+import java.util.Collections
 import java.util.LinkedHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.GZIPInputStream
@@ -44,6 +45,67 @@ class PlayerWebViewOverlayView(
 ) : FrameLayout(context) {
 
   companion object {
+    // Baseline ad/tracker fragment list. Declared in the companion object so it
+    // resolves position-independently (rebuildSnapshots() can reference it from
+    // the init block / anywhere in the class without a forward-reference constraint).
+    private val adDomains: Set<String> = setOf(
+      // Major ad networks
+      "doubleclick.net", "googleadservices.com", "googlesyndication.com",
+      "google-analytics.com", "googletagmanager.com", "gtag/js",
+      "pagead2.googlesyndication.com",
+      "adnxs.com", "rubiconproject.com", "criteo.com", "criteo.net",
+      "outbrain.com", "taboola.com", "revcontent.com",
+      // Popup / popunder networks
+      "popads", "popcash", "popunder", "adsterra.com",
+      "propellerads.com", "trafficfactory.biz",
+      // Tracking / analytics
+      "pixel.", "track.", "tracking.", "beacon.",
+      "histats.com", "statcounter.com", "scorecardresearch.com",
+      // Ad exchanges
+      "amazon-adsystem.com", "casalemedia.com", "contextweb.com",
+      "openx.net", "pubmatic.com", "sharethrough.com",
+      "media.net", "advertising.com", "adap.tv",
+      "moatads.com", "servedby.", "exdynsrv.com",
+      // Ad networks (additional)
+      "exoclick.com", "juicyads.com", "plugrush.com",
+      "trafficjunky.com", "adreactor.com", "adcash.com",
+      "adhitz.com", "adk2.com", "adpierce.com",
+      "clickadu.com", "clicksco.net", "hilltopads.com",
+      "adsystem.", "adserver.", "ads.",
+      // Discovered during playback
+      "interlinecustomroofingllc.com",
+      "1xlite",
+      // Phase 3 audit: main-frame hijack domains (used by nxsha, vidnest)
+      "wo.riverlayboy.shop",
+      "hai8g.com",
+      // Phase 3 audit: injected ad iframes / trackers
+      "zoaclachan.cyou",
+      "florian.sorrilylivyershape.cyou",
+      "ag.phrymaphytic.com",
+      "my.rtmark.net",
+      "s.click.aliexpress.com",
+      "developdomicile.com",
+      // == UNKNOWN == Hijack redirect domains (originally misclassified as CDN)
+      // frowstyambler.qpon was found during audit to be the nxsha hijack redirector,
+      // not a video CDN. The page navigates here during the Type B hijack chain.
+      "frowstyambler", "qpon",
+      // Cloudflare RUM beacon (purely analytics — safe to block)
+      "cloudflareinsights.com",
+      // Aggressive popup patterns (nxsha and similar providers)
+      "go.", "click.", "adx.", "adv.", "banner.",
+      "traffic.", "redirect.", "redirecting.",
+      "bestchange", "best-",
+      // == Discovered ad/tracker networks (auto-generated per-session subdomains) ==
+      // These are NOT in EasyList, so the AdblockEngine asset misses them and they
+      // fall through to R8:default-allow. Registrable domains below — the
+      // host.contains() match also catches their random subdomains
+      // (ph.cosedcost.com, parasol.caulkedwhys.shop, ballo.vulturkipskin.cfd, ...).
+      // Mirrors blocklist.json rules.alwaysBlock.domains (desktop parity).
+      "cosedcost.com",
+      "caulkedwhys.shop",
+      "vulturkipskin.cfd"
+    )
+
     // ── Double-Buffer Swap Timeout ──
     // Force swap after this duration even if onPageFinished hasn't fired.
     // Prevents the user from being stuck on a blank screen if the new
@@ -256,6 +318,21 @@ class PlayerWebViewOverlayView(
       })();
     """.trimIndent()
 
+    // Q4: devtool-hijack circuit breaker payload. The disable-devtool library
+    // spins up a tight setInterval/setTimeout loop that re-navigates to the 404
+    // page ~every 500ms (the repeating NAV:devtool-hijack logs). Once we have
+    // blocked the hijack at the native layer ≥2×, we nuke every timer the
+    // provider's JS scheduled so the loop stops burning the main thread and
+    // starving video init. Injected once, only after the breaker trips.
+    private val DEVTOOT_KILL_TIMERS = """
+      (function(){
+        try{
+          var maxId=window.setTimeout(function(){},0);
+          for(var i=0;i<maxId;i++){ try{window.clearTimeout(i);}catch(e){} try{window.clearInterval(i);}catch(e){} }
+        }catch(e){}
+      })();
+    """.trimIndent()
+
     // ── Chromium Renderer Warmup ──
     // Pre-spawn the Chromium renderer process at app launch. Creating a
     // WebView after warmup skips the process spawn (~50-80ms vs ~500ms).
@@ -279,6 +356,34 @@ class PlayerWebViewOverlayView(
       }
     }
 
+    // ── Shared Adblock Engine (Q7: expert perf consult 2026-08-17) ──
+    // The engine parses ~100k+ filter patterns (Aho-Corasick trie) from the
+    // asset files. Previously it was a PER-VIEW `by lazy` property, so every
+    // provider switch (which destroys + recreates the WebView) re-parsed the
+    // entire trie — a repeated, avoidable cost on the hot path. We now keep ONE
+    // engine shared across all provider WebViews and pre-warm it at module
+    // OnCreate (during app launch), so the first `shouldInterceptRequest`
+    // already finds it parsed. The engine is immutable post-init (AtomicReference
+    // swap on hot-reload, read-only otherwise), so sharing across the WebView
+    // request thread-pool is safe.
+    @Volatile private var sharedAdblockEngine: AdblockEngine? = null
+
+    /** Q7 (expert perf consult): async pre-parse the adblock trie at app launch
+     *  so the first watch open doesn't pay the parse cost (100k+ patterns).
+     *  Runs on a daemon background thread — the trie read uses AssetManager (thread-safe)
+     *  and the engine is read-only post-init, so this never blocks the JS/main thread. */
+    fun warmupAdblockEngine(context: Context) {
+      if (sharedAdblockEngine != null) return
+      Thread({
+        try {
+          sharedAdblockEngine = AdblockEngine(context)
+          android.util.Log.i("PlayerWebView", "Adblock engine pre-warmed at launch")
+        } catch (e: Exception) {
+          android.util.Log.w("PlayerWebView", "Adblock engine prewarm failed: ${e.message}")
+        }
+      }, "adblock-warmup").apply { isDaemon = true; start() }
+    }
+
     // ── Remote Config Integration ──
     @Volatile private var remoteBlockedDomains: Set<String>? = null
     @Volatile private var remoteProviderProfiles: Map<String, Set<String>>? = null
@@ -288,14 +393,122 @@ class PlayerWebViewOverlayView(
      * Effective CDN allowlist — flattened from blocklist.json's provider CDN domains.
      * Hardcoded set removed Phase 1 (all config comes from BlocklistConfigLoader now).
      */
-    val effectiveAllowedCdnHosts: Set<String>
-      get() = BlocklistConfigLoader.allCdnHosts
-    val effectiveBlockedDomains: Set<String>
-      get() = remoteBlockedDomains ?: emptySet()
-    val effectiveProviderProfiles: Map<String, Set<String>>
-      get() = remoteProviderProfiles ?: providerProfiles
-    val effectiveProviderRootHosts: Set<String>
-      get() = remoteProviderRootHosts ?: PROVIDER_ROOT_HOSTS
+    // ── Snapshotted effective sets (P1/F2: built ONCE in applyRemoteConfig via
+    //    rebuildSnapshots(), never recomputed on the hot path). Replaces the old
+    //    O(config) per-request getters and O(N*L) substring scans. The *Filter
+    //    forms do whole-label suffix matching (HostSuffixSet) and close the
+    //    "evil-cloudfront.net" false-allow vulnerability. See expert consult 2026-08-14. ──
+    @Volatile private var allowedCdnHostsSnapshot: Set<String> = emptySet()
+    @Volatile private var allowedCdnFilter: HostFilter = HostFilter.EMPTY
+    /** V6: explicit URL (substring) blocklist — highest precedence interception. */
+    @Volatile private var blockedUrlFilter: List<String> = emptyList()
+    @Volatile private var adDomainsSnapshot: Set<String> = emptySet()
+    @Volatile private var adFilter: HostFilter = HostFilter.EMPTY
+    @Volatile private var blockedDomainsSnapshot: Set<String> = emptySet()
+    @Volatile private var blockedFilter: HostFilter = HostFilter.EMPTY
+    @Volatile private var providerProfilesSnapshot: Map<String, Set<String>> = emptyMap()
+    // Initialized to empty; rebuildSnapshots() (via applyRemoteConfig in
+    // ensureWebView) populates this with PROVIDER_ROOT_HOSTS ∪ remote roots.
+    @Volatile private var rootHostsSnapshot: Set<String> = emptySet()
+
+    /** Resolved provider for the current embed — cached on navigation (P3) instead of
+     *  re-resolving via currentUrl on every request. */
+    @Volatile private var resolvedProvider: ProviderConfig? = null
+
+    /** Count of consecutive devtool-hijack nav blocks → circuit breaker (Q4). */
+    private var devtoolBlockCount: Int = 0
+
+    /**
+     * P4: Bounded negative cache of hosts proven to never carry video. On revisit we
+     * skip the O(N) R0 regex cascade entirely. To avoid poisoning (a host that serves
+     * an ad first, then a video segment — e.g. a shared CDN), we only promote a host
+     * after it has missed the video-regex N times consecutively; a single non-matching
+     * request is never enough. A successful R0 match evicts the host from both tables.
+     */
+    private val NEG_CACHE_THRESHOLD = 3
+    private val MAX_NEG_CACHE = 2048
+    private val nonVideoHosts: MutableSet<String> =
+      Collections.synchronizedSet(LinkedHashSet())
+    private val hostMissCount: MutableMap<String, Int> = ConcurrentHashMap()
+
+    private fun markVideoHost(host: String) {
+      if (host.isNotEmpty()) {
+        hostMissCount.remove(host)
+        nonVideoHosts.remove(host)
+      }
+    }
+
+    private fun markNonVideoHost(host: String) {
+      if (host.isEmpty() || hostMissCount.containsKey(host)) return // already cached
+      val n = (hostMissCount[host] ?: 0) + 1
+      if (n >= NEG_CACHE_THRESHOLD) {
+        hostMissCount.remove(host)
+        synchronized(nonVideoHosts) {
+          if (nonVideoHosts.size >= MAX_NEG_CACHE) {
+            val it = nonVideoHosts.iterator()
+            if (it.hasNext()) it.remove() // evict oldest (LRU)
+          }
+          nonVideoHosts.add(host)
+        }
+      } else {
+        hostMissCount[host] = n
+      }
+    }
+
+    val effectiveAllowedCdnHosts: Set<String> get() = allowedCdnHostsSnapshot
+    val effectiveBlockedDomains: Set<String> get() = blockedDomainsSnapshot
+    val effectiveProviderProfiles: Map<String, Set<String>> get() = providerProfilesSnapshot
+    val effectiveProviderRootHosts: Set<String> get() = rootHostsSnapshot
+
+    /**
+     * Host matcher combining a suffix set (proper domains) with a substring list
+     * (intentional fragment tokens like "pixel.", "popads", "gtag/js" that are NOT
+     * whole domains and must keep substring semantics). Suffix matching is O(log N·depth);
+     * the fragment list is tiny and stable.
+     */
+    private data class HostFilter(
+      val suffixSet: HostSuffixSet,
+      val fragmentList: List<String>,
+    ) {
+      fun matches(host: String): Boolean =
+        suffixSet.containsSuffix(host) || fragmentList.any { host.contains(it) }
+
+      companion object {
+        val EMPTY = HostFilter(HostSuffixSet(emptyList()), emptyList())
+      }
+    }
+
+    /** A host is "domain-like" (suffix-eligible) only if it looks like a registrable
+     *  host: one or more dot-separated labels, no trailing dot, no path/slash. */
+    private val DOMAIN_LIKE =
+      Regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+\$")
+
+    private fun buildFilter(set: Set<String>): HostFilter {
+      val suffix = mutableListOf<String>()
+      val frag = mutableListOf<String>()
+      for (e in set) {
+        val t = e.trim().lowercase()
+        if (t.isEmpty()) continue
+        if (DOMAIN_LIKE.matches(t)) suffix.add(t) else frag.add(t)
+      }
+      return HostFilter(HostSuffixSet(suffix), frag)
+    }
+
+    /** Build every snapshot from the current merged config. Call once per config change. */
+    private fun rebuildSnapshots() {
+      val cdn = BlocklistConfigLoader.allCdnHosts
+      allowedCdnHostsSnapshot = cdn
+      allowedCdnFilter = buildFilter(cdn)
+      blockedUrlFilter = BlocklistConfigLoader.allBlockedUrls
+      val blocked = remoteBlockedDomains ?: emptySet()
+      blockedDomainsSnapshot = blocked
+      blockedFilter = buildFilter(blocked)
+      val ad = adDomains + blocked
+      adDomainsSnapshot = ad
+      adFilter = buildFilter(ad)
+      providerProfilesSnapshot = remoteProviderProfiles ?: providerProfiles
+      rootHostsSnapshot = remoteProviderRootHosts ?: PROVIDER_ROOT_HOSTS
+    }
 
     fun applyRemoteConfig(cfg: BlocklistConfig) {
       if (cfg.blockedDomains.isNotEmpty()) {
@@ -307,6 +520,8 @@ class PlayerWebViewOverlayView(
       if (cfg.providerRootHosts.isNotEmpty()) {
         remoteProviderRootHosts = PROVIDER_ROOT_HOSTS + cfg.providerRootHosts
       }
+      // P1/F2: rebuild all hot-path snapshots once (lock-free swap via @Volatile).
+      rebuildSnapshots()
       android.util.Log.d("PlayerWebView",
         "Applied remote config v${cfg.version}: " +
         "allowed=${effectiveAllowedCdnHosts.size}, " +
@@ -398,7 +613,6 @@ class PlayerWebViewOverlayView(
       "nhdapi.com" to setOf("nhdapi.com", "cloudfront.net"),
       "zxcstream.xyz" to setOf("zxcstream.xyz", "test.zxcstream.xyz",
                                "player.zxcstream.xyz", "cloudfront.net"),
-      "vidsync.live" to setOf("vidsync.live", "cloudfront.net", "workers.dev"),
       // New providers without profiles yet fall back to heuristic + blocklist
     )
 
@@ -415,7 +629,6 @@ class PlayerWebViewOverlayView(
       "www.chillflix.lol", "chillflix.lol", "vidapi.cloud",
       "vidnest.fun", "vidnees", "wyzie.io", "vdrk.site",
       "toustream.xyz",
-      "vidsync.live",
       "streamguide.cfd",
       // Subtitle / data services (non-provider, must be in allowedCdnHosts too)
     )
@@ -811,11 +1024,12 @@ var _p=0;
   // ── Request Logger init ──
   init { initRequestLogDir(context) }
 
-  // ── Adblock Engine ──
-  // Lazy-loaded native filter engine with 106k+ blocked domains + 17k
-  // cosmetic selectors from EasyList/EasyPrivacy/AdGuard/uBO.
-  // Compiled by packages/filter-compiler/src/export-android.ts
-  private val adblockEngine: AdblockEngine by lazy { AdblockEngine(context) }
+  // ── Adblock Engine (Q7: shared singleton, pre-warmed at launch) ──
+  // Reads the shared, pre-parsed engine (see warmupAdblockEngine). Falls back
+  // to constructing one on first use if launch pre-warm hasn't run yet.
+  private val adblockEngine: AdblockEngine
+    get() = PlayerWebViewOverlayView.sharedAdblockEngine
+      ?: AdblockEngine(context).also { PlayerWebViewOverlayView.sharedAdblockEngine = it }
 
   // ═══════════════════════════════════════════════════════════════
   // R0b: Session-Trusted CDN Hosts (Phase 1 — Expert Rec)
@@ -823,26 +1037,64 @@ var _p=0;
   // A host that has served a recognized video URL (detected by R0 regex)
   // is added here. All future requests to it bypass every blocking layer.
   // Cleared on provider switch so each session starts fresh.
-  private val sessionTrustedCdnHosts = ConcurrentHashMap<String, Boolean>()
+  private val sessionTrustedCdnHosts = ConcurrentHashMap<String, Long>()
 
-  private fun addSessionTrustedHost(host: String) {
-    if (host.isNotEmpty()) sessionTrustedCdnHosts[host] = true
+  private fun getTrustTTLMs(): Long {
+    val cfg = BlocklistConfigLoader.config
+    return cfg.rules?.videoDetection?.trustTTLMs ?: 900_000L // 15 min default
   }
 
-  private fun isSessionTrustedHost(host: String): Boolean =
-    sessionTrustedCdnHosts.containsKey(host)
+  private fun addSessionTrustedHost(host: String) {
+    if (host.isNotEmpty()) sessionTrustedCdnHosts[host] = System.currentTimeMillis()
+  }
+
+  private fun isSessionTrustedHost(host: String): Boolean {
+    val timestamp = sessionTrustedCdnHosts[host] ?: return false
+    val ttl = getTrustTTLMs()
+    if (System.currentTimeMillis() - timestamp > ttl) {
+      sessionTrustedCdnHosts.remove(host)
+      return false
+    }
+    // Sliding window: refresh timestamp on each hit
+    sessionTrustedCdnHosts[host] = System.currentTimeMillis()
+    return true
+  }
 
   private fun clearSessionTrust() {
     sessionTrustedCdnHosts.clear()
   }
 
-  // ── Per-Provider Adblock Disable ──
-  // Some providers (e.g., screenscape, cinemaos) serve video directly
-  // through their embed domain without third-party CDN hops. Their requests
-  // shouldn't be blocked by the adblock engine or heuristic rules.
-  // Config-driven via blocklist.json providers[].adblockDisabled.
+  /**
+   * Q6: The moment the main frame finishes loading (onPageFinished), pre-seed
+   * sessionTrustedCdnHosts with the provider's own CDN hosts (cdnDomains) and
+   * per-embed-domain profile hosts. This means the FIRST video-segment request
+   * hits the O(1) R0b trusted path instead of waiting for the R0 regex to fire
+   * once and THEN trust — eliminating the first-segment stall on cold start.
+   * Hosts that are ad/tracker (adFilter/blockedFilter) are explicitly excluded.
+   */
+  private fun preseedProviderTrust() {
+    val cfg = resolvedProvider ?: return
+    val hosts = mutableSetOf<String>()
+    cfg.cdnDomains.forEach { hosts.add(it.lowercase()) }
+    for (embed in cfg.embedDomains) {
+      effectiveProviderProfiles[embed.lowercase()]?.forEach { hosts.add(it.lowercase()) }
+    }
+    for (h in hosts) {
+      if (h.isEmpty()) continue
+      if (adFilter.matches(h) || blockedFilter.matches(h)) continue // never trust ad/tracker hosts
+      addSessionTrustedHost(h)
+    }
+  }
+
+  // ── Per-Provider Config Access ──
+  // Resolves the ProviderConfig for the currently loaded embed URL.
+  // Used for adblockDisabled, allowServerRedirects, apiIntercepts, cosmeticRules.
+  // P3: Prefer the navigation-resolved provider snapshot (set on shouldOverrideUrlLoading /
+  // switchProvider / ensureWebView) to avoid re-resolving from currentUrl on every gate call.
+  // Falls back to a live URL resolution only when no snapshot is available yet.
   private val currentProviderConfig: ProviderConfig?
     get() {
+      resolvedProvider?.let { return it }
       val host = currentUrl?.let { Uri.parse(it) }?.host?.lowercase() ?: return null
       val cfg = BlocklistConfigLoader.config
       return cfg.providers.firstOrNull { provider ->
@@ -850,8 +1102,42 @@ var _p=0;
       }
     }
 
+  /**
+   * Resolve the ProviderConfig for a specific URL (not the live currentUrl).
+   * Needed at WebView-creation time because [currentProviderConfig] keys off
+   * currentUrl, which lags the URL actually being loaded (switchProvider sets
+   * currentUrl only AFTER the doc-start injections run). Returns null if the
+   * host doesn't match a known provider.
+   */
+  private fun providerConfigForUrl(url: String?): ProviderConfig? {
+    val host = url?.let { Uri.parse(it).host?.lowercase() } ?: return null
+    val cfg = BlocklistConfigLoader.config
+    return cfg.providers.firstOrNull { provider ->
+      provider.enabled && provider.embedDomains.any {
+        host.contains(it.lowercase()) || it.lowercase().contains(host)
+      }
+    }
+  }
+
   private val isCurrentProviderAdblockDisabled: Boolean
     get() = currentProviderConfig?.adblockDisabled == true
+
+  private val currentProviderAllowServerRedirects: Boolean
+    get() = currentProviderConfig?.allowServerRedirects == true
+
+  private val currentProviderApiIntercepts: List<ApiInterceptRule>
+    get() = currentProviderConfig?.apiIntercepts ?: emptyList()
+
+  /**
+   * Q1: Provider API/auth hosts that must NEVER be blocked, even when they
+   * share IP space with ad networks (R3.5 API exemption). Compared by exact
+   * host or suffix so subdomains of the declared apiDomain are covered.
+   */
+  private val currentProviderApiDomains: List<String>
+    get() = currentProviderConfig?.apiDomains ?: emptyList()
+
+  private val currentProviderCosmeticRules: List<String>
+    get() = currentProviderConfig?.cosmeticRules ?: emptyList()
 
   // ── Double-Buffer WebView Slots ──
   // Instead of pooling WebViews (which leaks stale state between providers),
@@ -865,6 +1151,14 @@ var _p=0;
   private val swapRunnable = Runnable { swapViews() }
 
   private var pageStartedFired = false
+  // Q6 (expert perf consult 2026-08-17): native waterfall timestamps.
+  // loadT0 = when we commit a real loadUrl() (app latency ends).
+  // loadT1 = onPageStarted (DNS/TLS + embed HTML fetch done).
+  // onPageFinished derives t1→t2 (provider HTML parsed, sub-resources loading).
+  // Purely diagnostic — no behavior or security change.
+  private var loadT0: Long = 0L
+  private var loadT1: Long = 0L
+  private fun markLoadStart() { loadT0 = System.currentTimeMillis() }
   private var pendingLoadUrl: String? = null
   @Volatile private var currentUrl: String? = null
   private var isLoading = false
@@ -878,6 +1172,19 @@ var _p=0;
   private val sessionLock = Any()
   private var lockedRootHost: String? = null
   private var lockedAllowedHosts: Set<String> = emptySet()
+
+  // ── Bootstrap whitelist (NavGuard P0: expert review) ──
+  // During the first 5s after page load, all domains visited are recorded.
+  // After bootstrap ends, only whitelisted domains are allowed — preventing
+  // post-load navigation hijacks. For redirect-mesh providers (vidsrc→viduki.net,
+  // videasy→videasy.to), the initial server redirect from the embed domain is
+  // allowed when allowServerRedirects=true and the target is added to the whitelist.
+  private var bootstrapWhitelist: MutableSet<String> = mutableSetOf()
+  private var bootstrapEnded = false
+  private var initialLoadComplete = false
+  private val bootstrapHandler = android.os.Handler(android.os.Looper.getMainLooper())
+  private val bootstrapRunnable = Runnable { bootstrapEnded = true }
+  private val BOOTSTRAP_DURATION_MS = 5000L
 
   // ── Provider home-escape guard (P0: path-level navigation containment) ──
   // The provider's own error UI can carry a "Go Home" button (or auto-redirect)
@@ -1101,6 +1408,12 @@ var _p=0;
         android.util.Log.d("PlayerWebView",
           "OVERLAY onPageStarted url=${url?.take(80)}" +
           " contentHeight=${view?.contentHeight}")
+        // Q6: record t1 and log t0→t1 (DNS/TLS + embed HTML fetch).
+        loadT1 = System.currentTimeMillis()
+        if (loadT0 > 0) {
+          android.util.Log.d("PlayerWebView",
+            "WATERFALL t0→t1 (DNS/TLS+fetch) = ${loadT1 - loadT0}ms")
+        }
         // Track the latest URL for the fallback timer. Redirects are handled
         // internally by WebView (shouldOverrideUrlLoading returns false), so
         // onPageStarted receives the redirect URL without a corresponding
@@ -1109,6 +1422,15 @@ var _p=0;
         pageStartedFired = true
         isLoading = true
         dispatchEvent("onLoadingStart") { putString("url", url ?: "") }
+
+        // Expert Q6 fallback: ensure the cosmetic <style> is present even
+        // if addDocumentStartJavaScript didn't fire for this document.
+        // Skipped for reactSafe providers at document_start (avoid #418 DOM shift);
+        // cosmetics are re-injected post-hydration in onPageFinished instead.
+        val reactSafePrimary = providerConfigForUrl(url)?.reactSafe == true
+        if (!reactSafePrimary) {
+          reinjectCosmeticIfNeeded(view, url)
+        }
 
         // P0b fallback: home-page escape guard. shouldOverrideUrlLoading covers
         // full navigations, but JS-driven `window.location` / redirects that
@@ -1129,15 +1451,30 @@ var _p=0;
         pageFinishedFallbackHandler.postDelayed(pageFinishedFallbackRunnable, 12000L)
 
         // Backup: re-inject disable-devtool blocker via evaluateJavascript.
-        view?.evaluateJavascript(DEVTOOT_REDIRECT_BLOCKER, null)
+        // V6: reactSafe providers get NO blocker at document_start (see switchProvider).
+        if (!reactSafePrimary) {
+          view?.evaluateJavascript(DEVTOOT_REDIRECT_BLOCKER, null)
+        }
       }
 
       override fun onPageFinished(view: WebView?, url: String?) {
         cancelPageFinishedFallback()
         val finalUrl = url ?: ""
+        // Mark initial load complete for home-escape guard
+        initialLoadComplete = true
         android.util.Log.d("PlayerWebView",
           "OVERLAY onPageFinished url=${finalUrl.take(80)}" +
           " size=(${width}x${height}) contentHeight=${wv.contentHeight}")
+        // Q6: log t1→t2 (provider HTML parsed) and t0→t2 (total to parsed).
+        if (loadT0 > 0) {
+          val now = System.currentTimeMillis()
+          val t1t2 = if (loadT1 > 0) (now - loadT1) else -1
+          android.util.Log.d("PlayerWebView",
+            "WATERFALL t1→t2 (HTML parsed) = ${t1t2}ms, t0→t2 = ${now - loadT0}ms")
+        }
+        // Q6: pre-seed R0b trusted hosts so the first video segment hits the
+        // O(1) allow path instead of stalling on the R0 regex cold start.
+        preseedProviderTrust()
         dispatchPageFinished(finalUrl)
       }
 
@@ -1157,7 +1494,7 @@ var _p=0;
       override fun shouldOverrideUrlLoading(
         view: WebView?,
         request: WebResourceRequest?
-      ): Boolean = shouldOverrideNavForWebView(request)
+      ): Boolean = shouldOverrideNavForWebView(view, request)
 
       override fun shouldInterceptRequest(
         view: WebView?,
@@ -1186,8 +1523,18 @@ var _p=0;
       override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         currentUrl = url
         isLoading = true
+        val reactSafeSwap = providerConfigForUrl(url)?.reactSafe == true
         // Re-inject disable-devtool blocker
-        view?.evaluateJavascript(DEVTOOT_REDIRECT_BLOCKER, null)
+        // V6: reactSafe providers get NO blocker at document_start (see switchProvider).
+        if (!reactSafeSwap) {
+          view?.evaluateJavascript(DEVTOOT_REDIRECT_BLOCKER, null)
+        }
+        // Expert Q6 fallback: ensure the cosmetic <style> is present.
+        // Skipped for reactSafe providers at document_start (avoid #418 DOM shift);
+        // cosmetics are re-injected post-hydration in onPageFinished instead.
+        if (!reactSafeSwap) {
+          reinjectCosmeticIfNeeded(view, url)
+        }
         // P0b fallback: home-page escape guard (same as primary client).
         if (url != null && isHomeEscapeForRequest(url)) {
           android.util.Log.w("PlayerWebView",
@@ -1197,16 +1544,30 @@ var _p=0;
       }
       override fun onPageFinished(view: WebView?, url: String?) {
         // Trigger swap — incoming page is ready
+        initialLoadComplete = true
+        // Q6: pre-seed R0b trusted hosts for the newly-swapped provider.
+        preseedProviderTrust()
         swapViews()
         // Re-inject guard script on main frame (post-swap)
         if (injectedScript.isNotEmpty()) {
           wv.evaluateJavascript(injectedScript, null)
         }
+        // V6: reactSafe providers — the heavy guard bundle was NOT injected at
+        // document_start (it breaks Next.js hydration #418). Inject it now,
+        // post-hydration, via injectedJavaScriptAfterLoad. Also re-inject the
+        // cosmetic <style> that we skipped at document_start.
+        val reactSafeSwapFin = url?.let { providerConfigForUrl(it)?.reactSafe == true } == true
+        if (reactSafeSwapFin) {
+          if (injectedJavaScriptAfterLoad.isNotEmpty()) {
+            wv.evaluateJavascript(injectedJavaScriptAfterLoad, null)
+          }
+          reinjectCosmeticIfNeeded(wv, url)
+        }
       }
       override fun shouldOverrideUrlLoading(
         view: WebView?,
         request: WebResourceRequest?
-      ): Boolean = shouldOverrideNavForWebView(request)
+      ): Boolean = shouldOverrideNavForWebView(view, request)
 
       override fun shouldInterceptRequest(
         view: WebView?,
@@ -1421,7 +1782,7 @@ var _p=0;
     return result
   }
 
-  private fun shouldOverrideNavForWebView(request: WebResourceRequest?): Boolean {
+  private fun shouldOverrideNavForWebView(view: WebView?, request: WebResourceRequest?): Boolean {
     val url = request?.url?.toString() ?: return false
 
     // Block disable-devtool hijack redirect (white robot page)
@@ -1429,6 +1790,13 @@ var _p=0;
       logRequest("BLOCK", "NAV:devtool-hijack", "theajack.github.io", "navigation", url)
       android.util.Log.d("PlayerWebView",
         "[AB] BLOCKED disable-devtool hijack redirect: ${url.take(120)}")
+      // Q4 circuit breaker: the hijack runs a ~500ms setInterval/setTimeout loop that
+      // re-fires this block forever. Once we've blocked it ≥2×, nuke the provider's
+      // timers so the loop stops taxing the main thread (the main cause of slow video
+      // init on screenscape source 3 and others).
+      if (devtoolBlockCount++ >= 2) {
+        try { view?.evaluateJavascript(DEVTOOT_KILL_TIMERS, null) } catch (e: Exception) { }
+      }
       return true
     }
 
@@ -1438,6 +1806,52 @@ var _p=0;
     if (url.startsWith("intent:")) {
       logRequest("BLOCK", "NAV:intent-scheme", targetHost, navDest, url)
       return true
+    }
+
+    // AllowServerRedirects: for redirect-mesh providers (vidsrc→viduki.net,
+    // videasy→videasy.to), the initial server redirect from the embed domain
+    // is allowed when allowServerRedirects=true. This is checked BEFORE the
+    // hijack-allowlist and bootstrap checks so the redirect target is seen
+    // during bootstrap and properly whitelisted for subsequent navigation.
+    //
+    // Primary signal: request.isRedirect() (API 24+) + view.url (the URL BEFORE
+    // the redirect completes). This is set by the Chromium network stack itself
+    // and CANNOT be spoofed by provider JS, and does not depend on HTTP headers
+    // that a `<meta name="referrer" content="no-referrer">` policy would strip.
+    // The Referer header is kept ONLY as a secondary fallback for API 23 and for
+    // JS-driven navigations where isRedirect() is false.
+    if (request.isForMainFrame && currentProviderAllowServerRedirects) {
+      val embedHost = sourceUri?.let { Uri.parse(it).host?.lowercase() }
+      var redirectAllowed = false
+      if (embedHost != null) {
+        // Primary: native redirect flag (API 24+) + current WebView URL.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && request.isRedirect) {
+          val previousHost = view?.url?.let { Uri.parse(it).host?.lowercase() }
+          if (previousHost == embedHost) redirectAllowed = true
+        }
+        // Secondary: Referer header (unreliable — may be empty/stripped).
+        if (!redirectAllowed) {
+          val referrerHost = request.requestHeaders?.get("Referer")?.let { Uri.parse(it).host?.lowercase() }
+          if (referrerHost == embedHost) redirectAllowed = true
+        }
+      }
+      if (redirectAllowed) {
+        // This is a server redirect from the embed domain — allow and whitelist
+        bootstrapWhitelist.add(targetHost)
+        val sig = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && request.isRedirect)
+          "NAV:server-redirect-native" else "NAV:server-redirect-referer"
+        logRequest("ALLOW", sig, targetHost, navDest, url)
+        android.util.Log.d("PlayerWebView",
+          "[NavGuard] Server redirect allowed (allowServerRedirects) → whitelisted: $targetHost")
+        return false
+      }
+    }
+
+    // Bootstrap phase: record all domains visited in the first 5 seconds.
+    if (!bootstrapEnded) {
+      bootstrapWhitelist.add(targetHost)
+      logRequest("ALLOW", "NAV:bootstrap-whitelist", targetHost, navDest, url)
+      return false
     }
 
     // P0: Session-locked allowlist (replaces userInitiatedNavigation flag).
@@ -1475,15 +1889,21 @@ var _p=0;
   private fun interceptRequestForWebView(request: WebResourceRequest?): WebResourceResponse? {
     val url = request?.url?.toString() ?: return null
 
+    // F1/P5: parse the URL ONCE and reuse the host/path on every gate below
+    // (was 4× Uri.parse(url) per request). reqHost/reqPath are the canonical
+    // lowercased forms used by R0b/R0/P0/P4x.
+    val reqUri = Uri.parse(url)
+    val reqHost = reqUri.host?.lowercase() ?: ""
+    val reqPath = reqUri.path?.lowercase() ?: ""
+
     // ═══════════════════════════════════════════════════════════════
     // R0b: SESSION-TRUSTED CDN HOST (fastest path — Phase 1)
     // ═══════════════════════════════════════════════════════════════
     // Once a host has been seen serving a recognized video URL (R0 below),
     // all future requests to it bypass EVERY blocking layer. This is O(1)
     // and handles hundreds of .ts segment requests without regex overhead.
-    val r0Host = Uri.parse(url).host?.lowercase() ?: ""
-    if (isSessionTrustedHost(r0Host)) {
-      logRequest("ALLOW", "R0b:session-trust", r0Host, synthesizeSecFetchDest(request), url)
+    if (isSessionTrustedHost(reqHost)) {
+      logRequest("ALLOW", "R0b:session-trust", reqHost, synthesizeSecFetchDest(request), url)
       return null
     }
 
@@ -1493,25 +1913,60 @@ var _p=0;
     // Detects HLS manifests, DASH manifests, media segments, and DRM keys
     // by matching the path portion (query params stripped) against regex.
     // Path is lowercased first so regex patterns don't need IGNORE_CASE.
-    val r0Path = Uri.parse(url).path?.lowercase() ?: ""
-    val hasVideoExt = VIDEO_EXTENSION_REGEX.containsMatchIn(r0Path)
-    val hasStructPath = VIDEO_PATH_REGEX.containsMatchIn(r0Path)
-    val hasBase64Path = BASE64_VIDEO_PATH_REGEX.containsMatchIn(r0Path)
-    val hasDisguisedMedia = DISGUISED_MEDIA_REGEX.containsMatchIn(r0Path)
-    if (hasVideoExt || hasStructPath || hasBase64Path || hasDisguisedMedia) {
-      addSessionTrustedHost(r0Host)
-      logRequest("ALLOW", "R0:video-detection", r0Host, synthesizeSecFetchDest(request), url)
+    // P4: skip the O(N) regex cascade for hosts already proven (≥3×) to never
+    // carry video. A single non-match does NOT cache (guards shared CDNs that
+    // serve an ad first, then a video segment).
+    var isVideo = false
+    if (nonVideoHosts.contains(reqHost)) {
+      isVideo = false
+    } else {
+      val hasVideoExt = VIDEO_EXTENSION_REGEX.containsMatchIn(reqPath)
+      val hasStructPath = VIDEO_PATH_REGEX.containsMatchIn(reqPath)
+      val hasBase64Path = BASE64_VIDEO_PATH_REGEX.containsMatchIn(reqPath)
+      val hasDisguisedMedia = DISGUISED_MEDIA_REGEX.containsMatchIn(reqPath)
+      if (hasVideoExt || hasStructPath || hasBase64Path || hasDisguisedMedia) {
+        isVideo = true
+        markVideoHost(reqHost)
+      } else {
+        markNonVideoHost(reqHost)
+      }
+    }
+    if (isVideo) {
+      addSessionTrustedHost(reqHost)
+      logRequest("ALLOW", "R0:video-detection", reqHost, synthesizeSecFetchDest(request), url)
       return null
+    }
+
+    // ── API Synthetic Intercept (Config-driven; e.g. screenscape /api/ads/cycles) ──
+    // Returns a synthetic Response when the URL matches an apiIntercepts rule.
+    // This runs at the native layer BEFORE the request leaves the WebView — no
+    // header mutation, no network round-trip, no fingerprint change. Mirrors
+    // desktop's injected JS bundle apiIntercepts but at the native interception
+    // layer for maximum reliability.
+    val apiIntercept = matchApiIntercept(url, request?.method ?: "GET")
+    if (apiIntercept != null) {
+      logRequest("INTERCEPT", "API:synthetic", reqHost, synthesizeSecFetchDest(request), url)
+      android.util.Log.d("PlayerWebView",
+        "[API-INTERCEPT] Synthetic response for: ${url.take(120)}")
+      return apiIntercept
     }
 
     // Block disable-devtool — Layer 2: Serve a stub script.
     // Providers check for HTTP 200 + typeof disableDevtool === 'function'.
     // Returning empty body breaks providers. Returning a real-shaped stub
     // satisfies the check while the Layer 1 no-op prevents detectors from running.
-    if (url.contains("theajack.github.io/disable-devtool")) {
+    // Matches both the original theajack.github.io URL and CDN mirrors
+    // (jsdelivr, unpkg, cdnjs) that the provider may load it from.
+    val isDisableDevtoolUrl = url.contains("disable-devtool") &&
+      (url.contains("theajack.github.io") ||
+       url.contains("jsdelivr.net") ||
+       url.contains("unpkg.com") ||
+       url.contains("cdnjs.cloudflare.com"))
+    if (isDisableDevtoolUrl) {
       val isPage = url.contains("404.html")
+      val devtoolHost = Uri.parse(url).host?.lowercase() ?: "theajack.github.io"
       logRequest("BLOCK", if (isPage) "REQ:devtool-404" else "REQ:devtool-stub",
-        "theajack.github.io", if (isPage) "empty" else "script", url)
+        devtoolHost, if (isPage) "empty" else "script", url)
       if (isPage) {
         return WebResourceResponse("text/html", "utf-8", 200, "OK",
           mapOf("Cache-Control" to "no-store"),
@@ -1536,8 +1991,76 @@ var _p=0;
         ByteArrayInputStream(stub))
     }
 
-    val host = Uri.parse(url).host?.lowercase() ?: return null
+    // ── Block devtools-detector — Layer 2: Serve a stub script.
+    // Some providers (e.g. viduki.net) load devtools-detector from cdnjs
+    // alongside disable-devtool. When ADBLOCK_ENGINE blocks it, the page's
+    // anti-debug initialization fails silently, stalling the player.
+    // We serve a minimal no-op stub so window.devtoolsDetector checks pass.
+    val isDevtoolsDetectorUrl = url.contains("devtools-detector") &&
+      (url.contains("cdnjs.cloudflare.com") ||
+       url.contains("jsdelivr.net") ||
+       url.contains("unpkg.com"))
+    if (isDevtoolsDetectorUrl) {
+      logRequest("BLOCK", "REQ:devtools-detector-stub",
+        Uri.parse(url).host?.lowercase() ?: "cdnjs.cloudflare.com", "script", url)
+      // Minimal stub — defines window.devtoolsDetector with no-op methods
+      val stub = buildString {
+        append("(function(){'use strict';\n")
+        append("var noop=function(){};\n")
+        append("var Detector=function(){};\n")
+        append("Detector.prototype.listen=noop;\n")
+        append("Detector.prototype.launch=noop;\n")
+        append("Detector.prototype.isOpen=noop;\n")
+        append("Detector.parseUserAgent=function(){return{isLegit:true};};\n")
+        append("try{Object.defineProperty(window,'devtoolsDetector',{value:new Detector(),writable:false,configurable:false,enumerable:true});}catch(e){window.devtoolsDetector=new Detector();}\n")
+        append("})();\n")
+      }.toByteArray(Charsets.UTF_8)
+      return WebResourceResponse("application/javascript", "utf-8", 200, "OK",
+        mapOf("Content-Type" to "application/javascript; charset=utf-8",
+              "Content-Length" to stub.size.toString(),
+              "Cache-Control" to "no-cache, no-store, must-revalidate"),
+        ByteArrayInputStream(stub))
+    }
+
+    // F1: reuse the host already parsed once at the top of this function.
+    if (reqHost.isEmpty()) return null
+    val host = reqHost
     val dest = synthesizeSecFetchDest(request)
+
+    // ═══════════════════════════════════════════════════
+    // Q1: API-DOMAIN EXEMPTION (R3.5)
+    // ═══════════════════════════════════════════════════
+    // Provider API/auth hosts (video auth, manifest signing, token refresh)
+    // often share IP ranges with ad/tracker CDNs. Allow them unconditionally
+    // so they bypass EVERY blocking layer below (P0 cross-provider, remote
+    // blocklist, AdblockEngine, heuristic, profile, R6/R7). Compared by exact
+    // host or suffix so subdomains are covered. Checked before any block so a
+    // misclassified apiDomain can never take down video delivery.
+    if (currentProviderApiDomains.any { host == it.lowercase() || host.endsWith(".$it".lowercase()) }) {
+      logRequest("ALLOW", "Q1:api-domain-exempt", host, dest, url)
+      return null
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // R3b: FIRST-PARTY ALLOW (config-driven, race-safe)
+    // ═══════════════════════════════════════════════════════════════
+    // The current provider's OWN embed domains (and their configured root
+    // hosts) must never be blocked by any layer below — even during a
+    // provider switch, when currentUrl/currentHost lag and would otherwise
+    // let first-party JS/CSS fall through to AdblockEngine (e.g. videasy's
+    // /_next/static + webpack chunks, peachify assets). Mirrors desktop's
+    // R3 hard-allow (before R4b/R5) and closes the over-blocking gap.
+    val fpAllow = (currentProviderConfig?.embedDomains?.any { ed ->
+        val e = ed.lowercase()
+        host == e || host.endsWith(".$e")
+      } ?: false) || effectiveProviderRootHosts.any { rh ->
+        val r = rh.lowercase()
+        host == r || host.endsWith(".$r")
+      }
+    if (fpAllow) {
+      logRequest("ALLOW", "R3b:first-party", host, dest, url)
+      return null
+    }
 
     trackRequestIfAuditing(url, request)
 
@@ -1567,7 +2090,9 @@ var _p=0;
     }
 
     // ── Remote config blocked domains ──
-    if (effectiveBlockedDomains.any { host.contains(it) }) {
+    // F1: whole-label suffix match (not substring) — closes the
+    // "evil-cloudfront.net" false-allow. Fragment tokens keep substring.
+    if (blockedFilter.matches(host)) {
         logRequest("BLOCK", "REMOTE:blocked-domain", host, dest, url)
         return WebResourceResponse("text/plain", "utf-8",
             ByteArrayInputStream(ByteArray(0)))
@@ -1581,7 +2106,19 @@ var _p=0;
     //
     // ALSO strips disable-devtool script tags from the HTML so the library
     // never loads — nuclear option for providers that bundle the library.
-    if (request.isForMainFrame && dest == "document" && host in effectiveProviderRootHosts) {
+    //
+    // GATED (expert fix): only re-fetch + prepend for providers that actually
+    // NEED byte-level injection — those with cosmeticRules (reliable CSS the
+    // declarative doc-start path may miss on some devices) or apiIntercepts
+    // (screenscape's /api/ads/cycles first poll). Providers with neither
+    // (e.g. peachify, a Next.js app) load the document normally: the manual
+    // re-fetch + 50KB bundle prepend at the very top of the HTML breaks
+    // Next.js hydration (React #418), leaving the player blank. Their guard
+    // bundle + cosmetics already arrive via addDocumentStartJavaScript.
+    val needsByteInjection =
+      cosmeticCssForHost(host) != null || currentProviderApiIntercepts.isNotEmpty()
+    if (request.isForMainFrame && dest == "document" &&
+        host in effectiveProviderRootHosts && needsByteInjection) {
         try {
             val conn = URL(url).openConnection() as java.net.HttpURLConnection
             conn.requestMethod = "GET"
@@ -1702,6 +2239,23 @@ var _p=0;
 
     val hasRangeHeader = headers.containsKey("Range")
 
+    // Rule 0: explicit URL blocklist (highest precedence, OTA-configurable).
+    // Blocks a specific path on an otherwise-allowlisted CDN host — R2:cdn-allowlist
+    // is host-level and would short-circuit the whole host before any path-aware
+    // block (R5/R6/R7) could run. Substring match on the full (lower-cased) URL.
+    if (blockedUrlFilter.isNotEmpty()) {
+      val lowerUrl = url.lowercase()
+      for (needle in blockedUrlFilter) {
+        if (needle.isNotEmpty() && lowerUrl.contains(needle.lowercase())) {
+          logRequest("BLOCK", "R0:url-blocklist", host, dest, url)
+          android.util.Log.w("PlayerWebView",
+            "[AB] URL BLOCK: ${url.take(120)}")
+          return WebResourceResponse("text/plain", "utf-8",
+            ByteArrayInputStream(ByteArray(0)))
+        }
+      }
+    }
+
     // Rule 1: video/audio/range → ALLOW
     if (hasRangeHeader || secFetchDest in setOf("video", "audio")) {
       logRequest("ALLOW", "R1:media/range", host, dest, url)
@@ -1722,7 +2276,7 @@ var _p=0;
         }
       }
       // Allow workers.dev domains that match known CDN patterns (e.g., vidnees)
-      if (effectiveAllowedCdnHosts.any { host.contains(it) }) {
+      if (allowedCdnFilter.matches(host)) {
         logRequest("ALLOW", "WDEV:cdn-match", host, dest, url)
         return null
       }
@@ -1740,7 +2294,7 @@ var _p=0;
     }
 
     // Rule 2: CDN allowlist → ALLOW
-    if (effectiveAllowedCdnHosts.any { host.contains(it) }) {
+    if (allowedCdnFilter.matches(host)) {
       logRequest("ALLOW", "R2:cdn-allowlist", host, dest, url)
       return null
     }
@@ -1827,7 +2381,7 @@ var _p=0;
     }
 
     // Rule 6: Domain blocklist
-    if (adDomains.any { host.contains(it) }) {
+    if (adFilter.matches(host)) {
       logRequest("BLOCK", "R6:domain-blocklist", host, dest, url)
       android.util.Log.w("PlayerWebView",
         "[AB] DOMAIN BLOCK: ${url.take(120)}")
@@ -1904,9 +2458,31 @@ var _p=0;
     newWv.addJavascriptInterface(JsBridgeInterface(), "ReactNativeWebView")
 
     // 3. Apply guard scripts
-    WebViewCompat.addDocumentStartJavaScript(newWv, DEVTOOT_REDIRECT_BLOCKER, setOf("*"))
-    if (injectedScript.isNotEmpty()) {
+    // V6: reactSafe providers (peachify / Next.js) — inject NO disable-devtool
+    // blocker at document_start. The neutralization overrides native methods that
+    // disable-devtool's OWN detectors flag as "tampering" (type=4), and those
+    // overrides break the React video player. We rely on the native layer + the
+    // post-hydration scriptlets-only bundle instead. Non-reactSafe providers get
+    // the full DEVTOOT_REDIRECT_BLOCKER.
+    val reactSafe = providerConfigForUrl(url)?.reactSafe == true
+    if (!reactSafe) {
+      WebViewCompat.addDocumentStartJavaScript(newWv, DEVTOOT_REDIRECT_BLOCKER, setOf("*"))
+    }
+    // V5: skip the native doc-start bundle for providers that hydrate badly when
+    // the guard runs at document_start (peachify → React #418). Those still get the
+    // bundle via RN injectedJavaScriptBeforeContentLoaded + the injectJavaScript spray.
+    // Resolve from the URL being loaded (not currentUrl, which lags until step 5).
+    val docStartBundle = providerConfigForUrl(url)?.docStartBundle != false
+    if (injectedScript.isNotEmpty() && docStartBundle && !reactSafe) {
       WebViewCompat.addDocumentStartJavaScript(newWv, injectedScript, setOf("*"))
+    }
+
+    // Expert Q6: reliable cosmetic <style> injection at document_start.
+    // Skipped at document_start for reactSafe providers — a <style> inserted
+    // before React hydrates shifts the DOM node tree and triggers #418. The
+    // cosmetic <style> is re-injected post-hydration via reinjectCosmeticIfNeeded.
+    if (!reactSafe) {
+      applyCosmeticDocStart(newWv, url)
     }
 
     // 4. Add to Activity root (behind current — INVISIBLE)
@@ -1926,6 +2502,10 @@ var _p=0;
     }
 
     // 5. Start loading
+    // P3: cache the navigation-resolved provider so every security gate reads it without
+    // re-resolving from currentUrl. Q4: reset the devtool-hijack circuit breaker per source.
+    resolvedProvider = providerConfigForUrl(url)
+    devtoolBlockCount = 0
     currentUrl = url
     isLoading = true
     if (referrer.isNotEmpty()) {
@@ -2117,7 +2697,12 @@ var _p=0;
     WebView.setWebContentsDebuggingEnabled(true)
     warmupRenderer(act)
     val cfg = BlocklistConfigLoader.config
-    if (cfg.version > 0) applyRemoteConfig(cfg)
+    // P1/F2: build snapshots unconditionally (covers local asset config too).
+    applyRemoteConfig(cfg)
+    // Q4: reset the devtool circuit-breaker for this provider load.
+    devtoolBlockCount = 0
+    // P3: cache the resolved provider from the URL being loaded.
+    resolvedProvider = providerConfigForUrl(sourceUri.ifEmpty { pendingLoadUrl })
     val anchorId = System.identityHashCode(this)
 
     val wv = WebView(act)
@@ -2139,14 +2724,30 @@ var _p=0;
     if (javaScriptCanOpenWindowsAutomatically) wv.settings.javaScriptCanOpenWindowsAutomatically = true
 
     // Inject disable-devtool redirect blocker into MAIN FRAME
-    WebViewCompat.addDocumentStartJavaScript(wv, DEVTOOT_REDIRECT_BLOCKER, setOf("*"))
+    // V6: reactSafe providers get NO blocker at document_start (see switchProvider).
+    val reactSafeInit = providerConfigForUrl(sourceUri.ifEmpty { pendingLoadUrl })?.reactSafe == true
+    if (!reactSafeInit) {
+      WebViewCompat.addDocumentStartJavaScript(wv, DEVTOOT_REDIRECT_BLOCKER, setOf("*"))
+    }
 
-    if (injectedScript.isNotEmpty()) {
+    val docStartBundleInit = providerConfigForUrl(sourceUri.ifEmpty { pendingLoadUrl })?.docStartBundle != false
+    if (injectedScript.isNotEmpty() && docStartBundleInit && !reactSafeInit) {
       android.util.Log.d("PlayerWebView",
         "OVERLAY INJECTING SCRIPT length=${injectedScript.length} start=${injectedScript.take(120).replace('\n', ' ')}")
       WebViewCompat.addDocumentStartJavaScript(wv, injectedScript, setOf("*"))
+    } else if (injectedScript.isNotEmpty() && !docStartBundleInit) {
+      android.util.Log.d("PlayerWebView",
+        "OVERLAY INJECTING SCRIPT SKIPPED (docStartBundle=false) length=${injectedScript.length}")
     } else {
       android.util.Log.w("PlayerWebView", "OVERLAY INJECTING SCRIPT SKIPPED — script is empty")
+    }
+
+    // Expert Q6: reliable cosmetic <style> injection at document_start
+    // (independent of the fragile HTML-fetch branch). Resolves the provider
+    // from sourceUri (the prop) or currentUrl.
+    // Skipped at document_start for reactSafe providers (avoid #418 DOM shift).
+    if (!reactSafeInit) {
+      applyCosmeticDocStart(wv, sourceUri.ifEmpty { currentUrl })
     }
 
     val rootContent = act.findViewById<ViewGroup>(android.R.id.content)
@@ -2157,6 +2758,7 @@ var _p=0;
         "OVERLAY Flushing pendingLoadUrl=$url anchor=$anchorId" +
         " UA=${wv.settings.userAgentString.take(60)}")
       pendingLoadUrl = null
+      markLoadStart()
       wv.loadUrl(url)
     }
   }
@@ -2232,6 +2834,7 @@ var _p=0;
     }
     currentUrl = url
     isLoading = true
+    markLoadStart()
     android.util.Log.d("PlayerWebView", "OVERLAY loadUrl url=${url.take(80)}")
     if (referrer.isNotEmpty()) {
       wv.loadUrl(url, mapOf("Referer" to referrer))
@@ -2256,6 +2859,8 @@ var _p=0;
   fun loadProviderUrl(url: String) {
     // Clear session trust for the new provider
     clearSessionTrust()
+    // Reset bootstrap state for the new provider
+    resetBootstrapState()
     val host = Uri.parse(url).host?.lowercase()
     if (host != null) {
       synchronized(sessionLock) {
@@ -2265,11 +2870,23 @@ var _p=0;
           host.contains(key) || key.contains(host)
         }?.value ?: emptySet()
         lockedAllowedHosts = (profile + host + host.removePrefix("www.") + effectiveAllowedCdnHosts).toSet()
+        // Initialize bootstrap whitelist with the embed host
+        bootstrapWhitelist.clear()
+        bootstrapWhitelist.add(host)
       }
       android.util.Log.d("PlayerWebView",
         "OVERLAY loadProviderUrl host=$host allowedSize=${lockedAllowedHosts.size}")
     }
     loadUrl(url)
+  }
+
+  /** Reset bootstrap state for a new provider load. */
+  private fun resetBootstrapState() {
+    bootstrapWhitelist.clear()
+    bootstrapEnded = false
+    initialLoadComplete = false
+    bootstrapHandler.removeCallbacks(bootstrapRunnable)
+    bootstrapHandler.postDelayed(bootstrapRunnable, BOOTSTRAP_DURATION_MS)
   }
 
   fun reload() {
@@ -2390,58 +3007,6 @@ var _p=0;
   //
   // Consolidated from across JS (POPUP_BLOCKER_SCRIPT AD_PATTERNS,
   // makeCFBypassScript AD_DOMAINS) and the original native list, plus
-  // domains discovered during real-world provider playback.
-  // This is the SINGLE source of truth for network-level ad blocking.
-
-  private val adDomains: Set<String> = setOf(
-    // Major ad networks
-    "doubleclick.net", "googleadservices.com", "googlesyndication.com",
-    "google-analytics.com", "googletagmanager.com", "gtag/js",
-    "pagead2.googlesyndication.com",
-    "adnxs.com", "rubiconproject.com", "criteo.com", "criteo.net",
-    "outbrain.com", "taboola.com", "revcontent.com",
-    // Popup / popunder networks
-    "popads", "popcash", "popunder", "adsterra.com",
-    "propellerads.com", "trafficfactory.biz",
-    // Tracking / analytics
-    "pixel.", "track.", "tracking.", "beacon.",
-    "histats.com", "statcounter.com", "scorecardresearch.com",
-    // Ad exchanges
-    "amazon-adsystem.com", "casalemedia.com", "contextweb.com",
-    "openx.net", "pubmatic.com", "sharethrough.com",
-    "media.net", "advertising.com", "adap.tv",
-    "moatads.com", "servedby.", "exdynsrv.com",
-    // Ad networks (additional)
-    "exoclick.com", "juicyads.com", "plugrush.com",
-    "trafficjunky.com", "adreactor.com", "adcash.com",
-    "adhitz.com", "adk2.com", "adpierce.com",
-    "clickadu.com", "clicksco.net", "hilltopads.com",
-    "adsystem.", "adserver.", "ads.",
-    // Discovered during playback
-    "interlinecustomroofingllc.com",
-    "1xlite",
-    // Phase 3 audit: main-frame hijack domains (used by nxsha, vidnest)
-    "wo.riverlayboy.shop",
-    "hai8g.com",
-    // Phase 3 audit: injected ad iframes / trackers
-    "zoaclachan.cyou",
-    "florian.sorrilylivyershape.cyou",
-    "ag.phrymaphytic.com",
-    "my.rtmark.net",
-    "s.click.aliexpress.com",
-    "developdomicile.com",
-    // == UNKNOWN == Hijack redirect domains (originally misclassified as CDN)
-    // frowstyambler.qpon was found during audit to be the nxsha hijack redirector,
-    // not a video CDN. The page navigates here during the Type B hijack chain.
-    "frowstyambler", "qpon",
-    // Cloudflare RUM beacon (purely analytics — safe to block)
-    "cloudflareinsights.com",
-    // Aggressive popup patterns (nxsha and similar providers)
-    "go.", "click.", "adx.", "adv.", "banner.",
-    "traffic.", "redirect.", "redirecting.",
-    "bestchange", "best-"
-  )
-
   // Same-origin ad paths — if the host matches the current provider domain
   // AND the path contains one of these, the request is blocked.
   // Also catches off-domain hijack paths like wo.riverlayboy.shop/cx/...
@@ -2450,6 +3015,14 @@ var _p=0;
     "/tracking/", "/affiliate/", "/promo/", "/sponsor/",
     "/cx/"
   )
+
+  /**
+   * Effective ad-domain blocklist = the hardcoded [adDomains] baseline UNION the
+   * OTA config's `blockedDomains` (`effectiveBlockedDomains`). Consumed by both
+   * the R6 domain-blocklist rule and [isAdOrTracker], so a provider config update
+   * (without an APK rebuild) can add new ad networks. The hardcoded baseline is
+   * the reliable floor; the remote set is additive.
+   */
 
   // ── P0: Cross-provider document detection helpers (expert review) ──
 
@@ -2495,6 +3068,70 @@ var _p=0;
     return "empty"
   }
 
+  /**
+   * Match a request against the current provider's apiIntercepts config.
+   * Returns a synthetic WebResourceResponse if matched, null otherwise.
+   * Mirrors the shared bundle's buildSyntheticResponse but at the native layer.
+   */
+  private fun matchApiIntercept(url: String, method: String): WebResourceResponse? {
+    val intercepts = currentProviderApiIntercepts
+    if (intercepts.isEmpty()) return null
+
+    val methodUpper = method.uppercase()
+    for (rule in intercepts) {
+      if (rule.match.isBlank()) continue
+      // Simple substring match for the API path pattern
+      if (url.indexOf(rule.match) == -1) continue
+
+      // Check HTTP method match
+      val methods = rule.methods
+      if (methods.isNotEmpty()) {
+        var matched = false
+        for (m in methods) {
+          if (m == "*" || m.uppercase() == methodUpper) {
+            matched = true
+            break
+          }
+        }
+        if (!matched) continue
+      }
+
+      // Build synthetic response
+      val primary = rule.synthetic?.primary
+      val fallback = rule.synthetic?.fallback
+      val fallbackCondition = rule.synthetic?.fallbackCondition
+      if (primary == null) continue
+
+      val chosenResponse = if (fallback != null && fallbackCondition != null && !fallbackCondition.isBlank() &&
+          url.indexOf(fallbackCondition) != -1) {
+        fallback
+      } else {
+        primary
+      }
+
+      // V5: stale-anchor substitution. The screenscape ad-window module
+      // gates isAdWindow = (now - anchorMs) < 10min. A "now" anchor
+      // makes the client conclude it is 0ms into a fresh ad window and OPEN it.
+      // Feeding "now - 700000" (>10min old) makes it conclude isAdWindow=false.
+      val nowMs = System.currentTimeMillis()
+      val json = try {
+        com.google.gson.Gson().toJson(chosenResponse).replace("\"@@NOW@@\"", (nowMs - 700_000).toString())
+      } catch (_: Exception) {
+        continue
+      }
+
+      android.util.Log.d("PlayerWebView",
+        "[API-INTERCEPT] Matched $methodUpper ${url.take(100)} -> synthetic response")
+
+      return WebResourceResponse("application/json", "utf-8", 200, "OK",
+        mapOf("Content-Type" to "application/json; charset=utf-8",
+              "Content-Length" to json.toByteArray().size.toString(),
+              "Cache-Control" to "no-cache, no-store, must-revalidate"),
+        java.io.ByteArrayInputStream(json.toByteArray(Charsets.UTF_8)))
+    }
+    return null
+  }
+
   /** Empty 200 OK HTML document — prevents iframe rendering without error signals. */
   private fun emptyDocumentResponse(): WebResourceResponse =
     WebResourceResponse("text/html", "utf-8", 200, "OK",
@@ -2508,16 +3145,13 @@ var _p=0;
       ByteArrayInputStream(ByteArray(0)))
 
   /**
-   * Build a static cosmetic <style> for a provider main-frame host, from
-   * blocklist.json providers[].cosmeticRules (single source of truth, loaded
-   * by BlocklistConfigLoader). Returns "" when the host isn't a provider root
-   * or the provider carries no cosmeticRules — so non-screenscape providers
-   * are untouched. Declarative CSS: hides always-present elements (download
-   * banner, footer, ad-window badge) before React paints them, and re-applies
-   * automatically on any re-render.
+   * Resolve the joined cosmetic CSS string for a provider main-frame host,
+   * from blocklist.json providers[].cosmeticRules (single source of truth,
+   * loaded by BlocklistConfigLoader — desktop parity). Returns null when the
+   * host isn't a provider root or the provider carries no cosmeticRules.
    */
-  private fun buildCosmeticStyleForHost(host: String): String {
-    try {
+  private fun cosmeticCssForHost(host: String): String? {
+    return try {
       val providers = BlocklistConfigLoader.config.providers
       for (p in providers) {
         if (!p.enabled) continue
@@ -2525,11 +3159,165 @@ var _p=0;
         val matched = p.embedDomains.any { host == it.lowercase() || host.endsWith(".$it".lowercase()) }
         if (!matched) continue
         val css = p.cosmeticRules.joinToString(" ") { it.trim() }
-        if (css.isEmpty()) return ""
-        return "<style data-filmsnaps-cosmetic=\"true\">" + css + "</style>"
+        return if (css.isEmpty()) null else css
       }
-    } catch (_: Exception) {}
-    return ""
+      null
+    } catch (_: Exception) { null }
+  }
+
+  /** Same match logic as [cosmeticCssForHost] but returns the individual rule list. */
+  private fun cosmeticRulesForHost(host: String): List<String>? {
+    return try {
+      val providers = BlocklistConfigLoader.config.providers
+      for (p in providers) {
+        if (!p.enabled) continue
+        if (p.cosmeticRules.isEmpty()) continue
+        val matched = p.embedDomains.any { host == it.lowercase() || host.endsWith(".$it".lowercase()) }
+        if (!matched) continue
+        return p.cosmeticRules.toList()
+      }
+      null
+    } catch (_: Exception) { null }
+  }
+
+  /**
+   * Build a static cosmetic <style> for a provider main-frame host (HTML
+   * interception branch). See [cosmeticCssForHost] for the source. Declarative
+   * CSS: hides always-present elements (download banner, footer, ad-window
+   * badge) before React paints them, and re-applies automatically on any
+   * re-render. Returns "" when there's no cosmetic for the host.
+   */
+  private fun buildCosmeticStyleForHost(host: String): String {
+    val css = cosmeticCssForHost(host) ?: return ""
+    return "<style data-filmsnaps-cosmetic=\"true\">" + css + "</style>"
+  }
+
+  /**
+   * Expert Q6/Q7: Reliable cosmetic injection via addDocumentStartJavaScript,
+   * INDEPENDENT of the fragile HTML-fetch branch (line ~1681). The desktop-parity
+   * cosmeticRules are applied declaratively at document_start so they survive the
+   * provider's React re-renders — fixing screenscape (source 3) where the HTML
+   * branch's second HttpURLConnection fetch silently fails (nxsha's succeeds) and
+   * the <style> is never injected.
+   *
+   * The snippet is idempotent: it only appends the <style> if one with the
+   * data-filmsnaps-cosmetic marker isn't already present, so it coexists safely
+   * with the HTML-branch <style> (whichever runs first wins; the other is a no-op).
+   *
+   * Backtick/`$`/backslash are escaped so the CSS (which may contain `:has(> a...)`
+   * and url() literals) is embedded verbatim inside a template literal.
+   */
+  /**
+   * Expert Q6/Q7 (fixed): reliable cosmetic hiding via addDocumentStartJavaScript.
+   *
+   * Two layers, mirroring the PREVIOUS working system (git 54c13a7) that hid
+   * provider chrome "perfectly":
+   *   1. A declarative <style> (idempotent) for any selector the WebView's CSS
+   *      engine supports natively — including `:has()` on modern Chromium.
+   *   2. A JS MutationObserver sweeper (the part the previous system relied on)
+   *      that querySelectorAll's the PLAIN (non-`:has()`) selectors and sets
+   *      display/visibility/opacity none — robust for SPA / dynamically-injected
+   *      elements and for Android WebViews whose CSS engine lacks `:has()`.
+   *      For `:has(> X)` rules we also hide X's PARENT (the div that directly
+   *      contains the target), replicating the old `_link.parentElement` hide.
+   *      Re-applied every 3s via setInterval so late-mounted nodes get caught.
+   */
+  private fun buildCosmeticDocumentStartJs(host: String): String? {
+    val rules = cosmeticRulesForHost(host) ?: return null
+    val plain = mutableListOf<String>()
+    val parent = mutableListOf<String>()
+    for (rule in rules) {
+      val sel = rule.substringBefore("{").trim()
+      if (sel.isEmpty()) continue
+      if (sel.contains(":has(")) {
+        // Direct-child :has(> X) → hide X's parent (the matched element).
+        val m = Regex(""":has\(\s*>\s*([^)]+?)\s*\)""").find(sel)
+        if (m != null) {
+          val inner = m.groupValues[1].trim()
+          if (inner.isNotEmpty()) parent.add(inner)
+        }
+        // Other :has() forms stay in the <style> only (handled by CSS engine).
+      } else {
+        plain.add(sel)
+      }
+    }
+    val styleRules = rules.joinToString(" ") { it.trim() }
+    val escapedStyle = styleRules
+      .replace("\\", "\\\\")
+      .replace("`", "\\`")
+      .replace("$", "\\$")
+    val escSel = { s: String ->
+      "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+    }
+    val plainJson = plain.joinToString(",", "[", "]", transform = escSel)
+    val parentJson = parent.joinToString(",", "[", "]", transform = escSel)
+    return """(function(){
+  try {
+    if (!document.querySelector('style[data-filmsnaps-cosmetic]')) {
+      var s = document.createElement('style');
+      s.setAttribute('data-filmsnaps-cosmetic','true');
+      s.textContent = `$escapedStyle`;
+      (document.head||document.documentElement).appendChild(s);
+    }
+    var PLAIN = $plainJson;
+    var PARENT = $parentJson;
+    function _fsHide(){
+      for (var i=0;i<PLAIN.length;i++){
+        try {
+          var els = document.querySelectorAll(PLAIN[i]);
+          for (var j=0;j<els.length;j++){
+            var el = els[j];
+            el.style.setProperty('display','none','important');
+            el.style.setProperty('visibility','hidden','important');
+            el.style.setProperty('opacity','0','important');
+          }
+        } catch(e){}
+      }
+      for (var k=0;k<PARENT.length;k++){
+        try {
+          var pels = document.querySelectorAll(PARENT[k]);
+          for (var m=0;m<pels.length;m++){
+            var pe = pels[m].parentElement;
+            if (pe) {
+              pe.style.setProperty('display','none','important');
+              pe.style.setProperty('visibility','hidden','important');
+              pe.style.setProperty('opacity','0','important');
+            }
+          }
+        } catch(e){}
+      }
+    }
+    _fsHide();
+    if (window.__fsObs) { try { window.__fsObs.disconnect(); } catch(e){} }
+    window.__fsObs = new MutationObserver(function(){ try { _fsHide(); } catch(e){} });
+    window.__fsObs.observe(document.documentElement, { childList:true, subtree:true });
+    if (window.__fsTimer) { try { clearInterval(window.__fsTimer); } catch(e){} }
+    window.__fsTimer = setInterval(function(){ try { _fsHide(); } catch(e){} }, 3000);
+  } catch(e){}
+})();"""
+  }
+
+  /** Register the cosmetic document-start script on a WebView (no-op if none). */
+  private fun applyCosmeticDocStart(wv: WebView, url: String?) {
+    val host = url?.let { Uri.parse(it).host?.lowercase() } ?: return
+    val js = buildCosmeticDocumentStartJs(host) ?: return
+    try {
+      WebViewCompat.addDocumentStartJavaScript(wv, js, setOf("*"))
+    } catch (e: Exception) {
+      android.util.Log.w("PlayerWebView", "cosmetic doc-start register failed: ${e.message}")
+    }
+  }
+
+  /**
+   * Expert Q6 fallback: re-inject the cosmetic <style> via evaluateJavascript if
+   * it isn't already present. Covers the rare case where addDocumentStartJavaScript
+   * didn't run for a given document (e.g. a client-side document swap that happens
+   * after document_start). The snippet's own guard makes this safe to call.
+   */
+  private fun reinjectCosmeticIfNeeded(view: WebView?, url: String?) {
+    val host = url?.let { Uri.parse(it).host?.lowercase() } ?: return
+    val js = buildCosmeticDocumentStartJs(host) ?: return
+    try { view?.evaluateJavascript(js, null) } catch (_: Exception) {}
   }
 
   private fun isAdOrTracker(url: String): Boolean {
@@ -2537,10 +3325,10 @@ var _p=0;
     val host = uri.host?.lowercase() ?: return false
 
     // 1. Never block known video CDNs
-    if (effectiveAllowedCdnHosts.any { host.contains(it) }) return false
+    if (allowedCdnFilter.matches(host)) return false
 
-    // 2. Domain-based blocking
-    if (adDomains.any { host.contains(it) }) return true
+    // 2. Domain-based blocking (F1: suffix + fragment match)
+    if (adFilter.matches(host)) return true
 
     // 3. Path-based blocking (same-origin ads)
     val currentHost = currentUrl?.let { Uri.parse(it) }?.host
@@ -2789,6 +3577,13 @@ var _p=0;
 
     if (injectedJavaScriptAfterLoad.isNotEmpty()) {
       wv?.evaluateJavascript(injectedJavaScriptAfterLoad, null)
+    }
+
+    // V6: reactSafe providers — re-inject the cosmetic <style> that we skipped
+    // at document_start (it would shift the DOM and trigger #418). Now that the
+    // page has hydrated, it's safe.
+    if (providerConfigForUrl(url)?.reactSafe == true) {
+      reinjectCosmeticIfNeeded(wv, url)
     }
   }
 

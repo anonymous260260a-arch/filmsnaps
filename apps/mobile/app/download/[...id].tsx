@@ -722,11 +722,12 @@ export default function DownloadScreen() {
         showStatus("⏳ Adding to download queue...");
         addLog("Enqueuing: " + url.substring(0, 200));
 
-        const ext = url.includes(".mkv")
-          ? "mkv"
-          : url.includes(".mp4")
-            ? "mp4"
-            : "mkv";
+        // Best-effort guess from the URL path; the native download service is
+        // authoritative and renames the finished file to the real extension
+        // (derived from the HTTP response) at completion, so this is only the
+        // transient in-flight name.
+        const pathExt = url.split(/[?#]/)[0].match(/\.([a-z0-9]{2,4})$/i);
+        const ext = pathExt ? pathExt[1].toLowerCase() : "mp4";
         const filename = `filmsnaps-${params.type}-${params.id}.${ext}`;
 
         const id = enqueue({

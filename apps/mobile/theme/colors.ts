@@ -76,6 +76,7 @@ export const colors = {
   heroGradientSolid: "rgba(7,7,8,0.93)",
 
   // ── Zinc palette (icon fills, small elements) ──
+  zinc900: "#18181b", // bottom-sheet / dialog card background
   zinc800: "#27272a",
   zinc500: "#71717a",
   zinc400: "#a1a1aa",

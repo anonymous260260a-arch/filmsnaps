@@ -43,4 +43,8 @@ dependencies {
   implementation 'com.facebook.react:react-android'
   // Required for WebViewCompat.addDocumentStartJavaScript() (Cloudflare-safe script injection)
   implementation 'androidx.webkit:webkit:1.9.0'
+  // Conscrypt for Ed25519 on Android API 23+ (minSdk 23)
+  implementation 'org.conscrypt:conscrypt-android:2.5.2'
+  // Gson for JSON parsing in BlocklistConfig and BlocklistConfigLoader
+  implementation 'com.google.code.gson:gson:2.10.1'
 }

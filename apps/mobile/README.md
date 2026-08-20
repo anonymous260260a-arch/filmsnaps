@@ -81,6 +81,53 @@ into the generated Android/iOS projects by `plugins/with-filmsnaps-downloader`
 during `expo prebuild`. Downloads persist across app restarts and surface in
 the Downloads screen.
 
+### File extension handling
+
+A downloaded file keeps the **real container extension** of the bytes actually
+written to disk (`.mkv`, `.mp4`, `.webm`, …), not a hard-coded default. The
+extension is resolved with a clear precedence:
+
+1. **JS-provided `extension`** — the download screen derives the extension from
+   the provider's file listing (e.g. `file.name.split(".").pop()` for falix)
+   and passes it through `enqueue({ extension })` → `buildFileName`. This wins
+   so the _temp_ file is created with the correct extension from the start.
+2. **Native response** — `FilmsnapsDownloadService.renameWithRealExtension`
+   derives the extension from the final HTTP response URL (after redirects)
+   plus the `Content-Type` header (`mimeToExt` maps `video/*` to extensions).
+   This is the backstop that handles providers whose listing hides the
+   real extension.
+3. **Fallback `.mp4`** — only used when neither of the above yields one.
+
+The resolved extension is emitted back to JS via the `onDownloadComplete`
+bridge event (`extension` + `fileName`), persisted in the download record, and
+used for the MediaStore `MIME_TYPE` at publish time — so the file appears with
+the correct icon and opens in the right player.
+
+> Note: providers like falix serve downloads from opaque tokenized URLs that
+> redirect, so the native response URL / `Content-Type` is not a reliable
+> extension source. For those providers the JS-provided `extension` (step 1)
+> is the authoritative fix.
+
+### Where downloaded files live
+
+To make offline videos **easy to find and play outside the app** (like a Chrome
+download) the app writes to the device's shared storage with **no permission
+prompt**:
+
+- **Android 10 (API 29) and later:** completed downloads are published into the
+  system **MediaStore `Downloads`** collection under a `Filmsnaps/` subfolder.
+  They appear in the system Downloads app, can be opened in any video player
+  (e.g. VLC via "Open with"), and **survive app uninstall**.
+- **Older Android (API 24–28):** files stay in the app-private
+  `getExternalFilesDir` download directory — still no permission, but only
+  visible inside FilmSnaps.
+- **In-app playback** of the MediaStore file uses a small `OfflineFileProvider`
+  bridge (`content://com.filmsnaps.offline/...`) so the native `expo-video`
+  player can read the shared file without copying it.
+
+Deleting an item from the in-app Downloads screen removes the shared MediaStore
+entry as well, so used-space accounting stays accurate.
+
 ## Feedback
 
 The settings page links to the deployed feedback portal (`@filmsnaps/feedback`),

@@ -140,26 +140,34 @@ export function useMoreLikeThis(
 
 // ── Filtered Discover ──
 
-export function useFilteredMovies(params: {
-  genreIds?: number[];
-  sortBy?: string;
-  page?: number;
-}) {
+export function useFilteredMovies(
+  params: {
+    genreIds?: number[];
+    sortBy?: string;
+    page?: number;
+  },
+  enabled = true,
+) {
   return useQuery({
     queryKey: ["movies", "filtered", params],
     queryFn: () => tmdbApi.getMovies(params),
     staleTime: 10 * MIN,
+    enabled,
   });
 }
 
-export function useFilteredTVShows(params: {
-  genreIds?: number[];
-  sortBy?: string;
-  page?: number;
-}) {
+export function useFilteredTVShows(
+  params: {
+    genreIds?: number[];
+    sortBy?: string;
+    page?: number;
+  },
+  enabled = true,
+) {
   return useQuery({
     queryKey: ["tv", "filtered", params],
     queryFn: () => tmdbApi.getTVShows(params),
     staleTime: 10 * MIN,
+    enabled,
   });
 }

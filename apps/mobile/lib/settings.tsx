@@ -6,7 +6,7 @@
  *
  * Usage:
  *   const { settings, updateSetting } = useSettings()
- *   updateSetting('autoPlayNext', true)
+ *   updateSetting('downloadOverCellular', true)
  */
 
 import React, {
@@ -28,17 +28,10 @@ const STORAGE_KEY = "@filmsnaps/settings/v1";
 export interface AppSettings {
   // Playback
   serverOrder: string[];
-  autoPlayNext: boolean;
-  defaultQuality: string;
 
   // Download
-  downloadQuality: string;
   downloadOverCellular: boolean;
   downloadSpeedLimit: "full" | "balanced" | "slower";
-
-  // Appearance
-  subtitleFontSize: "small" | "medium" | "large";
-  subtitleLanguage: string;
 
   // Advanced
   customProviderUrls: Record<string, string>;
@@ -77,17 +70,10 @@ interface SettingsContextValue {
 const DEFAULT_SETTINGS: AppSettings = {
   // Playback
   serverOrder: [],
-  autoPlayNext: false,
-  defaultQuality: "Auto",
 
   // Download
-  downloadQuality: "1080p",
   downloadOverCellular: false,
   downloadSpeedLimit: "full",
-
-  // Appearance
-  subtitleFontSize: "medium",
-  subtitleLanguage: "English",
 
   // Advanced
   customProviderUrls: {},
@@ -105,7 +91,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   homeRowOrder: [
     "trending-movies",
     "trending-tv",
-    "more-like-this",
     "continue-watching",
     "popular-movies",
   ],

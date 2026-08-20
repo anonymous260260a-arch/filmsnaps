@@ -56,8 +56,8 @@ export const SEED_ROADMAP: RoadmapItem[] = [
     title: "Download Manager v2",
     description:
       "Improved download engine with resume support, bandwidth throttling, and queue management.",
-    status: "in-progress",
-    progress: 40,
+    status: "completed",
+    progress: 100,
     estimatedRelease: "Q3 2026",
     upvotes: 98,
     upvotedBy: [],
@@ -74,17 +74,6 @@ export const SEED_ROADMAP: RoadmapItem[] = [
     upvotedBy: [],
   },
   {
-    id: "rm-4",
-    title: "Subtitle Editor",
-    description:
-      "In-app subtitle editor with sync adjustment, styling, and custom upload support.",
-    status: "planned",
-    progress: 0,
-    estimatedRelease: "Q4 2026",
-    upvotes: 67,
-    upvotedBy: [],
-  },
-  {
     id: "rm-5",
     title: "Continue Watching",
     description:
@@ -94,19 +83,56 @@ export const SEED_ROADMAP: RoadmapItem[] = [
     upvotes: 184,
     upvotedBy: [],
   },
-  {
-    id: "rm-6",
-    title: "Chromecast Support",
-    description:
-      "Cast movies and shows to your TV with full playback controls.",
-    status: "completed",
-    progress: 100,
-    upvotes: 156,
-    upvotedBy: [],
-  },
 ];
 
 export const SEED_CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "1.0.6",
+    releaseDate: "2026-07-29",
+    changes: [
+      {
+        type: "feature",
+        description:
+          "Feedback portal with Cloudflare Workers + D1 database production architecture",
+      },
+      {
+        type: "feature",
+        description:
+          "14-layer abuse prevention: Turnstile CAPTCHA, 3-tier rate limiting, spam scoring",
+      },
+      {
+        type: "feature",
+        description: "Offline submission queue with auto-retry on reconnect",
+      },
+      {
+        type: "improvement",
+        description:
+          "How Content Works transparency page with ad-blocking explainer",
+      },
+      {
+        type: "improvement",
+        description: "Theme color token migration across all screens",
+      },
+      {
+        type: "fix",
+        description:
+          "Download engine fixes: live byte tracking for accurate pause/resume",
+      },
+      {
+        type: "fix",
+        description: "Feedback portal WebView integration",
+      },
+      {
+        type: "fix",
+        description: "Guide page improvements with safe navigation",
+      },
+      {
+        type: "security",
+        description:
+          "IP SHA-256 hashing, CSP headers, anti-spam content quality detection",
+      },
+    ],
+  },
   {
     version: "1.0.5",
     releaseDate: "2026-07-15",

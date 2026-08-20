@@ -4,6 +4,8 @@ import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.Uri
+import java.util.Locale
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -42,7 +44,7 @@ class FilmsnapsDownloadService : Service() {
     interface Listener {
         fun onProgress(taskId: String, receivedBytes: Long, totalBytes: Long)
         fun onPaused(taskId: String, receivedBytes: Long, totalBytes: Long)
-        fun onComplete(taskId: String, filePath: String, totalBytes: Long)
+        fun onComplete(taskId: String, filePath: String, totalBytes: Long, realExt: String, realFileName: String)
         fun onError(taskId: String, error: String, errorCode: Int)
     }
 
@@ -141,19 +143,158 @@ class FilmsnapsDownloadService : Service() {
     private fun maybeStopForeground() {
         if (jobs.isEmpty()) {
             stopForeground(STOP_FOREGROUND_REMOVE)
+            // Explicitly cancel the notification ID: guarantees it is gone even if a
+            // delayed notify() would otherwise re-post it (ghost-notification fix).
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.cancel(NOTIFICATION_ID_BASE)
+            // No jobs left → the foreground service has nothing to do. Stop it so the
+            // OS reclaims it instead of leaving an idle service in the background.
+            // The RN module re-binds lazily on the next download (see onServiceDisconnected).
+            stopSelf()
         }
     }
 
     private fun buildSummaryNotification(): Notification {
-        val activeCount = jobs.size
-        val text = if (activeCount <= 1) "Downloading…" else "Downloading $activeCount files…"
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Filmsnaps")
-            .setContentText(text)
+        val activeJobs = jobs.values.toList()
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .build()
+            .setContentIntent(openDownloadsIntent())
+
+        when {
+            activeJobs.isEmpty() -> {
+                builder.setContentTitle("Filmsnaps")
+                    .setContentText("Downloads up to date")
+            }
+            activeJobs.size == 1 -> {
+                val job = activeJobs[0]
+                val received = job.progressReceived
+                val total = job.progressTotal
+                builder.setContentTitle(job.fileName)
+                    .setContentText(formatProgress(received, total))
+                if (total > 0) {
+                    // Known size — determinate bar with live percentage.
+                    builder.setProgress(100, ((received * 100) / total).toInt(), false)
+                } else {
+                    // Unknown total (chunked transfer, common on falix) — show an
+                    // indeterminate bar so the user sees active progress instead of
+                    // a static "downloading" with no movement.
+                    builder.setProgress(0, 0, true)
+                }
+            }
+            else -> {
+                builder.setContentTitle("Filmsnaps")
+                    .setContentText("Downloading ${activeJobs.size} files…")
+            }
+        }
+        return builder.build()
+    }
+
+    /**
+     * Tap target: deep-link into the in-app Downloads screen. The app's URL
+     * scheme is `filmsnaps`, and `/downloads` is a top-level route, so
+     * `filmsnaps://downloads` routes the user to the download manager.
+     */
+    private fun openDownloadsIntent(): PendingIntent {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("filmsnaps://downloads"))
+        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        return PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    /** Throttled notification refresh during active downloads (max ~1/sec). */
+    private var lastNotifUpdate = 0L
+    private fun notifyProgress() {
+        // Hard guard: never re-post the notification once the queue has drained.
+        // This blocks ghost posts from a progress event emitted just before the
+        // last job was removed (race against stopForeground).
+        if (jobs.isEmpty()) return
+        val now = System.currentTimeMillis()
+        if (now - lastNotifUpdate < 1000L) return
+        lastNotifUpdate = now
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(NOTIFICATION_ID_BASE, buildSummaryNotification())
+    }
+
+    /** If jobs remain, refresh the notification to reflect them; else stop it. */
+    private fun refreshOrStopForeground() {
+        if (jobs.isEmpty()) maybeStopForeground() else notifyProgress()
+    }
+
+    private fun formatProgress(received: Long, total: Long): String {
+        val rec = humanReadableBytes(received)
+        return if (total > 0) "$rec / ${humanReadableBytes(total)}" else "$rec downloaded"
+    }
+
+    private fun humanReadableBytes(bytes: Long): String {
+        if (bytes <= 0) return "0 B"
+        val units = arrayOf("B", "KB", "MB", "GB", "TB")
+        val exp = (Math.log(bytes.toDouble()) / Math.log(1024.0))
+            .toInt()
+            .coerceAtMost(units.size - 1)
+        val value = bytes / Math.pow(1024.0, exp.toDouble())
+        return String.format(Locale.US, "%.1f %s", value, units[exp])
+    }
+
+    /**
+     * Derive the real file extension from the HTTP response. The JS layer guesses
+     * an extension up front, but the actual container is only knowable once we see
+     * the server's response — and any download server may serve any extension.
+     * Prefers a clear extension on the final URL (after redirects); falls back to
+     * the Content-Type header when the URL has none.
+     */
+    private fun resolveExtension(resp: Response): String? {
+        val finalUrl = resp.request.url.toString()
+        val contentType = resp.header("Content-Type")
+        return resolveExtension(finalUrl, contentType)
+    }
+
+    private fun resolveExtension(url: String, contentType: String?): String? {
+        val urlExt = url
+            .substringBefore('?')
+            .substringBefore('#')
+            .substringAfterLast('/')
+            .substringAfterLast('.', "")
+            .lowercase()
+            .takeIf { it.length in 2..4 }
+        val ctExt = contentType
+            ?.substringBefore(';')
+            ?.trim()
+            ?.lowercase()
+            ?.let { mimeToExt(it) }
+        // Trust a clear URL extension; otherwise fall back to the Content-Type one.
+        return urlExt ?: ctExt
+    }
+
+    private fun mimeToExt(mime: String): String? = when (mime) {
+        "video/x-matroska" -> "mkv"
+        "video/webm" -> "webm"
+        "video/mp4", "video/x-m4v", "video/m4v" -> "mp4"
+        "video/quicktime" -> "mov"
+        "video/x-msvideo" -> "avi"
+        "video/x-flv" -> "flv"
+        "video/3gpp" -> "3gp"
+        "video/mp2t" -> "ts"
+        else -> null
+    }
+
+    /** Rename a finished file to its real extension (no-op if already correct). */
+    private fun renameWithRealExtension(file: File, resp: Response): File {
+        val realExt = resolveExtension(resp) ?: return file
+        val currentExt = file.extension.lowercase()
+        if (realExt == currentExt) return file
+        val newFile = File(file.parentFile, "${file.nameWithoutExtension}.$realExt")
+        if (newFile.exists()) return file // never clobber an existing file
+        return try {
+            if (file.renameTo(newFile)) newFile else file
+        } catch (_: Exception) {
+            file
+        }
     }
 
     private fun createNotificationChannel() {
@@ -174,6 +315,9 @@ class FilmsnapsDownloadService : Service() {
         private val offset: Long,
         private val headers: Map<String, String>,
     ) {
+        // Latest progress, surfaced to the foreground notification.
+        @Volatile var progressReceived: Long = offset
+        @Volatile var progressTotal: Long = -1L
         private val paused = AtomicBoolean(false)
         private val cancelled = AtomicBoolean(false)
         private var call: Call? = null
@@ -259,7 +403,10 @@ class FilmsnapsDownloadService : Service() {
                             val now = System.currentTimeMillis()
                             if (now - lastEmit >= PROGRESS_THROTTLE_MS) {
                                 lastEmit = now
+                                progressReceived = written
+                                progressTotal = totalBytes
                                 listener?.onProgress(taskId, written, totalBytes)
+                                this@FilmsnapsDownloadService.notifyProgress()
                             }
                         }
                     }
@@ -277,13 +424,19 @@ class FilmsnapsDownloadService : Service() {
                     }
                     paused.get() -> {
                         jobs.remove(taskId)
-                        maybeStopForeground()
                         listener?.onPaused(taskId, written, totalBytes)
+                        refreshOrStopForeground()
                     }
                     else -> {
                         jobs.remove(taskId)
-                        maybeStopForeground()
-                        listener?.onComplete(taskId, destFile.absolutePath, totalBytes)
+                        // The JS layer cannot know the real container up front, and ANY
+                        // download server may serve ANY extension. Derive the true
+                        // extension from the HTTP response (final URL after redirects +
+                        // Content-Type) and rename the finished file so it lands with the
+                        // correct extension — then players (VLC etc.) detect the codec.
+                        val finalFile = renameWithRealExtension(destFile, resp)
+                        listener?.onComplete(taskId, finalFile.absolutePath, totalBytes, finalFile.extension, finalFile.name)
+                        refreshOrStopForeground()
                     }
                 }
             }

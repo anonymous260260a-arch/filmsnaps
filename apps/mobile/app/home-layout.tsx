@@ -63,6 +63,7 @@ interface RowProps {
   listLength: number;
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
+  onHide: (index: number) => void;
 }
 
 const Row = memo(function Row({
@@ -73,6 +74,7 @@ const Row = memo(function Row({
   listLength,
   onMoveUp,
   onMoveDown,
+  onHide,
 }: RowProps) {
   const meta = SECTION_META[item];
   if (!meta) return null;
@@ -150,6 +152,16 @@ const Row = memo(function Row({
             color={isLast ? colors.textMuted : colors.textSecondary}
           />
         </TouchableOpacity>
+        {/* Hide / remove from home */}
+        <TouchableOpacity
+          onPress={() => onHide(index)}
+          activeOpacity={0.6}
+          className="w-8 h-8 rounded-full items-center justify-center"
+          style={{ backgroundColor: colors.bgTop }}
+          accessibilityLabel={`Hide ${meta.label} from home`}
+        >
+          <Ionicons name="eye-off" size={16} color={colors.error} />
+        </TouchableOpacity>
       </View>
     </TouchableOpacity>
   );
@@ -196,6 +208,27 @@ export default function HomeLayoutScreen() {
     [order, listLength, persistOrder],
   );
 
+  // Remove a section from the home layout (it stays available to re-add below).
+  const hideSection = useCallback(
+    (index: number) => {
+      const next = order.filter((_, i) => i !== index);
+      persistOrder(next);
+    },
+    [order, persistOrder],
+  );
+
+  // Re-add a previously hidden section (appended to the end of the order).
+  const showSection = useCallback(
+    (id: string) => {
+      if (order.includes(id)) return;
+      persistOrder([...order, id]);
+    },
+    [order, persistOrder],
+  );
+
+  // Sections defined in SECTION_META but not currently in the visible order.
+  const hiddenSections = SECTION_IDS.filter((id) => !order.includes(id));
+
   const onDragEnd = useCallback(
     ({ data }: { data: string[] }) => {
       persistOrder(data);
@@ -216,10 +249,11 @@ export default function HomeLayoutScreen() {
           listLength={listLength}
           onMoveUp={moveUp}
           onMoveDown={moveDown}
+          onHide={hideSection}
         />
       );
     },
-    [listLength, moveUp, moveDown],
+    [listLength, moveUp, moveDown, hideSection],
   );
 
   const keyExtractor = useCallback((item: string) => item, []);
@@ -279,6 +313,92 @@ export default function HomeLayoutScreen() {
         maxToRenderPerBatch={12}
         windowSize={7}
       />
+
+      {hiddenSections.length > 0 && (
+        <View className="mt-6 px-5">
+          <Text
+            className="text-xs font-semibold mb-2"
+            style={{
+              color: colors.textTertiary,
+              fontFamily: "Inter_600SemiBold",
+            }}
+          >
+            HIDDEN SECTIONS
+          </Text>
+          <View
+            style={{
+              borderRadius: 12,
+              overflow: "hidden",
+              borderWidth: 0.5,
+              borderColor: colors.border,
+            }}
+          >
+            {hiddenSections.map((id) => {
+              const meta = SECTION_META[id];
+              if (!meta) return null;
+              return (
+                <View
+                  key={id}
+                  className="flex-row items-center px-4"
+                  style={{
+                    height: ROW_HEIGHT,
+                    backgroundColor: colors.bgSurface,
+                    borderBottomWidth: 0.5,
+                    borderBottomColor: colors.borderZinc,
+                  }}
+                >
+                  <View
+                    className="w-9 h-9 rounded-full items-center justify-center mr-3"
+                    style={{ backgroundColor: colors.zincBg }}
+                  >
+                    <Ionicons name={meta.icon} size={16} color={colors.gold} />
+                  </View>
+                  <View className="flex-1">
+                    <Text
+                      className="text-sm font-semibold"
+                      style={{
+                        color: colors.textPrimary,
+                        fontFamily: "Inter_600SemiBold",
+                      }}
+                    >
+                      {meta.label}
+                    </Text>
+                    <Text
+                      className="text-xs mt-0.5"
+                      style={{ color: colors.textTertiary }}
+                    >
+                      {meta.subtitle}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => showSection(id)}
+                    activeOpacity={0.6}
+                    className="flex-row items-center px-3 h-8 rounded-full"
+                    style={{ backgroundColor: colors.bgTop }}
+                    accessibilityLabel={`Show ${meta.label} on home`}
+                  >
+                    <Ionicons
+                      name="eye"
+                      size={14}
+                      color={colors.gold}
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text
+                      className="text-xs font-semibold"
+                      style={{
+                        color: colors.gold,
+                        fontFamily: "Inter_600SemiBold",
+                      }}
+                    >
+                      Show
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      )}
     </View>
   );
 }

@@ -11,6 +11,7 @@
  */
 
 import { BrowserWindow, WebContents } from "electron";
+import { auditMainFramePopUnder } from "./structural-warnings";
 
 const BOOTSTRAP_DURATION_MS = 5000;
 
@@ -23,6 +24,16 @@ interface NavigationGuardOptions {
   onBlocked?: (type: "popup" | "navigation" | "redirect", url: string) => void;
   /** Optional callback when the bootstrap phase ends */
   onBootstrapComplete?: (whitelistedHosts: string[]) => void;
+  /**
+   * Redirect-mesh providers (vidsrc→viduki.net, videasy→videasy.to) bounce the
+   * embed through an upstream host before the real player page. That host was
+   * never "visited" during the bootstrap window, so the old guard blocked the
+   * redirect → ERR_FAILED. With this flag, a MAIN-FRAME redirect from the
+   * initial embed domain is allowed + added to the whitelist (the upstream
+   * host then serves the player). Ad-popups / home-escapes are still blocked.
+   * Config: providers.json providers[].allowServerRedirects.
+   */
+  allowServerRedirects?: boolean;
   /**
    * The original requested embed URL (== providerUrl). Path-level baseline
    * for the home-page escape guard: a same-host navigation away from the embed
@@ -48,36 +59,74 @@ interface NavigationGuardOptions {
 /**
  * Apply all navigation/popup/redirect guards to a webContents.
  * Must be called from the main process.
+ *
+ * Returns `{ bootstrapWhitelist, updateConfig }`. The WebContentsView hybrid
+ * owns a PERSISTENT provider view (main.ts openProviderView), so unlike the
+ * old per-attach <webview> model the guard is installed ONCE and re-pointed
+ * per provider switch via `updateConfig` (provider URL/hosts/redirect policy).
+ * The whitelist persists across switches so a previously-visited CDN is not
+ * re-blocked; new hosts are merged in.
  */
 export function applyNavigationGuard(
   webContents: WebContents,
   options: NavigationGuardOptions,
-): { bootstrapWhitelist: Set<string> } {
-  const {
-    providerUrl,
-    additionalAllowedHosts = [],
-    requestedEmbedUrl = providerUrl,
-    blockHomePaths = [],
-    universalBlockPaths = ["/"],
-  } = options;
+): {
+  bootstrapWhitelist: Set<string>;
+  updateConfig: (next: NavigationGuardOptions) => void;
+} {
+  // Mutable config — re-pointed by updateConfig on provider switch.
+  const config: {
+    providerUrl: string;
+    providerOrigin: string;
+    providerHostname: string;
+    additionalAllowedHosts: string[];
+    requestedEmbedUrl: string;
+    blockHomePaths: string[];
+    universalBlockPaths: string[];
+    allowServerRedirects: boolean;
+  } = {
+    providerUrl: options.providerUrl,
+    providerOrigin: "",
+    providerHostname: "",
+    additionalAllowedHosts: options.additionalAllowedHosts ?? [],
+    requestedEmbedUrl: options.requestedEmbedUrl ?? options.providerUrl,
+    blockHomePaths: options.blockHomePaths ?? [],
+    universalBlockPaths: options.universalBlockPaths ?? ["/"],
+    allowServerRedirects: options.allowServerRedirects ?? false,
+  };
 
-  // Parse the provider's origin
-  let providerOrigin: string;
-  let providerHostname: string;
-  try {
-    const parsed = new URL(providerUrl);
-    providerOrigin = parsed.origin;
-    providerHostname = parsed.hostname;
-  } catch {
-    console.error("[NavGuard] Invalid provider URL:", providerUrl);
-    providerOrigin = "";
-    providerHostname = "";
-  }
+  // Mutable callbacks — re-pointed by updateConfig so a provider switch on the
+  // persistent view routes events to the freshest renderer/onBlocked target.
+  const callbacks: {
+    onBlocked?: (
+      type: "popup" | "navigation" | "redirect",
+      url: string,
+    ) => void;
+    onEscaped?: (count: number, url: string) => void;
+    onBootstrapComplete?: (whitelistedHosts: string[]) => void;
+  } = {
+    onBlocked: options.onBlocked,
+    onEscaped: options.onEscaped,
+    onBootstrapComplete: options.onBootstrapComplete,
+  };
+
+  const parseProvider = (): void => {
+    try {
+      const parsed = new URL(config.providerUrl);
+      config.providerOrigin = parsed.origin;
+      config.providerHostname = parsed.hostname;
+    } catch {
+      console.error("[NavGuard] Invalid provider URL:", config.providerUrl);
+      config.providerOrigin = "";
+      config.providerHostname = "";
+    }
+  };
+  parseProvider();
 
   // Bootstrap whitelist: domains visited during the first N seconds
   const bootstrapWhitelist = new Set<string>([
-    providerHostname,
-    ...additionalAllowedHosts,
+    config.providerHostname,
+    ...config.additionalAllowedHosts,
   ]);
   let bootstrapEnded = false;
 
@@ -95,14 +144,15 @@ export function applyNavigationGuard(
   let lastEscapeAt = 0;
   let escapeCount = 0;
 
-  const requestedUrl = requestedEmbedUrl || providerUrl;
+  const requestedUrl = (): string =>
+    config.requestedEmbedUrl || config.providerUrl;
 
   const isHomeEscapeNow = (url: string): boolean =>
     isHomeEscapeCjs(
       url,
-      requestedEmbedUrl,
-      blockHomePaths,
-      universalBlockPaths,
+      config.requestedEmbedUrl,
+      config.blockHomePaths,
+      config.universalBlockPaths,
     );
 
   const handleEscape = (url: string): boolean => {
@@ -120,7 +170,7 @@ export function applyNavigationGuard(
       console.warn(
         `[NavGuard] Home-page escape escalated (${escapeCount}x): ${url.slice(0, 120)}`,
       );
-      options.onEscaped?.(escapeCount, url);
+      callbacks.onEscaped?.(escapeCount, url);
       return false; // still blocked (path was prevented by caller)
     }
 
@@ -132,9 +182,9 @@ export function applyNavigationGuard(
     );
     // Reload the original requested embed (re-enters the guarded session).
     try {
-      webContents.loadURL(requestedUrl);
+      webContents.loadURL(requestedUrl());
     } catch (e) {
-      options.onEscaped?.(escapeCount, url);
+      callbacks.onEscaped?.(escapeCount, url);
     }
     return false;
   };
@@ -142,9 +192,18 @@ export function applyNavigationGuard(
   // ── Popup blocking ──
   // This is the STRONGEST popup defense. Electron handles this at the
   // OS/Chromium level — no JavaScript in the page can override this.
-  webContents.setWindowOpenHandler(() => {
+  webContents.setWindowOpenHandler(({ url, features }) => {
     console.log("[NavGuard] Blocked popup window");
-    options.onBlocked?.("popup", "");
+    callbacks.onBlocked?.("popup", url);
+
+    // Structural audit (Phase 2e): a window.open carrying width/height
+    // features is the classic pop-under ad shape. The handler denies it
+    // regardless — the warning just surfaces the signature so a
+    // FILMSNAPS_AUDIT=1 run can flag a new ad vector or a guard gap.
+    // Electron 42's HandlerDetails exposes the feature list as `features`
+    // (comma-separated string) and the resolved popup URL as `url`.
+    auditMainFramePopUnder({ windowFeatures: features, frameUrl: url });
+
     return { action: "deny" };
   });
 
@@ -168,7 +227,7 @@ export function applyNavigationGuard(
         `[NavGuard] Blocked navigation to: ${targetHost} (${url.substring(0, 80)})`,
       );
       event.preventDefault();
-      options.onBlocked?.("navigation", url);
+      callbacks.onBlocked?.("navigation", url);
     } catch {
       // Invalid URL — block it
       console.log(
@@ -180,39 +239,62 @@ export function applyNavigationGuard(
 
   // ── Redirect blocking ──
   // Fires before HTTP redirects are followed. Same host check.
-  webContents.on("will-redirect", (event, url) => {
-    try {
-      const targetHost = new URL(url).hostname.toLowerCase();
+  //
+  // Electron 42 signature: (event, url, isInPlace, isMainFrame, ...). There is
+  // NO `navigationType` (the Plan agent verified this against the 42 d.ts), so
+  // `isMainFrame` distinguishes the provider's OWN initial server redirect
+  // (main frame, from the embed domain) from an in-page/iframe redirect.
+  webContents.on(
+    "will-redirect",
+    (event, url, _isInPlace, isMainFrame, _frameProcessId, _frameRoutingId) => {
+      try {
+        const targetHost = new URL(url).hostname.toLowerCase();
 
-      // Always allow same-host redirects
-      if (
-        targetHost === providerHostname ||
-        bootstrapWhitelist.has(targetHost)
-      ) {
-        // Same-host — check for a path-level home-page escape.
-        if (initialLoadComplete && isHomeEscapeNow(url)) {
-          event.preventDefault();
-          handleEscape(url);
+        // Always allow same-host redirects
+        if (
+          targetHost === config.providerHostname ||
+          bootstrapWhitelist.has(targetHost)
+        ) {
+          // Same-host — check for a path-level home-page escape.
+          if (initialLoadComplete && isHomeEscapeNow(url)) {
+            event.preventDefault();
+            handleEscape(url);
+          }
+          return;
         }
-        return;
-      }
 
-      // During bootstrap, add to whitelist
-      if (!bootstrapEnded) {
-        bootstrapWhitelist.add(targetHost);
-        console.log(`[NavGuard] Bootstrap whitelist added: ${targetHost}`);
-        return;
-      }
+        // Redirect-mesh: a MAIN-FRAME redirect away from the embed domain,
+        // for a provider configured to allow server redirects, is the mesh
+        // hop to the real player host (vidsrc→viduki.net). Allow it and add
+        // the target to the whitelist so subsequent same-host navigation/
+        // requests for the player are not blocked either. This is the fix for
+        // the expert-confirmed ERR_FAILED root cause: the upstream host was
+        // never visited during the bootstrap window.
+        if (isMainFrame && config.allowServerRedirects) {
+          bootstrapWhitelist.add(targetHost);
+          console.log(
+            `[NavGuard] Server redirect allowed (allowServerRedirects) → whitelisted: ${targetHost}`,
+          );
+          return;
+        }
 
-      console.log(
-        `[NavGuard] Blocked redirect to: ${targetHost} (${url.substring(0, 80)})`,
-      );
-      event.preventDefault();
-      options.onBlocked?.("redirect", url);
-    } catch {
-      event.preventDefault();
-    }
-  });
+        // During bootstrap, add to whitelist
+        if (!bootstrapEnded) {
+          bootstrapWhitelist.add(targetHost);
+          console.log(`[NavGuard] Bootstrap whitelist added: ${targetHost}`);
+          return;
+        }
+
+        console.log(
+          `[NavGuard] Blocked redirect to: ${targetHost} (${url.substring(0, 80)})`,
+        );
+        event.preventDefault();
+        callbacks.onBlocked?.("redirect", url);
+      } catch {
+        event.preventDefault();
+      }
+    },
+  );
 
   // ── Page lifecycle tracking ──
 
@@ -243,7 +325,7 @@ export function applyNavigationGuard(
       `[NavGuard] Bootstrap ended. Whitelisted hosts:`,
       Array.from(bootstrapWhitelist),
     );
-    options.onBootstrapComplete?.(Array.from(bootstrapWhitelist));
+    callbacks.onBootstrapComplete?.(Array.from(bootstrapWhitelist));
   }, BOOTSTRAP_DURATION_MS);
 
   // Clean up the timer when the window is closed
@@ -251,7 +333,42 @@ export function applyNavigationGuard(
     clearTimeout(bootstrapTimer);
   });
 
-  return { bootstrapWhitelist };
+  /**
+   * Re-point the guard for a provider switch on the SAME persistent view.
+   * Updates the provider origin/hosts/redirect policy and merges the new
+   * allowed hosts into the (persisting) whitelist. Escape state resets so a
+   * fresh provider gets a fresh home-page-escape window.
+   */
+  const updateConfig = (next: NavigationGuardOptions): void => {
+    config.providerUrl = next.providerUrl || config.providerUrl;
+    config.requestedEmbedUrl =
+      next.requestedEmbedUrl ?? next.providerUrl ?? config.providerUrl;
+    config.blockHomePaths = next.blockHomePaths ?? [];
+    config.universalBlockPaths = next.universalBlockPaths ?? ["/"];
+    config.allowServerRedirects = next.allowServerRedirects ?? false;
+    config.additionalAllowedHosts = next.additionalAllowedHosts ?? [];
+    for (const host of config.additionalAllowedHosts) {
+      bootstrapWhitelist.add(host.toLowerCase());
+    }
+    // Re-point the callbacks so blocked/escaped events route to the freshest
+    // renderer target after a provider switch.
+    callbacks.onBlocked = next.onBlocked;
+    callbacks.onEscaped = next.onEscaped;
+    callbacks.onBootstrapComplete = next.onBootstrapComplete;
+    parseProvider();
+    if (config.providerHostname)
+      bootstrapWhitelist.add(config.providerHostname);
+    // Fresh provider → fresh escape window.
+    initialLoadComplete = false;
+    escapeOnce = false;
+    lastEscapeAt = 0;
+    escapeCount = 0;
+    console.log(
+      `[NavGuard] Config updated → provider=${config.providerHostname || "?"} allowServerRedirects=${config.allowServerRedirects}`,
+    );
+  };
+
+  return { bootstrapWhitelist, updateConfig };
 }
 
 /**

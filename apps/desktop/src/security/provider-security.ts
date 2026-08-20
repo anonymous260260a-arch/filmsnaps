@@ -26,6 +26,7 @@ import {
 } from "./provider-config";
 import { getCurrentBlockingProviderId } from "./request-filter";
 import { getCosmeticFilterPayload } from "./filter-engine";
+import { armFetchHtmlInjection } from "./html-injector";
 
 const CDP_PROTOCOL = "1.3";
 /** How long after a committed navigation to probe the frame tree. */
@@ -229,19 +230,69 @@ export function attachProviderSecurity(
         return;
       }
       await dbg.sendCommand("Debugger.setSkipAllPauses", { skip: true });
+
+      // ── L8: Page.addScriptToEvaluateOnNewDocument (replaces Fetch domain) ──
+      // CRITICAL: Do NOT use Fetch.enable with urlPattern: '*'. That pauses
+      // EVERY network request including HLS .ts/DASH .m4s segments, causing
+      // 5–20ms IPC round-trips per segment → playback stutter, buffer underrun,
+      // and CPU spikes on low-end devices. Instead, use Page.addScriptToEvaluateOnNewDocument
+      // which runs the guard IIBE at document-start BEFORE any page JS executes,
+      // with ZERO network overhead or IPC latency.
+      //
+      // This runs in the SAME debugger session as verification + audit — only
+      // one attach per webContents, so no "another debugger already attached" error.
+      //
+      // Defense in depth (idempotent via the GUARD sentinel):
+      //   - Preload (L5/L6) runs at document-start in frames the mechanism covers.
+      //   - This layer guarantees coverage in EVERY html Document by construction —
+      //     reloads, cross-site navigations, process swaps, all.
+      //   - The protection's own GUARD (Symbol.for('__filmsnaps_preload_guard'))
+      //     makes the two idempotent: whichever runs first wins, the other no-ops.
+
+      // ── Primary: Page.addScriptToEvaluateOnNewDocument ──────────────────────
+      const protectionSource = getProtectionSource();
+      if (protectionSource) {
+        try {
+          await dbg.sendCommand("Page.addScriptToEvaluateOnNewDocument", {
+            source: `(() => { try { ${protectionSource} } catch (e) { console.error('[ProviderSecurity] doc-start inject failed', e); } })();`,
+          });
+          console.log(
+            `[ProviderSecurity] L8 addScriptToEvaluateOnNewDocument armed on guest ${guest.id} (${protectionSource.length} chars)`,
+          );
+        } catch (err) {
+          console.error(
+            "[ProviderSecurity] Failed to arm Page.addScriptToEvaluateOnNewDocument:",
+            err,
+          );
+        }
+      }
+
+      // The old Fetch domain arming is intentionally omitted. If HTML body
+      // rewriting is ever strictly needed (beyond what the preload + CSS injection
+      // already cover), re-add Fetch.enable with a restrictive urlPattern
+      // (e.g. only main-frame Documents), not '*'.
+
+      // ── Supplementary: document_start injection via addScript (Phase 2e) ────
+      // Already covered by the primary call above — keeping this block for
+      // parity with the existing code structure and future extensibility.
+      // const supplementarySource = getProtectionSource();
+      // if (supplementarySource) {
+      //   try {
+      //     await dbg.sendCommand("Page.addScriptToEvaluateOnNewDocument", {
+      //       source: `(() => { try { ${supplementarySource} } catch (e) { console.error('[ProviderSecurity] doc-start inject failed', e); } })();`,
+      //     });
+      //   } catch (err) {
+      //     console.error(
+      //       "[ProviderSecurity] Failed to arm supplementary Page.addScriptToEvaluateOnNewDocument:",
+      //       err,
+      //     );
+      //   }
+      // }
+
       // AUDIT net: sample the wire headers/status of auth-relevant requests.
       // Only when FILMSNAPS_AUDITNET=1 — otherwise zero request impact.
       if (AUDIT_NET) {
         try {
-          dbg.removeAllListeners("message");
-          dbg.on("message", (_e: any, method: string, params: any) => {
-            try {
-              if (method === "Network.requestWillBeSent" && auditNetOnReq)
-                void auditNetOnReq(params);
-              else if (method === "Network.responseReceived" && auditNetOnResp)
-                void auditNetOnResp(params);
-            } catch {}
-          });
           await dbg.sendCommand("Network.enable");
         } catch (err) {
           console.error(
@@ -249,10 +300,8 @@ export function attachProviderSecurity(
             err,
           );
         }
-      } else {
-        // (non-audit) CDP has no event wiring — pure verification.
       }
-      // Do NOT Page.addScriptToEvaluateOnNewDocument — the preload injects.
+
       console.log(
         `[ProviderSecurity] CDP verification attached to guest ${guest.id}`,
       );

@@ -81,8 +81,14 @@ export function VideoZone({
   isRefreshing,
   onRefreshHealth,
 }: VideoZoneProps) {
-  const { iframeLoadError, setIframeLoadError, cpuWarning, playerReady } =
-    usePlayer();
+  const {
+    iframeLoadError,
+    setIframeLoadError,
+    cpuWarning,
+    playerReady,
+    refreshKey,
+    setOverlayActive,
+  } = usePlayer();
 
   // ── Health dot color ──
   const health = currentProvider
@@ -111,6 +117,16 @@ export function VideoZone({
   const loadingSubtext = !currentProvider
     ? "Preparing stream..."
     : `Connecting to ${currentProvider.displayName || currentProvider.name}...`;
+
+  // ── Sync server dropdown open state with overlayActive so the native view hides.
+  React.useEffect(() => {
+    setOverlayActive(isServerOpen);
+  }, [isServerOpen, setOverlayActive]);
+
+  // ── Sync CPU warning + error state with overlayActive.
+  React.useEffect(() => {
+    setOverlayActive(cpuWarning || iframeLoadError);
+  }, [cpuWarning, iframeLoadError, setOverlayActive]);
 
   return (
     <div
@@ -208,22 +224,30 @@ export function VideoZone({
             />
           )}
 
-        {/* Desktop: Electron <webview> — gated on sessionReady so the webview
-             never navigates before the main process has installed the
-             per-provider rules + CSP (closes the startup race). */}
+        {/* Desktop: native WebContentsView (Phase 3 hybrid). Kept MOUNTED for
+             the whole session — even across error/CPU-warning states — because
+             the singleton view must never be torn down by a React gate. Its own
+             visibility (player:set-visible) reconciles with the overlays above:
+             it hides whenever this error/CPU-warning overlay must win the
+             z-order over the rect. Gates here are mount-vs-not: only sessionReady
+             + a real embed URL + a non-direct provider decide whether it exists. */}
         {isElectron &&
           sessionReady &&
-          !cpuWarning &&
-          !iframeLoadError &&
           embedUrl &&
           currentProvider &&
           !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
-            // NO key on this wrapper — the webview must never be remounted by
-            // React. A key change tears down the element + WebContents and
-            // re-opens the remount race; the webview is a singleton that only
-            // updates src in place (season/episode/refresh changes navigate it).
             <div className="absolute inset-0 z-10">
+              {/* key on refreshKey ONLY (NOT the provider/episode/season):
+                  a keyed remount is safe here (unlike the old <webview> —
+                  main owns the WebContents, so a remount only resets this
+                  controller, never tearing the singleton down), but it must not
+                  fire on provider/episode/season switches — those navigate the
+                  view in place via the src effect (see DesktopSecureWebview).
+                  Retry (handleRetry → refreshIframe) bumps refreshKey, remounts,
+                  and re-opens the same native view — a true reload with clean
+                  local state (hasError=false, isLoading=true). */}
               <DesktopSecureWebview
+                key={`${refreshKey}-electron`}
                 src={embedUrl}
                 onLoad={onIframeLoad}
                 onError={onIframeError}
