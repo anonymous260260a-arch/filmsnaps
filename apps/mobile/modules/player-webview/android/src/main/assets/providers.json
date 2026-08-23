@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "allowedCdnHosts": [
     "akamai.net",
     "akamaiedge.net",
@@ -42,7 +42,7 @@
     "caulkedwhys.shop",
     "vulturkipskin.cfd"
   ],
-  "blockedUrls": [],
+  "blockedUrls": ["cdn.jsdelivr.net/npm/disable-devtool@latest"],
   "providerProfiles": {
     "web.nxsha.app": ["web.nxsha.app", "workers.dev", "cloudfront.net"],
     "peachify.top": [
@@ -92,6 +92,11 @@
       "player.vidzee.wtf",
       "core.vidzee.wtf",
       "cloudfront.net"
+    ],
+    "megaplay.buzz": [
+      "megaplay.buzz",
+      "upcloud.animanga.fun",
+      "megacloud.animanga.fun"
     ]
   },
   "providerRootHosts": [
@@ -116,7 +121,8 @@
     "toustream.xyz",
     "streamguide.cfd",
     "player.vidzee.wtf",
-    "core.vidzee.wtf"
+    "core.vidzee.wtf",
+    "megaplay.buzz"
   ],
   "rules": {
     "videoDetection": {
@@ -290,8 +296,7 @@
       ],
       "cdnDomains": ["test.zxcstream.xyz", "player.zxcstream.xyz"],
       "enabled": true,
-      "reactSafe": true,
-      "disableDevtoolPatch": true
+      "reactSafe": true
     },
     {
       "id": "cinemaos",
@@ -401,6 +406,14 @@
       "enabled": true,
       "allowServerRedirects": true,
       "note": "redirect-mesh: player.videasy.net -> videasy.to before the player page"
+    },
+    {
+      "id": "megaplay",
+      "embedDomains": ["megaplay.buzz"],
+      "cdnDomains": ["upcloud.animanga.fun", "megacloud.animanga.fun"],
+      "enabled": true,
+      "adblockDisabled": true,
+      "note": "anime-only, MAL-keyed (/stream/mal/<id>/<ep>/<sub|dub>); R4 adblock off — MegaPlay's ad scripts double as video auth"
     }
   ]
 }
