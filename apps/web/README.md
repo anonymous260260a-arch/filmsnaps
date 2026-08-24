@@ -30,8 +30,11 @@ components/
 lib/
   tmdb.ts                 TMDB client (client-safe)
   tmdb.server.ts          TMDB client (server-only, reads TMDB_API_KEY)
+  anime/                  Anime support: AniList search, MAL/AniList ID resolution
+                          (OTA-bundled `anime-map.json`), threaded into watch pages
   movieProviders/         Provider proxy stack (dormant) + protection engine
   providers.js  moviebox.ts  showbox.ts  streamingMkvParser.ts
+app/api/anime/           Anime resolution/search API routes (MAL/AniList IDs)
 ```
 
 ## Environment

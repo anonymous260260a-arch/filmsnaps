@@ -18,7 +18,9 @@ import {
   app,
   BrowserWindow,
   Menu,
+  dialog,
   ipcMain,
+  session,
   shell,
   WebContentsView,
   webContents,
@@ -40,6 +42,7 @@ import {
   resetSessionHandlers,
   setBlockingProviderId,
   getCurrentBlockingProviderId,
+  getTrustManager,
 } from "./security/request-filter";
 import { applyNavigationGuard } from "./security/navigation-guard";
 import {
@@ -54,6 +57,8 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from "./security/ota-config";
+import { initDownloadManager } from "./download";
+import { initMediaSources } from "./media-sources";
 import {
   auditProviderSessionWarnings,
   auditPreloadObserverBookkeeping,
@@ -84,6 +89,13 @@ let nextServerPort = 3000;
 let currentProviderSession: ReturnType<typeof createProviderSession> | null =
   null;
 let currentProviderId: string | null = null;
+/**
+ * The last frame that reported a *qualified* (trusted-content) playback
+ * sample. Resume seeks are targeted here via `webContents.sendToFrame` so an
+ * ad pre-roll in another frame never gets seeked (expert verdict Q3/Q4).
+ * Reset on every navigation/provider switch — frames change across loads.
+ */
+let lastContentFrame: { processId: number; frameId: number } | null = null;
 
 // ── Provider WebContentsView (Phase 3 hybrid migration) ─────────────
 // A single native WebContentsView owns the provider embed. Created lazily on
@@ -272,6 +284,63 @@ function createMainWindow(): void {
     setLegalAccepted(true);
   });
 
+  // ── App-level maintenance IPC (Phase 4 Settings) ──
+
+  // Clear the provider session cache (cookies, HTTP cache, localStorage) and
+  // the app-wide session cache. The provider view is not destroyed — it just
+  // reloads with a clean slate.
+  ipcMain.handle("app:clear-cache", async () => {
+    const clear = async (sess: Electron.Session) => {
+      await sess.clearCache();
+      try {
+        await sess.cookies.flushStore();
+      } catch {
+        /* cookies may be empty / unsupported in some partitions */
+      }
+      await sess.clearStorageData();
+    };
+    try {
+      await clear(session.defaultSession);
+      // Provider session cache lives on its own partition.
+      await clear(session.fromPartition("persist:filmsnaps-provider"));
+    } catch (e) {
+      console.error("[Main] clear-cache error:", e);
+    }
+    return { success: true };
+  });
+
+  // Open a directory-selection dialog and resolve with the chosen path.
+  // Returns null if the user cancels.
+  ipcMain.handle("app:pick-download-folder", async () => {
+    if (!mainWindow) return null;
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: "Select download folder",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (canceled || filePaths.length === 0) return null;
+    return filePaths[0];
+  });
+
+  // Resolve the current configured download folder so Settings can display it.
+  ipcMain.handle("app:get-download-folder", () => {
+    if (!app.isReady()) return app.getPath("downloads");
+    return (
+      (globalThis as any).__filmsnapsDownloadDir ||
+      join(app.getPath("downloads"), "FilmSnaps")
+    );
+  });
+
+  // Persist a new download folder (used by the DownloadManager on next start;
+  // the running manager keeps its existing dir until relaunch).
+  ipcMain.handle("app:set-download-folder", (_e, dir: string) => {
+    try {
+      (globalThis as any).__filmsnapsDownloadDir = dir;
+    } catch {
+      /* best-effort */
+    }
+    return { success: true };
+  });
+
   // Save window state on changes + push maximize state to the renderer
   // so the custom title bar can swap its maximize/restore icon live.
   mainWindow.on("resize", () => {
@@ -432,6 +501,51 @@ const _playerState: PlayerViewStateMain = {
   isFullscreen: false,
 };
 
+// ── MegaPlay "Error Code: 410" detection (anime fallback chain) ─────
+//
+// MegaPlay renders a plain-text "Error Code: 410" when it has no source for
+// the requested MAL/AniList id + episode (consultation §3.2). Desktop can see
+// cross-origin DOM (web cannot) — after the guest settles, scan for it and
+// tell the renderer to advance the chain (MAL → AniList → exhausted).
+// Verdict §9 Q5: this is the ONLY auto-advance signal; soft signals (no
+// progress within N s) stay manual everywhere.
+const ANIME_410_SCAN_DELAY_MS = 2500;
+let anime410Timer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleAnime410Scan(wc: Electron.WebContents): void {
+  if (anime410Timer) clearTimeout(anime410Timer);
+  anime410Timer = setTimeout(() => {
+    anime410Timer = null;
+    if (wc.isDestroyed()) return;
+    // Only meaningful while the megaplay session is the active provider —
+    // a switch inside the settle window must not fire a stale advance.
+    if (getCurrentBlockingProviderId() !== "megaplay") return;
+    // Scoped to player-ish containers, NEVER document.body, so subtitle or
+    // comment text containing "Error Code: 410" cannot false-positive
+    // (verdict §9 action item 5).
+    const js =
+      "(function(){try{var scopes=document.querySelectorAll('main,[class*=\"player\"],[class*=\"container\"],#__next');for(var i=0;i<scopes.length;i++){if(/Error Code:\\s*410/.test(scopes[i].textContent||''))return '410';}return '';}catch(e){return '';}})();";
+    void wc
+      .executeJavaScript(js, true)
+      .then((res) => {
+        if (
+          res === "410" &&
+          !wc.isDestroyed() &&
+          mainWindow &&
+          !mainWindow.isDestroyed()
+        ) {
+          console.log(
+            "[Main] MegaPlay reported Error Code: 410 — advancing anime chain",
+          );
+          mainWindow.webContents.send("player:source-missing", { code: 410 });
+        }
+      })
+      .catch(() => {
+        /* guest navigated away mid-scan — benign */
+      });
+  }, ANIME_410_SCAN_DELAY_MS);
+}
+
 /** Reset the renderer-facing player state (on close / new provider). */
 function resetPlayerState(): void {
   _playerState.loading = false;
@@ -502,6 +616,14 @@ function ensureProviderView(): WebContentsView | null {
 
   // ── Forward load/error/audit state to the renderer (player:state) ──
   wc.on("did-start-loading", () => {
+    // Frames change across navigations/provider switches — drop the stale
+    // content-frame so the next seek re-qualifies against fresh samples.
+    lastContentFrame = null;
+    // Cancel any pending 410 scan from the previous page.
+    if (anime410Timer) {
+      clearTimeout(anime410Timer);
+      anime410Timer = null;
+    }
     sendPlayerState({ loading: true });
   });
   wc.on("did-stop-loading", () => {
@@ -510,6 +632,8 @@ function ensureProviderView(): WebContentsView | null {
   wc.on("did-finish-load", () => {
     sendPlayerState({ loaded: true, loading: false, error: null });
     if (providerId) recordProviderSuccess(providerId);
+    // Anime chain: scan for MegaPlay's "Error Code: 410" after settle.
+    scheduleAnime410Scan(wc);
   });
   wc.on("did-fail-load", (_e, code, desc, _url, isMainFrame) => {
     if (!isMainFrame) return;
@@ -813,6 +937,113 @@ function registerPlayerViewIPC(): void {
   ipcMain.handle("player:get-webcontents-id", () => {
     return providerView?.webContents.id ?? -1;
   });
+  ipcMain.handle("player:seek", (_e, seconds: number) => {
+    const t = Number(seconds);
+    if (
+      Number.isFinite(t) &&
+      t >= 0 &&
+      providerView &&
+      !providerView.webContents.isDestroyed()
+    ) {
+      // Targeted seek: route to the content frame only (recorded from the
+      // last qualified sample) so an ad pre-roll in another frame is never
+      // seeked. Fall back to a broadcast if no frame has been qualified yet
+      // (e.g. very first seek before any sample) — normally the invariant
+      // holds because the recorder only requests a seek after qualifying.
+      const wc = providerView.webContents;
+      if (lastContentFrame) {
+        try {
+          wc.sendToFrame(
+            [lastContentFrame.processId, lastContentFrame.frameId],
+            "provider:seek",
+            t,
+          );
+          return { success: true };
+        } catch {
+          // frame gone (navigated) — fall through to broadcast
+        }
+      }
+      wc.send("provider:seek", t);
+    }
+    return { success: true };
+  });
+
+  // ── Playback progress relay (watch-history writes) ──
+  // The session preload (provider-preload.ts §0.6) samples <video>/<audio>
+  // elements in every provider frame at ~1Hz and reports here. Forward the
+  // latest sample to the app renderer, where WatchClient's recorder persists
+  // watch progress. Payload is validated/coerced — it originates from a
+  // sandboxed preload, but only well-formed, in-bounds samples are worth
+  // relaying. We also *qualify* each sample: a sample only counts as
+  // authoritative content (and only then records the content frame for
+  // targeted seeks) if its media host is a trusted video CDN or a confident
+  // MSE blob, so ads in sibling frames are never seeked (expert verdict Q3).
+  ipcMain.on(
+    "provider:playback",
+    (
+      event,
+      sample: {
+        currentTime?: unknown;
+        duration?: unknown;
+        paused?: unknown;
+        readyState?: unknown;
+        srcHost?: unknown;
+        recentUserSeek?: unknown;
+      },
+    ) => {
+      const currentTime = Number(sample?.currentTime);
+      const duration = Number(sample?.duration);
+      if (!Number.isFinite(currentTime) || !Number.isFinite(duration)) return;
+      // Sanity bounds (verdict Q11): reject garbage / tampered samples.
+      if (!(duration > 0 && duration < 86400)) return;
+      if (!(currentTime >= 0 && currentTime <= duration + 5)) return;
+
+      const paused = !!sample?.paused;
+      const readyState = Number(sample?.readyState);
+      const srcHost = typeof sample?.srcHost === "string" ? sample.srcHost : "";
+      const recentUserSeek = !!sample?.recentUserSeek;
+
+      // Qualify the source host against R0 MIME-trust. Trusted = exact or
+      // suffix match on a host the session saw serve video. Fallback-confidence
+      // for MSE blob players that expose no resolvable host.
+      let qualified = false;
+      const trustMgr = currentProviderSession
+        ? getTrustManager(currentProviderSession)
+        : undefined;
+      const trusted = trustMgr?.getTrustedHosts().map((e) => e.hostname);
+      if (trusted && trusted.length > 0) {
+        qualified = trusted.some(
+          (h) => srcHost === h || srcHost.endsWith("." + h),
+        );
+      }
+      if (!qualified && srcHost === "blob" && !paused && duration >= 240) {
+        qualified = true; // MSE player: no host, but long-form & playing
+      }
+
+      // Record the authoritative content frame for targeted resume seeks.
+      if (
+        qualified &&
+        typeof event.processId === "number" &&
+        typeof event.frameId === "number"
+      ) {
+        lastContentFrame = {
+          processId: event.processId,
+          frameId: event.frameId,
+        };
+      }
+
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send("player:progress", {
+        currentTime,
+        duration,
+        paused,
+        readyState,
+        srcHost,
+        recentUserSeek,
+        qualified,
+      });
+    },
+  );
 }
 
 // ── Provider Session IPC (inline webview) ──────────────────────────
@@ -1056,7 +1287,8 @@ app.whenReady().then(() => {
       const engine = await deserialize(engineBuffer);
       // Store on globalThis so the renderer and main R4 handlers share it.
       // The engine is idempotent — deserialize is safe to call once.
-      globalThis["filmsnapsFiltersEngine"] = engine;
+      (globalThis as Record<string, unknown>)["filmsnapsFiltersEngine"] =
+        engine;
       console.log(
         "[Main] @ghostery/adblocker WASM engine pre-warmed (deserialized, " +
           (engine ? "ready" : "null") +
@@ -1085,6 +1317,12 @@ app.whenReady().then(() => {
   });
 
   createMainWindow();
+  // Phase 2 — Media Download Manager: intercept provider-session downloads
+  // (will-download) and expose pause/resume/cancel + progress to the renderer.
+  initDownloadManager(() => mainWindow);
+  // Download sources — hidden nxsha scraper + falix detail proxy
+  // (nxsha/falix media pages in the web app drive these over IPC).
+  initMediaSources(() => mainWindow);
   initUpdater();
 
   // macOS: re-create window when dock icon is clicked

@@ -27,8 +27,10 @@ lib/
   api.ts                  TMDB client
   download/               Download engine (manager, store, SQLite, native adapter)
   watchHistory.ts         Watch progress/history
-  settings.tsx            App settings
+  settings.tsx            App settings (incl. global `mode`: `movie_tv` | `anime`)
   introDetect.ts          Skip-intro detection
+  anime/                  Anime mode: AniList search, MAL/AniList ID resolution
+                          (OTA-bundled `anime-map.json`), threaded into the player
 ```
 
 ## Run
@@ -66,6 +68,18 @@ uBO scriptlets + provider cosmetic CSS) and injects it into the native
 (`AdblockEngine.kt`, `shouldInterceptRequest`), navigation gating, a DOM
 sweeper, disable-devtool neutralization, and the home-escape guard. See
 [docs/security.md](../../docs/security.md).
+
+### Hard Mode Split (Anime mode)
+
+The app runs on a global `mode` (`movie_tv` | `anime`) from
+`lib/settings.tsx`. In **anime** mode, `VideoWebView` selects servers via
+`filterAnimeProviders(getEnabledProviders())` (allowlist: nxsha, screenscape,
+megaplay) and routes to **MegaPlay**, which is keyed by MAL/AniList IDs rather
+than TMDB. Each anime title is resolved to its IDs in `lib/anime/resolve.ts`
+(backed by the OTA-bundled `lib/anime/anime-map.json`), and a 410 response
+triggers automatic fallback to the alternate ID space (MAL ↔ AniList). Server
+selection is **per-title**, so a regular movie opened inside anime mode still
+gets its correct (non-anime) server set.
 
 ## Downloads
 

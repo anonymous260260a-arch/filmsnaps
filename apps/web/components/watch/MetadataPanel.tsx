@@ -48,13 +48,13 @@ export function MetadataPanel({ initialMeta, plat }: MetadataPanelProps) {
       {/* Title + badges */}
       <div>
         <h2
-          className="text-2xl font-bold text-[#F4F4F5]"
+          className="text-2xl font-bold text-foreground"
           style={{ fontFamily: "var(--font-display)" }}
         >
           {title}
         </h2>
         <div className="flex items-center gap-2 mt-2">
-          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#D4A237]">
+          <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#D4A237]">
             {plat === "tv" ? "Series" : "Film"}
           </span>
           <span className="w-1 h-1 rounded-full bg-zinc-700" />

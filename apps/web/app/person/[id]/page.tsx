@@ -128,9 +128,11 @@ export default async function PersonPage({ params }: { params: any }) {
     return (
       <div className="min-h-screen bg-[#070708] flex items-center justify-center flex-col gap-4 px-6">
         <div className="w-16 h-16 rounded-full bg-[#16161A] flex items-center justify-center">
-          <span className="text-[#52525B] text-2xl font-bold">?</span>
+          <span className="text-faint text-2xl font-bold">?</span>
         </div>
-        <p className="text-[#F4F4F5] text-lg font-semibold">Person not found</p>
+        <p className="text-foreground text-lg font-semibold">
+          Person not found
+        </p>
         <a
           href="/"
           className="bg-[#D4A237] rounded-xl py-3 px-8 text-[#070708] font-bold text-sm"

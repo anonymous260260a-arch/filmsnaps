@@ -70,6 +70,34 @@ interface ElectronAPI {
   onEscapeBlocked: (
     callback: (event: { url: string; count: number }) => void,
   ) => () => void;
+  /**
+   * Subscribe to deterministic anime source-missing detection (main scanned
+   * the settled MegaPlay guest for "Error Code: 410" — verdict §9 Q5).
+   * Watch page advances the fallback chain (MAL → AniList) on this.
+   */
+  onPlayerSourceMissing: (
+    callback: (event: { code: number }) => void,
+  ) => () => void;
+  /**
+   * Subscribe to playback progress samples relayed from the provider embed
+   * (the session preload samples <video>/<audio> at ~1Hz). Used by the watch
+   * page's recorder to persist watch history. Returns an unsubscribe fn.
+   */
+  onPlayerProgress: (
+    callback: (sample: {
+      currentTime: number;
+      duration: number;
+      paused: boolean;
+      /** Sample's media host is trusted content (false for ad pre-roll). */
+      qualified: boolean;
+      /** Last media readyState (0–4) at sample time. */
+      readyState: number;
+      /** Host of the media source ("blob" for MSE, "" unknown). */
+      srcHost: string;
+      /** User performed a manual seek recently (backward-jump escape hatch). */
+      recentUserSeek: boolean;
+    }) => void,
+  ) => () => void;
 
   /**
    * Player namespace (WebContentsView hybrid). The provider embed renders in a
@@ -96,9 +124,124 @@ interface ElectronAPI {
     reload: () => Promise<void>;
     /** Get the provider WebContents id (for verification / devtools). */
     getWebContentsId: () => Promise<number>;
+    /**
+     * Seek the embed's active <video> element to the given second (watch
+     * resume). Applied by the session preload as soon as a media element
+     * exists; no-op if playback never starts.
+     */
+    seek: (seconds: number) => Promise<void>;
     /** Subscribe to provider view state changes; returns an unsubscribe fn. */
     onState: (callback: (state: PlayerViewState) => void) => () => void;
   };
+
+  /**
+   * Download Manager namespace (Phase 2). Manages offline media downloads
+   * intercepted from the provider session. Desktop-only.
+   */
+  download: {
+    start: (meta: DownloadMeta) => Promise<{ success: boolean }>;
+    pause: (id: string) => Promise<void>;
+    resume: (id: string) => Promise<void>;
+    cancel: (id: string) => Promise<void>;
+    getAll: () => Promise<DownloadTask[]>;
+    open: (id: string) => Promise<void>;
+    clear: (id: string, deleteFile?: boolean) => Promise<void>;
+    setSpeedLimit: (level: "full" | "balanced" | "slower") => Promise<void>;
+    onProgress: (callback: (tasks: DownloadTask[]) => void) => () => void;
+  };
+
+  /**
+   * Nxsha download-source namespace. Main process fetches download sources
+   * from nxsha's encrypted private API directly (API-first; the hidden-window
+   * CAPTCHA scrape remains as automatic fallback). States stream back over
+   * nxsha:state.
+   */
+  nxsha: {
+    scrape: (params: {
+      type: "movie" | "tv";
+      id: string;
+      season?: number;
+      episode?: number;
+    }) => Promise<{ success: boolean }>;
+    cancel: () => Promise<void>;
+    onState: (
+      callback: (state: NxshaScrapeState & { seq: number }) => void,
+    ) => () => void;
+  };
+
+  /** Falix download-source namespace (REST proxy — bypasses CORS). */
+  falix: {
+    /**
+     * Fetch title detail from the falix API by numeric id (TMDB id, or an
+     * IMDB number when the renderer falls back after a TMDB 404).
+     */
+    getDetail: <T = unknown>(tmdbId: string) => Promise<T>;
+  };
+
+  /** App-level maintenance (Settings page). Desktop-only. */
+  app: {
+    /** Clear session cache + cookies + storageData (provider + default). */
+    clearCache: () => Promise<void>;
+    /** Open a directory picker; resolves with the path or null on cancel. */
+    pickDownloadFolder: () => Promise<string | null>;
+    /** Get the currently configured download folder path. */
+    getDownloadFolder: () => Promise<string>;
+    /** Persist a new download folder (applied on next app start). */
+    setDownloadFolder: (dir: string) => Promise<{ success: boolean }>;
+    /** Open an http(s) URL in the user's default browser. */
+    openExternal: (url: string) => Promise<void>;
+  };
+}
+
+/** Nxsha scrape state pushed over nxsha:state (mirrors preload.ts). */
+interface NxshaScrapeState {
+  phase: "loading" | "solving" | "links" | "no-links" | "failed";
+  /** Optional progress text while loading (API path). */
+  status?: string;
+  servers?: Array<{
+    name: string;
+    links: Array<{
+      url: string;
+      label: string;
+      /** Original (unwrapped) URL — often the real direct file (API path). */
+      orgUri?: string;
+      provider?: string;
+    }>;
+  }>;
+  error?: string;
+}
+
+/** Status of a managed download (mirrors apps/desktop/src/download.ts). */
+type DownloadStatus = "active" | "paused" | "completed" | "failed" | "canceled";
+
+/** Metadata supplied when starting a download. */
+interface DownloadMeta {
+  url: string;
+  tmdbId?: string;
+  title?: string;
+  mediaType?: "movie" | "tv";
+  season?: number;
+  episode?: number;
+}
+
+/** A managed download task (mirrors apps/desktop/src/download.ts). */
+interface DownloadTask {
+  id: string;
+  url: string;
+  tmdbId?: string;
+  title: string;
+  mediaType?: "movie" | "tv";
+  season?: number;
+  episode?: number;
+  fileName: string;
+  filePath: string;
+  totalBytes: number;
+  receivedBytes: number;
+  speedBytesPerSec: number;
+  state: DownloadStatus;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /** Provider native-view state pushed to the renderer (player:state). */

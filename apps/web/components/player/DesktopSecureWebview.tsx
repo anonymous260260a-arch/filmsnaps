@@ -251,7 +251,7 @@ export const DesktopSecureWebview = forwardRef<
             <p className="text-white/70 text-sm font-semibold tracking-wide">
               Connecting to provider...
             </p>
-            <p className="text-[#52525B] text-xs">
+            <p className="text-faint text-xs">
               Secure tunnel active — All filtering layers engaged
             </p>
           </div>
@@ -277,12 +277,12 @@ export const DesktopSecureWebview = forwardRef<
             </svg>
           </div>
           <p
-            className="text-xl text-[#F4F4F5] font-bold text-center"
+            className="text-xl text-foreground font-bold text-center"
             style={{ fontFamily: "var(--font-display)" }}
           >
             Stream Connection Lost
           </p>
-          <p className="text-sm text-[#A1A1AA] text-center max-w-xs">
+          <p className="text-sm text-muted-foreground text-center max-w-xs">
             {errorMessage ||
               "The provider could not be reached. Try switching servers."}
           </p>

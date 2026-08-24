@@ -42,17 +42,17 @@ export default function PersonClient({ person, credits }: PersonClientProps) {
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
-              <Film className="w-5 h-5 text-[#52525B]" />
+              <Film className="w-5 h-5 text-faint" />
             </div>
           )}
         </div>
-        <p className="text-[#F4F4F5] text-[11px] font-medium truncate leading-tight">
+        <p className="text-foreground text-[11px] font-medium truncate leading-tight">
           {credit.title || credit.name}
         </p>
         {credit.vote_average != null && (
           <div className="flex items-center gap-0.5 mt-0.5">
             <Star className="w-2.5 h-2.5 fill-[#D4A237] text-[#D4A237]" />
-            <span className="text-[10px] text-[#D4A237] font-semibold">
+            <span className="text-[11px] text-[#D4A237] font-semibold">
               {credit.vote_average.toFixed(1)}
             </span>
           </div>
@@ -67,7 +67,7 @@ export default function PersonClient({ person, credits }: PersonClientProps) {
         {/* Back button */}
         <button
           onClick={() => router.back()}
-          className="flex items-center gap-2 text-[#A1A1AA] hover:text-[#F4F4F5] transition-colors mb-6 text-sm font-medium"
+          className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6 text-sm font-medium"
           aria-label="Go back"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -88,24 +88,24 @@ export default function PersonClient({ person, credits }: PersonClientProps) {
             </div>
           ) : (
             <div className="w-28 h-28 rounded-full bg-[#16161A] flex items-center justify-center mb-4">
-              <span className="text-[#52525B] text-3xl font-bold">
+              <span className="text-faint text-3xl font-bold">
                 {person.name?.charAt(0)}
               </span>
             </div>
           )}
           <h1
-            className="text-2xl font-bold text-[#F4F4F5] text-center"
+            className="text-2xl font-bold text-foreground text-center"
             style={{ fontFamily: "var(--font-display)" }}
           >
             {person.name}
           </h1>
           {person.known_for_department && (
-            <p className="text-[#52525B] text-sm mt-1">
+            <p className="text-faint text-sm mt-1">
               {person.known_for_department}
             </p>
           )}
           {person.birthday && (
-            <div className="flex items-center gap-1.5 mt-2 text-[#A1A1AA] text-xs">
+            <div className="flex items-center gap-1.5 mt-2 text-muted-foreground text-xs">
               <Calendar className="w-3.5 h-3.5" />
               <span>
                 {person.birthday}
@@ -114,7 +114,7 @@ export default function PersonClient({ person, credits }: PersonClientProps) {
             </div>
           )}
           {person.place_of_birth && (
-            <div className="flex items-center gap-1.5 mt-1 text-[#A1A1AA] text-xs">
+            <div className="flex items-center gap-1.5 mt-1 text-muted-foreground text-xs">
               <MapPin className="w-3.5 h-3.5" />
               <span>{person.place_of_birth}</span>
             </div>
@@ -125,12 +125,12 @@ export default function PersonClient({ person, credits }: PersonClientProps) {
         {person.biography && (
           <div className="mb-8">
             <h2
-              className="text-lg font-bold text-[#F4F4F5] mb-3"
+              className="text-lg font-bold text-foreground mb-3"
               style={{ fontFamily: "var(--font-display)" }}
             >
               Biography
             </h2>
-            <p className="text-[#A1A1AA] text-sm leading-relaxed whitespace-pre-line">
+            <p className="text-muted-foreground text-sm leading-relaxed whitespace-pre-line">
               {person.biography}
             </p>
           </div>
@@ -140,7 +140,7 @@ export default function PersonClient({ person, credits }: PersonClientProps) {
         {movieCredits.length > 0 && (
           <div className="mb-8">
             <h2
-              className="text-lg font-bold text-[#F4F4F5] mb-4"
+              className="text-lg font-bold text-foreground mb-4"
               style={{ fontFamily: "var(--font-display)" }}
             >
               Movies
@@ -161,7 +161,7 @@ export default function PersonClient({ person, credits }: PersonClientProps) {
         {tvCredits.length > 0 && (
           <div className="mb-8">
             <h2
-              className="text-lg font-bold text-[#F4F4F5] mb-4"
+              className="text-lg font-bold text-foreground mb-4"
               style={{ fontFamily: "var(--font-display)" }}
             >
               TV Shows

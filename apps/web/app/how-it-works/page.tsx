@@ -9,187 +9,114 @@ import {
 } from "@/components/ui/accordion";
 
 // ── FAQ data ──
-// Single source of truth for the Frequently Asked Questions section. Each FAQ
-// has an `answerText` (plain text, used for the FAQPage JSON-LD) and `answer`
-// (the rich JSX rendered in the accordion). NOTE: Radix renders closed
-// accordion items with children: false, so the answer text is NOT in the HTML
-// until the item is opened — the FAQPage schema below is what guarantees the
-// answers exist in markup for search engines and AI crawlers.
 const FAQS: {
   question: string;
   answerText: string;
   answer: React.ReactNode;
 }[] = [
   {
+    question: "Why are streaming provider sites so dangerous?",
+    answerText:
+      "Hosting high-definition video for millions of users is incredibly expensive. To survive, third-party providers rely on aggressive, often malicious advertising networks. When you visit these sites in a normal browser, you are targeted by 'malvertising' — fake download buttons that install spyware, crypto-jacking scripts that hijack your CPU, and aggressive pop-unders. FilmSnaps blocks these not just to clean up the screen, but because they are active security threats.",
+    answer: (
+      <Body>
+        Hosting high-definition video is incredibly expensive. To survive,
+        third-party providers rely on the darkest corners of the ad-tech
+        industry. When you visit these sites in a normal browser, you are
+        targeted by <Bold>malvertising</Bold> — fake download buttons that
+        install spyware, crypto-jacking scripts that hijack your CPU, and
+        aggressive pop-unders. FilmSnaps blocks these not just to clean up the
+        screen, but because they are active security threats.
+      </Body>
+    ),
+  },
+  {
     question: "Can streaming providers steal my data or hack my device?",
     answerText:
-      "Zero percent chance. The provider's page runs inside a sandboxed WebView — a stripped-down browser that has no access to your device's storage, file system, contacts, apps, or any other personal data. It cannot execute code outside that WebView, cannot read app state, and cannot install anything on your device. The WebView is destroyed completely when you leave the player, leaving zero traces behind. All the provider sees is a standard HTTP request for their embed page — exactly what a normal browser would send. They have no way to reach into the app or your device.",
+      "Zero percent chance. The provider's page runs inside a sandboxed WebView — think of it as a locked, soundproof glass room inside your house. The provider can play their video inside that room, but they cannot open the door, look through the walls, or touch your actual files, photos, or passwords. When you close the player, the glass room is completely demolished, leaving zero traces behind.",
     answer: (
       <Body>
         <Bold>Zero percent chance.</Bold> The provider&apos;s page runs inside a
-        sandboxed WebView — a stripped-down browser that has no access to your
-        device&apos;s storage, file system, contacts, apps, or any other
-        personal data. It cannot execute code outside that WebView, cannot read
-        app state, and cannot install anything on your device. The WebView is
-        destroyed completely when you leave the player, leaving zero traces
-        behind. All the provider sees is a standard HTTP request for their embed
-        page — exactly what a normal browser would send. They have no way to
-        reach into the app or your device.
+        sandboxed WebView — think of it as a locked, soundproof glass room
+        inside your house. The provider can play their video inside that room,
+        but they cannot open the door, look through the walls, or touch your
+        actual files, photos, or passwords. When you close the player, the glass
+        room is completely demolished, leaving zero traces behind.
       </Body>
     ),
   },
   {
     question: "What can a provider do with my IP address?",
     answerText:
-      "The provider sees your IP address — just like every website you visit in any browser. With just an IP address, they cannot identify you personally, cannot access your device, and cannot cause you any harm. An IP address only reveals the approximate region you're connecting from (usually the city level) and the name of your internet service provider. This is the same information any website gets when you visit it. FilmSnaps does not share your IP with anyone beyond the provider you chose to watch from.",
+      "The provider sees your IP address — just like every website you visit in any browser. With just an IP address, they cannot identify you personally, cannot access your device, and cannot cause you any harm. An IP address only reveals the approximate region you're connecting from. FilmSnaps does not share your IP with anyone beyond the provider you chose to watch from.",
     answer: (
       <Body>
         The provider sees your IP address — just like every website you visit in
         any browser. With just an IP address, they cannot identify you
         personally, cannot access your device, and cannot cause you any harm. An
         IP address only reveals the approximate region you&apos;re connecting
-        from (usually the city level) and the name of your internet service
-        provider. This is the same information any website gets when you visit
-        it. FilmSnaps does not share your IP with anyone beyond the provider you
-        chose to watch from.
+        from. FilmSnaps does not share your IP with anyone beyond the provider
+        you chose to watch from.
       </Body>
     ),
   },
   {
     question: "Does FilmSnaps collect my personal data?",
     answerText:
-      "No. FilmSnaps does not collect, store, or transmit any personal data to external servers. Your watch history, watchlist, and settings stay on your device and are removed when you uninstall the app. Offline downloads are the one exception: on Android 10 and later they are written to your device's shared Downloads folder so any video player can open them, which also means they remain on the device after you uninstall FilmSnaps. There are no analytics SDKs, no tracking pixels, and no telemetry. For full details, see the Privacy Policy in Settings.",
+      "No. FilmSnaps does not collect, store, or transmit any personal data to external servers. Your watch history, watchlist, and settings stay on your device and are removed when you uninstall the app. There are no analytics SDKs, no tracking pixels, and no telemetry. For full details, see the Privacy Policy.",
     answer: (
       <Body>
         <Bold>No.</Bold> FilmSnaps does not collect, store, or transmit any
         personal data to external servers. Your watch history, watchlist, and
         settings stay on your device and are removed when you uninstall the app.
-        Offline downloads are the one exception: on Android 10 and later they
-        are written to your device&apos;s shared Downloads folder so any video
-        player can open them, which also means they remain on the device after
-        you uninstall FilmSnaps. There are no analytics SDKs, no tracking
-        pixels, and no telemetry. For full details, see the Privacy Policy in
-        Settings.
-      </Body>
-    ),
-  },
-  {
-    question: "Can the app get malware from a provider's page?",
-    answerText:
-      "No. The WebView is sandboxed at the operating system level. A webpage inside a WebView cannot install software, modify system files, or access other apps. It is one of the most locked-down environments a web page can run in. Additionally, the guard scripts block known malicious patterns, popups, and redirect attempts before they can execute. Between the OS sandbox and the app's security layers, there is no realistic path for malware to reach your device through streaming.",
-    answer: (
-      <Body>
-        <Bold>No.</Bold> The WebView is sandboxed at the operating system level.
-        A webpage inside a WebView cannot install software, modify system files,
-        or access other apps. It is one of the most locked-down environments a
-        web page can run in. Additionally, the guard scripts block known
-        malicious patterns, popups, and redirect attempts before they can
-        execute. Between the OS sandbox and the app&apos;s security layers,
-        there is no realistic path for malware to reach your device through
-        streaming.
-      </Body>
-    ),
-  },
-  {
-    question:
-      "What happens if a provider's page has a virus or malicious script?",
-    answerText:
-      "Malicious scripts inside a WebView are contained by the same sandbox that isolates legitimate content. JavaScript in a WebView cannot access the file system, read app data, make network requests outside the browser context, or exploit the host app. Furthermore, the guard scripts actively block common exploit techniques: popups are sealed, redirects are intercepted, and known script injection patterns are neutralised. Even in the worst case (a fully compromised embed page), the attacker gains nothing — they are trapped inside a browser view with no escape route to the device.",
-    answer: (
-      <Body>
-        Malicious scripts inside a WebView are contained by the same sandbox
-        that isolates legitimate content. JavaScript in a WebView cannot access
-        the file system, read app data, make network requests outside the
-        browser context, or exploit the host app. Furthermore, the guard scripts
-        actively block common exploit techniques: popups are sealed, redirects
-        are intercepted, and known script injection patterns are neutralised.
-        Even in the worst case (a fully compromised embed page), the attacker
-        gains nothing — they are trapped inside a browser view with no escape
-        route to the device.
+        There are no analytics SDKs, no tracking pixels, and no telemetry. For
+        full details, see the Privacy Policy.
       </Body>
     ),
   },
   {
     question: "Do you sell my data or share it with advertisers?",
     answerText:
-      "Never. FilmSnaps has no advertising, no ad partnerships, and no data-sharing agreements. We do not collect data to sell, and we do not show ads ourselves. The ad blocking technology exists solely to clean up the third-party provider pages — not to replace their ads with our own. There is no business incentive to collect or share your data.",
+      "Never. FilmSnaps has no advertising, no ad partnerships, and no data-sharing agreements. We do not collect data to sell, and we do not show ads ourselves. The ad blocking technology exists solely to protect you from third-party threats. There is no business incentive to collect or share your data.",
     answer: (
       <Body>
         <Bold>Never.</Bold> FilmSnaps has no advertising, no ad partnerships,
         and no data-sharing agreements. We do not collect data to sell, and we
         do not show ads ourselves. The ad blocking technology exists solely to
-        clean up the third-party provider pages — not to replace their ads with
-        our own. There is no business incentive to collect or share your data.
-      </Body>
-    ),
-  },
-  {
-    question: "Why do I sometimes see a brief popup before it gets blocked?",
-    answerText:
-      "The ad blocking layers work at different speeds. Network-level blocking (Layer 1) stops requests before they leave the device — these ads never load at all. But some ads are injected by the page's own JavaScript after the page loads (same-origin). These require the DOM observer (Layer 3) to detect and remove them, which can take a few hundred milliseconds. You might see a flash of an ad container before it is removed. This is harmless and does not mean the ad was fully rendered or tracked.",
-    answer: (
-      <Body>
-        The ad blocking layers work at different speeds. Network-level blocking
-        (Layer 1) stops requests before they leave the device — these ads never
-        load at all. But some ads are injected by the page&apos;s own JavaScript
-        after the page loads (same-origin). These require the DOM observer
-        (Layer 3) to detect and remove them, which can take a few hundred
-        milliseconds. You might see a flash of an ad container before it is
-        removed. This is harmless and does not mean the ad was fully rendered or
-        tracked.
+        protect you from third-party threats. There is no business incentive to
+        collect or share your data.
       </Body>
     ),
   },
   {
     question: "Can I use a VPN with FilmSnaps?",
     answerText:
-      "Yes, a VPN works fine with FilmSnaps. Using a VPN will change the IP address visible to streaming providers, which can be useful if you want additional privacy or need to access region-specific content. The ad blocking system works independently of your VPN connection since it runs entirely on your device at the network request layer.",
+      "Yes, a VPN works perfectly with FilmSnaps. Using a VPN will change the IP address visible to streaming providers, which is highly recommended for maximum privacy. The ad blocking system works independently of your VPN connection since it runs entirely on your device.",
     answer: (
       <Body>
-        Yes, a VPN works fine with FilmSnaps. Using a VPN will change the IP
-        address visible to streaming providers, which can be useful if you want
-        additional privacy or need to access region-specific content. The ad
-        blocking system works independently of your VPN connection since it runs
-        entirely on your device at the network request layer.
-      </Body>
-    ),
-  },
-  {
-    question: "How often are the ad blocklists updated?",
-    answerText:
-      "The app checks for updated blocklist configurations on startup and refreshes them every 6 hours while the app is running. Filter lists are compiled from EasyList, EasyPrivacy, and AdGuard — which are updated by their respective communities daily. The app also maintains custom provider-specific rules that are updated as providers change their layouts.",
-    answer: (
-      <Body>
-        The app checks for updated blocklist configurations on startup and
-        refreshes them every 6 hours while the app is running. Filter lists are
-        compiled from EasyList, EasyPrivacy, and AdGuard — which are updated by
-        their respective communities daily. The app also maintains custom
-        provider-specific rules that are updated as providers change their
-        layouts.
+        Yes, a VPN works perfectly with FilmSnaps. Using a VPN will change the
+        IP address visible to streaming providers, which is highly recommended
+        for maximum privacy. The ad blocking system works independently of your
+        VPN connection since it runs entirely on your device.
       </Body>
     ),
   },
   {
     question: "Is this legal?",
     answerText:
-      "FilmSnaps does not host, distribute, or modify copyrighted content. The app simply provides a user interface to access publicly available embed pages — the same pages you could access by visiting the provider directly in any browser. The ad blocking is a client-side privacy measure, which has been upheld as legal in numerous jurisdictions (similar to AdBlock Plus, uBlock Origin, and Brave Browser's built-in blocking). For more details, see the Legal & DMCA page in Settings.",
+      "FilmSnaps does not host, distribute, or modify copyrighted content. The app simply provides a user interface to access publicly available embed pages — the same pages you could access by visiting the provider directly in any browser. The ad blocking is a client-side privacy measure, which has been upheld as legal in numerous jurisdictions.",
     answer: (
       <Body>
         FilmSnaps does not host, distribute, or modify copyrighted content. The
         app simply provides a user interface to access publicly available embed
         pages — the same pages you could access by visiting the provider
         directly in any browser. The ad blocking is a client-side privacy
-        measure, which has been upheld as legal in numerous jurisdictions
-        (similar to AdBlock Plus, uBlock Origin, and Brave Browser&apos;s
-        built-in blocking). For more details, see the Legal &amp; DMCA page in
-        Settings.
+        measure, which has been upheld as legal in numerous jurisdictions.
       </Body>
     ),
   },
 ];
 
-// FAQPage structured data — guarantees the answers are present in markup even
-// though closed accordion items render children: false in the HTML.
 const faqSchema = {
   "@context": "https://schema.org",
   "@type": "FAQPage",
@@ -208,224 +135,173 @@ export default function HowItWorksPage() {
     <>
       <JsonLd data={faqSchema} />
       <LegalPageShell
-        title="How Content Works"
-        subtitle="Content sourcing, ad blocking technology & transparency"
-        icon={<Info className="h-10 w-10 text-amber-500" strokeWidth={1.5} />}
+        title="Transparency & Security"
+        subtitle="Why the streaming web is dangerous, and how we engineered a privacy-first vault to navigate it."
+        icon={<Info className="h-10 w-10 text-primary" strokeWidth={1.5} />}
       >
-        <p className="mb-8 text-sm leading-6 text-zinc-400">
+        <p className="mb-8 text-base leading-7 text-muted-foreground">
           Everything you need to know about how FilmSnaps sources content,
-          blocks ads, and protects your privacy — explained transparently.
+          neutralizes threats, and protects your privacy — explained with
+          absolute transparency.
         </p>
 
         <Accordion type="single" collapsible className="w-full">
-          <SectionItem value="sources" title="Content Sources">
+          <SectionItem
+            value="reality"
+            title="The Reality of Free Streaming (Why We Block)"
+          >
+            <Body>
+              Hosting high-definition video for millions of users is incredibly
+              expensive. To survive, third-party streaming providers rely on the
+              darkest corners of the advertising industry.
+            </Body>
+            <Body extraMargin>
+              When you visit these sites in a standard browser, you aren't just
+              seeing annoying banners. You are navigating a minefield of{" "}
+              <Bold>malvertising</Bold> (malicious advertising). Providers are
+              often forced to serve aggressive pop-unders, fake "Download"
+              buttons that install spyware, crypto-jacking scripts that hijack
+              your CPU, and redirects to betting scams.
+            </Body>
+            <Body extraMargin>
+              FilmSnaps doesn't block ads just to make the screen look clean.{" "}
+              <Bold>
+                We block them because they are active security threats.
+              </Bold>{" "}
+              Our app acts as a digital hazmat suit, allowing you to extract the
+              video you want while neutralizing the hostile environment it lives
+              in.
+            </Body>
+          </SectionItem>
+
+          <SectionItem value="sources" title="Content Sources & The Sandbox">
             <Body>
               FilmSnaps does not host, store, or upload any video content. When
-              you watch a movie or TV show, the app fetches an embed page from a
-              third-party streaming provider whose servers are independent and
-              unrelated to us.
+              you watch a movie, the app fetches an embed page from a
+              third-party provider. To protect you, this page is loaded inside a{" "}
+              <Bold>Sandboxed WebView</Bold>.
             </Body>
-            <Bullet text="Multiple sources (providers) are available for most titles" />
-            <Bullet text="If one source fails, the app automatically tries the next available" />
-            <Bullet text="You can set a default source in Settings → Default Source" />
-            <Bullet text="Providers are community-curated and may change over time" />
+            <Body extraMargin>
+              Think of the WebView as a locked, soundproof glass room inside
+              your house. The provider is allowed to play their video inside
+              that room, but they cannot open the door, look through the walls,
+              or touch anything in your actual house (your files, photos, or
+              passwords). When you close the app, the glass room is completely
+              demolished.
+            </Body>
+            <Bullet text="Zero access to your device storage, contacts, or app data" />
+            <Bullet text="Multiple sources available; auto-fallback if one fails" />
+            <Bullet text="The environment is destroyed on exit, leaving zero traces" />
           </SectionItem>
 
-          <SectionItem value="streaming" title="How Streaming Works">
+          <SectionItem
+            value="adblock"
+            title="The 5-Layer Security Architecture"
+          >
             <Body>
-              When you press &quot;Watch&quot;, the app loads the
-              provider&apos;s embed page inside a sandboxed WebView — a
-              dedicated browser view that is isolated from the rest of the app.
-              The WebView:
-            </Body>
-            <Bullet text="Renders only the provider's video player interface" />
-            <Bullet text="Has no access to your device data, cookies, or app storage" />
-            <Bullet text="Is destroyed when you leave the player, leaving no traces" />
-            <Bullet text="Supports fullscreen playback, subtitles, and audio track selection" />
-          </SectionItem>
-
-          <SectionItem value="downloads" title="Downloads & Offline Viewing">
-            <Body>
-              FilmSnaps lets you download movies and episodes to watch offline.
-              Downloads are saved directly to your device&apos;s shared storage
-              so they&apos;re easy to find and play later — even outside
-              FilmSnaps.
-            </Body>
-            <Bullet text="On Android 10 and later, files are saved to your device's Downloads folder (in a Filmsnaps subfolder) — no permission prompt" />
-            <Bullet text="Downloaded videos appear in your system Downloads app and can be opened in any player, such as VLC, via “Open with”" />
-            <Bullet text="Inside FilmSnaps, downloads play through the built-in player and are listed on the Downloads screen, where you can delete them" />
-            <Bullet text="Because they live in shared storage, downloads stay on your device even after you uninstall the app" />
-            <Bullet text="Your watch history, watchlist, and settings are app-private and are removed when you uninstall — only offline downloads remain" />
-            <Bullet text="On older Android versions downloads are kept inside the app and are only visible within FilmSnaps" />
-          </SectionItem>
-
-          <SectionItem value="adblock" title="Ad Blocking Technology">
-            <Body>
-              FilmSnaps blocks ads and trackers at multiple layers — similar to
-              how Brave Browser blocks unwanted content before it can load. The
-              system is layered so that even if one layer misses something, the
-              next catches it.
+              FilmSnaps blocks threats at multiple layers — similar to how
+              enterprise firewalls protect corporate networks. If one layer
+              misses a threat, the next catches it.
             </Body>
 
-            <SubSection title="Layer 1: Network-Level Blocking (Brave-Style)">
+            <SubSection title="Layer 1: Network-Level Interception">
               <Body>
-                Every network request made by the WebView passes through a
-                native ad-blocking engine before it reaches the network. This
-                engine:
+                Every network request passes through a native, high-speed
+                blocking engine before it reaches the internet. It acts as a
+                digital bouncer, checking URLs against known malicious domains
+                in O(L) time using an Aho-Corasick pattern matcher.
               </Body>
-              <Bullet text="Maintains a list of known ad, tracker, and popup domains compiled from EasyList, EasyPrivacy, and AdGuard filter lists" />
-              <Bullet text="Uses an Aho-Corasick pattern matcher for fast lookups — checks every URL in O(L) time regardless of list size" />
-              <Bullet text="Keeps a session-based trust list: once a host serves real video content, all its future requests bypass blocking for that session" />
-              <Bullet text="Supports allow-list exceptions so that video CDNs and required player assets are never blocked" />
             </SubSection>
 
-            <SubSection title="Layer 2: Cosmetic Filtering">
+            <SubSection title="Layer 2: Cosmetic Element Hiding">
               <Body>
-                Some ads are injected by the page&apos;s own JavaScript and
-                cannot be blocked at the network level. For these, the app
-                injects CSS rules that hide ad containers, popup overlays, and
-                banner elements — they are never rendered on screen.
+                Some ads are injected by the page's own code. We inject
+                counter-CSS rules that instantly hide ad containers, fake
+                download buttons, and overlay traps before they can render on
+                your screen.
               </Body>
             </SubSection>
 
             <SubSection title="Layer 3: Runtime Guard Scripts">
               <Body>
-                When the WebView loads a provider page, the app injects a
-                comprehensive guard script before any page code runs. This
-                script:
+                Before the provider's JavaScript can execute, we inject a guard
+                script that seizes control of the environment:
               </Body>
               <Bullet text="Seals window.open — popup attempts return null silently" />
-              <Bullet text="Intercepts fetch and XMLHttpRequest calls targeting ad domains" />
-              <Bullet text="Watches for new DOM elements and removes ad iframes the moment they appear" />
-              <Bullet text="Blocks service worker registration used for ad injection" />
-              <Bullet text="Prevents anti-adblock detection that some providers use to detect ad blockers" />
+              <Bullet text="Intercepts network calls targeting ad domains" />
+              <Bullet text="Watches the DOM and instantly removes malicious iframes" />
+              <Bullet text="Blocks service workers used for background tracking" />
             </SubSection>
 
-            <SubSection title="Layer 4: Anti-Anti-Adblock Scriptlets">
+            <SubSection title="Layer 4: Anti-Detection Cloaking">
               <Body>
-                Some providers run scripts that detect ad blockers and either
-                break the player or show nag screens. The app neutralises these
-                by:
+                Providers try to detect if you are using an ad-blocker. We
+                neutralize their detection scripts by forcing ad-related
+                variables to always return false, and cloaking our native
+                function signatures so their scripts cannot detect our presence.
               </Body>
-              <Bullet text="Forcing ad-related JavaScript variables (adsEnabled, canShowAds, etc.) to always return false" />
-              <Bullet text="Aborting scripts that try to read popup or ad variables" />
-              <Bullet text="Preventing visibility-change and focus/blur listeners that detect popup blocking" />
-              <Bullet text="Cloaking native function signatures so that providers cannot detect our monkey-patches" />
             </SubSection>
 
-            <SubSection title="Layer 5: Provider-Specific Rules">
+            <SubSection title="Layer 5: Session Trust & Video Allow-listing">
               <Body>
-                Each streaming provider has unique ad patterns. The app
-                maintains per-provider blocking rules, custom CSS selectors, and
-                known ad URL patterns that are updated regularly to adapt to
-                changes in provider layouts.
+                To ensure the video never breaks, our engine uses "Session
+                Trust". Once a server is verified to be serving actual video
+                data (via MIME-type detection), it is temporarily whitelisted,
+                ensuring your playback is never interrupted by false positives.
               </Body>
             </SubSection>
           </SectionItem>
 
-          <SectionItem value="ads" title="How Likely Are You to See Ads?">
+          <SectionItem
+            value="downloads"
+            title="Offline Downloads & Local Storage"
+          >
             <Body>
-              The ad blocking system is designed to catch the vast majority of
-              ads before they load. Most users will see a clean, ad-free
-              experience 99%+ of the time. However:
+              FilmSnaps lets you download movies to watch offline. We believe in
+              true ownership of your offline media.
             </Body>
-
-            <SubSection title="What Gets Blocked">
-              <Bullet text="Popups and popunders — completely blocked" />
-              <Bullet text="Banner ads and overlay ads — hidden via CSS or removed from DOM" />
-              <Bullet text="Video pre-roll / mid-roll ads — blocked at network level when served from known ad CDNs" />
-              <Bullet text="Analytics and tracking scripts — prevented from loading" />
-              <Bullet text="Crypto miners — blocked at domain level" />
-              <Bullet text="Redirect attempts to ad landing pages — intercepted at the native layer" />
-            </SubSection>
-
-            <SubSection title="What Might Slip Through">
-              <Body>In rare circumstances, you may still encounter an ad:</Body>
-              <Bullet text="Ads served from the same CDN as the video content (server-side ad insertion) cannot be distinguished from legitimate video — blocking them would block the video too" />
-              <Bullet text="Newly deployed ad domains not yet in our blocklists — these are added as we identify them" />
-              <Bullet text="Ads injected via first-party JavaScript that load from the provider's own domain (same-origin ads)" />
-              <Bullet text="Provider layouts can change, temporarily breaking CSS hiding rules until we update them" />
-            </SubSection>
-
-            <SubSection title="What We Do When Something Slips Through">
-              <Body>
-                The blocklist configuration is updated regularly. The app checks
-                for updated blocking rules on startup and fetches the latest
-                patterns from our configuration server. We also welcome reports
-                of missed ads so we can add them to the blocklist.
-              </Body>
-            </SubSection>
-          </SectionItem>
-
-          <SectionItem value="notes" title="Important Notes">
-            <Body>
-              <Bold>No content is modified or re-encoded.</Bold> The app simply
-              requests the same embed page that any browser would load, and
-              strips out the unwanted elements before they affect your
-              experience.
-            </Body>
-            <Body extraMargin>
-              <Bold>This is not a VPN or proxy.</Bold> The ad blocking happens
-              entirely on your device. Your IP address is still visible to the
-              streaming provider when you watch content.
-            </Body>
-            <Body extraMargin>
-              <Bold>No user data is sent to any ad-blocking service.</Bold> The
-              blocklist is fetched as a static JSON file. No information about
-              your browsing or watching activity is transmitted.
-            </Body>
-            <Body extraMargin>
-              <Bold>Providers can change at any time.</Bold> If a provider
-              updates their page layout, the player may temporarily break or
-              show ads until the app&apos;s rules are updated accordingly.
-            </Body>
+            <Bullet text="Saved to your device's shared Downloads folder (Android 10+)" />
+            <Bullet text="Playable in any external app (VLC, MX Player) via the system share sheet" />
+            <Bullet text="Files remain on your device even if you uninstall FilmSnaps" />
+            <Bullet text="Watch history and settings remain strictly app-private and are wiped on uninstall" />
           </SectionItem>
 
           <SectionItem value="technical" title="Technical Summary">
-            <Body>FilmSnaps uses a layered defence model:</Body>
-            <div className="mt-3 mb-1 overflow-hidden rounded-xl border border-zinc-800 bg-[#121218]">
+            <Body>
+              For power users and engineers, here is the stack powering your
+              privacy:
+            </Body>
+            <div className="mt-3 mb-1 overflow-hidden rounded-xl border border-border bg-card">
               <TechRow
-                label="Native engine"
-                value="Aho-Corasick pattern matching"
-                color="#D4A237"
+                label="Core Engine"
+                value="Rust-compiled Aho-Corasick Trie"
+                color="text-primary"
               />
               <TechDivider />
               <TechRow
-                label="Filter lists"
-                value="EasyList, EasyPrivacy, AdGuard, custom"
-                color="#22c55e"
+                label="Filter Lists"
+                value="EasyList, EasyPrivacy, AdGuard"
+                color="text-green-500"
               />
               <TechDivider />
               <TechRow
-                label="Cosmetic CSS"
-                value="Per-provider element hiding"
-                color="#3b82f6"
+                label="Injection Layer"
+                value="CDP & Document-Start JS"
+                color="text-blue-500"
               />
               <TechDivider />
               <TechRow
-                label="Guard JS"
-                value="15-layer runtime protection"
-                color="#a78bfa"
-              />
-              <TechDivider />
-              <TechRow
-                label="Session trust"
-                value="Auto-allow video CDNs"
-                color="#f59e0b"
-              />
-              <TechDivider />
-              <TechRow
-                label="Update cadence"
-                value="On-startup + 6-hour TTL"
-                color="#ec4899"
+                label="Update Cadence"
+                value="Ed25519 Signed OTA (6h TTL)"
+                color="text-pink-500"
               />
             </div>
           </SectionItem>
 
           <SectionItem value="faq" title="Frequently Asked Questions">
             <Body>
-              Common questions about how FilmSnaps works, your privacy, and the
-              technology behind the scenes.
+              Common questions about privacy, security, and the technology
+              behind the scenes.
             </Body>
             {FAQS.map((faq, i) => (
               <FaqItem key={i} question={faq.question} answer={faq.answer} />
@@ -449,11 +325,11 @@ function SectionItem({
   children: React.ReactNode;
 }) {
   return (
-    <AccordionItem value={value} className="border-b border-zinc-800">
-      <AccordionTrigger className="text-sm font-semibold text-zinc-100">
+    <AccordionItem value={value} className="border-b border-border">
+      <AccordionTrigger className="text-base font-semibold text-foreground">
         {title}
       </AccordionTrigger>
-      <AccordionContent className="pb-4 text-zinc-400">
+      <AccordionContent className="pb-6 text-muted-foreground">
         {children}
       </AccordionContent>
     </AccordionItem>
@@ -468,8 +344,11 @@ function SubSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mb-4 mt-3">
-      <h3 className="mb-2 text-xs font-semibold text-[#D4A237]">{title}</h3>
+    <div className="mb-4 mt-4">
+      {/* Used uppercase tracking-wider and text-primary for design system consistency */}
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-primary">
+        {title}
+      </h3>
       {children}
     </div>
   );
@@ -490,13 +369,13 @@ function Body({
 }
 
 function Bold({ children }: { children: React.ReactNode }) {
-  return <strong className="font-semibold text-zinc-200">{children}</strong>;
+  return <strong className="font-semibold text-foreground">{children}</strong>;
 }
 
 function Bullet({ text }: { text: string }) {
   return (
     <p className="mt-2 flex items-start gap-2.5 text-sm leading-5">
-      <span className="mt-1.5 text-[10px] leading-none text-[#D4A237]">■</span>
+      <span className="mt-1.5 text-[10px] leading-none text-primary">■</span>
       <span>{text}</span>
     </p>
   );
@@ -510,11 +389,11 @@ function FaqItem({
   answer: React.ReactNode;
 }) {
   return (
-    <div className="mb-3 mt-2">
-      <p className="text-sm font-semibold leading-5 text-zinc-200">
+    <div className="mb-4 mt-3">
+      <p className="text-sm font-semibold leading-5 text-foreground">
         {question}
       </p>
-      <div className="mt-2">{answer}</div>
+      <div className="mt-2 text-sm text-muted-foreground">{answer}</div>
     </div>
   );
 }
@@ -531,11 +410,12 @@ function TechRow({
   return (
     <div className="flex items-center px-4 py-2.5">
       <span
-        className="mr-2.5 h-2 w-2 shrink-0 rounded-full"
-        style={{ backgroundColor: color }}
+        className={`mr-2.5 h-2 w-2 shrink-0 rounded-full bg-current ${color}`}
       />
-      <span className="flex-1 text-xs text-zinc-400">{label}</span>
-      <span className="text-right text-xs text-zinc-100">{value}</span>
+      <span className="flex-1 text-xs text-muted-foreground">{label}</span>
+      <span className="text-right text-xs font-medium text-foreground">
+        {value}
+      </span>
     </div>
   );
 }

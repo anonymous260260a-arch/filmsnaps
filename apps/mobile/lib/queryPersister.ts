@@ -60,6 +60,7 @@ export function isPersistableQuery(key: QueryKey): boolean {
     "upcoming",
     "season",
     "person",
+    "anilist", // anime home feed — stable content, persists like trending/popular
   ];
   return persistable.includes(prefix);
 }

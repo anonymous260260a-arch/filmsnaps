@@ -14,6 +14,7 @@
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Constants from "expo-constants";
 
 // ── Constants ──
 
@@ -47,6 +48,10 @@ export interface Announcement {
   dismissible?: boolean;
   /** ISO timestamp after which this announcement expires */
   expiresAt?: string;
+  /** Hide this announcement once the installed app version is >= this value
+   *  (e.g. a "new version released" notice vanishes after the user updates).
+   *  Compared semver-ish on major.minor.patch; absent = never auto-hide. */
+  hideFromVersion?: string;
 }
 
 export interface AnnouncementResponse {
@@ -121,6 +126,36 @@ function filterExpired(announcements: Announcement[]): Announcement[] {
   });
 }
 
+// ── Hide announcements superseded by the installed app version ──
+
+/** major.minor.patch compare. Returns <0 if a<b, 0 if equal, >0 if a>b. */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const da = pa[i] ?? 0;
+    const db = pb[i] ?? 0;
+    if (da !== db) return da - db;
+  }
+  return 0;
+}
+
+let cachedAppVersion: string | null = null;
+function getAppVersion(): string {
+  if (cachedAppVersion) return cachedAppVersion;
+  // app.json version is injected into the bundle by expo at build time.
+  cachedAppVersion = (Constants?.expoConfig?.version as string) || "0.0.0";
+  return cachedAppVersion;
+}
+
+function filterHiddenByVersion(announcements: Announcement[]): Announcement[] {
+  const appVersion = getAppVersion();
+  return announcements.filter((a) => {
+    if (!a.hideFromVersion) return true;
+    return compareVersions(appVersion, a.hideFromVersion) < 0;
+  });
+}
+
 // ── Dismissed IDs ──
 
 const DISMISSED_KEY = "@filmsnaps/announcements/dismissed/v1";
@@ -175,7 +210,7 @@ export async function fetchAnnouncements(options?: {
       const age = Date.now() - cached.fetchedAt;
       if (age < CACHE_TTL_MS) {
         cacheHit = true;
-        const filtered = filterExpired(cached.data);
+        const filtered = filterHiddenByVersion(filterExpired(cached.data));
         if (!options?.includeDismissed) {
           const dismissed = await getDismissedIds();
           return filtered.filter((a) => !dismissed.has(a.id));
@@ -199,7 +234,7 @@ export async function fetchAnnouncements(options?: {
       if (!cacheHit) {
         const stale = await readCache();
         if (stale) {
-          const filtered = filterExpired(stale.data);
+          const filtered = filterHiddenByVersion(filterExpired(stale.data));
           if (!options?.includeDismissed) {
             const dismissed = await getDismissedIds();
             return filtered.filter((a) => !dismissed.has(a.id));
@@ -216,7 +251,7 @@ export async function fetchAnnouncements(options?: {
     // Update cache
     await writeCache(announcements);
 
-    const filtered = filterExpired(announcements);
+    const filtered = filterHiddenByVersion(filterExpired(announcements));
 
     if (!options?.includeDismissed) {
       const dismissed = await getDismissedIds();
@@ -229,7 +264,7 @@ export async function fetchAnnouncements(options?: {
     if (!cacheHit) {
       const stale = await readCache();
       if (stale) {
-        const filtered = filterExpired(stale.data);
+        const filtered = filterHiddenByVersion(filterExpired(stale.data));
         if (!options?.includeDismissed) {
           const dismissed = await getDismissedIds();
           return filtered.filter((a) => !dismissed.has(a.id));

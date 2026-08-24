@@ -100,10 +100,10 @@ export function EpisodeRail({
           <button
             onClick={() => setShowSeasons(!showSeasons)}
             className="flex items-center gap-2 px-3 py-2 bg-[#0E0E11]
-              border border-[#222226] rounded-xl text-sm font-bold text-[#F4F4F5]
+              border border-[#222226] rounded-xl text-sm font-bold text-foreground
               hover:border-white/20 transition-colors"
           >
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">
+            <span className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500">
               Season
             </span>
             <span className="text-sm">
@@ -264,10 +264,10 @@ export function EpisodeRail({
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D4A237] opacity-75" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-[#D4A237]" />
           </span>
-          <p className="text-[9px] font-black uppercase text-zinc-500 tracking-[0.2em]">
+          <p className="text-[11px] font-black uppercase text-zinc-500 tracking-[0.2em]">
             Now Watching
           </p>
-          <h3 className="text-sm font-bold text-[#F4F4F5]">
+          <h3 className="text-sm font-bold text-foreground">
             S{selectedSeason < 10 ? `0${selectedSeason}` : selectedSeason} : E
             {activeEpisode < 10 ? `0${activeEpisode}` : activeEpisode}
           </h3>
@@ -285,7 +285,7 @@ export function EpisodeRail({
           onClick={goToPrevEpisode}
           className="flex-1 sm:flex-none flex items-center justify-center gap-1.5
             h-11 px-4 rounded-xl bg-[#0E0E11] border border-white/5
-            text-zinc-500 hover:text-[#F4F4F5] hover:border-white/20
+            text-zinc-500 hover:text-foreground hover:border-white/20
             disabled:opacity-30 disabled:cursor-not-allowed
             transition-all active:scale-95"
         >

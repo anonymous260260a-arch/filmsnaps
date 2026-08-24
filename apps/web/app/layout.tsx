@@ -1,5 +1,5 @@
 import "./globals.css";
-import { Inter, Playfair_Display } from "next/font/google";
+import { Geist, Geist_Mono, Playfair_Display } from "next/font/google";
 import { Providers } from "@/lib/providers";
 import { Toaster } from "@/components/ui/toaster";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -46,13 +46,25 @@ const siteSchema = {
   ],
 };
 
-const inter = Inter({
+const geist = Geist({
   subsets: ["latin"],
   display: "swap",
   preload: true,
   variable: "--font-body",
 });
 
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  preload: true,
+  variable: "--font-mono",
+});
+
+// NOTE (readability fix, expert verdict 08-22): only ONE next/font `.className`
+// may sit on <body>. Each .className sets font-family with equal specificity;
+// stacking them let Playfair's later-emitted rule win and the whole app
+// rendered as a display serif. Headings get the serif via the h1–h4 rule in
+// globals.css; body/UI is Geist; tabular data opts into mono via .font-mono.
 const playfair = Playfair_Display({
   subsets: ["latin"],
   display: "swap",
@@ -155,7 +167,7 @@ export default async function RootLayout({
         <link rel="dns-prefetch" href="https://image.tmdb.org" />
       </head>
       <body
-        className={`${inter.className} ${playfair.className} ${inter.variable} ${playfair.variable}`}
+        className={`${geist.className} ${geist.variable} ${playfair.variable} ${geistMono.variable}`}
         suppressHydrationWarning
       >
         {/* Site-wide Organization + WebSite structured data */}

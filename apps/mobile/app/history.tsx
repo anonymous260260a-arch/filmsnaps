@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -19,8 +19,13 @@ import { tmdbApi } from "../lib/api";
 import { MediaCard } from "../components/MediaCard";
 import { ProgressiveImage } from "../components/ProgressiveImage";
 import { clearAllProgress } from "../lib/watchHistory";
-import { useWatchHistory, watchHistoryStore } from "../lib/watchHistoryStore";
+import {
+  useWatchHistory,
+  watchHistoryStore,
+  type HistoryMode,
+} from "../lib/watchHistoryStore";
 import { getImageUrl } from "@filmsnaps/shared";
+import { tmdbToAnimeIds } from "../lib/anime/resolve";
 import { EmptyState } from "../components/EmptyState";
 import type { WatchProgress } from "../lib/watchHistory";
 
@@ -146,11 +151,21 @@ export default function HistoryScreen() {
   const queryClient = useQueryClient();
   const { width: SCREEN_WIDTH } = useWindowDimensions();
 
+  // Master archive: shows ALL modes by default with a segmented filter
+  // (All / Movies-TV / Anime). Filtering happens in the store selector.
+  const [filter, setFilter] = useState<HistoryMode>("all");
+
   // Subscribe to the local-first singleton. It survives this route's unmount,
   // so returning to /history never re-fetches or flashes a skeleton — the list
   // is already resolved (stale-then-revalidate if a background refresh runs).
-  const { entries, isHydrated, isRefreshing } = useWatchHistory();
+  const { entries, isHydrated, isRefreshing } = useWatchHistory(filter);
   const [displayCount, setDisplayCount] = useState(10);
+
+  // Reset the paging window whenever the filter changes so a shorter filtered
+  // list doesn't keep showing a stale "load more" slice.
+  useEffect(() => {
+    setDisplayCount(10);
+  }, [filter]);
 
   // Keep progress fresh after returning from a watch session (the player saved
   // new progress to AsyncStorage). Stale-then-revalidate: the list is already
@@ -185,7 +200,9 @@ export default function HistoryScreen() {
             text: "Remove",
             style: "destructive",
             onPress: () => {
-              watchHistoryStore.removeItem(id, item.mediaType).catch(() => {});
+              watchHistoryStore
+                .removeItem(id, item.mediaType, item.isAnime)
+                .catch(() => {});
             },
           },
         ],
@@ -197,16 +214,34 @@ export default function HistoryScreen() {
   const handleItemPress = useCallback(
     (item: WatchProgress) => {
       const id = item.tmdbId;
+      const isAnime = item.isAnime === true;
+      const base =
+        item.mediaType === "tv"
+          ? `/watch/tv/${id}/${item.season ?? 1}/${item.episode ?? 1}`
+          : `/watch/movie/${id}`;
+      const params = new URLSearchParams({});
+      if (isAnime) {
+        params.set("isAnime", "1");
+        const ids = tmdbToAnimeIds(
+          id,
+          item.mediaType,
+          item.season,
+          item.episode,
+        );
+        if (ids) {
+          params.set("mid", String(ids.malId));
+          if (ids.anilistId != null) params.set("aid", String(ids.anilistId));
+        }
+      }
+      const target = params.toString() ? `${base}?${params.toString()}` : base;
+
       if (item.mediaType === "tv") {
-        const season = item.season ?? 1;
-        const episode = item.episode ?? 1;
         queryClient.prefetchQuery({
           queryKey: ["tv", id],
           queryFn: () => tmdbApi.getTVDetails(Number(id)),
           staleTime: 1000 * 60 * 60,
         });
         router.prefetch(`/tv/${id}`);
-        nav.push(`/watch/tv/${id}/${season}/${episode}`);
       } else {
         queryClient.prefetchQuery({
           queryKey: ["movie", id],
@@ -214,8 +249,8 @@ export default function HistoryScreen() {
           staleTime: 1000 * 60 * 60,
         });
         router.prefetch(`/movie/${id}`);
-        nav.push(`/watch/movie/${id}`);
       }
+      nav.push(target);
     },
     [nav, router, queryClient],
   );
@@ -270,6 +305,45 @@ export default function HistoryScreen() {
           >
             History
           </Text>
+        </View>
+      </View>
+
+      {/* ── Mode filter (All / Movies-TV / Anime) ── */}
+      <View className="px-5 pb-2">
+        <View
+          className="flex-row rounded-lg p-1"
+          style={{ backgroundColor: colors.bgSurface }}
+        >
+          {(
+            [
+              { key: "all", label: "All" },
+              { key: "movie_tv", label: "Movies-TV" },
+              { key: "anime", label: "Anime" },
+            ] as Array<{ key: HistoryMode; label: string }>
+          ).map(({ key, label }) => {
+            const active = filter === key;
+            return (
+              <TouchableOpacity
+                key={key}
+                onPress={() => setFilter(key)}
+                activeOpacity={0.7}
+                className="flex-1 items-center py-1.5 rounded-md"
+                style={{
+                  backgroundColor: active ? colors.gold : "transparent",
+                }}
+              >
+                <Text
+                  style={{
+                    fontFamily: "Inter_600SemiBold",
+                    fontSize: 12,
+                    color: active ? colors.bg : colors.textSecondary,
+                  }}
+                >
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
       </View>
 

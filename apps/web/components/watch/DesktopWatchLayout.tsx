@@ -49,6 +49,16 @@ interface DesktopWatchLayoutProps {
   onRetry: () => void;
   onIframeLoad: () => void;
   onIframeError: () => void;
+  /** MegaPlay fallback-chain state (present only in anime sessions). */
+  animeChain?: AnimeChainState;
+}
+
+export interface AnimeChainState {
+  exhausted: boolean;
+  tried: string[];
+  canAdvance: boolean;
+  onAdvance: () => void;
+  missReason: string | null;
 }
 
 export function DesktopWatchLayout({
@@ -71,6 +81,7 @@ export function DesktopWatchLayout({
   onRetry,
   onIframeLoad,
   onIframeError,
+  animeChain,
 }: DesktopWatchLayoutProps) {
   const router = useRouter();
   const isDesktopVp = useIsDesktop();
@@ -182,6 +193,7 @@ export function DesktopWatchLayout({
             lastCheckedAt={lastCheckedAt}
             isRefreshing={isRefreshing}
             onRefreshHealth={refresh}
+            animeChain={animeChain}
           />
         </div>
 

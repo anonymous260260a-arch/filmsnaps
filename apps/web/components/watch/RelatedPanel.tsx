@@ -32,7 +32,7 @@ export function RelatedPanel({ contentid, initialMeta }: RelatedPanelProps) {
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-bold text-[#F4F4F5]">More Like This</h3>
+      <h3 className="text-sm font-bold text-foreground">More Like This</h3>
       <div className="grid grid-cols-3 gap-3">
         {similar.map((movie: any) => {
           const posterUrl = movie.poster_path
@@ -62,7 +62,7 @@ export function RelatedPanel({ contentid, initialMeta }: RelatedPanelProps) {
                   </div>
                 )}
               </div>
-              <p className="text-[11px] text-zinc-400 mt-1.5 truncate group-hover:text-[#F4F4F5] transition-colors">
+              <p className="text-[11px] text-zinc-400 mt-1.5 truncate group-hover:text-foreground transition-colors">
                 {movie.title}
               </p>
             </Link>

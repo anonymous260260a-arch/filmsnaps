@@ -3,14 +3,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import {
-  Search,
-  Menu,
-  X,
-  ArrowLeft,
-  Download,
-  Clock,
-} from "lucide-react";
+import { Search, Menu, X, ArrowLeft, Download, Clock } from "lucide-react";
 import { useWatchlist } from "@/hooks/useWatchlist";
 import {
   tmdbApi,
@@ -205,7 +198,7 @@ export function Header() {
                 {link.count !== undefined && link.count > 0 && (
                   <span
                     suppressHydrationWarning
-                    className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold rounded-full bg-primary/20 text-primary"
+                    className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[11px] font-bold rounded-full bg-primary/20 text-primary"
                   >
                     {link.count > 99 ? "99+" : link.count}
                   </span>
@@ -222,7 +215,7 @@ export function Header() {
             >
               <Search className="h-4 w-4" />
               <span className="hidden lg:inline">Search</span>
-              <kbd className="hidden lg:inline-flex items-center gap-0.5 ml-1 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground/60 bg-white/[0.04] rounded border border-white/[0.06]">
+              <kbd className="hidden lg:inline-flex items-center gap-0.5 ml-1 px-1.5 py-0.5 text-[11px] font-mono text-muted-foreground/60 bg-white/[0.04] rounded border border-white/[0.06]">
                 ⌘K
               </kbd>
 
@@ -256,7 +249,7 @@ export function Header() {
                       {suggestions.length > 0 ? (
                         <>
                           <div className="px-3 pb-1">
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/50">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/50">
                               Suggestions
                             </p>
                           </div>
@@ -485,7 +478,7 @@ export function Header() {
               {link.count !== undefined && link.count > 0 && (
                 <span
                   suppressHydrationWarning
-                  className="inline-flex items-center justify-center min-w-[20px] h-[20px] px-1.5 text-[10px] font-bold rounded-full bg-primary/20 text-primary"
+                  className="inline-flex items-center justify-center min-w-[20px] h-[20px] px-1.5 text-[11px] font-bold rounded-full bg-primary/20 text-primary"
                 >
                   {link.count > 99 ? "99+" : link.count}
                 </span>

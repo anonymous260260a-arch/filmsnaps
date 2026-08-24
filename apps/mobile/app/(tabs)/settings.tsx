@@ -30,7 +30,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeNavigation } from "@/lib/navigation";
 import { useSettings } from "../../lib/settings";
 import { useDownloadList } from "../../lib/download";
-import { getEnabledProviders } from "@filmsnaps/shared";
+import { getProvidersForMode } from "@filmsnaps/shared";
 import { getInfoAsync, documentDirectory } from "expo-file-system/legacy";
 import Constants from "expo-constants";
 import { colors } from "../../theme/colors";
@@ -257,8 +257,13 @@ export default function SettingsScreen() {
   }, []);
 
   // ── Providers for default source picker ──
-  // Mobile shows ALL enabled providers (the platforms filter is web-only).
-  const serverProviders = useMemo(() => getEnabledProviders(), []);
+  // Default-server picker reflects the active mode's provider set (Hard Mode
+  // Split). In anime mode this includes MegaPlay; in movie/TV mode it excludes
+  // anime-only servers.
+  const serverProviders = useMemo(
+    () => getProvidersForMode(settings.mode),
+    [settings.mode],
+  );
 
   const selectedServer = settings.defaultServer;
   const selectedProviderName = useMemo(() => {
@@ -289,6 +294,60 @@ export default function SettingsScreen() {
         contentContainerStyle={{ paddingBottom: 60 }}
         showsVerticalScrollIndicator={false}
       >
+        {/* ── 0. Content Mode (Hard Mode Split) ── */}
+        <SectionCard title="Content Mode">
+          <View
+            className="flex-row items-center px-5 py-3.5"
+            style={{ backgroundColor: colors.bgCard }}
+          >
+            <View
+              className="w-9 h-9 rounded-xl items-center justify-center mr-3"
+              style={{ backgroundColor: colors.bgTop }}
+            >
+              <Ionicons
+                name="tv-outline"
+                size={18}
+                color={colors.textSecondary}
+              />
+            </View>
+            <View className="flex-1">
+              <Text
+                className="text-zinc-200 text-sm font-bold"
+                style={{ fontFamily: "Inter_600SemiBold" }}
+              >
+                {settings.mode === "anime" ? "Anime" : "Movies & TV"}
+              </Text>
+              <Text className="text-zinc-500 text-xs mt-0.5">
+                Switch the whole app between Western media and anime
+              </Text>
+            </View>
+            <View
+              className="flex-row rounded-full overflow-hidden border border-zinc-700/40"
+              style={{ pointerEvents: "auto" }}
+            >
+              {(["movie_tv", "anime"] as const).map((m) => {
+                const active = settings.mode === m;
+                return (
+                  <TouchableOpacity
+                    key={m}
+                    onPress={() => updateSetting("mode", m)}
+                    className={`px-3 h-9 items-center justify-center ${active ? "bg-primary" : ""}`}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      className={`text-xs font-bold uppercase ${
+                        active ? "text-black" : "text-zinc-300"
+                      }`}
+                    >
+                      {m === "anime" ? "Anime" : "Movies"}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </SectionCard>
+
         {/* ── 1. Playback ── */}
         <SectionCard title="Playback">
           <SettingsRow

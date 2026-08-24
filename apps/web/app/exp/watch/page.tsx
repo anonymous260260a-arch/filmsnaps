@@ -7,10 +7,19 @@
  * This is a self-contained experimental page, not the main app.
  */
 
-'use client';
+"use client";
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Search, Play, Film, X, ChevronDown, ChevronUp, Clapperboard, Loader2 } from 'lucide-react';
+import React, { useState, useCallback, useRef, useEffect } from "react";
+import {
+  Search,
+  Play,
+  Film,
+  X,
+  ChevronDown,
+  ChevronUp,
+  Clapperboard,
+  Loader2,
+} from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -31,7 +40,11 @@ interface DetailData {
     genres?: Array<{ name?: string }>;
     description?: string;
     episodes?: Array<{ name?: string; seriesNo?: number; episodeNo?: number }>;
-    seasons?: Array<{ name?: string; seriesNo?: number; episodes?: Array<any> }>;
+    seasons?: Array<{
+      name?: string;
+      seriesNo?: number;
+      episodes?: Array<any>;
+    }>;
     releaseDate?: string;
     imdbRatingValue?: string;
   };
@@ -56,7 +69,7 @@ interface StreamResult {
 // ── Helpers ──────────────────────────────────────────────────────────
 
 function formatSize(size: string): string {
-  if (!size) return '';
+  if (!size) return "";
   const n = parseInt(size, 10);
   if (isNaN(n)) return size;
   if (n > 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)} GB`;
@@ -68,7 +81,7 @@ function formatSize(size: string): string {
 
 export default function MovieBoxExpPage() {
   // Search state
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searched, setSearched] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -90,19 +103,19 @@ export default function MovieBoxExpPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [episodeSe, setEpisodeSe] = useState(1);
   const [episodeEp, setEpisodeEp] = useState(1);
-  const [activeTab, setActiveTab] = useState<'search' | 'browse'>('browse');
+  const [activeTab, setActiveTab] = useState<"search" | "browse">("browse");
   const [error, setError] = useState<string | null>(null);
 
   // ── Load home on mount ──
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/exp/moviebox/home');
+        const res = await fetch("/api/exp/moviebox/home");
         const json = await res.json();
         // Flatten sections into one list (skip Banner)
         const allItems: SearchResult[] = [];
         for (const section of json.sections || []) {
-          if (section.section !== 'Banner') {
+          if (section.section !== "Banner") {
             for (const item of section.items || []) {
               if (!allItems.find((i) => i.slug === item.slug)) {
                 allItems.push(item);
@@ -112,7 +125,7 @@ export default function MovieBoxExpPage() {
         }
         setHomeData(allItems);
       } catch (e) {
-        console.error('[MovieBox] Failed to load home:', e);
+        console.error("[MovieBox] Failed to load home:", e);
       } finally {
         setLoadingHome(false);
       }
@@ -120,29 +133,34 @@ export default function MovieBoxExpPage() {
   }, []);
 
   // ── Search handler ──
-  const handleSearch = useCallback(async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!query.trim()) return;
-    setSearching(true);
-    setSearched(true);
-    setError(null);
-    setDetailSlug(null);
-    setDetailData(null);
-    setStreamData(null);
-    setIsPlaying(false);
+  const handleSearch = useCallback(
+    async (e?: React.FormEvent) => {
+      e?.preventDefault();
+      if (!query.trim()) return;
+      setSearching(true);
+      setSearched(true);
+      setError(null);
+      setDetailSlug(null);
+      setDetailData(null);
+      setStreamData(null);
+      setIsPlaying(false);
 
-    try {
-      const res = await fetch(`/api/exp/moviebox/search?q=${encodeURIComponent(query.trim())}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Search failed');
-      setResults(json.items || []);
-    } catch (e: any) {
-      setError(e.message);
-      setResults([]);
-    } finally {
-      setSearching(false);
-    }
-  }, [query]);
+      try {
+        const res = await fetch(
+          `/api/exp/moviebox/search?q=${encodeURIComponent(query.trim())}`,
+        );
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || "Search failed");
+        setResults(json.items || []);
+      } catch (e: any) {
+        setError(e.message);
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    },
+    [query],
+  );
 
   // ── Fetch detail + stream ──
   const openDetail = useCallback(async (item: SearchResult) => {
@@ -160,7 +178,9 @@ export default function MovieBoxExpPage() {
     try {
       const [detailRes, streamRes] = await Promise.all([
         fetch(`/api/exp/moviebox/detail/${item.slug}`),
-        fetch(`/api/exp/moviebox/stream/${item.subject_id}?detail_path=${item.slug}&se=1&ep=1`),
+        fetch(
+          `/api/exp/moviebox/stream/${item.subject_id}?detail_path=${item.slug}&se=1&ep=1`,
+        ),
       ]);
 
       if (detailRes.ok) {
@@ -181,48 +201,54 @@ export default function MovieBoxExpPage() {
   }, []);
 
   // ── Episode change ──
-  const changeEpisode = useCallback(async (se: number, ep: number) => {
-    if (!detailSlug || !detailData?.data) return;
-    setEpisodeSe(se);
-    setEpisodeEp(ep);
-    setLoadingStream(true);
-    setError(null);
-    setVideoError(false);
-    setIsPlaying(false);
+  const changeEpisode = useCallback(
+    async (se: number, ep: number) => {
+      if (!detailSlug || !detailData?.data) return;
+      setEpisodeSe(se);
+      setEpisodeEp(ep);
+      setLoadingStream(true);
+      setError(null);
+      setVideoError(false);
+      setIsPlaying(false);
 
-    // Find subject_id from detail data
-    const subjectId = (detailData as any)?.data?.subjectId || '';
+      // Find subject_id from detail data
+      const subjectId = (detailData as any)?.data?.subjectId || "";
 
-    try {
-      const res = await fetch(
-        `/api/exp/moviebox/stream/${subjectId}?detail_path=${detailSlug}&se=${se}&ep=${ep}`,
-      );
-      if (!res.ok) throw new Error('Failed to load stream');
-      const json = await res.json();
-      setStreamData(json);
-      if (!json.has_resource) {
-        setError(json.note || 'No stream available for this episode');
+      try {
+        const res = await fetch(
+          `/api/exp/moviebox/stream/${subjectId}?detail_path=${detailSlug}&se=${se}&ep=${ep}`,
+        );
+        if (!res.ok) throw new Error("Failed to load stream");
+        const json = await res.json();
+        setStreamData(json);
+        if (!json.has_resource) {
+          setError(json.note || "No stream available for this episode");
+        }
+      } catch (e: any) {
+        setError(e.message);
+      } finally {
+        setLoadingStream(false);
       }
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoadingStream(false);
-    }
-  }, [detailSlug, detailData]);
+    },
+    [detailSlug, detailData],
+  );
 
   // ── Quality change ──
-  const handleQualityChange = useCallback((idx: number) => {
-    setSelectedQuality(idx);
-    // If currently playing, switch source
-    if (videoRef.current && streamData?.sources[idx]) {
-      const wasPlaying = !videoRef.current.paused;
-      videoRef.current.src = streamData.sources[idx].url;
-      videoRef.current.load();
-      if (wasPlaying) {
-        videoRef.current.play().catch(() => {});
+  const handleQualityChange = useCallback(
+    (idx: number) => {
+      setSelectedQuality(idx);
+      // If currently playing, switch source
+      if (videoRef.current && streamData?.sources[idx]) {
+        const wasPlaying = !videoRef.current.paused;
+        videoRef.current.src = streamData.sources[idx].url;
+        videoRef.current.load();
+        if (wasPlaying) {
+          videoRef.current.play().catch(() => {});
+        }
       }
-    }
-  }, [streamData]);
+    },
+    [streamData],
+  );
 
   // ── Play ──
   const [videoError, setVideoError] = useState(false);
@@ -244,22 +270,27 @@ export default function MovieBoxExpPage() {
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
           <Film className="text-[#ff3d71]" size={24} />
           <h1 className="text-lg font-bold tracking-tight">
-            MovieBox <span className="text-[#52525B] font-normal text-sm">Experiment</span>
+            MovieBox{" "}
+            <span className="text-faint font-normal text-sm">Experiment</span>
           </h1>
 
           <div className="flex items-center gap-1 ml-auto">
             <button
-              onClick={() => setActiveTab('browse')}
+              onClick={() => setActiveTab("browse")}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                activeTab === 'browse' ? 'bg-white/10 text-white' : 'text-[#52525B] hover:text-white'
+                activeTab === "browse"
+                  ? "bg-white/10 text-white"
+                  : "text-faint hover:text-white"
               }`}
             >
               Browse
             </button>
             <button
-              onClick={() => setActiveTab('search')}
+              onClick={() => setActiveTab("search")}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                activeTab === 'search' ? 'bg-white/10 text-white' : 'text-[#52525B] hover:text-white'
+                activeTab === "search"
+                  ? "bg-white/10 text-white"
+                  : "text-faint hover:text-white"
               }`}
             >
               Search
@@ -270,13 +301,13 @@ export default function MovieBoxExpPage() {
 
       <div className="max-w-6xl mx-auto px-4 py-6">
         {/* ── Search bar ── */}
-        {activeTab === 'search' && (
+        {activeTab === "search" && (
           <form onSubmit={handleSearch} className="mb-8">
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <Search
                   size={16}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-[#52525B] pointer-events-none"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-faint pointer-events-none"
                 />
                 <input
                   type="text"
@@ -291,7 +322,11 @@ export default function MovieBoxExpPage() {
                 disabled={searching || !query.trim()}
                 className="px-5 py-3 rounded-xl bg-[#ff3d71] text-white text-sm font-bold hover:bg-[#e03560] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
               >
-                {searching ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                {searching ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Search size={14} />
+                )}
                 Search
               </button>
             </div>
@@ -317,7 +352,7 @@ export default function MovieBoxExpPage() {
                 setIsPlaying(false);
                 setVideoError(false);
               }}
-              className="mb-4 text-xs text-[#52525B] hover:text-white transition-colors flex items-center gap-1"
+              className="mb-4 text-xs text-faint hover:text-white transition-colors flex items-center gap-1"
             >
               <X size={12} /> Close
             </button>
@@ -328,7 +363,7 @@ export default function MovieBoxExpPage() {
                 {!isPlaying ? (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
                     {loadingStream ? (
-                      <Loader2 size={32} className="animate-spin text-[#52525B]" />
+                      <Loader2 size={32} className="animate-spin text-faint" />
                     ) : (
                       <button
                         onClick={handlePlay}
@@ -347,14 +382,18 @@ export default function MovieBoxExpPage() {
                   playsInline
                   onError={() => {
                     setVideoError(true);
-                    setError('Failed to load video stream. Try another quality.');
+                    setError(
+                      "Failed to load video stream. Try another quality.",
+                    );
                   }}
                 />
 
                 {videoError && isPlaying && (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-20">
                     <div className="text-center">
-                      <p className="text-red-400 text-sm mb-2">Video failed to load</p>
+                      <p className="text-red-400 text-sm mb-2">
+                        Video failed to load
+                      </p>
                       <button
                         onClick={handlePlay}
                         className="px-4 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/20"
@@ -372,10 +411,10 @@ export default function MovieBoxExpPage() {
                       <button
                         key={idx}
                         onClick={() => handleQualityChange(idx)}
-                        className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase transition-all ${
+                        className={`px-2.5 py-1 rounded text-[11px] font-bold uppercase transition-all ${
                           selectedQuality === idx
-                            ? 'bg-[#ff3d71] text-white'
-                            : 'bg-black/60 text-white/60 hover:text-white'
+                            ? "bg-[#ff3d71] text-white"
+                            : "bg-black/60 text-white/60 hover:text-white"
                         }`}
                       >
                         {s.resolution}
@@ -388,7 +427,7 @@ export default function MovieBoxExpPage() {
 
             {/* ── Detail info ── */}
             {loadingDetail ? (
-              <div className="flex items-center gap-2 text-[#52525B] text-sm">
+              <div className="flex items-center gap-2 text-faint text-sm">
                 <Loader2 size={14} className="animate-spin" />
                 Loading...
               </div>
@@ -401,51 +440,57 @@ export default function MovieBoxExpPage() {
                     {detailData.data.genres.map((g: any, i: number) => (
                       <span
                         key={i}
-                        className="px-2.5 py-1 rounded-full bg-white/[0.06] text-[10px] font-semibold text-[#A1A1AA] uppercase tracking-wider"
+                        className="px-2.5 py-1 rounded-full bg-white/[0.06] text-[11px] font-semibold text-muted-foreground uppercase tracking-wider"
                       >
-                        {typeof g === 'string' ? g : g.name}
+                        {typeof g === "string" ? g : g.name}
                       </span>
                     ))}
                   </div>
                 )}
 
                 {detailData.data.description && (
-                  <p className="text-sm text-[#A1A1AA] leading-relaxed line-clamp-3">
+                  <p className="text-sm text-muted-foreground leading-relaxed line-clamp-3">
                     {detailData.data.description}
                   </p>
                 )}
 
                 {/* ── Episode selector ── */}
-                {detailData.data.seasons && detailData.data.seasons.length > 0 && (
-                  <div className="pt-2">
-                    <h3 className="text-sm font-semibold mb-3 text-[#A1A1AA] uppercase tracking-wider">
-                      Episodes
-                    </h3>
-                    <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto">
-                      {detailData.data.seasons.map((season) =>
-                        (season.episodes || []).map((ep: any) => (
-                          <button
-                            key={`${season.seriesNo}-${ep.episodeNo}`}
-                            onClick={() => changeEpisode(season.seriesNo || 1, ep.episodeNo || 1)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                              episodeSe === (season.seriesNo || 1) &&
-                              episodeEp === (ep.episodeNo || 1)
-                                ? 'bg-[#ff3d71] text-white'
-                                : 'bg-white/[0.06] text-[#A1A1AA] hover:text-white hover:bg-white/[0.12]'
-                            }`}
-                          >
-                            S{season.seriesNo || 1}:E{ep.episodeNo || 1}
-                          </button>
-                        )),
-                      )}
+                {detailData.data.seasons &&
+                  detailData.data.seasons.length > 0 && (
+                    <div className="pt-2">
+                      <h3 className="text-sm font-semibold mb-3 text-muted-foreground uppercase tracking-wider">
+                        Episodes
+                      </h3>
+                      <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto">
+                        {detailData.data.seasons.map((season) =>
+                          (season.episodes || []).map((ep: any) => (
+                            <button
+                              key={`${season.seriesNo}-${ep.episodeNo}`}
+                              onClick={() =>
+                                changeEpisode(
+                                  season.seriesNo || 1,
+                                  ep.episodeNo || 1,
+                                )
+                              }
+                              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                                episodeSe === (season.seriesNo || 1) &&
+                                episodeEp === (ep.episodeNo || 1)
+                                  ? "bg-[#ff3d71] text-white"
+                                  : "bg-white/[0.06] text-muted-foreground hover:text-white hover:bg-white/[0.12]"
+                              }`}
+                            >
+                              S{season.seriesNo || 1}:E{ep.episodeNo || 1}
+                            </button>
+                          )),
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
                 {/* Stream sources info */}
                 {streamData?.has_resource && streamData.sources.length > 0 && (
                   <div className="pt-2">
-                    <h3 className="text-sm font-semibold mb-2 text-[#A1A1AA] uppercase tracking-wider">
+                    <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">
                       Available Qualities
                     </h3>
                     <div className="flex flex-wrap gap-2">
@@ -455,11 +500,12 @@ export default function MovieBoxExpPage() {
                           onClick={() => handleQualityChange(idx)}
                           className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                             selectedQuality === idx
-                              ? 'bg-[#ff3d71] text-white ring-1 ring-[#ff3d71]/50'
-                              : 'bg-white/[0.06] text-[#A1A1AA] hover:text-white'
+                              ? "bg-[#ff3d71] text-white ring-1 ring-[#ff3d71]/50"
+                              : "bg-white/[0.06] text-muted-foreground hover:text-white"
                           }`}
                         >
-                          {s.resolution} • {s.format} {s.size ? `• ${formatSize(s.size)}` : ''}
+                          {s.resolution} • {s.format}{" "}
+                          {s.size ? `• ${formatSize(s.size)}` : ""}
                         </button>
                       ))}
                     </div>
@@ -475,11 +521,11 @@ export default function MovieBoxExpPage() {
           className={`grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3`}
         >
           {/* Home browsing */}
-          {activeTab === 'browse' && !detailSlug && (
+          {activeTab === "browse" && !detailSlug && (
             <>
               {loadingHome ? (
                 <div className="col-span-full flex items-center justify-center py-20">
-                  <Loader2 size={24} className="animate-spin text-[#52525B]" />
+                  <Loader2 size={24} className="animate-spin text-faint" />
                 </div>
               ) : (
                 homeData.map((item, idx) => (
@@ -494,16 +540,22 @@ export default function MovieBoxExpPage() {
           )}
 
           {/* Search results */}
-          {activeTab === 'search' && searched && !detailSlug && (
+          {activeTab === "search" && searched && !detailSlug && (
             <>
               {results.length === 0 && !searching ? (
-                <div className="col-span-full flex flex-col items-center justify-center py-20 text-[#52525B]">
+                <div className="col-span-full flex flex-col items-center justify-center py-20 text-faint">
                   <Search size={32} className="mb-3 opacity-30" />
-                  <p className="text-sm">No results found for &ldquo;{query}&rdquo;</p>
+                  <p className="text-sm">
+                    No results found for &ldquo;{query}&rdquo;
+                  </p>
                 </div>
               ) : (
                 results.map((item, idx) => (
-                  <Card key={idx} item={item} onClick={() => openDetail(item)} />
+                  <Card
+                    key={idx}
+                    item={item}
+                    onClick={() => openDetail(item)}
+                  />
                 ))
               )}
             </>
@@ -512,7 +564,7 @@ export default function MovieBoxExpPage() {
       </div>
 
       {/* ── Footer ── */}
-      <footer className="text-center py-12 text-[10px] text-[#52525B] uppercase tracking-widest">
+      <footer className="text-center py-12 text-[11px] text-faint uppercase tracking-widest">
         MovieBox Experiment • Powered by moviebox.ph API
       </footer>
     </div>
@@ -546,7 +598,7 @@ function Card({ item, onClick }: { item: SearchResult; onClick: () => void }) {
 
         {/* Badge */}
         {item.badge && (
-          <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-[#ff3d71]/90 text-white text-[8px] font-bold uppercase">
+          <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-[#ff3d71]/90 text-white text-[11px] font-bold uppercase">
             {item.badge}
           </span>
         )}
@@ -565,7 +617,7 @@ function Card({ item, onClick }: { item: SearchResult; onClick: () => void }) {
           {item.name}
         </p>
         {item.year && (
-          <p className="text-[10px] text-[#52525B] mt-0.5">{item.year}</p>
+          <p className="text-[11px] text-faint mt-0.5">{item.year}</p>
         )}
       </div>
     </button>

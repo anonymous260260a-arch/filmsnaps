@@ -27,6 +27,8 @@ import {
   Bookmark,
   Clock,
   Download,
+  Library,
+  Settings,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
@@ -113,6 +115,7 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
       {
         label: "Library",
         items: [
+          { href: "/library", label: "Library", icon: Library },
           {
             href: "/saved",
             label: "Saved",
@@ -120,7 +123,17 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
             count: savedMovies?.length,
           },
           { href: "/history", label: "History", icon: Clock },
-          { href: "/download", label: "Downloads", icon: Download },
+          { href: "/downloads", label: "Downloads", icon: Download },
+        ] as NavItem[],
+      },
+      {
+        label: "System",
+        items: [
+          {
+            href: "/settings",
+            label: "Settings",
+            icon: Settings,
+          },
         ] as NavItem[],
       },
     ],
@@ -247,13 +260,13 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
                 key={item.count}
                 suppressHydrationWarning
                 className="sb-pop inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full
-                  bg-[#D4A237]/15 px-1 text-[10px] font-bold tabular-nums text-[#D4A237]
+                  bg-[#D4A237]/15 px-1 text-[11px] font-bold tabular-nums text-[#D4A237]
                   ring-1 ring-[#D4A237]/25"
               >
                 {item.count > 99 ? "99+" : item.count}
               </span>
             ) : (
-              <kbd className="sb-fade text-[10px] font-medium text-zinc-700 opacity-0 transition-opacity group-hover:opacity-100">
+              <kbd className="sb-fade text-[11px] font-medium text-zinc-700 opacity-0 transition-opacity group-hover:opacity-100">
                 {mod}
                 {idx + 1}
               </kbd>
@@ -261,7 +274,7 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
           </>
         )}
         {/* pulse dot when a download is live and labels are hidden */}
-        {sidebarCollapsed && item.href === "/download" && download && (
+        {sidebarCollapsed && item.href === "/downloads" && download && (
           <span className="sb-pulse absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[#D4A237]" />
         )}
       </Link>
@@ -319,7 +332,7 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
               className="h-6 w-6 shrink-0 rounded-[7px] object-cover shadow-[0_2px_12px_rgba(212,162,55,0.25)]"
             />
             <span
-              className="truncate text-[15px] font-bold tracking-tight text-[#F4F4F5]"
+              className="truncate text-[15px] font-bold tracking-tight text-foreground"
               style={{ fontFamily: "var(--font-display)" }}
             >
               FilmSnaps
@@ -372,7 +385,7 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
               <span className="sb-fade flex-1 truncate text-left text-[13px] font-medium">
                 Search
               </span>
-              <kbd className="rounded border border-white/[0.08] bg-white/[0.04] px-1.5 py-px text-[10px] font-medium text-zinc-500">
+              <kbd className="rounded border border-white/[0.08] bg-white/[0.04] px-1.5 py-px text-[11px] font-medium text-zinc-500">
                 {mod}K
               </kbd>
             </>
@@ -384,7 +397,7 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
             {sidebarCollapsed ? (
               gi > 0 && <div className="mx-2.5 my-2 h-px bg-white/[0.06]" />
             ) : (
-              <p className="px-2.5 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-600">
+              <p className="px-2.5 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-600">
                 {group.label}
               </p>
             )}
@@ -408,7 +421,7 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
             <p className="min-w-0 flex-1 truncate text-[11px] font-medium text-zinc-300">
               {download.label}
             </p>
-            <span className="text-[10px] tabular-nums text-zinc-500">
+            <span className="text-[11px] tabular-nums text-zinc-500">
               {pct}%
             </span>
           </div>
@@ -419,7 +432,7 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
             />
           </div>
           {download.speed && (
-            <p className="mt-1 text-[10px] tabular-nums text-zinc-600">
+            <p className="mt-1 text-[11px] tabular-nums text-zinc-600">
               {download.speed}
             </p>
           )}
@@ -471,7 +484,7 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
         >
           <span className="text-xs font-medium text-zinc-200">{tip.label}</span>
           {tip.hint && (
-            <kbd className="text-[10px] text-zinc-500">{tip.hint}</kbd>
+            <kbd className="text-[11px] text-zinc-500">{tip.hint}</kbd>
           )}
         </div>
       )}

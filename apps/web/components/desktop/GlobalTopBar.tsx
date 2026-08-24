@@ -303,7 +303,7 @@ export function GlobalTopBar() {
           <span className="hidden text-xs font-medium sm:inline">Search</span>
           <kbd
             className="rounded border border-white/[0.08] bg-white/[0.05] px-1.5 py-px
-            text-[10px] font-semibold text-zinc-600 group-hover:text-zinc-400"
+            text-[11px] font-semibold text-zinc-600 group-hover:text-zinc-400"
           >
             {mod}K
           </kbd>
@@ -370,7 +370,7 @@ export function GlobalTopBar() {
             className="tb-fade flex min-w-0 items-center gap-3"
           >
             <span
-              className="max-w-[300px] truncate text-sm font-bold text-[#F4F4F5]"
+              className="max-w-[300px] truncate text-sm font-bold text-foreground"
               style={{ fontFamily: "var(--font-display)" }}
             >
               {title}

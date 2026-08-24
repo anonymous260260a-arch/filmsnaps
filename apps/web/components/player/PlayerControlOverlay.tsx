@@ -6,11 +6,11 @@
  * pointer-events-none so iframe stays clickable underneath.
  */
 
-'use client';
+"use client";
 
-import React, { useState, useEffect, useRef } from 'react';
-import { AlertCircle, X } from 'lucide-react';
-import { usePlayer } from './PlayerProvider';
+import React, { useState, useEffect, useRef } from "react";
+import { AlertCircle, X } from "lucide-react";
+import { usePlayer } from "./PlayerProvider";
 
 interface PlayerControlOverlayProps {
   /** Whether the player is in a transitioning state (loading new episode) */
@@ -34,12 +34,12 @@ export function PlayerControlOverlay({
     };
 
     // Show controls on any interaction
-    document.addEventListener('mousemove', show);
-    document.addEventListener('touchstart', show);
+    document.addEventListener("mousemove", show);
+    document.addEventListener("touchstart", show);
 
     return () => {
-      document.removeEventListener('mousemove', show);
-      document.removeEventListener('touchstart', show);
+      document.removeEventListener("mousemove", show);
+      document.removeEventListener("touchstart", show);
       if (hideTimer.current) clearTimeout(hideTimer.current);
     };
   }, []);
@@ -55,12 +55,12 @@ export function PlayerControlOverlay({
             <div className="absolute inset-0 rounded-full border-2 border-[#222226]" />
             <div
               className="absolute inset-0 rounded-full border-t-2 border-[#D4A237] animate-spin"
-              style={{ animationDuration: '1.2s' }}
+              style={{ animationDuration: "1.2s" }}
             />
             <div className="absolute inset-3 rounded-full border-2 border-[#222226]" />
             <div className="absolute inset-[18px] rounded-full bg-[#D4A237]/30" />
           </div>
-          <p className="text-xs font-black text-[#52525B] uppercase tracking-[0.3em] animate-pulse">
+          <p className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse">
             Scanning Projection Room
           </p>
         </div>
@@ -71,7 +71,7 @@ export function PlayerControlOverlay({
       {!isPending && (
         <div
           className={`absolute inset-0 z-20 transition-opacity duration-300 ${
-            visible ? 'opacity-100' : 'opacity-0'
+            visible ? "opacity-100" : "opacity-0"
           } pointer-events-none`}
         >
           {/* Gradient shadows for legibility */}
@@ -84,10 +84,13 @@ export function PlayerControlOverlay({
       {cpuWarning && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#070708]/85 backdrop-blur-sm">
           <div className="flex items-start gap-3 text-sm text-[#E05252] bg-red-500/10 px-5 py-4 rounded-xl border border-red-500/20 max-w-md mx-4">
-            <AlertCircle size={16} className="text-[#E05252] flex-shrink-0 mt-0.5" />
+            <AlertCircle
+              size={16}
+              className="text-[#E05252] flex-shrink-0 mt-0.5"
+            />
             <div className="flex-1 text-xs sm:text-sm">
               This server is using too much CPU — it has been stopped.
-              <span className="block mt-1 text-[#A1A1AA]">
+              <span className="block mt-1 text-muted-foreground">
                 Switch to a different server above to continue watching.
               </span>
             </div>

@@ -34,6 +34,15 @@ export interface WatchProgress {
   /** TMDB id of the movie or TV show */
   tmdbId: string;
   mediaType: "movie" | "tv";
+  /**
+   * Whether this progress was recorded in an anime session. Drives physical
+   * key separation (`anime:tv:123` vs `tv:123`) so a title watched in both
+   * modes keeps two independent resume points — anime (MAL/AniList seasonal
+   * numbering + MegaPlay cuts) must never corrupt movie/TV (TMDB absolute
+   * numbering + standard-server cuts) and vice-versa. `undefined`/`false`
+   * = movie/TV (legacy records default to movie/TV, no migration needed).
+   */
+  isAnime?: boolean;
   /** Which provider was used (e.g. nxsha, peachify, screenscape, etc.) */
   providerId?: string;
   /** Last playback position in seconds */
@@ -66,11 +75,15 @@ export function buildStorageKey(
   mediaType: "movie" | "tv",
   season?: number,
   episode?: number,
+  isAnime?: boolean,
 ): string {
-  if (mediaType === "tv" && season != null && episode != null) {
-    return `tv:${tmdbId}:season:${season}:episode:${episode}`;
-  }
-  return `${mediaType}:${tmdbId}`;
+  const base =
+    mediaType === "tv" && season != null && episode != null
+      ? `tv:${tmdbId}:season:${season}:episode:${episode}`
+      : `${mediaType}:${tmdbId}`;
+  // Physical separation: anime records live under a distinct prefix so they
+  // can never overwrite or resume-pollute movie/TV records for the same twin.
+  return isAnime ? `anime:${base}` : base;
 }
 
 // ── Index / migration ──────────────────────────────────────────
@@ -166,7 +179,13 @@ export async function saveProgress(progress: WatchProgress): Promise<void> {
     progress.mediaType,
     progress.season,
     progress.episode,
+    progress.isAnime,
   );
+
+  if (__DEV__)
+    console.log(
+      `[FS-WH] saveProgress key=${key} isAnime=${progress.isAnime} mediaType=${progress.mediaType} tmdbId=${progress.tmdbId} pct=${progress.percent}`,
+    );
 
   // Only persist meaningful progress (>5s) or mark completed
   const shouldPersist = progress.currentTime > 5 || progress.completed;
@@ -204,9 +223,10 @@ export async function getProgress(
   mediaType: "movie" | "tv",
   season?: number,
   episode?: number,
+  isAnime?: boolean,
 ): Promise<WatchProgress | null> {
   await migrateIfNeeded();
-  const key = buildStorageKey(tmdbId, mediaType, season, episode);
+  const key = buildStorageKey(tmdbId, mediaType, season, episode, isAnime);
   return readItem(key);
 }
 
@@ -219,18 +239,22 @@ export async function getResumePoint(
   mediaType: "movie" | "tv",
   currentSeason?: number,
   currentEpisode?: number,
+  isAnime?: boolean,
 ): Promise<WatchProgress | null> {
   await migrateIfNeeded();
 
   if (mediaType === "movie") {
-    const entry = await readItem(`movie:${tmdbId}`);
+    const entry = await readItem(
+      buildStorageKey(tmdbId, "movie", undefined, undefined, isAnime),
+    );
     if (entry && !entry.completed && entry.percent > 0.01) return entry;
     return null;
   }
 
-  // TV: read only this show's episodes (bounded set).
+  // TV: read only this show's episodes (bounded set), scoped to the mode.
   const index = await loadIndex();
-  const prefix = `tv:${tmdbId}:`;
+  const basePrefix = `tv:${tmdbId}:`;
+  const prefix = isAnime ? `anime:${basePrefix}` : basePrefix;
   const keys = index.filter((e) => e.k.startsWith(prefix)).map((e) => e.k);
   const tvEntries: WatchProgress[] = [];
   for (const k of keys) {
@@ -307,6 +331,7 @@ export async function markCompleted(
   mediaType: "movie" | "tv",
   season?: number,
   episode?: number,
+  isAnime?: boolean,
 ): Promise<void> {
   await migrateIfNeeded();
   await saveProgress({
@@ -319,6 +344,7 @@ export async function markCompleted(
     episode,
     updatedAt: Date.now(),
     completed: true,
+    isAnime,
   });
 }
 
@@ -347,9 +373,10 @@ export async function clearProgress(
   mediaType: "movie" | "tv",
   season?: number,
   episode?: number,
+  isAnime?: boolean,
 ): Promise<void> {
   await migrateIfNeeded();
-  const key = buildStorageKey(tmdbId, mediaType, season, episode);
+  const key = buildStorageKey(tmdbId, mediaType, season, episode, isAnime);
   await AsyncStorage.removeItem(ITEM_PREFIX + key);
   const index = await loadIndex();
   const filtered = index.filter((e) => e.k !== key);
@@ -365,13 +392,16 @@ export async function clearProgress(
 export async function clearMediaProgress(
   tmdbId: string | number,
   mediaType: "movie" | "tv",
+  isAnime?: boolean,
 ): Promise<void> {
   await migrateIfNeeded();
   const idStr = String(tmdbId);
+  const prefix = isAnime ? `anime:` : "";
   const matchKey = (k: string): boolean =>
     mediaType === "tv"
-      ? k === `tv:${idStr}` || k.startsWith(`tv:${idStr}:`)
-      : k === `movie:${idStr}` || k.startsWith(`movie:${idStr}:`);
+      ? k === `${prefix}tv:${idStr}` || k.startsWith(`${prefix}tv:${idStr}:`)
+      : k === `${prefix}movie:${idStr}` ||
+        k.startsWith(`${prefix}movie:${idStr}:`);
   const index = await loadIndex();
   const matched = index.filter((e) => matchKey(e.k));
   for (const m of matched) {
@@ -408,10 +438,14 @@ export async function getAggregatedHistory(): Promise<
 > {
   const all = await getAllProgress();
 
-  // Group by tmdbId
+  // Group by tmdbId — but keep anime and movie/TV physically separate even when
+  // they share a TMDB twin id. The `anime:` prefix lives on the storage key, not
+  // on WatchProgress fields, so we must key the group on isAnime explicitly or a
+  // leaked/legacy movie/TV record for the same twin will merge into (and mask)
+  // the anime one.
   const groups = new Map<string, WatchProgress[]>();
   for (const entry of all) {
-    const key = `${entry.mediaType}:${entry.tmdbId}`;
+    const key = `${entry.isAnime === true ? "anime:" : ""}${entry.mediaType}:${entry.tmdbId}`;
     const existing = groups.get(key) ?? [];
     existing.push(entry);
     groups.set(key, existing);

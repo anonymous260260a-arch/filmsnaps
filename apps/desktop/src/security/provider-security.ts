@@ -26,7 +26,6 @@ import {
 } from "./provider-config";
 import { getCurrentBlockingProviderId } from "./request-filter";
 import { getCosmeticFilterPayload } from "./filter-engine";
-import { armFetchHtmlInjection } from "./html-injector";
 
 const CDP_PROTOCOL = "1.3";
 /** How long after a committed navigation to probe the frame tree. */

@@ -26,8 +26,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ForwardIcon } from "../../components/Icons";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeNavigation } from "@/lib/navigation";
+import { useSettings } from "@/lib/settings";
 import { useFocusEffect } from "expo-router";
 import { useDownloadList } from "../../lib/download";
+import { tmdbToAnimeIds } from "../../lib/anime/resolve";
 import { getAllBookmarks } from "../../lib/bookmarks";
 import {
   useWatchHistory,
@@ -119,6 +121,7 @@ function EmptyLibrary() {
 export default function LibraryScreen() {
   const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
+  const { settings } = useSettings();
   const { width: SCREEN_WIDTH } = useWindowDimensions();
   const cardWidth = ITEM_WIDTH_COEFF(SCREEN_WIDTH);
   const cardHeight = cardWidth * 1.5;
@@ -138,8 +141,11 @@ export default function LibraryScreen() {
     return () => unsub();
   }, []);
 
-  // ── History / Continue Watching — subscribe to the local-first singleton ──
-  const { entries: storeHistory } = useWatchHistory();
+  // ── History / Continue Watching — subscribe to the local-first singleton,
+  //    scoped to the active mode (Library previews show only current mode). ──
+  const { entries: storeHistory } = useWatchHistory(
+    settings.mode === "anime" ? "anime" : "movie_tv",
+  );
   const historyEntries = useMemo(
     () =>
       storeHistory as Array<{ latest: WatchProgress; fullyWatched: boolean }>,
@@ -249,11 +255,20 @@ export default function LibraryScreen() {
 
   const handleHistoryPress = useCallback(
     (p: WatchProgress) => {
-      if (p.mediaType === "tv") {
-        nav.push(`/watch/tv/${p.tmdbId}/${p.season ?? 1}/${p.episode ?? 1}`);
-      } else {
-        nav.push(`/watch/movie/${p.tmdbId}`);
+      const base =
+        p.mediaType === "tv"
+          ? `/watch/tv/${p.tmdbId}/${p.season ?? 1}/${p.episode ?? 1}`
+          : `/watch/movie/${p.tmdbId}`;
+      const params = new URLSearchParams({});
+      if (p.isAnime === true) {
+        params.set("isAnime", "1");
+        const ids = tmdbToAnimeIds(p.tmdbId, p.mediaType, p.season, p.episode);
+        if (ids) {
+          params.set("mid", String(ids.malId));
+          if (ids.anilistId != null) params.set("aid", String(ids.anilistId));
+        }
       }
+      nav.push(params.toString() ? `${base}?${params.toString()}` : base);
     },
     [nav],
   );

@@ -120,10 +120,10 @@ export function ServerPickerSheet({
               }`}
             />
             <div className="min-w-0">
-              <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-0.5">
+              <p className="text-[11px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-0.5">
                 Source Server
               </p>
-              <p className="text-sm font-bold text-[#F4F4F5] truncate">
+              <p className="text-sm font-bold text-foreground truncate">
                 {currentProvider.displayName || currentProvider.name}
               </p>
             </div>
@@ -157,7 +157,7 @@ export function ServerPickerSheet({
             {/* Header */}
             <div className="flex items-center justify-between mb-6 mt-2 md:mt-0">
               <h3
-                className="text-lg font-bold text-[#F4F4F5]"
+                className="text-lg font-bold text-foreground"
                 style={{ fontFamily: "var(--font-display)" }}
               >
                 Select Source
@@ -211,7 +211,7 @@ export function ServerPickerSheet({
                     <span className="flex-1 min-w-0">
                       <span
                         className={`block text-sm font-semibold truncate ${
-                          isActive ? "text-[#D4A237]" : "text-[#F4F4F5]"
+                          isActive ? "text-[#D4A237]" : "text-foreground"
                         }`}
                       >
                         {p.displayName || p.name}
@@ -219,7 +219,7 @@ export function ServerPickerSheet({
                       {p.note && (
                         <span
                           className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full
-                          bg-[#D4A237]/15 text-[#D4A237] text-[9px] font-bold
+                          bg-[#D4A237]/15 text-[#D4A237] text-[11px] font-bold
                           border border-[#D4A237]/30"
                         >
                           {p.note}
@@ -229,7 +229,7 @@ export function ServerPickerSheet({
 
                     {/* Latency */}
                     {health?.alive && health.latencyMs && (
-                      <span className="text-[10px] font-medium text-zinc-500">
+                      <span className="text-[11px] font-medium text-zinc-500">
                         {health.latencyMs < 2000
                           ? `${health.latencyMs}ms`
                           : `${Math.round(health.latencyMs / 1000)}s`}

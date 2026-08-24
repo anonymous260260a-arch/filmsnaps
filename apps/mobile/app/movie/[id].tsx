@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import {
   View,
   Text,
@@ -36,6 +42,7 @@ import { downloadToast } from "../../lib/download";
 import { prefetchArtwork } from "../../lib/prefetchArtwork";
 import type { WatchProgress } from "../../lib/watchHistory";
 import type { Movie } from "@filmsnaps/shared";
+import { resolveMovie } from "../../lib/anime/resolve";
 import * as Haptics from "expo-haptics";
 import { Share } from "react-native";
 
@@ -63,6 +70,12 @@ export default function MovieDetailScreen() {
   const movie = data;
   const title = movie?.title || movie?.name || "";
 
+  // Per-title anime: derive from the map, NOT the global mode. A movie-mode
+  // user who taps a genuinely-anime title still gets the anime session, and an
+  // anime-mode user who taps a regular movie gets the movie session.
+  const animeHit = useMemo(() => resolveMovie(id!) ?? null, [id]);
+  const isAnime = animeHit != null;
+
   const [bookmarked, setBookmarked] = useState(false);
   const [trailerOpen, setTrailerOpen] = useState(false);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
@@ -72,7 +85,7 @@ export default function MovieDetailScreen() {
   useEffect(() => {
     if (id) {
       isBookmarked(id!).then(setBookmarked);
-      getProgress(id!, "movie").then((p) => {
+      getProgress(id!, "movie", undefined, undefined, isAnime).then((p) => {
         if (p && p.percent > 0) setResumeState(p);
       });
     }
@@ -467,11 +480,22 @@ export default function MovieDetailScreen() {
             <TouchableOpacity
               onPress={() => {
                 const base = `/watch/movie/${id}`;
-                const qs =
+                const params = new URLSearchParams(
                   resumeState && resumeState.percent < 0.95
-                    ? `?t=${Math.floor(resumeState.currentTime)}&backdrop=${movie.backdrop_path || ""}`
-                    : `?backdrop=${movie.backdrop_path || ""}`;
-                nav.push(`${base}${qs}`);
+                    ? {
+                        t: String(Math.floor(resumeState.currentTime)),
+                        backdrop: movie.backdrop_path || "",
+                      }
+                    : { backdrop: movie.backdrop_path || "" },
+                );
+                if (animeHit) {
+                  params.set("isAnime", "1");
+                  params.set("mid", String(animeHit.malId));
+                  if (animeHit.anilistId != null)
+                    params.set("aid", String(animeHit.anilistId));
+                  params.set("audio", "sub");
+                }
+                nav.push(`${base}?${params.toString()}`);
               }}
               activeOpacity={0.9}
               style={{

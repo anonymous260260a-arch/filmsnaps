@@ -17,13 +17,13 @@ const LINKS = [
 export function LegalFooter() {
   return (
     <DesktopGate>
-      <footer className="border-t border-zinc-800/60">
+      <footer className="border-t border-border">
         <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-x-6 gap-y-2 px-4 py-8">
           {LINKS.map((link) => (
             <Link
               key={link.href}
               href={link.href}
-              className="text-xs text-zinc-500 transition-colors hover:text-amber-400"
+              className="text-xs text-muted-foreground transition-colors hover:text-primary"
             >
               {link.label}
             </Link>

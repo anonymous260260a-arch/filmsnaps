@@ -10,6 +10,7 @@ export type {
   ProviderDefinition,
   ProviderProtection,
   ProviderCapabilities,
+  MediaType,
 } from "./types/provider";
 
 // ── Providers ──
@@ -22,6 +23,10 @@ export {
   isUiEnabled,
   getProgressMode,
   getResumeMode,
+  filterAnimeProviders,
+  getNonAnimeProviders,
+  getProvidersForMode,
+  type AppMode,
 } from "./providers/registry";
 export {
   checkProviderHealth,

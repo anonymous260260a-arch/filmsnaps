@@ -1,4 +1,11 @@
-import type { ProviderDefinition } from "../types/provider";
+import type { ProviderDefinition, MediaType } from "../types/provider";
+
+/**
+ * App-wide content mode (Hard Mode Split). Mobile drives the whole app off
+ * this; web/desktop still lean on `animeOnly`/`ANIME_PROVIDER_IDS` until
+ * migrated. `'movie_tv'` = TMDB movies & TV; `'anime'` = MAL/AniList-keyed.
+ */
+export type AppMode = MediaType; // 'movie_tv' | 'anime'
 
 /**
  * All providers registered in one place.
@@ -15,6 +22,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     id: "nxsha",
     name: "Nxsha",
     displayName: "Source 1",
+    mediaTypes: ["movie_tv", "anime"], // Hybrid — carries some anime
     note: "Multi-lang · Fast · Sometimes gets down",
     baseUrl: "https://web.nxsha.app",
     embed: {
@@ -59,12 +67,14 @@ export const PROVIDERS: ProviderDefinition[] = [
     id: "peachify",
     name: "peachify",
     displayName: "Source 2",
+    mediaTypes: ["movie_tv"],
     note: "Multi-lang",
     baseUrl: "https://peachify.top/embed",
     embed: {
-      movie: (id) => `/movie/${id}?dub=Hi&accent=FF9900&cast=hide&pip=hide`,
-      tv: (id, season, episode) =>
-        `/tv/${id}/${season}/${episode}?dub=Hi&accent=FF9900&cast=hide&pip=hide`,
+      movie: (id, startAt) =>
+        `/movie/${id}?dub=Hi&accent=FF9900&cast=hide&pip=hide${startAt ? `&startAt=${Math.floor(startAt)}` : ""}`,
+      tv: (id, season, episode, startAt) =>
+        `/tv/${id}/${season}/${episode}?dub=Hi&accent=FF9900&cast=hide&pip=hide${startAt ? `&startAt=${Math.floor(startAt)}` : ""}`,
     },
     sandbox: "allow-scripts allow-same-origin ",
     // Hidden from the web picker (mobile + desktop show all enabled).
@@ -89,6 +99,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     id: "screenscape",
     name: "ScreenScape",
     displayName: "Source 3",
+    mediaTypes: ["movie_tv", "anime"], // Hybrid
     note: "Reliable · Multi-lang · Always-Work",
     baseUrl: "https://screenscape.me/embed",
     embed: {
@@ -276,9 +287,10 @@ export const PROVIDERS: ProviderDefinition[] = [
     reactSafe: true,
     disableDevtoolPatch: true,
     embed: {
-      movie: (id) => `/2/movie/${id}?color=e01621`,
-      tv: (id, season, episode) =>
-        `/2/tv/${id}/${season}/${episode}?color=e01621`,
+      movie: (id, startAt) =>
+        `/2/movie/${id}?color=e01621${startAt ? `&progress=${Math.floor(startAt)}` : ""}`,
+      tv: (id, season, episode, startAt) =>
+        `/2/tv/${id}/${season}/${episode}?color=e01621${startAt ? `&progress=${Math.floor(startAt)}` : ""}`,
     },
     // viduki.net (vidsrc2) posts MEDIA_DATA natively (progress: 'native') and
     // accepts a ?progress= resume param (resume: 'url').
@@ -416,8 +428,10 @@ export const PROVIDERS: ProviderDefinition[] = [
     // enabled: false,
     baseUrl: "https://player.videasy.net",
     embed: {
-      movie: (id) => `/movies/${id}`,
-      tv: (id, season, episode) => `/tv/${id}/${season}/${episode}`,
+      movie: (id, startAt) =>
+        `/movies/${id}${startAt ? `?progress=${Math.floor(startAt)}` : ""}`,
+      tv: (id, season, episode, startAt) =>
+        `/tv/${id}/${season}/${episode}${startAt ? `?progress=${Math.floor(startAt)}` : ""}`,
     },
     // videasy emits no live events — app media hook (progress: 'app'); resume is
     // via the ?progress= URL param only (resume: 'url').
@@ -512,6 +526,46 @@ export const PROVIDERS: ProviderDefinition[] = [
     },
     allowedOrigins: ["https://streamguide.cfd"],
   },
+  // ── MegaPlay (anime-only · MAL/AniList-keyed) ───────────────
+  // URL shapes: /stream/mal/<malId>/<ep>/<sub|dub> and /stream/ani/<anilistId>/...
+  // Keyed by MyAnimeList/AniList IDs, NOT TMDB. `animeOnly` keeps it out of
+  // every movie/TV picker (all platforms); it appears only in anime-profiled
+  // watch sessions, where the caller passes EmbedOptions.idSpace + resolved ids.
+  // Expert verdict Q6a/Q8: opts-based builders, v1 sub-only UI (opts.audio is
+  // honored but never set by callers yet).
+  {
+    id: "megaplay",
+    name: "MegaPlay",
+    displayName: "MegaPlay",
+    note: "Anime · Sub & Dub",
+    baseUrl: "https://megaplay.buzz",
+    mediaTypes: ["anime"],
+    enabled: true,
+    animeOnly: true,
+    order: 30,
+    embed: {
+      // Anime film — no episode segment.
+      movie: (id, _startAt, opts) =>
+        `/stream/${opts?.idSpace === "ani" ? "ani" : "mal"}/${id}/${
+          opts?.audio === "dub" ? "dub" : "sub"
+        }`,
+      tv: (id, _season, episode, _startAt, opts) =>
+        `/stream/${opts?.idSpace === "ani" ? "ani" : "mal"}/${id}/${episode}/${
+          opts?.audio === "dub" ? "dub" : "sub"
+        }`,
+    },
+    allowedOrigins: [
+      "https://megaplay.buzz",
+      "https://megacloud.animanga.fun",
+      "https://upcloud.animanga.fun",
+    ],
+    sandbox: "allow-scripts allow-same-origin ",
+    // Player posts events over window.parent.postMessage (megacloud channel) —
+    // event contract unverified, so progress stays default-native (passive)
+    // and resume stays default-postMessage: unlike screenscape, MegaPlay does
+    // not self-resume (fresh loads start at 0), so an app-side seek is safe to
+    // attempt and silently degrades if the nested player ignores it.
+  },
 ];
 
 /**
@@ -533,6 +587,48 @@ export function getEnabledProviders(
   return PROVIDERS.filter(
     (p) => p.enabled !== false && (includeDownloadOnly || !p.forDownloadOnly),
   ).sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+}
+
+/**
+ * Providers allowed in an anime-profiled watch session, in picker priority
+ * order (expert verdict: servers 1 + 3 carry some anime; megaplay is the
+ * dedicated anime source). Intersected with each platform's own rules.
+ */
+export const ANIME_PROVIDER_IDS = ["nxsha", "screenscape", "megaplay"];
+
+/**
+ * Intersect a platform-filtered provider list with the anime allowlist.
+ * Callers apply their platform filtering first; this narrows to anime-capable
+ * servers only.
+ */
+export function filterAnimeProviders(
+  providers: ProviderDefinition[],
+): ProviderDefinition[] {
+  const allow = new Set<string>(ANIME_PROVIDER_IDS);
+  return providers.filter((p) => allow.has(p.id));
+}
+
+/**
+ * Providers for regular movie/TV sessions — excludes `animeOnly` providers
+ * whose URLs are keyed by MAL/AniList ids and would break with a TMDB id.
+ * Every server-picker surface (web, desktop, mobile RN) must derive its list
+ * through this (or an equivalent filter) rather than the raw enabled list.
+ */
+export function getNonAnimeProviders(): ProviderDefinition[] {
+  return getEnabledProviders().filter((p) => p.animeOnly !== true);
+}
+
+/**
+ * Hard Mode Split picker (mobile). Returns enabled providers whose
+ * `mediaTypes` includes the active mode. Providers without `mediaTypes` are
+ * treated as `['movie_tv']` (legacy default) so unmigrated entries still
+ * appear in movie/TV mode. Prefer this over `getNonAnimeProviders` /
+ * `filterAnimeProviders` on mobile.
+ */
+export function getProvidersForMode(mode: MediaType): ProviderDefinition[] {
+  return getEnabledProviders().filter((p) =>
+    (p.mediaTypes ?? ["movie_tv"]).includes(mode),
+  );
 }
 
 /**

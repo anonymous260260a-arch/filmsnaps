@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "2.1.0",
+      "date": "2026-08-24",
+      "releaseNotes": "Full anime support: Anime mode toggle surfaces anime titles via AniList search and routes playback to MegaPlay. Every anime title auto-matches to its MyAnimeList / AniList ID with automatic 410 fallback between ID spaces. Movie/TV and anime libraries stay separate — watch history, continue-watching, and saved lists are organized by content type, and any title always opens with the correct set of servers regardless of active mode. Search filter simplified to Movies/TV and Anime. Version-gated in-app announcement drives users to the website download.",
+      "downloadUrl": "https://filmsnap-pro.netlify.app/download",
+      "size": "~90 MB"
+    },
+    {
       "version": "2.0.0",
       "date": "2026-08-20",
       "releaseNotes": "v2.0.0 — Desktop security architecture overhaul: migrated from <webview> to WebContentsView with full ad-blocking engine restructure (Ghostery engine + uBO filter lists + Ed25519-signed OTA config). Android player reliability: server-redirect fix for viduki.net/videasy.net, devtools-detector.js stub injection, disable-devtool patch. New Settings Community section with GitHub + Website links and Star on GitHub card. Download engine v2 with live byte tracking for accurate pause/resume. New Feedback Portal with 14-layer abuse prevention (Turnstile CAPTCHA, rate limiting, spam scoring, offline queue).",

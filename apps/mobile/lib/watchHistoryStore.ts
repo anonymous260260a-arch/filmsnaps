@@ -22,7 +22,7 @@
  * store is a better fit than remote-server-state tooling.
  */
 
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { tmdbApi } from "./api";
 import {
   getAggregatedHistory,
@@ -56,6 +56,31 @@ export interface WatchHistorySnapshot {
   isHydrated: boolean;
   /** True during a forceRefresh() (pull-to-refresh) pass. */
   isRefreshing: boolean;
+}
+
+/**
+ * History filter consumed by the store selector. `all` returns every entry
+ * (the /history master archive); `movie_tv` / `anime` scope to the active mode.
+ * Filtering lives in the data layer (not the UI) so MRU caps and re-renders
+ * apply after the filter.
+ */
+export type HistoryMode = "all" | "movie_tv" | "anime";
+
+function filterByMode(
+  entries: ResolvedHistoryEntry[],
+  mode: HistoryMode,
+): ResolvedHistoryEntry[] {
+  if (mode === "all") return entries;
+  const out = entries.filter((e) =>
+    mode === "anime" ? e.latest.isAnime === true : e.latest.isAnime !== true,
+  );
+  if (__DEV__)
+    console.log(
+      `[FS-WH] filterByMode mode=${mode} total=${entries.length} shown=${out.length} flags=${JSON.stringify(
+        entries.map((e) => e.latest.isAnime),
+      )}`,
+    );
+  return out;
 }
 
 class WatchHistoryStore {
@@ -233,16 +258,22 @@ class WatchHistoryStore {
   async removeItem(
     tmdbId: string | number,
     mediaType: "movie" | "tv",
+    isAnime?: boolean,
   ): Promise<void> {
     const idStr = String(tmdbId);
     try {
-      await clearMediaProgress(tmdbId, mediaType);
+      await clearMediaProgress(tmdbId, mediaType, isAnime);
     } catch {
       // ignore storage errors — still remove from in-memory view
     }
 
     this.entries = this.entries.filter(
-      (e) => !(e.latest.tmdbId === idStr && e.latest.mediaType === mediaType),
+      (e) =>
+        !(
+          e.latest.tmdbId === idStr &&
+          e.latest.mediaType === mediaType &&
+          (e.latest.isAnime ?? false) === (isAnime ?? false)
+        ),
     );
 
     const cached = await readHistoryMetaCache();
@@ -263,12 +294,21 @@ export const watchHistoryStore = new WatchHistoryStore();
  * the screen can show a one-time skeleton; afterwards it renders instantly,
  * including after route unmounts.
  */
-export function useWatchHistory(): WatchHistorySnapshot {
-  return useSyncExternalStore(
+export function useWatchHistory(
+  mode: HistoryMode = "all",
+): WatchHistorySnapshot {
+  const raw = useSyncExternalStore(
     watchHistoryStore.subscribe,
     watchHistoryStore.getSnapshot,
     watchHistoryStore.getSnapshot,
   );
+  // Filter at the data layer. Memoized on the raw snapshot + mode so the
+  // filtered array reference is stable across renders unless either changes.
+  const entries = useMemo(
+    () => filterByMode(raw.entries, mode),
+    [raw.entries, mode],
+  );
+  return { ...raw, entries };
 }
 
 // Start hydration as soon as this module is first imported (the home screen

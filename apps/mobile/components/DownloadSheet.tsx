@@ -30,18 +30,31 @@ interface ServerOption {
 
 const SERVERS: ServerOption[] = [
   {
-    key: "nxsha",
-    label: "Server 1",
-    subtitle: "HD quality · Fast",
-    icon: "cloud-download-outline",
+    key: "falix",
+    label: "Falix",
+    subtitle: "Direct HEVC files · bulk seasons",
+    icon: "phone-portrait-outline",
+    badge: "Primary",
+    badgeColor: colors.gold,
   },
   {
-    key: "falix",
-    label: "Server 3",
-    subtitle: "Smaller file · Good for storage",
-    icon: "phone-portrait-outline",
+    key: "nxsha",
+    label: "Nxsha",
+    subtitle: "Multi-server direct links",
+    icon: "cloud-download-outline",
+    badge: "Secondary",
+    badgeColor: colors.textTertiary,
   },
 ];
+
+interface ServerOption {
+  key: string;
+  label: string;
+  subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  badge?: string;
+  badgeColor?: string;
+}
 
 interface DownloadSheetProps {
   visible: boolean;
@@ -123,7 +136,37 @@ export function DownloadSheet({
                     />
                   </View>
                   <View style={styles.serverInfo}>
-                    <Text style={styles.serverLabel}>{server.label}</Text>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                      }}
+                    >
+                      <Text style={styles.serverLabel}>{server.label}</Text>
+                      {server.badge && (
+                        <View
+                          style={{
+                            borderRadius: 10,
+                            paddingHorizontal: 6,
+                            paddingVertical: 1,
+                            backgroundColor: `${server.badgeColor}22`,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 9,
+                              fontWeight: "800",
+                              letterSpacing: 0.5,
+                              color: server.badgeColor,
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            {server.badge}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                     <Text style={styles.serverSubtitle}>{server.subtitle}</Text>
                   </View>
                   <Ionicons

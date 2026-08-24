@@ -6,9 +6,19 @@
  *   - createAsyncStorageAdapter() — for mobile (React Native)
  */
 
-import type { StorageAdapter } from './types';
+import type { StorageAdapter, WatchProgress, WatchHistoryMap } from "./types";
+import { buildStorageKey } from "./useWatchHistory";
 
 // ── localStorage adapter (web) ────────────────────────────────────
+//
+// Stores history as per-item keys: @filmsnaps/watch:<flatKey>
+// where flatKey is e.g. "movie:123" or "tv:123:season:1:episode:3".
+// Also maintains an @filmsnaps/watch-index MRU index capped at 1000 entries,
+// mirroring mobile's watchHistoryStore model.
+//
+// This shape enables: getResumePoint, getProgress, saveProgress, clearProgress,
+// removeEntry, clearAll, getAllProgress, getAggregatedHistory — all of which
+// expect per-item keys, not a single monolithic blob.
 
 /**
  * Create a storage adapter backed by window.localStorage.
@@ -18,9 +28,7 @@ import type { StorageAdapter } from './types';
  * tabs receive the change immediately.
  */
 export function createLocalStorageAdapter(): StorageAdapter {
-  const listeners = new Set<
-    (key: string, newValue: string | null) => void
-  >();
+  const listeners = new Set<(key: string, newValue: string | null) => void>();
 
   // Cross-tab sync listener
   const handleStorageEvent = (e: StorageEvent) => {
@@ -30,8 +38,8 @@ export function createLocalStorageAdapter(): StorageAdapter {
     }
   };
 
-  if (typeof window !== 'undefined') {
-    window.addEventListener('storage', handleStorageEvent);
+  if (typeof window !== "undefined") {
+    window.addEventListener("storage", handleStorageEvent);
   }
 
   return {
@@ -78,13 +86,11 @@ export function createLocalStorageAdapter(): StorageAdapter {
  * On mobile there's no cross-tab sync (single-window app). The
  * `addCrossTabListener` is omitted.
  */
-export function createAsyncStorageAdapter(
-  asyncStorage: {
-    getItem: (key: string) => Promise<string | null>;
-    setItem: (key: string, value: string) => Promise<void>;
-    removeItem: (key: string) => Promise<void>;
-  },
-): StorageAdapter {
+export function createAsyncStorageAdapter(asyncStorage: {
+  getItem: (key: string) => Promise<string | null>;
+  setItem: (key: string, value: string) => Promise<void>;
+  removeItem: (key: string) => Promise<void>;
+}): StorageAdapter {
   return {
     async getItem(key: string): Promise<string | null> {
       try {

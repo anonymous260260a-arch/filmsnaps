@@ -25,12 +25,12 @@ export default function NotFound() {
           </div>
 
           <h1
-            className="text-4xl font-bold text-[#F4F4F5] mb-3"
+            className="text-4xl font-bold text-foreground mb-3"
             style={{ fontFamily: "var(--font-display)" }}
           >
             Page Not Found
           </h1>
-          <p className="text-[#A1A1AA] text-sm leading-relaxed mb-8">
+          <p className="text-muted-foreground text-sm leading-relaxed mb-8">
             The page you&apos;re looking for doesn&apos;t exist or was moved.
             Let&apos;s get you back to the good stuff — trending movies and TV
             shows.
@@ -45,7 +45,7 @@ export default function NotFound() {
             </Link>
             <Link
               href="/"
-              className="w-full sm:w-auto bg-[#16161A] hover:bg-[#1E1E24] active:scale-[0.98] transition-all rounded-xl py-3 px-6 text-[#F4F4F5] font-bold text-sm ring-1 ring-white/10"
+              className="w-full sm:w-auto bg-[#16161A] hover:bg-[#1E1E24] active:scale-[0.98] transition-all rounded-xl py-3 px-6 text-foreground font-bold text-sm ring-1 ring-white/10"
             >
               Go Home
             </Link>

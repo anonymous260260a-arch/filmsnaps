@@ -65,7 +65,7 @@ export function LegalGateOverlay({
             className="mb-6 h-[72px] w-[72px] rounded-[18px]"
           />
           <h1
-            className="mb-3 text-center text-[22px] font-bold text-[#F4F4F5]"
+            className="mb-3 text-center text-[22px] font-bold text-foreground"
             style={{ fontFamily: "var(--font-display)" }}
           >
             You&apos;ve declined the terms of use

@@ -67,6 +67,13 @@ filmsnaps/
 - **Stack:** Expo SDK 55, React Native 0.83, TypeScript.
 - **Role:** the phone app — discovery, downloads (SQLite-backed), watch
   history, and a native hardened player via the `PlayerWebView` Expo module.
+- **Modes:** a global **Hard Mode Split** (`apps/mobile/lib/settings.tsx`) drives
+  the whole app between `movie_tv` (TMDB movies & TV) and `anime` (MAL/AniList-keyed).
+  Anime mode surfaces titles via AniList search (`apps/mobile/lib/anime/search.ts`),
+  resolves each to its MAL/AniList ID (`apps/mobile/lib/anime/resolve.ts`, backed by
+  the OTA-bundled `apps/mobile/lib/anime/anime-map.json`), and routes playback to
+  **MegaPlay**. Server selection is **per-title**, so a movie inside anime mode (or
+  anime inside movie/TV mode) still opens with the correct provider set.
 - **Native modules:** `modules/player-webview/` (Android `AdblockEngine.kt`,
   `PlayerWebViewOverlayView.kt`; iOS `PlayerWebView.swift`).
 - **Downloads:** `lib/download/` — manager + SQLite store + native downloader.
@@ -90,17 +97,17 @@ filmsnaps/
 
 Shared logic consumed by all apps. Exposes subpath exports:
 
-| Subpath      | Contents                                                                                                                                     |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.`          | Barrel: guard script builder, providers, types, utils.                                                                                       |
-| `/security`  | `playerGuard.ts` (15-layer guard), `scriptlets.ts` (uBO scriptlets), `navigation-home.ts` (home-escape guard).                               |
-| `/providers` | Provider registry (`registry.ts`) — single source of truth.                                                                                  |
-| `/types`     | Shared TypeScript types (movie, provider).                                                                                                   |
-| `/api`       | TMDB API helpers.                                                                                                                            |
-| `/state`     | `useWatchHistory` + storage layer (watchlist state is per-app: web `apps/web/hooks/useWatchlist.ts`, mobile `apps/mobile/lib/bookmarks.ts`). |
-| `/theme`     | Design tokens.                                                                                                                               |
-| `/utils`     | `cn`, image, video helpers.                                                                                                                  |
-| `/constants` | TMDB constants.                                                                                                                              |
+| Subpath      | Contents                                                                                                                                                                                 |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.`          | Barrel: guard script builder, providers, types, utils.                                                                                                                                   |
+| `/security`  | `playerGuard.ts` (15-layer guard), `scriptlets.ts` (uBO scriptlets), `navigation-home.ts` (home-escape guard).                                                                           |
+| `/providers` | Provider registry (`registry.ts`) — single source of truth, including the Hard Mode Split (`getProvidersForMode`, `getNonAnimeProviders`, `filterAnimeProviders`, `ANIME_PROVIDER_IDS`). |
+| `/types`     | Shared TypeScript types (movie, provider).                                                                                                                                               |
+| `/api`       | TMDB API helpers.                                                                                                                                                                        |
+| `/state`     | `useWatchHistory` + storage layer (watchlist state is per-app: web `apps/web/hooks/useWatchlist.ts`, mobile `apps/mobile/lib/bookmarks.ts`).                                             |
+| `/theme`     | Design tokens.                                                                                                                                                                           |
+| `/utils`     | `cn`, image, video helpers.                                                                                                                                                              |
+| `/constants` | TMDB constants.                                                                                                                                                                          |
 
 Built with `pnpm --filter @filmsnaps/shared build` (postinstall hook). A
 postbuild step (`packages/shared/scripts/fix-dist-imports.mjs`) normalizes ESM

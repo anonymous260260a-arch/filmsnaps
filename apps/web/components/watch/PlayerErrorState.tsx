@@ -3,6 +3,11 @@
  *
  * Shows provider name, retry options, and quick-switch to alternative servers.
  * Servers are offered in registry order — no ping rearrangement, no auto/best-available.
+ *
+ * `variant="anime-exhausted"` renders the terminal MegaPlay chain state
+ * (verdict §9 Q10): different copy + a monospace debug line listing every
+ * ID-space that was tried (`Tried: MAL #821, AniList #821`) so bug reports
+ * carry their own telemetry.
  */
 
 "use client";
@@ -22,6 +27,10 @@ interface PlayerErrorStateProps {
   onSelectProvider: (provider: ProviderDefinition) => void;
   /** Called to retry the current provider */
   onRetry: () => void;
+  /** Anime chain exhausted — swap copy, hide server suggestions. */
+  variant?: "standard" | "anime-exhausted";
+  /** Monospace debug list of tried ID spaces, e.g. ["MAL #821", "AniList #821"]. */
+  tried?: string[];
 }
 
 export function PlayerErrorState({
@@ -30,30 +39,50 @@ export function PlayerErrorState({
   selectedId,
   onSelectProvider,
   onRetry,
+  variant = "standard",
+  tried,
 }: PlayerErrorStateProps) {
+  const animeExhausted = variant === "anime-exhausted";
+
   // Find alternative providers (not the current one)
   const alternatives = providers.filter(
-    (p) => p.id !== selectedId && p.id !== "falix",
+    (p) => p.id !== selectedId && p.id !== "falix" && !p.animeOnly,
   );
 
   // Pick a couple of good alternatives for quick-switch buttons
-  const quickSwitches = alternatives.slice(0, 3);
+  const quickSwitches = animeExhausted ? [] : alternatives.slice(0, 3);
 
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070708]/90 backdrop-blur-sm z-40 gap-4 px-6">
       <Clapperboard className="text-[#D4A237]" size={48} strokeWidth={1.5} />
 
       <p
-        className="text-xl text-[#F4F4F5] font-bold text-center"
+        className="text-xl text-foreground font-bold text-center"
         style={{ fontFamily: "var(--font-display)" }}
       >
-        Playback interrupted
+        {animeExhausted ? "No anime sources found" : "Playback interrupted"}
       </p>
 
-      <p className="text-sm text-[#A1A1AA] text-center max-w-sm">
-        Stream failed on{" "}
-        <strong className="text-[#F4F4F5]">{currentProviderName}</strong>.
+      <p className="text-sm text-muted-foreground text-center max-w-sm">
+        {animeExhausted ? (
+          <>
+            No playable source for this title on{" "}
+            <strong className="text-foreground">MegaPlay</strong>.
+          </>
+        ) : (
+          <>
+            Stream failed on{" "}
+            <strong className="text-foreground">{currentProviderName}</strong>.
+          </>
+        )}
       </p>
+
+      {/* Debug line — what the fallback chain actually tried */}
+      {tried && tried.length > 0 && (
+        <p className="font-mono text-[11px] text-zinc-600 tracking-tight">
+          Tried: {tried.join(", ")}
+        </p>
+      )}
 
       {/* Quick-switch buttons */}
       <div className="flex items-center gap-2 flex-wrap justify-center mt-2">

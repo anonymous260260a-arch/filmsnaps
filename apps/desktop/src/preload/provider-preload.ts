@@ -277,6 +277,202 @@
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // 0.6 PLAYBACK PROGRESS REPORTER (watch-history writes)
+  //
+  // Samples every <video>/<audio> element in THIS frame once per second and
+  // reports { currentTime, duration, paused } to main over IPC
+  // ("provider:playback"). Main relays it to the app renderer
+  // ("player:progress"), where WatchClient's recorder persists watch progress
+  // (Continue Watching / resume points).
+  //
+  // The preload runs in EVERY provider frame (main frame + OOPIF child
+  // frames) — the media element usually lives in a child iframe; frames
+  // without media report nothing, and main just keeps the latest sample.
+  //
+  // Pure observation: reads currentTime/duration only, never touches
+  // playback. All failures are swallowed (best-effort telemetry).
+  // ═══════════════════════════════════════════════════════════════
+  try {
+    const electron = require("electron") as {
+      ipcRenderer?: {
+        send: (channel: string, payload?: unknown) => void;
+        on: (channel: string, listener: (...args: any[]) => void) => void;
+      };
+    };
+    const ipc = electron?.ipcRenderer;
+    if (ipc && typeof document !== "undefined") {
+      // Pick the most relevant media element in THIS frame: prefer a playing
+      // element with known duration over a paused one.
+      const pickMedia = (): HTMLMediaElement | null => {
+        const medias = document.querySelectorAll("video, audio");
+        let best: HTMLMediaElement | null = null;
+        for (let i = 0; i < medias.length; i++) {
+          const m = medias[i] as HTMLMediaElement;
+          if (!(m.duration > 0)) continue; // no metadata yet
+          if (!best || (!m.paused && best.paused)) best = m;
+        }
+        return best;
+      };
+
+      // ── User-seek tracking (expert verdict Q11) ──────────────
+      // lastUserSeekTs is stamped whenever any media element in this frame
+      // fires a `seeking` event that is NOT our own programmatic write
+      // (programmatic writes are suppressed for 700ms). The renderer uses
+      // `recentUserSeek` as an escape hatch for the backward-jump guard so a
+      // legitimate manual rewind never freezes progress saves.
+      let lastUserSeekTs = 0;
+      let lastProgrammaticSeekTs = 0;
+      document.addEventListener(
+        "seeking",
+        (e) => {
+          const el = e.target as unknown;
+          if (!(el instanceof HTMLMediaElement)) return;
+          if (Date.now() - lastProgrammaticSeekTs < 700) return; // our own write
+          lastUserSeekTs = Date.now();
+        },
+        true,
+      );
+
+      let lastSent = 0;
+      setInterval(() => {
+        try {
+          const now = Date.now();
+          if (now - lastSent < 1000) return;
+          const best = pickMedia();
+          if (!best) return;
+          lastSent = now;
+
+          // Enrich: host of the media source (so main can qualify trusted
+          // content vs ad pre-roll) + readyState + user-seek recency.
+          const src = best.currentSrc || best.src || "";
+          let srcHost = "";
+          try {
+            if (src.startsWith("blob:")) srcHost = "blob";
+            else if (src) srcHost = new URL(src).host;
+          } catch {
+            srcHost = "";
+          }
+
+          ipc.send("provider:playback", {
+            currentTime: best.currentTime,
+            duration: best.duration,
+            paused: !!best.paused,
+            readyState: best.readyState,
+            srcHost,
+            recentUserSeek: now - lastUserSeekTs < 15000,
+          });
+        } catch {
+          /* sampling best-effort */
+        }
+      }, 1000);
+
+      // Resume-seek: main relays the renderer's "player:seek" here, targeted
+      // to THIS frame (content frame only — ads in other frames never receive
+      // it). The seek is "sticky": apply, then settle over a 15s window,
+      // re-applying if the player snaps back (drift > 3s), and aborting the
+      // moment the user interacts with the content element (expert verdict Q5).
+      const seekAbortEvents = [
+        "seeking",
+        "seeked",
+        "pause",
+        "play",
+        "volumechange",
+      ] as const;
+
+      ipc.on("provider:seek", (_event, t: unknown) => {
+        try {
+          const target = Number(t);
+          if (!Number.isFinite(target) || target < 0) return;
+
+          let retries = 0;
+          let heldChecks = 0;
+          let suppressUntil = 0;
+          let el: HTMLMediaElement | null = null;
+          let settleTimer: ReturnType<typeof setInterval> | null = null;
+          let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+
+          const detach = () => {
+            if (el) {
+              for (const ev of seekAbortEvents) {
+                el.removeEventListener(ev, onUserInteract);
+              }
+            }
+            if (settleTimer) {
+              clearInterval(settleTimer);
+              settleTimer = null;
+            }
+            if (safetyTimer) {
+              clearTimeout(safetyTimer);
+              safetyTimer = null;
+            }
+          };
+
+          const onUserInteract = () => {
+            // Ignore the seeking/seeked pair our own write triggers.
+            if (Date.now() <= suppressUntil) return;
+            detach();
+          };
+
+          const apply = (): boolean => {
+            el = pickMedia();
+            if (!el) return false;
+            try {
+              el.currentTime = target;
+            } catch {
+              /* not seekable yet */
+            }
+            lastProgrammaticSeekTs = Date.now();
+            suppressUntil = Date.now() + 700;
+            for (const ev of seekAbortEvents) {
+              el.addEventListener(ev, onUserInteract);
+            }
+            return true;
+          };
+
+          const settle = (): void => {
+            const cur = pickMedia();
+            if (!cur) {
+              detach();
+              return;
+            }
+            el = cur;
+            const drift = Math.abs(cur.currentTime - target);
+            if (drift <= 3) {
+              // Position held — need two consecutive good checks before giving
+              // up the settle loop.
+              if (++heldChecks >= 2) {
+                detach();
+                return;
+              }
+            } else {
+              heldChecks = 0;
+              if (retries < 5) {
+                retries++;
+                apply();
+              } else {
+                detach();
+              }
+            }
+          };
+
+          if (!apply()) {
+            // Media not mounted yet — but apply() already retried once per
+            // tick via settle(); give it a moment.
+          }
+          settleTimer = setInterval(settle, 1000);
+          safetyTimer = setTimeout(detach, 15000);
+        } catch {
+          /* seek best-effort */
+        }
+      });
+
+      registerHook("playback-report");
+    }
+  } catch {
+    /* reporter unavailable — embed progress just won't be recorded */
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // 1. PROTOTYPE OVERRIDES — run synchronously at document-start,
   //    before any page script. No DOM needed. Unremovable via
   //    configurable:false + writable:false.
@@ -442,6 +638,28 @@
   // injected before first paint. No runtime MutationObserver is needed.
   // If __FS_COSMETIC_CSS__ is empty, no cosmetic CSS was compiled in — the
   // static CSS from the HTML injection layer (L8) covers the common cases.
+  const __fsCosmeticCss: string = /* __FS_COSMETIC_CSS__ */ "";
+  if (__fsCosmeticCss && typeof document !== "undefined") {
+    try {
+      const injectStaticCss = (): void => {
+        if (document.getElementById("__fs_static_cosmetic")) return;
+        const style = document.createElement("style");
+        style.id = "__fs_static_cosmetic";
+        style.textContent = __fsCosmeticCss;
+        (document.head || document.documentElement).appendChild(style);
+      };
+      if (document.documentElement) {
+        injectStaticCss();
+      } else {
+        document.addEventListener("readystatechange", injectStaticCss, {
+          once: true,
+        });
+      }
+      registerHook("static-cosmetic-css");
+    } catch {
+      /* static CSS best-effort */
+    }
+  }
 
   // ═══════════════════════════════════════════════════════════════
   // 3. STORAGE KEY INTERCEPTION — block tracking persistence.

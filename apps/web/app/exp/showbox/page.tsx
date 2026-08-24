@@ -9,9 +9,9 @@
  * moviebox.ph experiment at /exp/watch.
  */
 
-'use client';
+"use client";
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   Search,
   Play,
@@ -22,7 +22,7 @@ import {
   Tv,
   Loader2,
   AlertTriangle,
-} from 'lucide-react';
+} from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ interface ListItem {
   title: string;
   rating: number;
   year: string;
-  type: 'movie' | 'tv';
+  type: "movie" | "tv";
   imdb_id?: string;
   poster?: string;
   seasons?: string;
@@ -69,15 +69,15 @@ export default function ShowBoxExpPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'movies' | 'tv'>('movies');
+  const [activeTab, setActiveTab] = useState<"movies" | "tv">("movies");
 
   // Categories
   const [cats, setCats] = useState<Record<string, string>>({});
-  const [selectedCat, setSelectedCat] = useState('all');
+  const [selectedCat, setSelectedCat] = useState("all");
   const [showCatPicker, setShowCatPicker] = useState(false);
 
   // Search
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<{
     movies: ListItem[];
     tv: ListItem[];
@@ -86,12 +86,12 @@ export default function ShowBoxExpPage() {
 
   // Detail state
   const [detailId, setDetailId] = useState<number | null>(null);
-  const [detailType, setDetailType] = useState<'movie' | 'tv' | null>(null);
+  const [detailType, setDetailType] = useState<"movie" | "tv" | null>(null);
   const [movieDetail, setMovieDetail] = useState<MovieDetail | null>(null);
   const [tvDetail, setTvDetail] = useState<TVSeasonDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [tvSeason, setTvSeason] = useState(1);
-  const [selectedEpisode, setSelectedEpisode] = useState<string>('1');
+  const [selectedEpisode, setSelectedEpisode] = useState<string>("1");
 
   // Player state
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -125,7 +125,7 @@ export default function ShowBoxExpPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/exp/showbox/categories');
+        const res = await fetch("/api/exp/showbox/categories");
         const json = await res.json();
         setCats(json || {});
       } catch {}
@@ -137,78 +137,76 @@ export default function ShowBoxExpPage() {
   }, [loadData]);
 
   // ── Search handler ──
-  const handleSearch = useCallback(async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!query.trim()) return;
-    setSearching(true);
-    setError(null);
-    setDetailId(null);
-    setMovieDetail(null);
-    setTvDetail(null);
-    setVideoUrl(null);
-    setIsPlaying(false);
-
-    try {
-      const res = await fetch(
-        `/api/exp/showbox/search?q=${encodeURIComponent(query.trim())}`,
-      );
-      if (!res.ok) throw new Error('Search failed');
-      const json = await res.json();
-      setSearchResults({ movies: json.movies || [], tv: json.tv || [] });
-    } catch (e: any) {
-      setError(e.message);
-      setSearchResults(null);
-    } finally {
-      setSearching(false);
-    }
-  }, [query]);
-
-  // ── Open detail ──
-  const openDetail = useCallback(
-    async (item: ListItem) => {
-      setDetailId(item.id);
-      setDetailType(item.type);
-      setLoadingDetail(true);
+  const handleSearch = useCallback(
+    async (e?: React.FormEvent) => {
+      e?.preventDefault();
+      if (!query.trim()) return;
+      setSearching(true);
       setError(null);
-      setVideoUrl(null);
-      setIsPlaying(false);
-      setVideoError(false);
-      setTvSeason(1);
-      setSelectedEpisode('1');
+      setDetailId(null);
       setMovieDetail(null);
       setTvDetail(null);
+      setVideoUrl(null);
+      setIsPlaying(false);
 
       try {
-        if (item.type === 'movie') {
-          const res = await fetch(`/api/exp/showbox/detail/movie/${item.id}`);
-          if (res.ok) {
-            const json = await res.json();
-            setMovieDetail(json);
-
-            // Auto-select first video source if available
-            const firstUrl =
-              json.videos?.[0]?.url ||
-              json.sources?.[0]?.url ||
-              null;
-            if (firstUrl) setVideoUrl(firstUrl);
-          }
-        } else {
-          const res = await fetch(
-            `/api/exp/showbox/detail/tv/${item.id}?season=1`,
-          );
-          if (res.ok) {
-            const json = await res.json();
-            setTvDetail(json);
-          }
-        }
+        const res = await fetch(
+          `/api/exp/showbox/search?q=${encodeURIComponent(query.trim())}`,
+        );
+        if (!res.ok) throw new Error("Search failed");
+        const json = await res.json();
+        setSearchResults({ movies: json.movies || [], tv: json.tv || [] });
       } catch (e: any) {
         setError(e.message);
+        setSearchResults(null);
       } finally {
-        setLoadingDetail(false);
+        setSearching(false);
       }
     },
-    [],
+    [query],
   );
+
+  // ── Open detail ──
+  const openDetail = useCallback(async (item: ListItem) => {
+    setDetailId(item.id);
+    setDetailType(item.type);
+    setLoadingDetail(true);
+    setError(null);
+    setVideoUrl(null);
+    setIsPlaying(false);
+    setVideoError(false);
+    setTvSeason(1);
+    setSelectedEpisode("1");
+    setMovieDetail(null);
+    setTvDetail(null);
+
+    try {
+      if (item.type === "movie") {
+        const res = await fetch(`/api/exp/showbox/detail/movie/${item.id}`);
+        if (res.ok) {
+          const json = await res.json();
+          setMovieDetail(json);
+
+          // Auto-select first video source if available
+          const firstUrl =
+            json.videos?.[0]?.url || json.sources?.[0]?.url || null;
+          if (firstUrl) setVideoUrl(firstUrl);
+        }
+      } else {
+        const res = await fetch(
+          `/api/exp/showbox/detail/tv/${item.id}?season=1`,
+        );
+        if (res.ok) {
+          const json = await res.json();
+          setTvDetail(json);
+        }
+      }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoadingDetail(false);
+    }
+  }, []);
 
   // ── Load TV season ──
   const loadTVSeason = useCallback(
@@ -268,38 +266,36 @@ export default function ShowBoxExpPage() {
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
           <Film className="text-[#ff3d71]" size={24} />
           <h1 className="text-lg font-bold tracking-tight">
-            ShowBox{' '}
-            <span className="text-[#52525B] font-normal text-sm">
-              Experiment
-            </span>
+            ShowBox{" "}
+            <span className="text-faint font-normal text-sm">Experiment</span>
           </h1>
 
           <div className="flex items-center gap-2 ml-auto">
             {/* Movie/TV tabs */}
             <button
               onClick={() => {
-                setActiveTab('movies');
+                setActiveTab("movies");
                 setPage(1);
                 closeDetail();
               }}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                activeTab === 'movies'
-                  ? 'bg-white/10 text-white'
-                  : 'text-[#52525B] hover:text-white'
+                activeTab === "movies"
+                  ? "bg-white/10 text-white"
+                  : "text-faint hover:text-white"
               }`}
             >
               Movies
             </button>
             <button
               onClick={() => {
-                setActiveTab('tv');
+                setActiveTab("tv");
                 setPage(1);
                 closeDetail();
               }}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                activeTab === 'tv'
-                  ? 'bg-white/10 text-white'
-                  : 'text-[#52525B] hover:text-white'
+                activeTab === "tv"
+                  ? "bg-white/10 text-white"
+                  : "text-faint hover:text-white"
               }`}
             >
               TV Shows
@@ -308,10 +304,10 @@ export default function ShowBoxExpPage() {
             {/* Search toggle — just scroll to search */}
             <button
               onClick={() => {
-                const el = document.getElementById('search-section');
-                el?.scrollIntoView({ behavior: 'smooth' });
+                const el = document.getElementById("search-section");
+                el?.scrollIntoView({ behavior: "smooth" });
               }}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/[0.06] text-[#52525B] hover:text-white transition-colors flex items-center gap-1.5"
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/[0.06] text-faint hover:text-white transition-colors flex items-center gap-1.5"
             >
               <Search size={12} />
               Search
@@ -328,7 +324,7 @@ export default function ShowBoxExpPage() {
               <div className="relative flex-1">
                 <Search
                   size={16}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-[#52525B] pointer-events-none"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-faint pointer-events-none"
                 />
                 <input
                   type="text"
@@ -358,7 +354,7 @@ export default function ShowBoxExpPage() {
             <div className="mt-4 space-y-4">
               {searchResults.movies.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-semibold text-[#52525B] uppercase tracking-wider mb-2">
+                  <h3 className="text-xs font-semibold text-faint uppercase tracking-wider mb-2">
                     Movies ({searchResults.movies.length})
                   </h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
@@ -374,7 +370,7 @@ export default function ShowBoxExpPage() {
               )}
               {searchResults.tv.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-semibold text-[#52525B] uppercase tracking-wider mb-2">
+                  <h3 className="text-xs font-semibold text-faint uppercase tracking-wider mb-2">
                     TV Shows ({searchResults.tv.length})
                   </h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
@@ -390,7 +386,7 @@ export default function ShowBoxExpPage() {
               )}
               {searchResults.movies.length === 0 &&
                 searchResults.tv.length === 0 && (
-                  <div className="flex flex-col items-center py-8 text-[#52525B]">
+                  <div className="flex flex-col items-center py-8 text-faint">
                     <Search size={24} className="mb-2 opacity-30" />
                     <p className="text-sm">
                       No results for &ldquo;{query}&rdquo;
@@ -414,20 +410,20 @@ export default function ShowBoxExpPage() {
             {/* Back button */}
             <button
               onClick={closeDetail}
-              className="mb-4 text-xs text-[#52525B] hover:text-white transition-colors flex items-center gap-1"
+              className="mb-4 text-xs text-faint hover:text-white transition-colors flex items-center gap-1"
             >
               <X size={12} /> Close
             </button>
 
             {loadingDetail ? (
-              <div className="flex items-center gap-2 text-[#52525B] text-sm py-8">
+              <div className="flex items-center gap-2 text-faint text-sm py-8">
                 <Loader2 size={14} className="animate-spin" />
                 Loading details...
               </div>
             ) : (
               <>
                 {/* ── Movie Detail ── */}
-                {detailType === 'movie' && movieDetail && (
+                {detailType === "movie" && movieDetail && (
                   <div className="space-y-4">
                     <div className="flex flex-col md:flex-row gap-6">
                       {/* Poster */}
@@ -438,7 +434,8 @@ export default function ShowBoxExpPage() {
                             alt={movieDetail.title}
                             className="w-full rounded-xl ring-1 ring-white/[0.08]"
                             onError={(e) => {
-                              (e.target as HTMLImageElement).style.display = 'none';
+                              (e.target as HTMLImageElement).style.display =
+                                "none";
                             }}
                           />
                         </div>
@@ -448,7 +445,7 @@ export default function ShowBoxExpPage() {
                         <h2 className="text-2xl font-bold mb-1">
                           {movieDetail.title}
                         </h2>
-                        <div className="flex flex-wrap gap-3 text-xs text-[#52525B] mb-3">
+                        <div className="flex flex-wrap gap-3 text-xs text-faint mb-3">
                           {movieDetail.year && <span>{movieDetail.year}</span>}
                           {movieDetail.imdb_rating && (
                             <span className="text-[#f5c518]">
@@ -466,7 +463,7 @@ export default function ShowBoxExpPage() {
                         </div>
 
                         {movieDetail.description && (
-                          <p className="text-sm text-[#A1A1AA] leading-relaxed line-clamp-4">
+                          <p className="text-sm text-muted-foreground leading-relaxed line-clamp-4">
                             {movieDetail.description}
                           </p>
                         )}
@@ -476,7 +473,7 @@ export default function ShowBoxExpPage() {
                     {/* Video sources */}
                     {movieDetail.videos && movieDetail.videos.length > 0 && (
                       <div>
-                        <h3 className="text-sm font-semibold mb-2 text-[#A1A1AA] uppercase tracking-wider">
+                        <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">
                           Available Streams
                         </h3>
                         <div className="flex flex-wrap gap-2">
@@ -486,8 +483,8 @@ export default function ShowBoxExpPage() {
                               onClick={() => handlePlay(v.url)}
                               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
                                 videoUrl === v.url
-                                  ? 'bg-[#ff3d71] text-white ring-1 ring-[#ff3d71]/50'
-                                  : 'bg-white/[0.06] text-[#A1A1AA] hover:text-white'
+                                  ? "bg-[#ff3d71] text-white ring-1 ring-[#ff3d71]/50"
+                                  : "bg-white/[0.06] text-muted-foreground hover:text-white"
                               }`}
                             >
                               <Play size={10} />
@@ -500,7 +497,7 @@ export default function ShowBoxExpPage() {
 
                     {movieDetail.sources && movieDetail.sources.length > 0 && (
                       <div>
-                        <h3 className="text-sm font-semibold mb-2 text-[#A1A1AA] uppercase tracking-wider">
+                        <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">
                           Raw Sources
                         </h3>
                         <div className="flex flex-wrap gap-2">
@@ -510,8 +507,8 @@ export default function ShowBoxExpPage() {
                               onClick={() => handlePlay(s.url)}
                               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                                 videoUrl === s.url
-                                  ? 'bg-[#ff3d71] text-white'
-                                  : 'bg-white/[0.06] text-[#A1A1AA] hover:text-white'
+                                  ? "bg-[#ff3d71] text-white"
+                                  : "bg-white/[0.06] text-muted-foreground hover:text-white"
                               }`}
                             >
                               {s.quality || `Source ${idx + 1}`}
@@ -521,33 +518,31 @@ export default function ShowBoxExpPage() {
                       </div>
                     )}
 
-                    {(!movieDetail.videos?.length &&
-                      !movieDetail.sources?.length) && (
-                      <div className="px-4 py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-sm flex items-center gap-2">
-                        <AlertTriangle size={14} />
-                        No stream sources found in the API response for this
-                        movie.
-                      </div>
-                    )}
+                    {!movieDetail.videos?.length &&
+                      !movieDetail.sources?.length && (
+                        <div className="px-4 py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-sm flex items-center gap-2">
+                          <AlertTriangle size={14} />
+                          No stream sources found in the API response for this
+                          movie.
+                        </div>
+                      )}
                   </div>
                 )}
 
                 {/* ── TV Detail ── */}
-                {detailType === 'tv' && tvDetail && (
+                {detailType === "tv" && tvDetail && (
                   <div className="space-y-4">
-                    <h2 className="text-2xl font-bold">
-                      Season {tvSeason}
-                    </h2>
+                    <h2 className="text-2xl font-bold">Season {tvSeason}</h2>
 
                     {tvDetail.description && (
-                      <p className="text-sm text-[#A1A1AA] leading-relaxed line-clamp-3">
+                      <p className="text-sm text-muted-foreground leading-relaxed line-clamp-3">
                         {tvDetail.description}
                       </p>
                     )}
 
                     {/* Season selector */}
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-[#52525B] font-semibold uppercase tracking-wider">
+                      <span className="text-xs text-faint font-semibold uppercase tracking-wider">
                         Season:
                       </span>
                       <select
@@ -568,7 +563,7 @@ export default function ShowBoxExpPage() {
                     {/* Episode grid */}
                     {tvDetail.thumbs && (
                       <div>
-                        <h3 className="text-sm font-semibold mb-3 text-[#A1A1AA] uppercase tracking-wider">
+                        <h3 className="text-sm font-semibold mb-3 text-muted-foreground uppercase tracking-wider">
                           Episodes
                         </h3>
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -583,8 +578,8 @@ export default function ShowBoxExpPage() {
                                 }}
                                 className={`text-left rounded-xl overflow-hidden bg-white/[0.03] border transition-all hover:scale-[1.02] active:scale-[0.98] ${
                                   selectedEpisode === epNum
-                                    ? 'border-[#ff3d71]/50 ring-1 ring-[#ff3d71]/20'
-                                    : 'border-white/[0.06] hover:border-white/[0.15]'
+                                    ? "border-[#ff3d71]/50 ring-1 ring-[#ff3d71]/20"
+                                    : "border-white/[0.06] hover:border-white/[0.15]"
                                 }`}
                               >
                                 <div className="aspect-video relative overflow-hidden bg-[#0E0E11]">
@@ -603,12 +598,12 @@ export default function ShowBoxExpPage() {
                                       />
                                     </div>
                                   )}
-                                  <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] font-bold">
+                                  <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/70 text-white text-[11px] font-bold">
                                     EP {epNum}
                                   </span>
                                 </div>
                                 <div className="p-1.5">
-                                  <p className="text-[10px] font-medium leading-tight line-clamp-2 text-white/80">
+                                  <p className="text-[11px] font-medium leading-tight line-clamp-2 text-white/80">
                                     {tvDetail.titles?.[epNum] ||
                                       `Episode ${epNum}`}
                                   </p>
@@ -634,7 +629,7 @@ export default function ShowBoxExpPage() {
                         onError={() => {
                           setVideoError(true);
                           setError(
-                            'Failed to load video stream. The URL may not be playable in the browser.',
+                            "Failed to load video stream. The URL may not be playable in the browser.",
                           );
                         }}
                       />
@@ -642,7 +637,10 @@ export default function ShowBoxExpPage() {
                       {videoError && isPlaying && (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-20">
                           <div className="text-center">
-                            <AlertTriangle size={24} className="mx-auto mb-2 text-red-400" />
+                            <AlertTriangle
+                              size={24}
+                              className="mx-auto mb-2 text-red-400"
+                            />
                             <p className="text-red-400 text-sm mb-2">
                               Video failed to load
                             </p>
@@ -666,7 +664,7 @@ export default function ShowBoxExpPage() {
                     </div>
 
                     {/* URL info */}
-                    <div className="mt-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[10px] text-[#52525B] break-all font-mono">
+                    <div className="mt-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[11px] text-faint break-all font-mono">
                       {videoUrl}
                     </div>
                   </div>
@@ -681,10 +679,10 @@ export default function ShowBoxExpPage() {
           <div className="mb-4 flex items-center gap-2">
             <button
               onClick={() => setShowCatPicker(!showCatPicker)}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/[0.06] text-[#A1A1AA] hover:text-white transition-colors flex items-center gap-1"
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/[0.06] text-muted-foreground hover:text-white transition-colors flex items-center gap-1"
             >
-              {selectedCat === 'all'
-                ? 'All Categories'
+              {selectedCat === "all"
+                ? "All Categories"
                 : cats[selectedCat] || selectedCat}
               {showCatPicker ? (
                 <ChevronUp size={12} />
@@ -694,9 +692,7 @@ export default function ShowBoxExpPage() {
             </button>
 
             {/* Result count */}
-            <span className="text-[10px] text-[#52525B]">
-              {total} results
-            </span>
+            <span className="text-[11px] text-faint">{total} results</span>
           </div>
         )}
 
@@ -705,14 +701,14 @@ export default function ShowBoxExpPage() {
           <div className="mb-4 flex flex-wrap gap-1.5">
             <button
               onClick={() => {
-                setSelectedCat('all');
+                setSelectedCat("all");
                 setPage(1);
                 setShowCatPicker(false);
               }}
-              className={`px-2.5 py-1 rounded-full text-[10px] font-semibold transition-colors ${
-                selectedCat === 'all'
-                  ? 'bg-[#ff3d71] text-white'
-                  : 'bg-white/[0.06] text-[#A1A1AA] hover:text-white'
+              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${
+                selectedCat === "all"
+                  ? "bg-[#ff3d71] text-white"
+                  : "bg-white/[0.06] text-muted-foreground hover:text-white"
               }`}
             >
               All
@@ -725,10 +721,10 @@ export default function ShowBoxExpPage() {
                   setPage(1);
                   setShowCatPicker(false);
                 }}
-                className={`px-2.5 py-1 rounded-full text-[10px] font-semibold transition-colors ${
+                className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${
                   selectedCat === id
-                    ? 'bg-[#ff3d71] text-white'
-                    : 'bg-white/[0.06] text-[#A1A1AA] hover:text-white'
+                    ? "bg-[#ff3d71] text-white"
+                    : "bg-white/[0.06] text-muted-foreground hover:text-white"
                 }`}
               >
                 {name}
@@ -742,7 +738,7 @@ export default function ShowBoxExpPage() {
           <>
             {loading ? (
               <div className="flex items-center justify-center py-20">
-                <Loader2 size={24} className="animate-spin text-[#52525B]" />
+                <Loader2 size={24} className="animate-spin text-faint" />
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
@@ -763,17 +759,17 @@ export default function ShowBoxExpPage() {
                 <button
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={page <= 1}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/[0.06] text-[#A1A1AA] hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/[0.06] text-muted-foreground hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   Previous
                 </button>
-                <span className="text-xs text-[#52525B]">
+                <span className="text-xs text-faint">
                   Page {page} of {totalPages}
                 </span>
                 <button
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   disabled={page >= totalPages}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/[0.06] text-[#A1A1AA] hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/[0.06] text-muted-foreground hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   Next
                 </button>
@@ -784,9 +780,9 @@ export default function ShowBoxExpPage() {
       </div>
 
       {/* ── Footer ── */}
-      <footer className="text-center py-12 text-[10px] text-[#52525B] uppercase tracking-widest">
-        ShowBox Experiment • Powered by sbfunapi.cc •{' '}
-        {total.toLocaleString()} titles indexed
+      <footer className="text-center py-12 text-[11px] text-faint uppercase tracking-widest">
+        ShowBox Experiment • Powered by sbfunapi.cc • {total.toLocaleString()}{" "}
+        titles indexed
       </footer>
     </div>
   );
@@ -824,7 +820,7 @@ function Card({
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            {showType && item.type === 'tv' ? (
+            {showType && item.type === "tv" ? (
               <Tv size={24} className="text-[#222226]" />
             ) : (
               <Film size={24} className="text-[#222226]" />
@@ -834,8 +830,8 @@ function Card({
 
         {/* Type badge */}
         {showType && (
-          <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/60 text-white text-[8px] font-bold uppercase">
-            {item.type === 'tv' ? 'TV' : 'MOVIE'}
+          <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/60 text-white text-[11px] font-bold uppercase">
+            {item.type === "tv" ? "TV" : "MOVIE"}
           </span>
         )}
 
@@ -854,10 +850,10 @@ function Card({
         </p>
         <div className="flex items-center gap-2 mt-0.5">
           {item.year && (
-            <span className="text-[10px] text-[#52525B]">{item.year}</span>
+            <span className="text-[11px] text-faint">{item.year}</span>
           )}
           {item.rating > 0 && (
-            <span className="text-[10px] text-[#ff3d71]">
+            <span className="text-[11px] text-[#ff3d71]">
               ★ {item.rating.toFixed(1)}
             </span>
           )}

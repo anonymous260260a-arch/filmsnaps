@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import * as React from 'react';
+import * as React from "react";
 import {
   Filter,
   Search,
@@ -9,8 +9,8 @@ import {
   Calendar,
   Languages,
   SortAsc,
-} from 'lucide-react';
-import { GlassButton } from '@/components/ui/glass-button';
+} from "lucide-react";
+import { GlassButton } from "@/components/ui/glass-button";
 import {
   Drawer,
   DrawerContent,
@@ -18,20 +18,20 @@ import {
   DrawerTitle,
   DrawerFooter,
   DrawerTrigger,
-} from '@/components/ui/drawer';
-import { Input } from '@/components/ui/input';
-import { Slider } from '@/components/ui/slider';
-import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
-import { cn } from '@/lib/utils';
+} from "@/components/ui/drawer";
+import { Input } from "@/components/ui/input";
+import { Slider } from "@/components/ui/slider";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from "@/components/ui/select";
 
 interface Genre {
   id: number;
@@ -69,21 +69,21 @@ export function MediaFilter({
   onReset,
   onApply,
 }: FilterProps) {
-  const [genreSearch, setGenreSearch] = React.useState('');
+  const [genreSearch, setGenreSearch] = React.useState("");
   const [isOpen, setIsOpen] = React.useState(false);
 
-  const filteredGenres = genres.filter((g) =>
-    g.name.toLowerCase().includes(genreSearch.toLowerCase())
+  const filteredGenres = genres?.filter((g) =>
+    g.name.toLowerCase().includes(genreSearch.toLowerCase()),
   );
 
   const activeFilterCount =
     (selectedGenres.length > 0 ? 1 : 0) +
-    (sortBy !== 'popularity.desc' ? 1 : 0) +
+    (sortBy !== "popularity.desc" ? 1 : 0) +
     (yearRange[0] !== 1900 || yearRange[1] !== new Date().getFullYear()
       ? 1
       : 0) +
     (ratingRange[0] !== 0 || ratingRange[1] !== 10 ? 1 : 0) +
-    (language !== '' ? 1 : 0);
+    (language !== "" ? 1 : 0);
 
   return (
     <Drawer open={isOpen} onOpenChange={setIsOpen}>
@@ -174,17 +174,17 @@ export function MediaFilter({
               />
 
               <div className="flex flex-wrap gap-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar mb-4">
-                {filteredGenres.map((g) => (
+                {filteredGenres?.map((g) => (
                   <Badge
                     key={g.id}
                     variant={
-                      selectedGenres.includes(g.id) ? 'default' : 'outline'
+                      selectedGenres.includes(g.id) ? "default" : "outline"
                     }
                     className={cn(
-                      'cursor-pointer py-1.5 px-3 transition-all duration-200',
+                      "cursor-pointer py-1.5 px-3 transition-all duration-200",
                       selectedGenres.includes(g.id)
-                        ? 'bg-primary hover:bg-primary/90'
-                        : 'bg-secondary/20 hover:bg-secondary/40 border-transparent'
+                        ? "bg-primary hover:bg-primary/90"
+                        : "bg-secondary/20 hover:bg-secondary/40 border-transparent",
                     )}
                     onClick={() => onGenreToggle(g.id)}
                   >

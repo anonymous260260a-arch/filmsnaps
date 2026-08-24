@@ -36,6 +36,15 @@ export function DesktopAppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setMounted(true);
+    // Couch-distance scaling (readability verdict Q3): rem utilities resolve
+    // against the ROOT font-size, so the bump must land on <html>, not on a
+    // shell div. Web/browser pages keep the default 16px root.
+    if (
+      typeof window !== "undefined" &&
+      window.electronAPI?.isDesktop === true
+    ) {
+      document.documentElement.classList.add("fs-desktop");
+    }
   }, []);
 
   const isElectron =

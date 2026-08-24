@@ -28,18 +28,28 @@ import {
   useFilteredTVShows,
 } from "../../hooks/useTMDB";
 import { tmdbApi } from "../../lib/api";
+import { filterTmdbAnime } from "../../lib/tmdb";
 import { MediaCard } from "../../components/MediaCard";
 import { EmptyState } from "../../components/EmptyState";
+import { ProgressiveImage } from "../../components/ProgressiveImage";
 import type { Movie } from "@filmsnaps/shared";
+import { useSettings } from "@/lib/settings";
 import { SwipeExemptScrollView } from "../../components/SwipeExemptScroll";
 import { colors } from "../../theme/colors";
+import {
+  animeSearch,
+  rankAnimeSearchResults,
+  type AnimeResult,
+  type ScoredAnimeResult,
+} from "../../lib/anime/search";
+import { lookupMal } from "../../lib/anime/resolve";
 
 const NUM_COLUMNS = 3;
 const GAP = 8;
 const PADDING = 16;
 const ITEMS_PER_PAGE = 20;
 
-type MediaTypeFilter = "all" | "movie" | "tv";
+type MediaTypeFilter = "movie_tv" | "anime";
 type SortOption =
   | "popularity.desc"
   | "vote_average.desc"
@@ -57,6 +67,7 @@ export default function SearchScreen() {
   const insets = useSafeAreaInsets();
   const { width: SCREEN_WIDTH } = useWindowDimensions();
   const queryClient = useQueryClient();
+  const { settings } = useSettings();
 
   // ── Search state ──
   const [query, setQuery] = useState("");
@@ -64,8 +75,11 @@ export default function SearchScreen() {
   const isSearching = debouncedQuery.length >= 2;
 
   // ── Filters ──
-  const [mediaTypeFilter, setMediaTypeFilter] =
-    useState<MediaTypeFilter>("all");
+  // Auto-select by the global Hard Mode Split: anime mode shows the anime
+  // filter, movie_tv mode shows the combined movie/TV filter.
+  const [mediaTypeFilter, setMediaTypeFilter] = useState<MediaTypeFilter>(
+    settings.mode === "anime" ? "anime" : "movie_tv",
+  );
   const [selectedGenreIds, setSelectedGenreIds] = useState<number[]>([]);
   const [sortBy, setSortBy] = useState<SortOption>("popularity.desc");
   const [showSortPicker, setShowSortPicker] = useState(false);
@@ -77,7 +91,15 @@ export default function SearchScreen() {
   const consumedMoviePage = useRef<number>(0);
   const consumedTvPage = useRef<number>(0);
 
-  const hasFilters = selectedGenreIds.length > 0 || mediaTypeFilter !== "all";
+  // ── Anime mode (filtered via the media-type toggle) ──
+  const isAnimeMode = mediaTypeFilter === "anime";
+  const [animeResults, setAnimeResults] = useState<ScoredAnimeResult[]>([]);
+  const [animeLoading, setAnimeLoading] = useState(false);
+  const [animeError, setAnimeError] = useState<string | null>(null);
+  const animeReqId = useRef(0);
+
+  const hasFilters =
+    selectedGenreIds.length > 0 || mediaTypeFilter !== "movie_tv";
 
   // ── Hooks ──
 
@@ -111,13 +133,9 @@ export default function SearchScreen() {
   // mount (even when nothing is selected), flipping isLoading true and briefly
   // painting the skeleton loader over the empty state.
   const movieEnabled =
-    !isSearching &&
-    hasFilters &&
-    (mediaTypeFilter === "movie" || mediaTypeFilter === "all");
+    !isSearching && hasFilters && mediaTypeFilter === "movie_tv";
   const tvEnabled =
-    !isSearching &&
-    hasFilters &&
-    (mediaTypeFilter === "tv" || mediaTypeFilter === "all");
+    !isSearching && hasFilters && mediaTypeFilter === "movie_tv";
 
   const movieFilterResult = useFilteredMovies(movieParams, movieEnabled);
   const tvFilterResult = useFilteredTVShows(tvParams, tvEnabled);
@@ -149,13 +167,14 @@ export default function SearchScreen() {
     const next = searchResult.data.results.filter(
       (item: any) => item.media_type === "movie" || item.media_type === "tv",
     );
-    if (next.length) appendUnique(next);
+    const clean = filterTmdbAnime(next);
+    if (clean.length) appendUnique(clean);
   }, [searchResult.data, isSearching, appendUnique]);
 
   // Movie source — gated by consumed page counter
   useEffect(() => {
     if (isSearching) return;
-    if (mediaTypeFilter !== "movie" && mediaTypeFilter !== "all") return;
+    if (mediaTypeFilter !== "movie_tv") return;
     const data = movieFilterResult.data;
     if (!data?.results?.length) return;
     const thisPage = data.page ?? page;
@@ -165,7 +184,7 @@ export default function SearchScreen() {
       ...r,
       _mediaType: "movie" as const,
     }));
-    appendUnique(tagged);
+    appendUnique(filterTmdbAnime(tagged));
   }, [
     movieFilterResult.data,
     isSearching,
@@ -177,7 +196,7 @@ export default function SearchScreen() {
   // TV source — gated by consumed page counter
   useEffect(() => {
     if (isSearching) return;
-    if (mediaTypeFilter !== "tv" && mediaTypeFilter !== "all") return;
+    if (mediaTypeFilter !== "movie_tv") return;
     const data = tvFilterResult.data;
     if (!data?.results?.length) return;
     const thisPage = data.page ?? page;
@@ -187,8 +206,43 @@ export default function SearchScreen() {
       ...r,
       _mediaType: "tv" as const,
     }));
-    appendUnique(tagged);
+    appendUnique(filterTmdbAnime(tagged));
   }, [tvFilterResult.data, isSearching, mediaTypeFilter, appendUnique, page]);
+
+  // Anime mode — independent of TMDB movie/TV hooks (AniList-backed).
+  // Only meaningful with a typed query, like the other search sources.
+  useEffect(() => {
+    if (!isAnimeMode) {
+      if (animeResults.length || animeError) {
+        setAnimeResults([]);
+        setAnimeError(null);
+      }
+      return;
+    }
+    const q = debouncedQuery.trim();
+    if (q.length < 2) {
+      setAnimeResults([]);
+      setAnimeError(null);
+      setAnimeLoading(false);
+      return;
+    }
+    const id = ++animeReqId.current;
+    setAnimeLoading(true);
+    setAnimeError(null);
+    animeSearch(q, 30)
+      .then((res) => {
+        if (id !== animeReqId.current) return;
+        setAnimeResults(rankAnimeSearchResults(res.results, q, 24));
+      })
+      .catch(() => {
+        if (id !== animeReqId.current) return;
+        setAnimeError("Couldn't reach the anime search service.");
+      })
+      .finally(() => {
+        if (id !== animeReqId.current) return;
+        setAnimeLoading(false);
+      });
+  }, [isAnimeMode, debouncedQuery]);
 
   // ── Check if there are more pages ──
   const hasMorePages = useMemo(() => {
@@ -198,9 +252,9 @@ export default function SearchScreen() {
     }
     const moviePages = movieFilterResult.data?.total_pages ?? 0;
     const tvPages = tvFilterResult.data?.total_pages ?? 0;
-    if (mediaTypeFilter === "movie") return page < moviePages;
-    if (mediaTypeFilter === "tv") return page < tvPages;
-    return page < Math.max(moviePages, tvPages);
+    if (mediaTypeFilter === "movie_tv")
+      return page < Math.max(moviePages, tvPages);
+    return false;
   }, [
     isSearching,
     searchResult.data,
@@ -252,11 +306,11 @@ export default function SearchScreen() {
 
   const handleClearFilters = useCallback(() => {
     setSelectedGenreIds([]);
-    setMediaTypeFilter("all");
+    setMediaTypeFilter(settings.mode === "anime" ? "anime" : "movie_tv");
     setSortBy("popularity.desc");
     setQuery("");
     resetPagination();
-  }, [resetPagination]);
+  }, [resetPagination, settings.mode]);
 
   const handleLoadMore = useCallback(() => {
     if (!isFetchingCurrent && hasMorePages) {
@@ -296,6 +350,39 @@ export default function SearchScreen() {
       resetPagination();
     },
     [resetPagination],
+  );
+
+  // Anime result → resolve its TMDB twin, then open the native detail page
+  // (which carries the anime threading into the player). If no twin exists,
+  // surface that the title isn't on FilmSnaps.
+  const handleAnimePress = useCallback(
+    (item: AnimeResult) => {
+      const twin = lookupMal(item.malId);
+      const tmdbShowId = twin?.tmdbShowId;
+      const tmdbMovieId = twin?.tmdbMovieId;
+      if (tmdbShowId != null) {
+        queryClient.prefetchQuery({
+          queryKey: ["tv", tmdbShowId],
+          queryFn: () => tmdbApi.getTVDetails(tmdbShowId),
+          staleTime: 1000 * 60 * 60,
+        });
+        router.prefetch(`/tv/${tmdbShowId}`);
+        nav.push(`/tv/${tmdbShowId}`);
+      } else if (tmdbMovieId != null) {
+        queryClient.prefetchQuery({
+          queryKey: ["movie", tmdbMovieId],
+          queryFn: () => tmdbApi.getMovieDetails(tmdbMovieId),
+          staleTime: 1000 * 60 * 60,
+        });
+        router.prefetch(`/movie/${tmdbMovieId}`);
+        nav.push(`/movie/${tmdbMovieId}`);
+      } else {
+        setAnimeError(
+          `No matching FilmSnaps title for "${item.titleEnglish || item.title}".`,
+        );
+      }
+    },
+    [nav, router, queryClient],
   );
 
   // ── Dimensions ──
@@ -362,9 +449,9 @@ export default function SearchScreen() {
           )}
         </View>
 
-        {/* Media type toggle */}
+        {/* Media type toggle — two-way: Movies/TV vs Anime (auto-selected by mode) */}
         <View className="flex-row mt-3 bg-zinc-900 rounded-lg p-0.5">
-          {(["all", "movie", "tv"] as const).map((type) => (
+          {(["movie_tv", "anime"] as const).map((type) => (
             <TouchableOpacity
               key={type}
               onPress={() => handleMediaTypeChange(type)}
@@ -374,7 +461,7 @@ export default function SearchScreen() {
               <Text
                 className={`text-xs font-bold ${mediaTypeFilter === type ? "text-void" : "text-zinc-400"}`}
               >
-                {type === "all" ? "All" : type === "movie" ? "Movies" : "TV"}
+                {type === "movie_tv" ? "Movies / TV" : "Anime"}
               </Text>
             </TouchableOpacity>
           ))}
@@ -462,7 +549,96 @@ export default function SearchScreen() {
       </View>
 
       {/* ─── Content ─── */}
-      {isFirstLoad ? (
+      {isAnimeMode ? (
+        // Anime mode — AniList-backed grid; tapping opens the TMDB twin.
+        <View style={{ flex: 1 }}>
+          {animeLoading ? (
+            <View className="flex-1 items-center justify-center">
+              <ActivityIndicator size="large" color={colors.gold} />
+            </View>
+          ) : animeError ? (
+            <View className="flex-1 items-center justify-center px-8">
+              <Ionicons
+                name="alert-circle-outline"
+                size={44}
+                color={colors.progressTrack}
+              />
+              <Text className="text-zinc-400 text-sm mt-4 text-center">
+                {animeError}
+              </Text>
+            </View>
+          ) : animeResults.length === 0 ? (
+            <View className="flex-1 items-center justify-center px-8">
+              <Ionicons
+                name="tv-outline"
+                size={48}
+                color={colors.progressTrack}
+              />
+              <Text className="text-zinc-400 text-base mt-4 text-center">
+                {debouncedQuery.trim().length >= 2
+                  ? "No anime found"
+                  : "Search anime titles"}
+              </Text>
+              <Text className="text-zinc-600 text-sm mt-2 text-center">
+                Type at least 2 characters
+              </Text>
+            </View>
+          ) : (
+            <FlatList
+              data={animeResults}
+              keyExtractor={(item) => String(item.malId)}
+              numColumns={NUM_COLUMNS}
+              keyboardShouldPersistTaps="always"
+              contentContainerStyle={{
+                padding: PADDING,
+                paddingBottom: 100,
+                flexGrow: 1,
+              }}
+              columnWrapperStyle={{ gap: GAP }}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => handleAnimePress(item)}
+                  style={{ width: itemWidth, marginBottom: 14 }}
+                >
+                  <View
+                    className="bg-elevated rounded-xl overflow-hidden"
+                    style={{ width: itemWidth, height: itemHeight - 40 }}
+                  >
+                    {item.image ? (
+                      <ProgressiveImage
+                        uri={item.image}
+                        style={{ width: itemWidth, height: itemHeight - 40 }}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View className="flex-1 items-center justify-center bg-elevated">
+                        <Ionicons
+                          name="tv-outline"
+                          size={28}
+                          color={colors.textTertiary}
+                        />
+                      </View>
+                    )}
+                  </View>
+                  <Text
+                    style={{
+                      color: colors.textSecondary,
+                      fontSize: 12,
+                      fontFamily: "Inter_500Medium",
+                      marginTop: 6,
+                    }}
+                    numberOfLines={2}
+                  >
+                    {item.titleEnglish || item.title}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            />
+          )}
+        </View>
+      ) : isFirstLoad ? (
         // Loading skeleton
         <View
           style={{

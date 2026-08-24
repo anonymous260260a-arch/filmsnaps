@@ -2,9 +2,9 @@
 const nextConfig = {
   // Standalone output when building for the desktop app
   // (bundles server + deps into .next/standalone/ for Electron)
-  output: process.env.BUILD_FOR_DESKTOP === 'true' ? 'standalone' : undefined,
+  output: process.env.BUILD_FOR_DESKTOP === "true" ? "standalone" : undefined,
   reactStrictMode: true,
-  allowedDevOrigins:["192.168.100.7"],
+  allowedDevOrigins: ["192.168.100.7"],
   // Performance optimizations
   poweredByHeader: false,
   compress: true,
@@ -14,16 +14,22 @@ const nextConfig = {
 
   // Optimize images
   images: {
-    formats: ['image/avif', 'image/webp'],
+    formats: ["image/avif", "image/webp"],
     deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
     minimumCacheTTL: 60 * 60 * 24 * 30, // 30 days
     qualities: [75, 85, 90],
     remotePatterns: [
       {
-        protocol: 'https',
-        hostname: 'image.tmdb.org',
-        pathname: '/t/p/**',
+        protocol: "https",
+        hostname: "image.tmdb.org",
+        pathname: "/t/p/**",
+      },
+      {
+        // AniList cover CDN — anime search results only
+        protocol: "https",
+        hostname: "s4.anilist.co",
+        pathname: "/file/anilistcdn/**",
       },
     ],
   },
@@ -34,14 +40,14 @@ const nextConfig = {
       config.optimization = {
         ...config.optimization,
         minimize: true,
-        moduleIds: 'deterministic',
-        runtimeChunk: 'single',
+        moduleIds: "deterministic",
+        runtimeChunk: "single",
         splitChunks: {
-          chunks: 'all',
+          chunks: "all",
           cacheGroups: {
             vendor: {
               test: /[\\/]node_modules[\\/]/,
-              name: 'vendors',
+              name: "vendors",
               priority: 10,
             },
             common: {
@@ -61,33 +67,33 @@ const nextConfig = {
   async headers() {
     return [
       {
-        source: '/:path*',
+        source: "/:path*",
         headers: [
           {
-            key: 'X-DNS-Prefetch-Control',
-            value: 'on',
+            key: "X-DNS-Prefetch-Control",
+            value: "on",
           },
 
           {
-            key: 'X-Frame-Options',
-            value: 'SAMEORIGIN',
+            key: "X-Frame-Options",
+            value: "SAMEORIGIN",
           },
           {
-            key: 'X-Content-Type-Options',
-            value: 'nosniff',
+            key: "X-Content-Type-Options",
+            value: "nosniff",
           },
           {
-            key: 'Referrer-Policy',
-            value: 'origin-when-cross-origin',
+            key: "Referrer-Policy",
+            value: "origin-when-cross-origin",
           },
         ],
       },
       {
-        source: '/images/:path*',
+        source: "/images/:path*",
         headers: [
           {
-            key: 'Cache-Control',
-            value: 'public, max-age=31536000, immutable',
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
           },
         ],
       },
@@ -97,7 +103,7 @@ const nextConfig = {
   turbopack: {},
 
   experimental: {
-    optimizePackageImports: ['lucide-react', '@radix-ui/react-icons'],
+    optimizePackageImports: ["lucide-react", "@radix-ui/react-icons"],
   },
 };
 

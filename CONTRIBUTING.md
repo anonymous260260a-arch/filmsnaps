@@ -119,12 +119,22 @@ blocklist.json          legacy v4 fallback (backward compat)
   name: 'MyProvider',                  // internal name
   displayName: 'Server XX',            // shown in UI (mask the real name)
   baseUrl: 'https://example.com',      // embed base
+  mediaTypes: ['movie_tv'],            // ['movie_tv'] (default) or add 'anime'; providers without it default to movie/TV
+  animeOnly: false,                    // true for MAL/AniList-keyed anime-only sources (excluded from movie/TV pickers)
   embed: {
     movie: (id: string) => `/embed/movie/${id}`,
     tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}`,
   }
 }
 ```
+
+> **Anime providers** are keyed by MAL/AniList IDs, not TMDB. Mark them
+> `animeOnly: true` (and `mediaTypes: ['anime']`) so they're excluded from
+> movie/TV server pickers and selected only in anime sessions via
+> `filterAnimeProviders` / `getProvidersForMode('anime')`. If an anime source
+> should also carry regular movie/TV (hybrid), set `mediaTypes: ['movie_tv', 'anime']`
+> (e.g. nxsha, screenscape) and add it to `ANIME_PROVIDER_IDS` if it should appear
+> in anime sessions.
 
 ### Step 2 — Add its domains to `providers.json` (v5)
 

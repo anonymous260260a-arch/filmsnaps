@@ -7,6 +7,34 @@
  */
 
 import { contextBridge, ipcRenderer } from "electron";
+import type { DownloadTask, DownloadMeta, DownloadStatus } from "./download";
+
+// ── Nxsha scraper state (mirrored in apps/web/types/electron.d.ts) ──
+
+export interface NxshaScrapeParams {
+  type: "movie" | "tv";
+  id: string;
+  season?: number;
+  episode?: number;
+}
+
+export interface NxshaScrapeLink {
+  url: string;
+  label: string;
+  /** Original (unwrapped) URL — often the real direct file (API path). */
+  orgUri?: string;
+  provider?: string;
+}
+
+export type NxshaScrapeState =
+  | { phase: "loading"; status?: string }
+  | { phase: "solving" }
+  | {
+      phase: "links";
+      servers: Array<{ name: string; links: NxshaScrapeLink[] }>;
+    }
+  | { phase: "no-links"; error?: string }
+  | { phase: "failed"; error?: string };
 
 // ── Update status types (mirrored in updater.ts) ──
 
@@ -96,6 +124,34 @@ export interface ElectronAPI {
   onEscapeBlocked: (
     callback: (event: { url: string; count: number }) => void,
   ) => () => void;
+  /**
+   * Subscribe to deterministic anime source-missing detection (main scanned
+   * the settled MegaPlay guest for "Error Code: 410" — verdict §9 Q5).
+   * Watch page advances the fallback chain (MAL → AniList) on this.
+   */
+  onPlayerSourceMissing: (
+    callback: (event: { code: number }) => void,
+  ) => () => void;
+  /**
+   * Subscribe to playback progress samples relayed from the provider embed
+   * (the session preload samples <video>/<audio> at ~1Hz). Used by the watch
+   * page's recorder to persist watch history. Returns an unsubscribe fn.
+   */
+  onPlayerProgress: (
+    callback: (sample: {
+      currentTime: number;
+      duration: number;
+      paused: boolean;
+      /** Sample's media host is trusted content (false for ad pre-roll). */
+      qualified: boolean;
+      /** Last media readyState (0–4) at sample time. */
+      readyState: number;
+      /** Host of the media source ("blob" for MSE, "" unknown). */
+      srcHost: string;
+      /** User performed a manual seek recently (backward-jump escape hatch). */
+      recentUserSeek: boolean;
+    }) => void,
+  ) => () => void;
 
   /**
    * Player namespace (WebContentsView hybrid). The provider embed renders in a
@@ -115,7 +171,48 @@ export interface ElectronAPI {
     setFullscreen: (fullscreen: boolean) => Promise<void>;
     reload: () => Promise<void>;
     getWebContentsId: () => Promise<number>;
+    /** Seek the embed's active <video> to the given second (watch resume). */
+    seek: (seconds: number) => Promise<void>;
     onState: (callback: (state: PlayerViewState) => void) => () => void;
+  };
+
+  /**
+   * Download Manager namespace (Phase 2). Manages offline media downloads
+   * intercepted from the provider session. Desktop-only.
+   */
+  download: {
+    start: (meta: DownloadMeta) => Promise<{ success: boolean }>;
+    pause: (id: string) => Promise<void>;
+    resume: (id: string) => Promise<void>;
+    cancel: (id: string) => Promise<void>;
+    getAll: () => Promise<DownloadTask[]>;
+    open: (id: string) => Promise<void>;
+    clear: (id: string, deleteFile?: boolean) => Promise<void>;
+    setSpeedLimit: (level: "full" | "balanced" | "slower") => Promise<void>;
+    onProgress: (callback: (tasks: DownloadTask[]) => void) => () => void;
+  };
+
+  /**
+   * Nxsha download-source namespace. Main process fetches download sources
+   * from nxsha's encrypted private API directly (API-first; the hidden-window
+   * CAPTCHA scrape remains as automatic fallback). States stream back over
+   * nxsha:state.
+   */
+  nxsha: {
+    scrape: (params: NxshaScrapeParams) => Promise<{ success: boolean }>;
+    cancel: () => Promise<void>;
+    onState: (
+      callback: (state: NxshaScrapeState & { seq: number }) => void,
+    ) => () => void;
+  };
+
+  /** Falix download-source namespace (REST proxy — bypasses CORS). */
+  falix: {
+    /**
+     * Fetch title detail from the falix API by numeric id (TMDB id, or an
+     * IMDB number when the renderer falls back after a TMDB 404).
+     */
+    getDetail: <T = unknown>(tmdbId: string) => Promise<T>;
   };
 }
 
@@ -210,6 +307,42 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.removeListener("provider:escape-blocked", listener);
     };
   },
+  onPlayerSourceMissing: (callback: (event: { code: number }) => void) => {
+    const listener = (_event: unknown, payload: { code: number }) =>
+      callback(payload);
+    ipcRenderer.on("player:source-missing", listener);
+    return () => {
+      ipcRenderer.removeListener("player:source-missing", listener);
+    };
+  },
+  onPlayerProgress: (
+    callback: (sample: {
+      currentTime: number;
+      duration: number;
+      paused: boolean;
+      qualified: boolean;
+      readyState: number;
+      srcHost: string;
+      recentUserSeek: boolean;
+    }) => void,
+  ) => {
+    const listener = (
+      _event: unknown,
+      sample: {
+        currentTime: number;
+        duration: number;
+        paused: boolean;
+        qualified: boolean;
+        readyState: number;
+        srcHost: string;
+        recentUserSeek: boolean;
+      },
+    ) => callback(sample);
+    ipcRenderer.on("player:progress", listener);
+    return () => {
+      ipcRenderer.removeListener("player:progress", listener);
+    };
+  },
 
   player: {
     open: (embedUrl: string) => ipcRenderer.invoke("player:open", embedUrl),
@@ -226,6 +359,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("player:fullscreen", fullscreen),
     reload: () => ipcRenderer.invoke("player:reload"),
     getWebContentsId: () => ipcRenderer.invoke("player:get-webcontents-id"),
+    seek: (seconds: number) =>
+      ipcRenderer.invoke("player:seek", Number(seconds)),
     onState: (callback: (state: PlayerViewState) => void) => {
       const listener = (_event: unknown, state: PlayerViewState) =>
         callback(state);
@@ -234,5 +369,61 @@ contextBridge.exposeInMainWorld("electronAPI", {
         ipcRenderer.removeListener("player:state", listener);
       };
     },
+  },
+
+  download: {
+    start: (meta: DownloadMeta) => ipcRenderer.invoke("download:start", meta),
+    pause: (id: string) => ipcRenderer.invoke("download:pause", id),
+    resume: (id: string) => ipcRenderer.invoke("download:resume", id),
+    cancel: (id: string) => ipcRenderer.invoke("download:cancel", id),
+    getAll: () => ipcRenderer.invoke("download:get-all"),
+    open: (id: string) => ipcRenderer.invoke("download:open", id),
+    clear: (id: string, deleteFile?: boolean) =>
+      ipcRenderer.invoke("download:clear", id, deleteFile),
+    setSpeedLimit: (level: "full" | "balanced" | "slower") =>
+      ipcRenderer.invoke("download:set-speed-limit", level),
+    onProgress: (callback: (tasks: DownloadTask[]) => void) => {
+      const listener = (_event: unknown, tasks: DownloadTask[]) =>
+        callback(tasks);
+      ipcRenderer.on("download:progress", listener);
+      return () => {
+        ipcRenderer.removeListener("download:progress", listener);
+      };
+    },
+  },
+
+  /** App-level maintenance (Settings page). Desktop-only. */
+  app: {
+    clearCache: () => ipcRenderer.invoke("app:clear-cache"),
+    pickDownloadFolder: () => ipcRenderer.invoke("app:pick-download-folder"),
+    getDownloadFolder: () => ipcRenderer.invoke("app:get-download-folder"),
+    setDownloadFolder: (dir: string) =>
+      ipcRenderer.invoke("app:set-download-folder", dir),
+    /** Open an http(s) URL in the user's default browser. */
+    openExternal: (url: string) =>
+      ipcRenderer.invoke("media-sources:open-external", url),
+  },
+
+  nxsha: {
+    scrape: (params: NxshaScrapeParams) =>
+      ipcRenderer.invoke("nxsha:scrape", params),
+    cancel: () => ipcRenderer.invoke("nxsha:cancel"),
+    onState: (
+      callback: (state: NxshaScrapeState & { seq: number }) => void,
+    ) => {
+      const listener = (
+        _event: unknown,
+        state: NxshaScrapeState & { seq: number },
+      ) => callback(state);
+      ipcRenderer.on("nxsha:state", listener);
+      return () => {
+        ipcRenderer.removeListener("nxsha:state", listener);
+      };
+    },
+  },
+
+  falix: {
+    getDetail: <T = unknown>(tmdbId: string) =>
+      ipcRenderer.invoke("falix:detail", tmdbId) as Promise<T>,
   },
 });

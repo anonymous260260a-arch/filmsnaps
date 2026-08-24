@@ -50,6 +50,16 @@ export const tmdbApi = {
   getMovieDetails: (id: number | string) =>
     apiFetch(`/movie/${id}?append_to_response=videos,credits,similar`),
 
+  getTVDetails: (id: number | string) =>
+    apiFetch(`/tv/${id}?append_to_response=videos,credits,similar`),
+
+  /** External ids (imdb_id, …) for a movie/tv — used for falix fallback lookups. */
+  getExternalIds: (
+    mediaType: "movie" | "tv",
+    id: number | string,
+  ): Promise<{ imdb_id?: string | null }> =>
+    apiFetch(`/${mediaType}/${id}/external_ids`),
+
   searchMulti: (query: string) =>
     apiFetch(
       `/search/multi?query=${encodeURIComponent(query)}&language=en-US&include_adult=false`,

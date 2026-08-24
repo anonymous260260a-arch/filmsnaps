@@ -30,17 +30,17 @@ export function LegalPageShell({
   children,
 }: LegalPageShellProps) {
   return (
-    <div className="min-h-screen bg-zinc-950">
+    <div className="min-h-screen bg-background text-foreground">
       {/* Nav — hidden inside the desktop shell (GlobalTopBar provides chrome) */}
       <DesktopGate>
-        <header className="border-b border-zinc-800">
+        <header className="border-b border-border">
           <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
-            <Link href="/" className="text-white font-bold text-lg">
+            <Link href="/" className="text-foreground font-bold text-lg">
               FilmSnaps
             </Link>
             <Link
               href="/"
-              className="text-zinc-400 hover:text-white text-sm transition-colors"
+              className="text-muted-foreground hover:text-foreground text-sm transition-colors"
             >
               ← Back to Home
             </Link>
@@ -53,12 +53,14 @@ export function LegalPageShell({
         <div className="text-center mb-10">
           {icon && <div className="mx-auto mb-4">{icon}</div>}
           <h1
-            className="text-3xl font-bold text-white mb-2"
+            className="text-3xl font-bold text-foreground mb-2"
             style={{ fontFamily: "var(--font-display)" }}
           >
             {title}
           </h1>
-          {subtitle && <p className="text-zinc-400 text-sm">{subtitle}</p>}
+          {subtitle && (
+            <p className="text-muted-foreground text-sm">{subtitle}</p>
+          )}
         </div>
 
         {children}
