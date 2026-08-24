@@ -1,5 +1,5 @@
 {
-  "version": 10,
+  "version": 11,
   "allowedCdnHosts": [
     "akamai.net",
     "akamaiedge.net",
@@ -31,7 +31,9 @@
     "upcloud.animanga.fun",
     "megacloud.animanga.fun",
     "challenges.cloudflare.com",
-    "flagsapi.com"
+    "flagsapi.com",
+    "cdn.watching.onl",
+    "03nc1.livedns.my"
   ],
   "blockedDomains": [
     "fj.topperanlases.com",

@@ -27,6 +27,13 @@ import com.google.gson.annotations.SerializedName
  * Update flow: edit providers.json + filters.txt on GitHub → CI signs with
  * Ed25519 private key → publishes providers.json.sig + filters.txt → next app
  * launch pulls new config, verifies signature, applies if valid → no rebuild.
+ *
+ * NOTE (Gson/Kotlin trap): Gson instantiates these data classes via UnsafeAllocator,
+ * bypassing Kotlin constructors, so any collection field ABSENT from the JSON is
+ * left as its raw JVM default `null` (not the Kotlin `emptyList()`/`emptyMap()`
+ * default). `normalize()` hydrates every null collection back to empty immediately
+ * after parse — see BlocklistConfigLoader.parseConfig. Do NOT read any collection
+ * field without going through a normalized config.
  */
 data class BlocklistConfig(
     @SerializedName("version") val version: Int = 0,
@@ -52,12 +59,36 @@ data class BlocklistConfig(
     // V5: Ed25519 signature over the canonical JSON bytes (OTA integrity)
     @SerializedName("signature") val signature: String? = null,
     @SerializedName("publicKey") val publicKey: String? = null,
-)
+) {
+    /**
+     * Hydrate null collections left by Gson's UnsafeAllocator into empties.
+     * Safe to call on an already-normalized config (idempotent).
+     */
+    fun normalize(): BlocklistConfig {
+        return this.copy(
+            allowedCdnHosts = this.allowedCdnHosts ?: emptySet(),
+            blockedDomains = this.blockedDomains ?: emptySet(),
+            blockedUrls = this.blockedUrls ?: emptyList(),
+            providerProfiles = this.providerProfiles ?: emptyMap(),
+            providerRootHosts = this.providerRootHosts ?: emptySet(),
+            providers = (this.providers ?: emptyList()).map { it.normalize() },
+            rules = this.rules?.normalize(),
+            navigationGuard = this.navigationGuard?.normalize(),
+        )
+    }
+}
 
 data class RulesConfig(
     @SerializedName("videoDetection") val videoDetection: VideoDetectionConfig? = null,
     @SerializedName("alwaysBlock") val alwaysBlock: AlwaysBlockConfig? = null,
-)
+) {
+    fun normalize(): RulesConfig {
+        return this.copy(
+            videoDetection = this.videoDetection?.normalize(),
+            alwaysBlock = this.alwaysBlock?.normalize(),
+        )
+    }
+}
 
 data class VideoDetectionConfig(
     @SerializedName("extensions") val extensions: List<String> = emptyList(),
@@ -65,12 +96,26 @@ data class VideoDetectionConfig(
     @SerializedName("enableSessionTrust") val enableSessionTrust: Boolean = true,
     /** V5: sliding trust TTL in ms (default 900000 = 15 min). */
     @SerializedName("trustTTLMs") val trustTTLMs: Long = 900_000,
-)
+) {
+    fun normalize(): VideoDetectionConfig {
+        return this.copy(
+            extensions = this.extensions ?: emptyList(),
+            pathPatterns = this.pathPatterns ?: emptyList(),
+        )
+    }
+}
 
 data class AlwaysBlockConfig(
     @SerializedName("domains") val domains: List<String> = emptyList(),
     @SerializedName("pathPatterns") val pathPatterns: List<String> = emptyList(),
-)
+) {
+    fun normalize(): AlwaysBlockConfig {
+        return this.copy(
+            domains = this.domains ?: emptyList(),
+            pathPatterns = this.pathPatterns ?: emptyList(),
+        )
+    }
+}
 
 /**
  * Path-level navigation containment — blocks provider home-page escapes
@@ -80,7 +125,13 @@ data class AlwaysBlockConfig(
 data class NavigationGuardConfig(
     @SerializedName("universalBlockPaths") val universalBlockPaths: List<String> = listOf("/"),
     @SerializedName("shallowDepthThreshold") val shallowDepthThreshold: Int = 1,
-)
+) {
+    fun normalize(): NavigationGuardConfig {
+        return this.copy(
+            universalBlockPaths = this.universalBlockPaths ?: listOf("/"),
+        )
+    }
+}
 
 data class ProviderConfig(
     @SerializedName("id") val id: String,
@@ -132,13 +183,34 @@ data class ProviderConfig(
      * providers[].disableDevtoolPatch.
      */
     @SerializedName("disableDevtoolPatch") val disableDevtoolPatch: Boolean = false,
-)
+) {
+    /**
+     * Hydrate null collections left by Gson's UnsafeAllocator into empties.
+     * Safe to call on an already-normalized config (idempotent).
+     */
+    fun normalize(): ProviderConfig {
+        return this.copy(
+            embedDomains = this.embedDomains ?: emptyList(),
+            cdnDomains = this.cdnDomains ?: emptyList(),
+            apiDomains = this.apiDomains ?: emptyList(),
+            blockHomePaths = this.blockHomePaths ?: emptyList(),
+            apiIntercepts = (this.apiIntercepts ?: emptyList()).map { it.normalize() },
+            cosmeticRules = this.cosmeticRules ?: emptyList(),
+        )
+    }
+}
 
 data class ApiInterceptRule(
     @SerializedName("match") val match: String,
     @SerializedName("methods") val methods: List<String> = emptyList(),
     @SerializedName("synthetic") val synthetic: SyntheticResponse? = null,
-)
+) {
+    fun normalize(): ApiInterceptRule {
+        return this.copy(
+            methods = this.methods ?: emptyList(),
+        )
+    }
+}
 
 data class SyntheticResponse(
     @SerializedName("primary") val primary: Map<String, Any>? = null,

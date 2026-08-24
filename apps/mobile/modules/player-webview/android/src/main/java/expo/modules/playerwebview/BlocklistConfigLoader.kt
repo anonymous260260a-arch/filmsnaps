@@ -524,7 +524,12 @@ object BlocklistConfigLoader {
 
     private fun parseConfig(json: String): BlocklistConfig {
         val gson = Gson()
-        return gson.fromJson(json, BlocklistConfig::class.java)
+        val raw = gson.fromJson(json, BlocklistConfig::class.java)
+            ?: throw IllegalStateException("Gson returned null for config JSON")
+        // Gson instantiates via UnsafeAllocator, bypassing Kotlin constructors, so
+        // collection fields absent from JSON are left null. Normalize hydrates them
+        // to empties before any consumer reads them (fixes the launch/OTA NPE).
+        return raw.normalize()
     }
 
     // ── Flattened CDN host set (read by PlayerWebViewOverlayView) ────
@@ -559,15 +564,18 @@ object BlocklistConfigLoader {
     private fun logConfigSummary(source: String, cfg: BlocklistConfig) {
         val universal = cfg.navigationGuard?.universalBlockPaths ?: listOf("/")
         val enabledProviders = cfg.providers.filter { it.enabled }
-        val withHomePaths = enabledProviders.filter { it.blockHomePaths.isNotEmpty() }
-        val withCosmetic = enabledProviders.filter { it.cosmeticRules.isNotEmpty() }
-        val withApiIntercepts = enabledProviders.filter { it.apiIntercepts.isNotEmpty() }
-        val withRedirects = enabledProviders.filter { it.allowServerRedirects }
+        // Null-safe after parseConfig -> normalize(): every collection is non-null.
+        val withHomePaths = enabledProviders.count { it.blockHomePaths.isNotEmpty() }
+        val withCosmetic = enabledProviders.count { it.cosmeticRules.isNotEmpty() }
+        val withApiIntercepts = enabledProviders.count { it.apiIntercepts.isNotEmpty() }
+        val withRedirects = enabledProviders.count { it.allowServerRedirects }
+        val withAdblockDisabled = enabledProviders.count { it.adblockDisabled }
         Log.i(TAG, "[CONFIG] source=$source version=${cfg.version} " +
             "universal=$universal " +
             "providers=${enabledProviders.size} " +
-            "(homePaths=${withHomePaths.size}, cosmetic=${withCosmetic.size}, " +
-            "apiIntercepts=${withApiIntercepts.size}, allowRedirects=${withRedirects.size}) " +
+            "(homePaths=$withHomePaths, cosmetic=$withCosmetic, " +
+            "apiIntercepts=$withApiIntercepts, allowRedirects=$withRedirects, " +
+            "adblockDisabled=$withAdblockDisabled) " +
             "ids=${enabledProviders.joinToString(",") { it.id }}")
     }
 
