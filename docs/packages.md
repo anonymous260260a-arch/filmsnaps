@@ -16,17 +16,17 @@ builds it automatically (`pnpm --filter @filmsnaps/shared build`).
 
 **Exports:**
 
-| Subpath      | Contents                                                |
-| ------------ | ------------------------------------------------------- |
-| `.`          | Barrel: guard script builder, providers, types, utils.  |
-| `/security`  | `playerGuard.ts`, `scriptlets.ts`, `navigation-home.ts` |
-| `/providers` | `registry.ts` (provider single source of truth)         |
-| `/types`     | movie + provider types                                  |
-| `/api`       | TMDB helpers                                            |
-| `/state`     | `useWatchHistory` + storage layer                       |
-| `/theme`     | design tokens                                           |
-| `/utils`     | `cn`, image, video                                      |
-| `/constants` | TMDB constants                                          |
+| Subpath      | Contents                                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.`          | Barrel: guard script builder, providers, types, utils.                                                                                                              |
+| `/security`  | `playerGuard.ts`, `scriptlets.ts`, `navigation-home.ts`                                                                                                             |
+| `/providers` | `registry.ts` (provider single source of truth, incl. Hard Mode Split: `getProvidersForMode`, `getNonAnimeProviders`, `filterAnimeProviders`, `ANIME_PROVIDER_IDS`) |
+| `/types`     | movie + provider types                                                                                                                                              |
+| `/api`       | TMDB helpers                                                                                                                                                        |
+| `/state`     | `useWatchHistory` + storage layer                                                                                                                                   |
+| `/theme`     | design tokens                                                                                                                                                       |
+| `/utils`     | `cn`, image, video                                                                                                                                                  |
+| `/constants` | TMDB constants                                                                                                                                                      |
 
 The `fix-dist-imports.mjs` postbuild step normalizes ESM imports in the
 compiled output so consumers (Next.js, React Native, Electron) can import it

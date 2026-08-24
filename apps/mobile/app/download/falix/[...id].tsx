@@ -27,6 +27,7 @@ import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useDownloadInfra, useDownloadList } from "../../../lib/download";
+import { tmdbApi } from "../../../lib/api";
 import { colors } from "../../../theme/colors";
 
 // ── API Base ──
@@ -107,6 +108,119 @@ const sortByQuality = (a: FalixTelegramFile, b: FalixTelegramFile) => {
   return aq - bq;
 };
 
+// ── Audio-language tags ── (mirrors web LANGUAGE_TAGS)
+const LANGUAGE_TAGS = [
+  "Multi",
+  "MultiAudio",
+  "Dual",
+  "DualAudio",
+  "Dubbed",
+  "Hindi",
+  "English",
+  "Urdu",
+  "Punjabi",
+  "Panjabi",
+  "Marathi",
+  "Gujarati",
+  "Bengali",
+  "Odia",
+  "Tamil",
+  "Telugu",
+  "Kannada",
+  "Malayalam",
+  "Tulu",
+  "Bhojpuri",
+  "Rajasthani",
+  "Haryanvi",
+  "Assamese",
+  "Nepali",
+  "Sinhala",
+  "Japanese",
+  "Korean",
+  "Mandarin",
+  "Cantonese",
+  "Chinese",
+  "Thai",
+  "Vietnamese",
+  "Indonesian",
+  "Malay",
+  "Filipino",
+  "Tagalog",
+  "Burmese",
+  "Khmer",
+  "Lao",
+  "Arabic",
+  "Persian",
+  "Farsi",
+  "Turkish",
+  "Kurdish",
+  "Hebrew",
+  "Georgian",
+  "Armenian",
+  "Azerbaijani",
+  "Kazakh",
+  "Uzbek",
+  "Spanish",
+  "French",
+  "German",
+  "Italian",
+  "Dutch",
+  "Portuguese",
+  "Russian",
+  "Ukrainian",
+  "Belarusian",
+  "Polish",
+  "Czech",
+  "Slovak",
+  "Hungarian",
+  "Romanian",
+  "Bulgarian",
+  "Serbian",
+  "Croatian",
+  "Bosnian",
+  "Slovenian",
+  "Albanian",
+  "Macedonian",
+  "Greek",
+  "Lithuanian",
+  "Latvian",
+  "Estonian",
+  "Danish",
+  "Swedish",
+  "Norwegian",
+  "Finnish",
+  "Icelandic",
+  "Irish",
+  "Welsh",
+  "Catalan",
+  "Basque",
+  "Galician",
+  "Swahili",
+  "Afrikaans",
+  "Zulu",
+  "Amharic",
+  "Hausa",
+  "Yoruba",
+  "Somali",
+  "Mongolian",
+];
+
+// Word-boundary scan of a release name for known language tags.
+const extractLanguages = (name: string): string[] => {
+  const lower = name.toLowerCase();
+  const found: string[] = [];
+  for (const lang of LANGUAGE_TAGS) {
+    if (
+      new RegExp(`(?:^|[.\\s_-])${lang.toLowerCase()}(?:$|[.\\s_\\-\\d])`).test(
+        lower,
+      )
+    ) {
+      found.push(lang);
+    }
+  }
+  return found;
+};
+
 // ── Parse size string to bytes ──
 const parseSizeToBytes = (sizeStr: string): number => {
   if (!sizeStr) return 0;
@@ -161,6 +275,80 @@ const getFileByTier = (
   return sortedFiles[midIndex];
 };
 
+// Sky-chip language row shown under a file name (mirrors web file rows).
+function LanguageChips({ fileName }: { fileName: string }) {
+  const langs = useMemo(() => extractLanguages(fileName), [fileName]);
+  if (langs.length === 0) return null;
+  return (
+    <View
+      style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 5 }}
+    >
+      {langs.map((lang) => (
+        <Text
+          key={lang}
+          style={{
+            color: "#7dd3fc",
+            fontSize: 10,
+            fontWeight: "600",
+            backgroundColor: "rgba(56, 189, 248, 0.1)",
+            paddingHorizontal: 6,
+            paddingVertical: 1.5,
+            borderRadius: 4,
+          }}
+        >
+          {lang}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+// About description — clamped to 3 lines with a See more/less toggle that
+// only appears when the text actually overflows the clamp (mirrors web).
+function AboutDescription({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+
+  return (
+    <View>
+      <Text
+        style={{ color: "#a1a1aa", fontSize: 14, lineHeight: 22 }}
+        numberOfLines={expanded ? undefined : 3}
+      >
+        {text}
+      </Text>
+      {overflows && (
+        <TouchableOpacity
+          onPress={() => setExpanded((p) => !p)}
+          activeOpacity={0.7}
+          style={{ marginTop: 4 }}
+        >
+          <Text style={{ color: colors.gold, fontSize: 13, fontWeight: "600" }}>
+            {expanded ? "See less" : "See more"}
+          </Text>
+        </TouchableOpacity>
+      )}
+      {/* Hidden full-size measurer: detects overflow without clamping the
+          reported line count (numberOfLines=3 collapses lines.length too). */}
+      {!expanded && !overflows && (
+        <View
+          style={{ position: "absolute", opacity: 0, pointerEvents: "none" }}
+        >
+          <Text
+            style={{ color: "#a1a1aa", fontSize: 14, lineHeight: 22 }}
+            numberOfLines={0}
+            onTextLayout={(e) => {
+              if (e.nativeEvent.lines.length > 3) setOverflows(true);
+            }}
+          >
+            {text}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 export default function FalixDownloadScreen() {
   const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
@@ -180,6 +368,7 @@ export default function FalixDownloadScreen() {
   const [expandedEpisodes, setExpandedEpisodes] = useState<
     Record<number, boolean>
   >({});
+  const [allExpanded, setAllExpanded] = useState(false);
   const [bulkQualityTier, setBulkQualityTier] = useState<QualityTier>("mid");
   const [showBulkPanel, setShowBulkPanel] = useState(false);
   const { enqueue } = useDownloadInfra();
@@ -193,15 +382,48 @@ export default function FalixDownloadScreen() {
     isLoading: falixLoading,
     isError: falixIsError,
     error: falixError,
+    refetch: refetchFalix,
   } = useQuery<FalixData | null>({
     queryKey: ["falix", "detail", params.type, params.id],
     queryFn: async () => {
       if (!params.id) return null;
-      const res = await fetch(`${FALIX_API_BASE}/api/id/${params.id}`);
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
-      return (await res.json()) as FalixData;
+      // 1. Try the TMDB id directly.
+      const directRes = await fetch(`${FALIX_API_BASE}/api/id/${params.id}`, {
+        cache: "no-store",
+      });
+      if (directRes.ok) {
+        return (await directRes.json()) as FalixData;
+      }
+      // 2. TMDB id missed (404) → resolve its IMDB id and retry.
+      if (directRes.status === 404) {
+        try {
+          const ext = await tmdbApi.getExternalIds(params.id, params.type);
+          const imdbRaw = ext?.imdb_id;
+          if (imdbRaw) {
+            const imdbNum = Number(String(imdbRaw).replace(/^tt0*/, ""));
+            if (Number.isFinite(imdbNum) && imdbNum > 0) {
+              const imdbRes = await fetch(
+                `${FALIX_API_BASE}/api/id/${imdbNum}`,
+                { cache: "no-store" },
+              );
+              if (imdbRes.ok) {
+                return (await imdbRes.json()) as FalixData;
+              }
+            }
+          }
+        } catch {
+          // fall through to the error below
+        }
+      }
+      // 3. Both missed → surface a not-found error.
+      throw new Error(
+        directRes.status === 404
+          ? "This title is not available on Falix."
+          : `API error: ${directRes.status}`,
+      );
     },
     enabled: !!params.id,
+    retry: false,
     staleTime: 10 * 60 * 1000,
   });
 
@@ -220,6 +442,29 @@ export default function FalixDownloadScreen() {
       setSelectedSeason(data.seasons[0].season_number);
     }
   }, [data]);
+
+  // ── Expand / collapse all episodes at once ──
+  // Derives the current season's episodes inline (data + selectedSeason) so it
+  // doesn't depend on the currentEpisodes memo declared further below.
+  const toggleAllEpisodes = useCallback(() => {
+    const next = !allExpanded;
+    LayoutAnimation.easeInEaseOut();
+    setAllExpanded(next);
+    const season =
+      data?.type === "tv"
+        ? data.seasons?.find((s) => s.season_number === selectedSeason)
+        : undefined;
+    const eps = season?.episodes || [];
+    setExpandedEpisodes(
+      eps.reduce(
+        (acc, ep) => {
+          acc[ep.episode_number] = next;
+          return acc;
+        },
+        {} as Record<number, boolean>,
+      ),
+    );
+  }, [allExpanded, data, selectedSeason]);
 
   // ── Build download URL ──
   const buildDownloadUrl = (fileId: string, fileName: string): string => {
@@ -255,6 +500,26 @@ export default function FalixDownloadScreen() {
     const url = buildDownloadUrl(fileId, fileName);
     Linking.openURL(url).catch(() => Alert.alert("Could not open URL"));
   };
+
+  // ── Resolve a file's download-store state (mirrors web row: completed /
+  //     active / idle). Matches by title+quality+server like the existing
+  //     code; for TV the per-episode match is best-effort.
+  const getFileState = useCallback(
+    (quality: string): "completed" | "active" | "idle" => {
+      const storeTask = downloads.find(
+        (t) =>
+          t.title === data?.title &&
+          t.quality === quality &&
+          t.server === "falix",
+      );
+      if (!storeTask) return "idle";
+      if (storeTask.status === "completed") return "completed";
+      if (storeTask.status === "downloading" || storeTask.status === "pending")
+        return "active";
+      return "idle";
+    },
+    [downloads, data],
+  );
 
   // ── Get current season episodes ──
   const currentEpisodes = useMemo(() => {
@@ -435,15 +700,14 @@ export default function FalixDownloadScreen() {
               }}
             >
               {sortedFiles.map((file, i) => {
+                const fileState = getFileState(file.quality);
+                const isDownloading = fileState === "active";
                 const storeTask = downloads.find(
                   (t) =>
                     t.title === data?.title &&
                     t.quality === file.quality &&
                     t.server === "falix",
                 );
-                const isDownloading =
-                  storeTask?.status === "downloading" ||
-                  storeTask?.status === "pending";
                 const progress = storeTask?.totalBytes
                   ? storeTask.receivedBytes / storeTask.totalBytes
                   : 0;
@@ -510,6 +774,7 @@ export default function FalixDownloadScreen() {
                       >
                         {file.name}
                       </Text>
+                      <LanguageChips fileName={file.name} />
                     </View>
 
                     <View
@@ -540,6 +805,12 @@ export default function FalixDownloadScreen() {
                       )}
                       {isDownloading ? (
                         <ActivityIndicator size="small" color={colors.gold} />
+                      ) : fileState === "completed" ? (
+                        <Ionicons
+                          name="checkmark-circle"
+                          size={22}
+                          color={colors.successGreen}
+                        />
                       ) : (
                         <View style={{ flexDirection: "row", gap: 6 }}>
                           <TouchableOpacity
@@ -938,6 +1209,75 @@ export default function FalixDownloadScreen() {
   ]);
 
   // ── Loading / Error / Empty ──
+  // Malformed link: missing type/id — distinct from a true not-found.
+  if (!params.type || !params.id) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: colors.voidBlack,
+          paddingHorizontal: 24,
+        }}
+      >
+        <StatusBar barStyle="light-content" />
+        <View
+          style={{
+            width: 64,
+            height: 64,
+            borderRadius: 32,
+            backgroundColor: "rgba(239, 68, 68, 0.1)",
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 20,
+          }}
+        >
+          <Ionicons
+            name="alert-circle-outline"
+            size={36}
+            color={colors.error}
+          />
+        </View>
+        <Text
+          style={{
+            color: "#d4d4d8",
+            fontSize: 18,
+            fontWeight: "600",
+            marginBottom: 8,
+          }}
+        >
+          Download unavailable
+        </Text>
+        <Text
+          style={{
+            color: "#71717a",
+            fontSize: 14,
+            textAlign: "center",
+            marginBottom: 24,
+            lineHeight: 20,
+          }}
+        >
+          This falix link is malformed.
+        </Text>
+        <TouchableOpacity
+          onPress={() => nav.goBack({ fallback: "/(tabs)" })}
+          style={{
+            backgroundColor: colors.gold,
+            borderRadius: 12,
+            paddingVertical: 14,
+            paddingHorizontal: 32,
+          }}
+          activeOpacity={0.8}
+        >
+          <Text style={{ color: "#000000", fontWeight: "700", fontSize: 15 }}>
+            Go Back
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   if (loading) {
     return (
       <View
@@ -1007,6 +1347,90 @@ export default function FalixDownloadScreen() {
         >
           {error}
         </Text>
+        <View style={{ flexDirection: "row", gap: 12 }}>
+          <TouchableOpacity
+            onPress={() => nav.goBack({ fallback: "/(tabs)" })}
+            style={{
+              backgroundColor: "rgba(39, 39, 42, 0.8)",
+              borderRadius: 12,
+              paddingVertical: 14,
+              paddingHorizontal: 28,
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={{ color: "#d4d4d8", fontWeight: "700", fontSize: 15 }}>
+              Go Back
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => refetchFalix()}
+            style={{
+              backgroundColor: colors.gold,
+              borderRadius: 12,
+              paddingVertical: 14,
+              paddingHorizontal: 28,
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={{ color: "#000000", fontWeight: "700", fontSize: 15 }}>
+              Retry
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  if (!data) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: colors.voidBlack,
+          paddingHorizontal: 24,
+        }}
+      >
+        <StatusBar barStyle="light-content" />
+        <View
+          style={{
+            width: 64,
+            height: 64,
+            borderRadius: 32,
+            backgroundColor: "rgba(82, 82, 91, 0.12)",
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 20,
+          }}
+        >
+          <Ionicons
+            name="folder-open-outline"
+            size={34}
+            color={colors.zinc500}
+          />
+        </View>
+        <Text
+          style={{
+            color: "#d4d4d8",
+            fontSize: 18,
+            fontWeight: "600",
+            marginBottom: 8,
+          }}
+        >
+          No data available
+        </Text>
+        <Text
+          style={{
+            color: "#71717a",
+            fontSize: 14,
+            textAlign: "center",
+            marginBottom: 24,
+            lineHeight: 20,
+          }}
+        >
+          Falix has no entry for this title.
+        </Text>
         <TouchableOpacity
           onPress={() => nav.goBack({ fallback: "/(tabs)" })}
           style={{
@@ -1021,22 +1445,6 @@ export default function FalixDownloadScreen() {
             Go Back
           </Text>
         </TouchableOpacity>
-      </View>
-    );
-  }
-
-  if (!data) {
-    return (
-      <View
-        style={{
-          flex: 1,
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: colors.voidBlack,
-        }}
-      >
-        <StatusBar barStyle="light-content" />
-        <Text style={{ color: "#71717a" }}>No data available</Text>
       </View>
     );
   }
@@ -1238,6 +1646,36 @@ export default function FalixDownloadScreen() {
                 ))}
               </View>
 
+              {/* Audio languages from the API — same sky-chip language as file
+                  rows below, so hero and files read as one system. */}
+              {data.languages && data.languages.length > 0 && (
+                <View
+                  style={{
+                    flexDirection: "row",
+                    flexWrap: "wrap",
+                    marginTop: 8,
+                    gap: 6,
+                  }}
+                >
+                  {data.languages.map((l, i) => (
+                    <Text
+                      key={i}
+                      style={{
+                        color: "#7dd3fc",
+                        fontSize: 11,
+                        fontWeight: "600",
+                        backgroundColor: "rgba(56, 189, 248, 0.1)",
+                        paddingHorizontal: 8,
+                        paddingVertical: 3,
+                        borderRadius: 6,
+                      }}
+                    >
+                      {l}
+                    </Text>
+                  ))}
+                </View>
+              )}
+
               {/* Movie quick download */}
               {!isTV && data.telegram && data.telegram.length > 0 && (
                 <TouchableOpacity
@@ -1291,9 +1729,7 @@ export default function FalixDownloadScreen() {
             >
               About
             </Text>
-            <Text style={{ color: "#a1a1aa", fontSize: 14, lineHeight: 22 }}>
-              {data.description}
-            </Text>
+            <AboutDescription text={data.description} />
           </View>
         )}
 
@@ -1308,17 +1744,61 @@ export default function FalixDownloadScreen() {
         {isTV && (
           <View style={{ paddingHorizontal: 16, marginBottom: 16 }}>
             {renderSeasonTabs()}
-            <Text
+            <View
               style={{
-                color: "#ffffff",
-                fontWeight: "700",
-                fontSize: 15,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
                 marginBottom: 14,
-                fontFamily: "PlayfairDisplay_700Bold",
               }}
             >
-              Season {selectedSeason} Episodes
-            </Text>
+              <Text
+                style={{
+                  color: "#ffffff",
+                  fontWeight: "700",
+                  fontSize: 15,
+                  fontFamily: "PlayfairDisplay_700Bold",
+                }}
+              >
+                Season {selectedSeason} Episodes
+              </Text>
+              {currentEpisodes.length > 0 && (
+                <TouchableOpacity
+                  onPress={toggleAllEpisodes}
+                  activeOpacity={0.7}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 5,
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 16,
+                    backgroundColor: "rgba(39, 39, 42, 0.8)",
+                    borderWidth: 1,
+                    borderColor: "rgba(63, 63, 70, 0.5)",
+                  }}
+                >
+                  <Ionicons
+                    name={
+                      allExpanded
+                        ? "chevron-up-outline"
+                        : "chevron-down-outline"
+                    }
+                    size={14}
+                    color={colors.gold}
+                  />
+                  <Text
+                    style={{
+                      color: colors.gold,
+                      fontSize: 11,
+                      fontWeight: "700",
+                    }}
+                  >
+                    {allExpanded ? "Collapse All" : "Expand All"}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
             <FlatList
               data={currentEpisodes}
               renderItem={renderEpisode}
@@ -1353,15 +1833,14 @@ export default function FalixDownloadScreen() {
               Download Options
             </Text>
             {[...data.telegram].sort(sortByQuality).map((file, i) => {
+              const fileState = getFileState(file.quality);
+              const isDownloading = fileState === "active";
               const storeTask = downloads.find(
                 (t) =>
                   t.title === data?.title &&
                   t.quality === file.quality &&
                   t.server === "falix",
               );
-              const isDownloading =
-                storeTask?.status === "downloading" ||
-                storeTask?.status === "pending";
               const progress = storeTask?.totalBytes
                 ? storeTask.receivedBytes / storeTask.totalBytes
                 : 0;
@@ -1430,6 +1909,7 @@ export default function FalixDownloadScreen() {
                     >
                       {file.name}
                     </Text>
+                    <LanguageChips fileName={file.name} />
                   </View>
 
                   <View
@@ -1460,6 +1940,12 @@ export default function FalixDownloadScreen() {
                     )}
                     {isDownloading ? (
                       <ActivityIndicator size="small" color={colors.gold} />
+                    ) : fileState === "completed" ? (
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={24}
+                        color={colors.successGreen}
+                      />
                     ) : (
                       <View style={{ flexDirection: "row", gap: 6 }}>
                         <TouchableOpacity

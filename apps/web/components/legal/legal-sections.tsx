@@ -65,7 +65,7 @@ export const LEGAL_GATE_SECTIONS: LegalSection[] = [
             "Not redistributing downloaded content or using it for commercial purposes",
           ].map((item) => (
             <li key={item} className="flex items-start gap-2.5">
-              <span className="mt-1.5 text-[10px] leading-none text-[#D4A237]">
+              <span className="mt-1.5 text-[11px] leading-none text-[#D4A237]">
                 ■
               </span>
               <span className="text-sm leading-5 text-zinc-300">{item}</span>

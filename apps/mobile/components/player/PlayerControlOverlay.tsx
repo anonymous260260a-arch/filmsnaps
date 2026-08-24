@@ -53,6 +53,9 @@ interface PlayerControlOverlayProps {
   providerDisplayName: string;
   providerId: string;
   auditMode: boolean;
+  onMegaplay?: boolean;
+  audio?: "sub" | "dub";
+  onAudioChange?: (next: "sub" | "dub") => void;
 }
 
 // ── Component ──
@@ -74,6 +77,9 @@ export function PlayerControlOverlay({
   providerDisplayName,
   providerId,
   auditMode,
+  onMegaplay,
+  audio = "sub",
+  onAudioChange,
 }: PlayerControlOverlayProps) {
   const insets = useSafeAreaInsets();
   const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } =
@@ -227,30 +233,59 @@ export function PlayerControlOverlay({
             </TouchableOpacity>
           )}
 
-          {/* Right group: Source switcher + Fullscreen */}
+          {/* Right group: Sub/Dub (MegaPlay) + Source switcher + Fullscreen */}
           <View
             className="flex-row items-center gap-2"
             style={{ pointerEvents: "auto" }}
           >
-            <TouchableOpacity
-              onPress={onServerPickerOpen}
-              className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
-              activeOpacity={0.7}
-            >
-              <Ionicons name="server" size={16} color={colors.gold} />
-            </TouchableOpacity>
-            {providerId !== "nxsha" && providerId !== "chillflix" && (
-              <TouchableOpacity
-                onPress={onToggleFullscreen}
-                className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
-                activeOpacity={0.7}
-              >
-                <Ionicons
-                  name={isFullscreen ? "contract" : "expand"}
-                  size={20}
-                  color="#fff"
-                />
-              </TouchableOpacity>
+            {onMegaplay && onAudioChange && (
+              <View className="flex-row rounded-full bg-black/40 overflow-hidden border border-zinc-700/40">
+                {(["sub", "dub"] as const).map((a) => {
+                  const active = audio === a;
+                  return (
+                    <TouchableOpacity
+                      key={a}
+                      onPress={() => onAudioChange(a)}
+                      className={`px-3 h-9 items-center justify-center ${
+                        active ? "bg-primary" : ""
+                      }`}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        className={`text-xs font-bold uppercase ${
+                          active ? "text-black" : "text-zinc-300"
+                        }`}
+                      >
+                        {a}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+            {!onMegaplay && (
+              <>
+                <TouchableOpacity
+                  onPress={onServerPickerOpen}
+                  className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="server" size={16} color={colors.gold} />
+                </TouchableOpacity>
+                {providerId !== "nxsha" && providerId !== "chillflix" && (
+                  <TouchableOpacity
+                    onPress={onToggleFullscreen}
+                    className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name={isFullscreen ? "contract" : "expand"}
+                      size={20}
+                      color="#fff"
+                    />
+                  </TouchableOpacity>
+                )}
+              </>
             )}
           </View>
         </View>

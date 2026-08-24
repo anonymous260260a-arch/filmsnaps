@@ -10,9 +10,14 @@ const Page = async ({ params, searchParams }) => {
   const sp = await searchParams;
   const hdrs = await headers();
   const userAgent = hdrs.get("user-agent") || "";
-  // Desktop (Electron) → default nxsha, Web → default cinemaos
+  // Desktop (Electron) → default nxsha, Web → default cinemaos.
+  // Anime-profiled sessions (?mid= / ?aid= from anime search) default to
+  // MegaPlay instead — its builders need those IDs, not TMDB ones.
   const isDesktop = userAgent.includes("Electron");
-  const defaultProvider = sp.provider || (isDesktop ? "nxsha" : "screenscape");
+  const animeOrigin = Boolean(sp.mid || sp.aid);
+  const defaultProvider =
+    sp.provider ||
+    (animeOrigin ? "megaplay" : isDesktop ? "nxsha" : "screenscape");
 
   let meta;
   let initialSeasonData = null;
@@ -58,6 +63,9 @@ const Page = async ({ params, searchParams }) => {
       minimal={sp.minimal === "1"}
       initialSeason={initialSeason}
       initialEpisode={initialEpisode}
+      initialResumeT={sp.t ? parseInt(sp.t, 10) : undefined}
+      initialMalId={sp.mid ? parseInt(sp.mid, 10) : undefined}
+      initialAnilistId={sp.aid ? parseInt(sp.aid, 10) : undefined}
     />
   );
 };

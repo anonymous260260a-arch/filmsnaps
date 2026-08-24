@@ -26,6 +26,7 @@ import { FalixPlayer } from "@/components/player/FalixPlayer";
 import { buildIframeCSP } from "@/lib/movieProviders/cspBuilder";
 import { PlayerErrorState } from "./PlayerErrorState";
 import { ServerDropdown } from "./ServerDropdown";
+import type { AnimeChainState } from "./DesktopWatchLayout";
 
 const DIRECT_VIDEO_PROVIDERS = new Set<string>(["falix"]);
 
@@ -54,6 +55,8 @@ interface VideoZoneProps {
   lastCheckedAt: number;
   isRefreshing: boolean;
   onRefreshHealth: () => void;
+  /** MegaPlay fallback-chain state (present only in anime sessions). */
+  animeChain?: AnimeChainState;
 }
 
 export function VideoZone({
@@ -80,6 +83,7 @@ export function VideoZone({
   lastCheckedAt,
   isRefreshing,
   onRefreshHealth,
+  animeChain,
 }: VideoZoneProps) {
   const {
     iframeLoadError,
@@ -190,7 +194,7 @@ export function VideoZone({
             <div className="flex items-center gap-3 text-sm text-[#E05252] bg-red-500/10 px-5 py-4 rounded-xl border border-red-500/20 max-w-md mx-4">
               <div className="flex-1 text-xs sm:text-sm">
                 This server is using too much CPU — it has been stopped.
-                <span className="block mt-1 text-[#A1A1AA]">
+                <span className="block mt-1 text-muted-foreground">
                   Switch to a different server to continue watching.
                 </span>
               </div>
@@ -198,18 +202,41 @@ export function VideoZone({
           </div>
         )}
 
-        {/* Error State */}
-        {iframeLoadError && !cpuWarning && currentProvider && (
-          <PlayerErrorState
-            currentProviderName={
-              currentProvider.displayName || currentProvider.name
-            }
-            providers={providers}
-            selectedId={selectedProviderId}
-            onSelectProvider={handleErrorSwitch}
-            onRetry={onRetry}
-          />
-        )}
+        {/* Error State — standard, or the terminal anime-chain variant */}
+        {(iframeLoadError || animeChain?.exhausted) &&
+          !cpuWarning &&
+          currentProvider && (
+            <PlayerErrorState
+              currentProviderName={
+                currentProvider.displayName || currentProvider.name
+              }
+              providers={providers}
+              selectedId={selectedProviderId}
+              onSelectProvider={handleErrorSwitch}
+              onRetry={onRetry}
+              variant={animeChain?.exhausted ? "anime-exhausted" : "standard"}
+              tried={animeChain?.exhausted ? animeChain.tried : undefined}
+            />
+          )}
+
+        {/* Manual chain advance (web browser on desktop layout — Electron
+            auto-advances on the deterministic 410 signal; verdict Q5 keeps
+            soft signals manual everywhere). */}
+        {animeChain &&
+          !animeChain.exhausted &&
+          animeChain.canAdvance &&
+          playerReady &&
+          !iframeLoadError &&
+          !cpuWarning && (
+            <button
+              onClick={animeChain.onAdvance}
+              className="absolute bottom-3 right-3 z-30 flex items-center gap-1.5 px-3.5 py-2 rounded-full
+                bg-black/60 backdrop-blur-sm border border-violet-400/30 text-violet-300
+                text-xs font-bold hover:bg-black/80 transition-all active:scale-95"
+            >
+              Not playing? Try next anime source
+            </button>
+          )}
 
         {/* Direct-video player (Falix) */}
         {!cpuWarning &&
@@ -302,10 +329,10 @@ export function VideoZone({
               <div className="absolute inset-3 rounded-full border-2 border-[#222226]" />
               <div className="absolute inset-[18px] rounded-full bg-[#D4A237]/30" />
             </div>
-            <p className="text-xs font-black text-[#52525B] uppercase tracking-[0.3em] animate-pulse">
+            <p className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse">
               Scanning Projection Room
             </p>
-            <p className="text-[10px] text-zinc-600 -mt-3">{loadingSubtext}</p>
+            <p className="text-[11px] text-zinc-600 -mt-3">{loadingSubtext}</p>
           </div>
         )}
       </div>

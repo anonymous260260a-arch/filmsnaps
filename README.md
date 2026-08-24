@@ -38,8 +38,6 @@ Expo/React Native mobile app, and a feedback portal.
 - **[Security Architecture](docs/security.md)** — the full security stack: R0–R8
   rule cascade and L2–L8 desktop layers, mobile native protection, WebContentsView hybrid,
   and the `providers.json` + `filters.txt` v5 configuration.
-- **[Security Expert Review](docs/security-expert-review.md)** — external expert review
-  and implementation status.
 - **[Architecture](docs/architecture.md)** — repository layout, data flow,
   builds, and CI.
 - **[Contributing](CONTRIBUTING.md)** — how to set up, develop, add a provider,
@@ -108,6 +106,7 @@ build profiles).
 - **Native hardened desktop player** — WebContentsView hybrid (Electron 43), L8 `Page.addScriptToEvaluateOnNewDocument` HTML-bytes injection (replaces disabled CDP-Fetch that dropped renderer headers → Cloudflare 403),
   `@ghostery/adblocker` (adblock-rs WASM), session trust with MIME-based 15-min TTL, `allowServerRedirects` for redirect-mesh providers.
 - **Native hardened mobile player** — `PlayerWebView` native Expo module with `shouldInterceptRequest` filtering (Aho-Corasick unified trie), Ed25519-verified OTA config with ring-buffer rollback, 3×-failure watchdog, NavGuard server-redirect fix, session trust with 15-min TTL, and cosmetic rules from config.
+- **Anime support** — toggle **Anime mode** (Hard Mode Split) to surface anime via AniList search and route playback to **MegaPlay** (MAL/AniList-keyed). Every anime title auto-matches to its MyAnimeList / AniList ID, with automatic 410 fallback between ID spaces. Server selection is **per-title**, so a movie in anime mode (or anime in movie/TV mode) always opens with the correct servers.
 - **Signed OTA config** — `providers.json` + `filters.txt` v5, Ed25519-signed, ring-buffer rollback (3 configs),
   3×-failure watchdog with local `heal-events.log` on both desktop and mobile.
 - **Mobile downloads** — SQLite-backed episode/movie downloads with a native

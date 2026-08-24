@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import {
   View,
   Text,
@@ -40,6 +46,7 @@ import type { Movie } from "@filmsnaps/shared";
 import * as Haptics from "expo-haptics";
 import { Share } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { resolveShowIds } from "../../lib/anime/resolve";
 
 function formatRuntime(minutes: number): string {
   if (minutes < 1) return "<1m";
@@ -66,6 +73,12 @@ export default function TVDetailScreen() {
 
   const show = data;
   const title = show?.name || show?.title || "";
+
+  // Per-title anime: derive from the map, NOT the global mode. A movie-mode
+  // user who taps a genuinely-anime title still gets the anime session, and an
+  // anime-mode user who taps a regular show gets the movie/TV session.
+  const animeHit = useMemo(() => (id ? resolveShowIds(id) : null), [id]);
+  const isAnime = animeHit != null;
 
   const [bookmarked, setBookmarked] = useState(false);
   const [resumeState, setResumeState] = useState<WatchProgress | null>(null);
@@ -467,13 +480,29 @@ export default function TVDetailScreen() {
                 const s = resumeState?.season ?? 1;
                 const e = resumeState?.episode ?? 1;
                 const base = `/watch/tv/${id}/${s}/${e}`;
-                const qs =
+                const params = new URLSearchParams(
                   resumeState &&
-                  resumeState.percent > 0 &&
-                  resumeState.percent < 0.95
-                    ? `?t=${Math.floor(resumeState.currentTime)}&backdrop=${show.backdrop_path || ""}`
-                    : `?backdrop=${show.backdrop_path || ""}`;
-                nav.push(`${base}${qs}`);
+                    resumeState.percent > 0 &&
+                    resumeState.percent < 0.95
+                    ? {
+                        t: String(Math.floor(resumeState.currentTime)),
+                        backdrop: show.backdrop_path || "",
+                      }
+                    : { backdrop: show.backdrop_path || "" },
+                );
+                const hit = isAnime && id ? resolveShowIds(id, s) : null;
+                if (__DEV__)
+                  console.log(
+                    `[FS-410] TV Watch press isAnime=${isAnime} tmdb=${id} s=${s} e=${e} hit=${hit ? `mal:${hit.malId}` : "null"}`,
+                  );
+                if (hit) {
+                  params.set("isAnime", "1");
+                  params.set("mid", String(hit.malId));
+                  if (hit.anilistId != null)
+                    params.set("aid", String(hit.anilistId));
+                  params.set("audio", "sub");
+                }
+                nav.push(`${base}?${params.toString()}`);
               }}
               activeOpacity={0.9}
               style={{

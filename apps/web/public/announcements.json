@@ -15,6 +15,25 @@
       "date": "July 29, 2026",
       "dismissible": true,
       "expiresAt": "2026-12-31T00:00:00Z"
+    },
+    {
+      "id": "v2-anime-support",
+      "type": "feature",
+      "title": "New version released — Full anime support added",
+      "subtitle": "Switch to Anime mode to unlock MegaPlay streaming. Download the new version from https://filmsnap-pro.netlify.app/download.",
+      "body": [
+        "FilmSnaps 2.1.0 is here, and the headline feature is complete anime support.",
+        "Toggle Anime mode from the home header. In Anime mode the app surfaces anime titles through AniList search and routes playback to MegaPlay — our dedicated anime streaming source.",
+        "Every anime title is matched to its MyAnimeList / AniList ID automatically, so episodes line up correctly with no manual cour math. If a source returns a 410, the player automatically falls back to the alternate ID space (MAL ↔ AniList) so playback keeps going.",
+        "Anime and regular movie/TV libraries are kept separate. Your watch history, continue-watching, and saved list stay organized by content type, and a title always opens with the correct set of servers regardless of which mode you're in.",
+        "Download the new version 2.1.0 from our website at https://filmsnap-pro.netlify.app/download and start watching anime today."
+      ],
+      "actionLabel": "Download",
+      "externalUrl": "https://filmsnap-pro.netlify.app/download",
+      "date": "August 24, 2026",
+      "dismissible": true,
+      "expiresAt": "2027-08-24T00:00:00Z",
+      "hideFromVersion": "2.1.0"
     }
   ]
 }

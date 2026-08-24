@@ -3,14 +3,7 @@
 import React, { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import {
-  Star,
-  Calendar,
-  Tv,
-  ArrowLeft,
-  Play,
-  Youtube,
-} from "lucide-react";
+import { Star, Calendar, Tv, ArrowLeft, Play, Youtube } from "lucide-react";
 import { getImageUrl, getTrailerKey } from "@/lib/tmdb";
 import dynamic from "next/dynamic";
 import { MediaCarousel } from "@/components/MediaCarousel";
@@ -19,9 +12,12 @@ import { Badge } from "@/components/ui/badge";
 import VideoSkeleton from "@/components/VideoSkeleton";
 import { Suspense } from "react";
 import { SaveButton } from "@/components/SaveButton";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import DownloadBadge from "@/components/download/DownloadBadge";
+import DownloadButton from "@/components/download/DownloadButton";
 import { CastCarousel } from "@/components/CastCarousel";
 import { TrailerModal } from "@/components/TrailerModal";
+import { useResumeTarget } from "@/hooks/useResumeTarget";
 
 const VideoPlayer = dynamic(
   () =>
@@ -33,8 +29,24 @@ const VideoPlayer = dynamic(
 
 export default function TVClient({ show }: { show: any }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [trailerOpen, setTrailerOpen] = useState(false);
   const trailerKey = getTrailerKey(show.videos);
+  // Resume-aware watch target: when the user has progress here, the primary
+  // button relabels to "Resume" and carries the ?t= seek offset.
+  const resume = useResumeTarget(String(show.id), "tv", `/watch/tv/${show.id}`);
+  // Anime identity passthrough (TMDB spine): arrivals from anime search carry
+  // ?mid=<mal>&aid=<anilist>; thread them into the watch href so the watch
+  // session stays anime-profiled (defaults to MegaPlay).
+  const mid = searchParams.get("mid");
+  const aid = searchParams.get("aid");
+  const animeQs = [mid ? `mid=${mid}` : "", aid ? `aid=${aid}` : ""]
+    .filter(Boolean)
+    .join("&");
+  const watchHref =
+    !animeQs || resume.href.includes("mid=")
+      ? resume.href
+      : `${resume.href}${resume.href.includes("?") ? "&" : "?"}${animeQs}`;
   const firstAirYear = show.first_air_date
     ? new Date(show.first_air_date).getFullYear()
     : null;
@@ -156,12 +168,14 @@ export default function TVClient({ show }: { show: any }) {
                 {/* Action buttons */}
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
-                    onClick={() => router.push(`/watch/tv/${show.id}`)}
+                    onClick={() => router.push(watchHref)}
                     className="group gap-2.5 px-7 py-3.5 h-auto rounded-full font-bold text-sm text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
                   >
                     <Play className="w-5 h-5 fill-current" />
-                    Watch Now
+                    {resume.point ? "Resume" : "Watch Now"}
                   </Button>
+                  <DownloadButton tmdbId={show.id} mediaType="tv" />
+                  <DownloadBadge />
                   <SaveButton
                     movie={show}
                     size="lg"

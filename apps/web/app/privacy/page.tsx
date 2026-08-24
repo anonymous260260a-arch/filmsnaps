@@ -14,88 +14,96 @@ export default function PrivacyPage() {
   return (
     <LegalPageShell
       title="Privacy Policy"
-      subtitle="How we handle your data — the short version: we don't collect it"
+      subtitle="How we handle your data — the short version: we don't collect it."
       icon={
-        <ShieldCheck className="h-10 w-10 text-amber-500" strokeWidth={1.5} />
+        <ShieldCheck className="h-10 w-10 text-primary" strokeWidth={1.5} />
       }
     >
       <div className="space-y-8">
-        <p className="text-sm text-zinc-400">Last updated: July 2026</p>
+        <p className="text-sm font-medium text-faint">
+          Last updated: August 2026
+        </p>
 
-        <Section title="Data Collection">
+        <Section title="Our Privacy Philosophy">
           <Body>
-            FilmSnaps does <Bold>not</Bold> collect, store, or transmit any
-            personal data to external servers. The app is designed with a
-            privacy-first approach — everything stays on your device.
+            We believe privacy is a fundamental right, not a premium feature.
+            FilmSnaps is engineered with a strict{" "}
+            <Bold>zero-knowledge architecture</Bold>. The app does not collect,
+            store, or transmit any personal data, telemetry, or usage statistics
+            to external servers. Everything you do stays on your device.
           </Body>
         </Section>
 
-        <Section title="What We Store Locally">
-          <Body>The following data is stored exclusively on your device:</Body>
-          <Bullet text="Watch history — movies and TV shows you have watched" />
-          <Bullet text="Saved/bookmarked content — your personal watchlist" />
-          <Bullet text="Downloaded files — content you have saved for offline viewing" />
-          <Bullet text="App settings — your preferences (server selection, subtitle options, etc.)" />
-          <Bullet text="Search queries — recent searches" />
-        </Section>
-
-        <Section title="How Data Is Stored">
+        <Section title="The Bridge Architecture">
           <Body>
-            All local data is stored using your browser&apos;s local storage and
-            standard web platform APIs, or your device&apos;s file system in the
-            desktop app. No data is encrypted beyond what the operating system
-            provides by default. We recommend enabling device-level encryption
-            in your system&apos;s security settings.
+            FilmSnaps operates strictly as a client-side bridge. To display
+            movie titles, posters, and summaries, the app queries public
+            metadata databases (such as TMDB). When you choose to watch a title,
+            the app passes the public metadata ID to independent, third-party
+            embed providers.
+          </Body>
+          <Body>
+            Because we act only as a conduit, your streaming requests are sent
+            directly from your device to the third-party provider. FilmSnaps
+            servers never see, route, or log the content you request.
           </Body>
         </Section>
 
-        <Section title="Third-Party Content Servers">
+        <Section title="What Stays Locally on Your Device">
           <Body>
-            When you stream or download content, your requests are sent directly
-            to third-party content servers that are not affiliated with
-            FilmSnaps. These servers may log your IP address and request details
-            as part of their normal operation. FilmSnaps has no control over and
-            assumes no responsibility for the data practices of these third
-            parties.
+            The following data is stored exclusively in your device's local
+            storage or file system:
+          </Body>
+          <Bullet text="Watch history and progress (to enable the 'Continue Watching' feature)" />
+          <Bullet text="Your personal watchlist and bookmarked titles" />
+          <Bullet text="App settings (preferred providers, subtitle defaults, UI preferences)" />
+          <Bullet text="Offline downloads (saved to your device's shared media folders)" />
+        </Section>
+
+        <Section title="Third-Party Providers & IP Addresses">
+          <Body>
+            When you stream content, your device connects directly to
+            third-party content servers. These independent providers may log
+            your IP address and request details as part of their standard web
+            server operations. FilmSnaps has no control over, and assumes no
+            responsibility for, the data practices or privacy policies of these
+            third-party hosts. We strongly recommend using a reputable VPN if
+            you wish to mask your IP address from streaming providers.
           </Body>
         </Section>
 
-        <Section title="No Tracking or Analytics">
+        <Section title="Zero Telemetry & No Analytics">
           <Body>
-            FilmSnaps does not include any analytics SDKs, tracking pixels, or
-            third-party monitoring tools. We do not collect usage statistics,
-            crash reports, or any telemetry data. There are no advertisements in
-            the app.
+            FilmSnaps does not include any analytics SDKs, tracking pixels,
+            crash reporters, or third-party monitoring tools. We do not know
+            what you watch, when you watch it, or how long you use the app.
+            There are no advertisements, and therefore no ad-tracking networks
+            embedded in our codebase.
           </Body>
         </Section>
 
-        <Section title="Data Sharing">
+        <Section title="Blocklist Updates">
           <Body>
-            Since we collect no personal data, we share no personal data. We do
-            not sell, trade, or transfer any information to third parties.
+            To keep the ad-blocking engine effective, the app periodically
+            fetches updated filter rules from a static, public repository. This
+            request contains no user identifiers, device IDs, or browsing
+            history. It is a simple, anonymous file download.
           </Body>
         </Section>
 
         <Section title="Children's Privacy">
           <Body>
             FilmSnaps is not directed at children under 13. We do not knowingly
-            collect any information from children. If you believe a child has
-            provided personal data through the app, contact us immediately.
-          </Body>
-        </Section>
-
-        <Section title="Changes to This Policy">
-          <Body>
-            We may update this privacy policy from time to time. Changes will be
-            reflected with an updated &quot;Last updated&quot; date at the top
-            of this page.
+            collect any information from anyone, let alone children. If you
+            believe a child has interacted with our services, please contact us.
           </Body>
         </Section>
 
         <Section title="Contact">
           <Body>
-            If you have questions about this privacy policy, please reach out
-            via email at <Bold>privacy@filmsnaps.app</Bold>.
+            If you have questions about this privacy policy or our security
+            architecture, please reach out via email at{" "}
+            <Bold>privacy@filmsnaps.app</Bold>.
           </Body>
         </Section>
       </div>
@@ -113,25 +121,27 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="mb-5">
-      <h2 className="mb-2 text-sm font-semibold text-[#D4A237]">{title}</h2>
+    <section className="mb-8">
+      <h2 className="mb-3 text-lg font-semibold text-foreground">{title}</h2>
       {children}
     </section>
   );
 }
 
 function Body({ children }: { children: React.ReactNode }) {
-  return <p className="text-sm leading-6 text-zinc-400">{children}</p>;
+  return (
+    <p className="text-base leading-7 text-muted-foreground mb-4">{children}</p>
+  );
 }
 
 function Bold({ children }: { children: React.ReactNode }) {
-  return <span className="font-semibold text-zinc-200">{children}</span>;
+  return <span className="font-semibold text-foreground">{children}</span>;
 }
 
 function Bullet({ text }: { text: string }) {
   return (
-    <p className="mt-2 flex items-start gap-2.5 text-sm leading-5 text-zinc-300">
-      <span className="mt-1.5 text-[10px] leading-none text-[#D4A237]">■</span>
+    <p className="mt-2 flex items-start gap-3 text-base leading-7 text-muted-foreground">
+      <span className="mt-2.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
       <span>{text}</span>
     </p>
   );

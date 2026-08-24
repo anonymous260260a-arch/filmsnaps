@@ -49,6 +49,9 @@ import {
 import { AnnouncementBanner } from "../../components/AnnouncementBanner";
 import NetInfo from "@react-native-community/netinfo";
 import { useSettings } from "../../lib/settings";
+import { useAniListHome } from "../../lib/anime/home";
+import type { AniListMedia } from "../../lib/anime/home";
+import { lookupMal, tmdbToAnimeIds } from "../../lib/anime/resolve";
 import { colors } from "../../theme/colors";
 import { typography } from "../../theme/typography";
 import { SwipeExemptScrollView } from "../../components/SwipeExemptScroll";
@@ -91,10 +94,15 @@ export default function HomeScreen() {
     isLoading: loadingPopular,
   } = usePopularMovies();
 
+  // ── Settings (hoisted above history subscription which reads `settings.mode`) ──
+  const { settings, updateSetting, loaded: settingsLoaded } = useSettings();
+
   // ── History — subscribe to the local-first singleton (no local load state).
   // The store owns hydration + TMDB enrichment and survives unmounts, so the
   // home screen just renders whatever it currently holds. ──
-  const { entries: storeHistory } = useWatchHistory();
+  const { entries: storeHistory } = useWatchHistory(
+    settings.mode === "anime" ? "anime" : "movie_tv",
+  );
   const historyEntries = useMemo(
     () => storeHistory.slice(0, 6),
     [storeHistory],
@@ -140,8 +148,6 @@ export default function HomeScreen() {
   // ── Pull-to-refresh ──
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // ── Settings ──
-  const { settings, loaded: settingsLoaded } = useSettings();
   const { active: activeDownloads, completed: completedDownloads } =
     useDownloadList();
 
@@ -507,33 +513,32 @@ export default function HomeScreen() {
           </View>
 
           {/* Right: Actions */}
-          <View className="flex-row items-center" style={{ gap: 16 }}>
-            <TouchableOpacity
-              onPress={() => nav.push("/search")}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="Search"
-              accessibilityHint="Opens search screen"
+          <View className="flex-row items-center" style={{ gap: 12 }}>
+            {/* Hard Mode Split toggle */}
+            <View
+              className="flex-row rounded-full overflow-hidden border border-zinc-700/40"
+              style={{ pointerEvents: "auto" }}
             >
-              <Ionicons
-                name="search-outline"
-                size={22}
-                color={colors.textSecondary}
-              />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => nav.push("/settings")}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="Settings"
-              accessibilityHint="Opens settings screen"
-            >
-              <Ionicons
-                name="settings-outline"
-                size={22}
-                color={colors.textSecondary}
-              />
-            </TouchableOpacity>
+              {(["movie_tv", "anime"] as const).map((m) => {
+                const active = settings.mode === m;
+                return (
+                  <TouchableOpacity
+                    key={m}
+                    onPress={() => updateSetting("mode", m)}
+                    className={`px-2.5 h-8 items-center justify-center ${active ? "bg-primary" : ""}`}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      className={`text-[11px] font-bold uppercase ${
+                        active ? "text-black" : "text-zinc-300"
+                      }`}
+                    >
+                      {m === "anime" ? "Anime" : "Movies"}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
         </View>
 
@@ -670,18 +675,19 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        {/* ── Hero — always first, never reordered ── */}
-        {heroItem ? (
-          <Hero item={heroItem} onWatchPress={handleWatchPress} />
-        ) : !loadingMovies ? (
-          <View
-            className="w-full"
-            style={{
-              height: SCREEN_WIDTH * 0.62,
-              backgroundColor: colors.skeletonBgAlt,
-            }}
-          />
-        ) : null}
+        {/* ── Hero — always first, never reordered (movie/TV mode only) ── */}
+        {settings.mode === "movie_tv" &&
+          (heroItem ? (
+            <Hero item={heroItem} onWatchPress={handleWatchPress} />
+          ) : !loadingMovies ? (
+            <View
+              className="w-full"
+              style={{
+                height: SCREEN_WIDTH * 0.62,
+                backgroundColor: colors.skeletonBgAlt,
+              }}
+            />
+          ) : null)}
 
         {/* ── Announcements banner (non-blocking, between Hero and sections) ── */}
         {announcements.length > 0 && (
@@ -696,11 +702,129 @@ export default function HomeScreen() {
           </DeferredContent>
         )}
 
-        {/* ── Remaining sections ordered by settings.homeRowOrder ── */}
-        {orderedSections.map((id) => (
-          <View key={id}>{renderSection(id)}</View>
-        ))}
+        {/* ── Hard Mode Split: anime mode swaps the data hook, not the layout ── */}
+        {settings.mode === "anime" ? (
+          <AnimeHomeFeed nav={nav} />
+        ) : (
+          /* ── Remaining TMDB sections ordered by settings.homeRowOrder
+              (Continue Watching is included in homeRowOrder, so it renders
+              via the switch below — no separate block needed). ── */
+          orderedSections.map((id) => <View key={id}>{renderSection(id)}</View>)
+        )}
       </ScrollView>
+    </View>
+  );
+}
+
+// ── Anime Home Feed (Hard Mode Split — anime mode) ──
+// Single <HomeFeed> layout, swapped data hook (AniList instead of TMDB). Cards
+// carry MAL ids; tapping resolves to the TMDB twin and pushes to its detail
+// page (which, in anime mode, threads MAL/AniList ids into the watch session).
+
+interface AnimeHomeFeedProps {
+  nav: ReturnType<typeof useSafeNavigation>;
+}
+
+function AnimeHomeFeed({ nav }: AnimeHomeFeedProps) {
+  const { data, isLoading } = useAniListHome();
+
+  const openAnime = useCallback(
+    (item: { id: number; malId: number | null }) => {
+      if (item.malId == null) return;
+      const twin = lookupMal(item.malId);
+      const params = new URLSearchParams({
+        isAnime: "1",
+        mid: String(item.malId),
+      });
+      if (twin?.tmdbShowId != null) {
+        if (twin.tmdbShowId != null) params.set("aid", String(item.id));
+        const url = `/watch/tv/${twin.tmdbShowId}?${params.toString()}`;
+        console.log(
+          `[FS-WH] openAnime -> tv twin=${twin.tmdbShowId} url=${url}`,
+        );
+        nav.push(url);
+      } else if (twin?.tmdbMovieId != null) {
+        if (twin.tmdbMovieId != null) params.set("aid", String(item.id));
+        const url = `/watch/movie/${twin.tmdbMovieId}?${params.toString()}`;
+        console.log(
+          `[FS-WH] openAnime -> movie twin=${twin.tmdbMovieId} url=${url}`,
+        );
+        nav.push(url);
+      } else {
+        console.log(`[FS-WH] openAnime -> NO twin for malId=${item.malId}`);
+      }
+    },
+    [nav],
+  );
+
+  const rows: Array<{ key: string; label: string; items: AniListMedia[] }> = [
+    { key: "trending", label: "Trending Anime", items: data?.trending ?? [] },
+    { key: "popular", label: "Popular Anime", items: data?.popular ?? [] },
+    { key: "seasonal", label: "This Season", items: data?.seasonal ?? [] },
+  ];
+
+  if (isLoading && !data) {
+    return (
+      <View className="px-4 mt-4">
+        <Shimmer width={160} height={20} borderRadius={4} />
+        <View className="flex-row mt-3" style={{ gap: 10 }}>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Shimmer key={i} width={110} height={165} borderRadius={12} />
+          ))}
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View className="mt-2">
+      {rows.map((row) => (
+        <View key={row.key} className="mb-6">
+          <Text
+            style={[
+              typography.heading,
+              { marginHorizontal: 16, marginBottom: 12 },
+            ]}
+          >
+            {row.label}
+          </Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
+          >
+            {row.items.map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                onPress={() => openAnime(item)}
+                activeOpacity={0.8}
+                style={{ width: 110 }}
+              >
+                <ProgressiveImage
+                  uri={item.coverImage ?? ""}
+                  style={{
+                    width: 110,
+                    height: 165,
+                    borderRadius: 12,
+                    backgroundColor: colors.skeletonBgAlt,
+                  }}
+                  resizeMode="cover"
+                />
+                <Text
+                  numberOfLines={2}
+                  style={{
+                    color: colors.textPrimary,
+                    fontSize: 12,
+                    marginTop: 6,
+                  }}
+                >
+                  {item.title}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      ))}
     </View>
   );
 }
@@ -758,13 +882,32 @@ function ContinueWatchingSection({
             <TouchableOpacity
               key={`${p.mediaType}:${p.tmdbId}`}
               onPress={() => {
-                if (p.mediaType === "tv") {
-                  nav.push(
-                    `/watch/tv/${p.tmdbId}/${p.season ?? 1}/${p.episode ?? 1}`,
+                const base =
+                  p.mediaType === "tv"
+                    ? `/watch/tv/${p.tmdbId}/${p.season ?? 1}/${p.episode ?? 1}`
+                    : `/watch/movie/${p.tmdbId}`;
+                const params = new URLSearchParams({});
+                if (p.isAnime === true) {
+                  params.set("isAnime", "1");
+                  // Re-derive the anime-native ids (the feed carried mid/aid, but a
+                  // stored history record only keeps the TMDB twin). Without this the
+                  // player would send the TMDB id as a MAL id → MegaPlay 410 with no
+                  // fallback (see FS-410 logs).
+                  const ids = tmdbToAnimeIds(
+                    p.tmdbId,
+                    p.mediaType,
+                    p.season,
+                    p.episode,
                   );
-                } else {
-                  nav.push(`/watch/movie/${p.tmdbId}`);
+                  if (ids) {
+                    params.set("mid", String(ids.malId));
+                    if (ids.anilistId != null)
+                      params.set("aid", String(ids.anilistId));
+                  }
                 }
+                nav.push(
+                  params.toString() ? `${base}?${params.toString()}` : base,
+                );
               }}
               activeOpacity={0.7}
               style={{ width: cardWidth }}

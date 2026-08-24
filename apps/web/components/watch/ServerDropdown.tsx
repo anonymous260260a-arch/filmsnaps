@@ -167,7 +167,7 @@ export function ServerDropdown({
     >
       {/* ── Header ── */}
       <div className="px-3 py-2.5 border-b border-[#222226]">
-        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">
+        <p className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500">
           SOURCE SERVER
         </p>
       </div>
@@ -206,14 +206,14 @@ export function ServerDropdown({
               {/* Provider info */}
               <div className="flex-1 min-w-0">
                 <p
-                  className={`text-sm font-semibold truncate ${isActive ? "text-[#D4A237]" : "text-[#F4F4F5]"}`}
+                  className={`text-sm font-semibold truncate ${isActive ? "text-[#D4A237]" : "text-foreground"}`}
                 >
                   {p.displayName || p.name}
                 </p>
                 {p.note && (
                   <span
                     className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full
-                    bg-[#D4A237]/15 text-[#D4A237] text-[9px] font-bold
+                    bg-[#D4A237]/15 text-[#D4A237] text-[11px] font-bold
                     border border-[#D4A237]/30"
                   >
                     {p.note}
@@ -229,7 +229,7 @@ export function ServerDropdown({
               )}
 
               {/* Quality tier badge */}
-              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#222226] text-zinc-500 shrink-0">
+              <span className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-[#222226] text-zinc-500 shrink-0">
                 {getQualityLabel(p)}
               </span>
             </button>
@@ -242,14 +242,14 @@ export function ServerDropdown({
         <button
           onClick={onRefresh}
           disabled={isRefreshing}
-          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] text-zinc-500 hover:text-[#F4F4F5] hover:bg-white/[0.06] transition-colors disabled:opacity-50"
+          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] text-zinc-500 hover:text-foreground hover:bg-white/[0.06] transition-colors disabled:opacity-50"
           aria-label="Refresh server health"
         >
           <RefreshCw size={12} className={isRefreshing ? "animate-spin" : ""} />
           Refresh
         </button>
         {lastCheckedAt > 0 && (
-          <span className="text-[10px] text-zinc-600">
+          <span className="text-[11px] text-zinc-600">
             Last: {getRelativeTime(lastCheckedAt)}
           </span>
         )}

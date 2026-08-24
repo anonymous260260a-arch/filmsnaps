@@ -27,6 +27,10 @@ export default function WatchScreen() {
     fileUri?: string;
     title?: string;
     startAt?: string;
+    isAnime?: string;
+    mid?: string;
+    aid?: string;
+    audio?: string;
   }>();
 
   const segments = params.id ?? [];
@@ -42,6 +46,13 @@ export default function WatchScreen() {
   const fileUri = params.fileUri || undefined;
   const title = params.title || undefined;
   const startAt = params.startAt ? Number(params.startAt) : 0;
+  const isAnime = params.isAnime === "1";
+  const animeMalId = params.mid ? Number(params.mid) : undefined;
+  console.log(
+    `[FS-WH] WatchScreen mount type=${type} id=${id} isAnime=${isAnime} rawIsAnime=${params.isAnime} mid=${params.mid} aid=${params.aid}`,
+  );
+  const animeAnilistId = params.aid ? Number(params.aid) : undefined;
+  const animeAudio = params.audio === "dub" ? "dub" : "sub";
 
   // Determine if this is a direct video playback (HEVC/Falix)
   const isDirectPlayback =
@@ -135,6 +146,10 @@ export default function WatchScreen() {
         episode={episode}
         initialProvider={provider}
         backdropUrl={backdropUrl}
+        isAnime={isAnime}
+        animeMalId={animeMalId}
+        animeAnilistId={animeAnilistId}
+        animeAudio={animeAudio}
         onClose={() => nav.goBack({ fallback: "/(tabs)" })}
       />
     </View>

@@ -11,7 +11,7 @@
  * lavender #8B5CF6 (mobile uses it as a real accent), while the web Cinematic
  * Void theme uses a neutral elevated surface so skeletons/inputs/secondary
  * buttons stay gray-on-black.
- * Font families: --font-display (Playfair Display), --font-body (Inter)
+ * Font families: --font-display (Playfair Display), --font-body (Geist)
  */
 @layer base {
   :root {
@@ -52,6 +52,12 @@
     --muted: var(--subtle);
     --muted-foreground: 240 5% 65%; /* #A1A1AA */
 
+    /* Faint — tertiary text tier. STRICTLY for UI chrome, placeholders and
+       disabled states (expert verdict 08-22). ~5.3–5.8:1 on void/card,
+       passes AA normal text. Content-bearing text uses muted-foreground. */
+    --faint: 240 5% 55%; /* #858591 */
+    --faint-foreground: 240 5% 65%;
+
     /* Accent matches muted for buttons etc */
     --accent: var(--subtle);
     --accent-foreground: 240 5% 96%; /* #F4F4F5 */
@@ -62,6 +68,31 @@
     --ring: 41 65% 52%; /* #D4A237 */
 
     --radius: 0.75rem;
+
+    /* ── Typography tokens (Precision Dark) ── */
+    /* Body / UI font sizes */
+    --font-size-xs: 0.75rem;
+    --font-size-sm: 0.875rem;
+    --font-size-md: 1rem;
+    --font-size-lg: 1.125rem;
+    --font-size-xl: 1.25rem;
+    --font-size-2xl: 1.5rem;
+    --font-size-3xl: 1.875rem;
+
+    /* Line heights */
+    --leading-tight: 1.25;
+    --leading-normal: 1.5;
+    --leading-loose: 1.75;
+
+    /* Letter spacing */
+    --tracking-tight: -0.02em;
+    --tracking-normal: 0;
+    --tracking-wide: 0.02em;
+
+    /* Desktop shell compensation — top gutter for PageShell pages under
+       the in-flow GlobalTopBar (expert spacing verdict Q1: one 32px gutter
+       between app chrome and page canvas). */
+    --desktop-main-pt: 2rem;
   }
 }
 
@@ -75,7 +106,7 @@
     @apply bg-background text-foreground antialiased overflow-x-hidden;
     background-color: hsl(var(--void));
     color: #F4F4F5;
-    font-family: var(--font-body), 'Inter', -apple-system, BlinkMacSystemFont,
+    font-family: var(--font-body), -apple-system, BlinkMacSystemFont,
       'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans',
       'Helvetica Neue', sans-serif;
   }
@@ -162,8 +193,38 @@
   padding-top: 0;
 }
 
+/* PageShell pages inside the desktop shell: the GlobalTopBar is in-flow
+   (h-12), not overlaying, so the website-header clearing math (pt-24/pt-32)
+   doesn't apply — but padding-top: 0 glues the page title to the bar. Give
+   shell-rendered PageShell pages their editorial gutter instead (specificity
+   0,2,1 beats both the rule above and the utility classes; other mains —
+   watch/player immersive layouts — stay at 0). */
+.desktop-shell main.page-shell {
+  padding-top: var(--desktop-main-pt);
+}
+.desktop-shell main.page-shell-hero {
+  padding-top: calc(var(--desktop-main-pt) + 0.5rem);
+}
+
+/* ── Desktop couch-distance scaling ──
+ * Expert verdict Q3: scale the whole UI ~12.5% inside Electron. Implemented on
+ * <html> (html.fs-desktop) rather than .desktop-shell because rem-based
+ * Tailwind utilities resolve against the ROOT font-size, not any container.
+ * DesktopAppShell adds the class after mount; web/browser stays at 16px. */
+html.fs-desktop {
+  font-size: 18px;
+}
+
 /* â”€â”€ Utility Classes â”€â”€ */
 @layer utilities {
+  .text-display-xs { font-size: var(--font-size-xs); line-height: var(--leading-normal); letter-spacing: var(--tracking-normal); }
+  .text-display-sm { font-size: var(--font-size-sm); line-height: var(--leading-normal); letter-spacing: var(--tracking-normal); }
+  .text-display-md { font-size: var(--font-size-md); line-height: var(--leading-normal); letter-spacing: var(--tracking-normal); }
+  .text-display-lg { font-size: var(--font-size-lg); line-height: var(--leading-tight); letter-spacing: var(--tracking-tight); }
+  .text-display-xl { font-size: var(--font-size-xl); line-height: var(--leading-tight); letter-spacing: var(--tracking-tight); }
+  .text-display-2xl { font-size: var(--font-size-2xl); line-height: var(--leading-tight); letter-spacing: var(--tracking-tight); }
+  .text-display-3xl { font-size: var(--font-size-3xl); line-height: var(--leading-tight); letter-spacing: var(--tracking-tight); }
+
   .text-shadow-soft {
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
   }

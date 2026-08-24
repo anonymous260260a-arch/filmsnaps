@@ -7,7 +7,13 @@
  * in an immersive server-card picker.
  */
 
-import React, { useState, useRef, useCallback, useMemo } from "react";
+import React, {
+  useState,
+  useRef,
+  useCallback,
+  useMemo,
+  useEffect,
+} from "react";
 import {
   View,
   Text,
@@ -19,6 +25,8 @@ import {
   Platform,
   LayoutAnimation,
   Dimensions,
+  Linking,
+  Alert,
 } from "react-native";
 import { WebView } from "react-native-webview";
 import { useLocalSearchParams } from "expo-router";
@@ -28,6 +36,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../../theme/colors";
 import { EpisodeRail } from "../../../components/player/EpisodeRail";
 import { useDownloadInfra, useDownloadList } from "../../../lib/download";
+import { fetchNxshaSources } from "../../../lib/nxshaApi";
+import {
+  organizeServers,
+  extractFilename,
+  isGatewayUrl,
+  getExt,
+  type NxshaServer,
+  type ParsedLink,
+} from "../../../lib/nxshaLinks";
 
 // ── Constants ──
 
@@ -297,134 +314,36 @@ true;
 
 // ── Types ──
 
-interface NxshaLink {
-  url: string;
-  label: string;
-}
-
-interface NxshaServer {
-  name: string;
-  links: NxshaLink[];
-}
-
-interface ParsedLink extends NxshaLink {
-  quality: string;
-  qualityRank: number;
-  audioType: string;
-  audioPriority: number;
-  audioLabel: string;
-  size: string;
-  format: string;
-  server: string;
-}
-
 type SolveState =
+  | "loading-api"
   | "loading-page"
   | "solving"
   | "found-links"
   | "failed"
   | "no-links";
 
-// ── Link parser ──
-
-function parseLabel(label: string): {
-  quality: string;
-  qualityRank: number;
-  audioType: string;
-  audioPriority: number;
-  audioLabel: string;
-  size: string;
-  format: string;
-} {
-  const lower = label.toLowerCase();
-
-  // Quality
-  let quality = "",
-    qualityRank = 99;
-  for (const [q, r] of Object.entries(QUALITY_RANK)) {
-    if (lower.includes(q)) {
-      quality =
-        q === "fhd" ? "1080p" : q === "hd" ? "720p" : q === "sd" ? "480p" : q;
-      qualityRank = r as number;
-      break;
-    }
-  }
-
-  // Audio
-  let audioType = "other",
-    audioPriority = 5,
-    audioLabel = "";
-  for (const kw of AUDIO_KEYWORDS) {
-    if (kw.re.test(lower)) {
-      audioType = kw.type;
-      audioPriority = kw.priority;
-      audioLabel = kw.label;
-      break;
-    }
-  }
-
-  // Size
-  let size = "";
-  const sm = lower.match(/([\d,.]+)\s*(gb|mb)/i);
-  if (sm) size = sm[0];
-
-  // Format
-  let format = "";
-  if (lower.includes("hevc") || lower.includes("h265")) format = "HEVC";
-  else if (lower.includes("m3u8")) format = "M3U8";
-  else if (lower.includes("h264")) format = "H.264";
-
-  return {
-    quality,
-    qualityRank,
-    audioType,
-    audioPriority,
-    audioLabel,
-    size,
-    format,
-  };
-}
-
-function parseLinks(server: NxshaServer): ParsedLink[] {
-  return server.links.map((link) => ({
-    ...link,
-    server: server.name,
-    ...parseLabel(link.label),
-  }));
-}
-
-function sortParsedLinks(links: ParsedLink[]): ParsedLink[] {
-  return [...links].sort((a, b) => {
-    if (a.audioPriority !== b.audioPriority)
-      return a.audioPriority - b.audioPriority;
-    return a.qualityRank - b.qualityRank;
-  });
-}
-
 // ── Format helpers ──
 
-function getExt(url: string): string {
-  try {
-    const p = new URL(url).pathname;
-    const m = p.match(/\.([a-z0-9]+)(?:\?|$)/i);
-    return m ? m[1].toLowerCase() : "mp4";
-  } catch {
-    return "mp4";
+function qualityColor(quality: string): string {
+  switch (quality) {
+    case "2160p":
+    case "4k":
+      return colors.gold;
+    case "1080p":
+    case "fhd":
+      return "#B45309";
+    case "720p":
+    case "hd":
+      return "#A1A1AA";
+    case "480p":
+    case "sd":
+      return "#64748B";
+    case "360p":
+      return colors.textTertiary;
+    default:
+      return colors.textTertiary;
   }
 }
-
-const QUALITY_DISPLAY: Record<string, string> = {
-  "4k": "4K",
-  "2160p": "4K",
-  "1080p": "1080p",
-  fhd: "1080p",
-  "720p": "720p",
-  hd: "720p",
-  "480p": "480p",
-  sd: "480p",
-  "360p": "360p",
-  m3u8: "M3U8",
-};
 
 // ── Server Accordion Card ──
 
@@ -434,14 +353,26 @@ function ServerCard({
   onToggle,
   downloads,
   onDownload,
+  onOpen,
 }: {
   server: NxshaServer & { parsed: ParsedLink[] };
   expanded: boolean;
   onToggle: () => void;
   downloads: ReturnType<typeof useDownloadList>["all"];
   onDownload: (link: ParsedLink) => void;
+  onOpen: (link: ParsedLink) => void;
 }) {
-  const sorted = useMemo(() => sortParsedLinks(server.parsed), [server.parsed]);
+  const sorted = useMemo(
+    () =>
+      [...server.parsed].sort((a, b) => {
+        if (a.audioPriority !== b.audioPriority)
+          return a.audioPriority - b.audioPriority;
+        if (a.qualityRank !== b.qualityRank)
+          return a.qualityRank - b.qualityRank;
+        return b.sizeBytes - a.sizeBytes;
+      }),
+    [server.parsed],
+  );
   const linkCount = sorted.length;
   const audioGroups = useMemo(() => {
     const groups: { audioLabel: string; links: ParsedLink[] }[] = [];
@@ -547,15 +478,24 @@ function ServerCard({
                   className="flex-row items-center mt-2 mb-1.5 px-1"
                   style={{ gap: 6 }}
                 >
-                  <AudioTypeIcon
-                    type={group.links[0]?.audioType || ""}
+                  <Ionicons
+                    name={
+                      group.audioLabel.toLowerCase().includes("hindi")
+                        ? "language"
+                        : group.audioLabel.toLowerCase().includes("dual")
+                          ? "headset"
+                          : group.audioLabel.toLowerCase().includes("tamil")
+                            ? "language"
+                            : group.audioLabel.toLowerCase().includes("english")
+                              ? "globe-outline"
+                              : "musical-note"
+                    }
                     size={12}
+                    color={colors.gold}
                   />
                   <Text
                     className="text-[10px] font-bold uppercase tracking-wider"
-                    style={{
-                      color: getAudioColor(group.links[0]?.audioType || ""),
-                    }}
+                    style={{ color: colors.gold }}
                   >
                     {group.audioLabel}
                   </Text>
@@ -569,9 +509,10 @@ function ServerCard({
               {/* Links */}
               {group.links.map((link, li) => (
                 <DownloadItem
-                  key={`${link.url}-${li}`}
+                  key={`${link.downloadUrl}-${li}`}
                   link={link}
                   onDownload={() => onDownload(link)}
+                  onOpen={() => onOpen(link)}
                   downloads={downloads}
                 />
               ))}
@@ -583,60 +524,26 @@ function ServerCard({
   );
 }
 
-// ── Audio type helpers ──
-
-function getAudioColor(type: string): string {
-  switch (type) {
-    case "hindi":
-      return colors.amber;
-    case "dual-audio":
-      return colors.secondary;
-    case "original":
-      return colors.info;
-    case "tamil":
-      return colors.error;
-    case "english":
-      return colors.successGreen;
-    default:
-      return colors.zinc500;
-  }
-}
-
-function AudioTypeIcon({ type, size = 12 }: { type: string; size?: number }) {
-  const name: keyof typeof Ionicons.glyphMap =
-    type === "hindi"
-      ? "language"
-      : type === "dual-audio"
-        ? "headset"
-        : type === "original"
-          ? "mic-outline"
-          : type === "tamil"
-            ? "language"
-            : type === "english"
-              ? "globe-outline"
-              : "musical-note";
-  return <Ionicons name={name} size={size} color={getAudioColor(type)} />;
-}
-
 // ── Download Item Row ──
 
 function DownloadItem({
   link,
   onDownload,
+  onOpen,
   downloads,
 }: {
   link: ParsedLink;
   onDownload: () => void;
+  onOpen: () => void;
   downloads: ReturnType<typeof useDownloadList>["all"];
 }) {
-  const qualityDisplay = QUALITY_DISPLAY[link.quality] || link.quality;
-  const qualityColor =
-    QUALITY_COLORS[link.quality.toUpperCase()] ||
-    QUALITY_COLORS[qualityDisplay] ||
-    colors.textTertiary;
+  const q = link.quality || "";
+  const qualityDisplay = q ? q.toUpperCase() : "LINK";
+  const qColor = qualityColor(link.quality);
+  const isGateway = !link.isDirect && isGatewayUrl(link.downloadUrl);
   const storeTask = useMemo(
-    () => downloads.find((t) => t.url === link.url),
-    [downloads, link.url],
+    () => downloads.find((t) => t.url === link.downloadUrl),
+    [downloads, link.downloadUrl],
   );
   const isActive =
     storeTask?.status === "downloading" || storeTask?.status === "pending";
@@ -645,11 +552,17 @@ function DownloadItem({
     ? storeTask.receivedBytes / storeTask.totalBytes
     : 0;
 
+  const subtitle = [
+    link.server,
+    link.filename || link.downloadUrl.split("/").pop()?.split("?")[0],
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const extras = link.extras.slice(0, 4);
+
   return (
-    <TouchableOpacity
-      onPress={isActive ? undefined : onDownload}
-      disabled={isActive}
-      activeOpacity={0.7}
+    <View
       className="flex-row items-center rounded-xl mb-1.5 px-3 py-2.5"
       style={{
         backgroundColor: colors.zincBgFull,
@@ -660,11 +573,11 @@ function DownloadItem({
       {/* Quality badge */}
       <View
         className="rounded-lg px-2 py-1 min-w-[52px] items-center mr-3"
-        style={{ backgroundColor: `${qualityColor}18` }}
+        style={{ backgroundColor: `${qColor}18` }}
       >
         <Text
           style={{
-            color: qualityColor,
+            color: qColor,
             fontSize: 10,
             fontWeight: "800",
             letterSpacing: 0.5,
@@ -675,30 +588,54 @@ function DownloadItem({
       </View>
 
       {/* Info */}
-      <View className="flex-1 mr-2">
-        {/* Size + Format row */}
-        <View className="flex-row items-center" style={{ gap: 6 }}>
+      <TouchableOpacity
+        onPress={isGateway ? onOpen : onDownload}
+        disabled={isActive}
+        activeOpacity={0.7}
+        className="flex-1 mr-2"
+      >
+        <View className="flex-row items-center flex-wrap" style={{ gap: 4 }}>
           {link.size ? (
             <Text className="text-zinc-300 text-[11px] font-semibold">
               {link.size}
             </Text>
-          ) : null}
-          {link.format && (
+          ) : (
+            <Text className="text-zinc-600 text-[11px]">size unknown</Text>
+          )}
+          {link.langs?.map((lang) => (
             <View
+              key={lang}
+              className="rounded px-1.5 py-0.5"
+              style={{ backgroundColor: "rgba(212,162,55,0.10)" }}
+            >
+              <Text className="text-amber-400 text-[8px] font-bold">
+                {lang}
+              </Text>
+            </View>
+          ))}
+          {extras.map((ex) => (
+            <View
+              key={ex}
               className="rounded px-1.5 py-0.5"
               style={{ backgroundColor: "rgba(59,130,246,0.12)" }}
             >
-              <Text className="text-blue-400 text-[8px] font-bold">
-                {link.format}
+              <Text className="text-blue-400 text-[8px] font-bold">{ex}</Text>
+            </View>
+          ))}
+          {link.mirrorCount > 1 && (
+            <View
+              className="rounded px-1.5 py-0.5"
+              style={{ backgroundColor: "rgba(255,255,255,0.06)" }}
+            >
+              <Text className="text-zinc-400 text-[8px] font-bold">
+                +{link.mirrorCount - 1} mirrors
               </Text>
             </View>
           )}
         </View>
-        {/* Truncated URL for reference */}
         <Text className="text-zinc-600 text-[8px] mt-0.5" numberOfLines={1}>
-          {link.url.length > 45 ? link.url.substring(0, 45) + "…" : link.url}
+          {subtitle}
         </Text>
-
         {/* Progress bar for active downloads */}
         {isActive && progress > 0 && (
           <View
@@ -709,20 +646,20 @@ function DownloadItem({
               className="h-full rounded-full"
               style={{
                 width: `${Math.min(progress * 100, 100)}%`,
-                backgroundColor: qualityColor,
+                backgroundColor: qColor,
               }}
             />
           </View>
         )}
-      </View>
+      </TouchableOpacity>
 
-      {/* Action button */}
+      {/* Action button: gold Download (direct) · blue Open↗ (gateway) */}
       {isActive ? (
         <View
           className="w-8 h-8 rounded-full items-center justify-center"
-          style={{ backgroundColor: `${qualityColor}20` }}
+          style={{ backgroundColor: `${qColor}20` }}
         >
-          <ActivityIndicator size="small" color={qualityColor} />
+          <ActivityIndicator size="small" color={qColor} />
         </View>
       ) : isDone ? (
         <View
@@ -735,15 +672,26 @@ function DownloadItem({
             color={colors.successGreen}
           />
         </View>
+      ) : isGateway ? (
+        <TouchableOpacity
+          onPress={onOpen}
+          activeOpacity={0.7}
+          className="w-8 h-8 rounded-full items-center justify-center"
+          style={{ backgroundColor: "rgba(59,130,246,0.15)" }}
+        >
+          <Ionicons name="open-outline" size={16} color="#3B82F6" />
+        </TouchableOpacity>
       ) : (
-        <View
+        <TouchableOpacity
+          onPress={onDownload}
+          activeOpacity={0.7}
           className="w-8 h-8 rounded-full items-center justify-center"
           style={{ backgroundColor: "rgba(212, 162, 55, 0.15)" }}
         >
           <Ionicons name="download" size={16} color={colors.gold} />
-        </View>
+        </TouchableOpacity>
       )}
-    </TouchableOpacity>
+    </View>
   );
 }
 
@@ -756,11 +704,13 @@ export default function NxshaDownloadScreen() {
   const webViewRef = useRef<WebView>(null);
 
   const [loadingPage, setLoadingPage] = useState(true);
-  const [solveState, setSolveState] = useState<SolveState>("loading-page");
+  const [solveState, setSolveState] = useState<SolveState>("loading-api");
+  const [apiTried, setApiTried] = useState(false);
   const [servers, setServers] = useState<NxshaServer[]>([]);
   const [expandedServers, setExpandedServers] = useState<
     Record<number, boolean>
   >({});
+  const [statusText, setStatusText] = useState("Contacting download servers…");
   const [showEpPicker, setShowEpPicker] = useState(false);
   const [pickedSeason, setPickedSeason] = useState<number | null>(null);
   const [pickedEpisode, setPickedEpisode] = useState<number | null>(null);
@@ -794,29 +744,47 @@ export default function NxshaDownloadScreen() {
     setPickedSeason(season);
     setPickedEpisode(episode);
     setShowEpPicker(false);
+    setApiTried(false);
     setLoadingPage(true);
-    setSolveState("loading-page");
+    setSolveState("loading-api");
     setServers([]);
     setExpandedServers({});
   }, []);
 
+  // ── API-first fetch (proxy does the crypto server-side) ──
+  useEffect(() => {
+    if (apiTried || !params.id || !params.type) return;
+    let cancelled = false;
+    setApiTried(true);
+    setSolveState("loading-api");
+    setStatusText("Contacting download servers…");
+    (async () => {
+      const result = await fetchNxshaSources({
+        type: params.type,
+        id: params.id,
+        season: effectiveSeason,
+        episode: effectiveEpisode,
+      });
+      if (cancelled) return;
+      if (result && result.length > 0) {
+        setServers(result);
+        setExpandedServers({ 0: true });
+        setSolveState("found-links");
+      } else {
+        // No API result → fall back to the WebView CAPTCHA scrape.
+        setSolveState("loading-page");
+        setLoadingPage(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiTried, params.id, params.type, effectiveSeason, effectiveEpisode]);
+
   // ── Parse & organize servers ──
   const organizedServers = useMemo(() => {
     if (servers.length === 0) return [];
-    return servers
-      .map((s) => ({ ...s, parsed: parseLinks(s) }))
-      .sort((a, b) => {
-        // 1. Exact match "MbPly-[Multi-Lang]" always first
-        const aExact = a.name.includes("MbPly") ? 0 : 1;
-        const bExact = b.name.includes("MbPly") ? 0 : 1;
-        if (aExact !== bExact) return aExact - bExact;
-        // 2. Any server with "Multi-Lang" in the name comes next
-        const aMulti = a.name.toLowerCase().includes("multi-lang") ? 0 : 1;
-        const bMulti = b.name.toLowerCase().includes("multi-lang") ? 0 : 1;
-        if (aMulti !== bMulti) return aMulti - bMulti;
-        // 3. Rest stay in original order
-        return 0;
-      });
+    return organizeServers(servers);
   }, [servers]);
 
   const totalLinks = useMemo(
@@ -824,17 +792,25 @@ export default function NxshaDownloadScreen() {
     [organizedServers],
   );
 
+  // ── Open gateway in external browser ──
+  const handleOpen = useCallback((link: ParsedLink) => {
+    Linking.openURL(link.downloadUrl).catch(() =>
+      Alert.alert("Could not open URL"),
+    );
+  }, []);
+
   // ── Download handler ──
   const handleDownload = useCallback(
     (link: ParsedLink) => {
-      const ext = getExt(link.url);
+      const finalUrl = link.downloadUrl || link.url;
+      const ext = getExt(finalUrl);
       const qualityStr = link.quality ? `-${link.quality}` : "";
       const filename = isTV
         ? `nxsha-S${effectiveSeason}E${effectiveEpisode}${qualityStr}-${link.server.replace(/[^a-zA-Z0-9]/g, "")}.${ext}`
         : `nxsha${qualityStr}-${link.server.replace(/[^a-zA-Z0-9]/g, "")}.${ext}`;
 
       enqueue({
-        url: link.url,
+        url: finalUrl,
         fileName: filename,
         server: "nxsha",
         mediaType: params.type,
@@ -1008,9 +984,9 @@ export default function NxshaDownloadScreen() {
           )}
           <TouchableOpacity
             onPress={() => {
-              webViewRef.current?.reload();
+              setApiTried(false);
               setLoadingPage(true);
-              setSolveState("loading-page");
+              setSolveState("loading-api");
               setServers([]);
               setExpandedServers({});
             }}
@@ -1040,7 +1016,9 @@ export default function NxshaDownloadScreen() {
       </View>
 
       {/* ── Loading overlay ── */}
-      {(solveState === "loading-page" || solveState === "solving") && (
+      {(solveState === "loading-api" ||
+        solveState === "loading-page" ||
+        solveState === "solving") && (
         <View
           className="absolute inset-0 z-20 items-center justify-center"
           style={{ backgroundColor: "rgba(0,0,0,0.85)" }}
@@ -1056,14 +1034,18 @@ export default function NxshaDownloadScreen() {
           >
             <ActivityIndicator size="large" color={colors.gold} />
             <Text className="text-white text-sm font-semibold mt-4">
-              {solveState === "loading-page"
-                ? "Loading download page..."
-                : "Solving security check..."}
+              {solveState === "loading-api"
+                ? "Fetching download links…"
+                : solveState === "loading-page"
+                  ? "Loading download page..."
+                  : "Solving security check..."}
             </Text>
             <Text className="text-zinc-500 text-xs mt-1.5 text-center leading-relaxed">
-              {solveState === "solving"
-                ? "Extracting video links from all servers"
-                : "This should take a few seconds"}
+              {solveState === "loading-api"
+                ? statusText
+                : solveState === "solving"
+                  ? "Extracting video links from all servers"
+                  : "This should take a few seconds"}
             </Text>
             <View className="flex-row items-center mt-4" style={{ gap: 8 }}>
               <View className="w-1.5 h-1.5 rounded-full bg-amber-500/50" />
@@ -1318,6 +1300,7 @@ export default function NxshaDownloadScreen() {
                 }}
                 downloads={downloads}
                 onDownload={handleDownload}
+                onOpen={handleOpen}
               />
             ))}
           </View>
@@ -1353,47 +1336,56 @@ export default function NxshaDownloadScreen() {
         </ScrollView>
       )}
 
-      {/* ── WebView (always mounted, hidden when links found) ── */}
-      <View
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          opacity: solveState === "found-links" ? 0 : 1,
-          zIndex: solveState === "found-links" ? -1 : 1,
-        }}
-      >
-        <WebView
-          ref={webViewRef}
-          source={{ uri: downloadUrl }}
-          style={{ flex: 1, backgroundColor: colors.playerBg }}
-          allowsFullscreenVideo={true}
-          allowsInlineMediaPlayback={true}
-          mediaPlaybackRequiresUserAction={false}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
-          sharedCookiesEnabled={true}
-          thirdPartyCookiesEnabled={true}
-          startInLoadingState={true}
-          injectedJavaScriptBeforeContentLoaded={AD_BLOCK_SCRIPT}
-          allowsBackForwardNavigationGestures={false}
-          setSupportMultipleWindows={false}
-          allowFileAccess={false}
-          javaScriptCanOpenWindowsAutomatically={false}
-          incognito={true}
-          onShouldStartLoadWithRequest={handleNavigation}
-          onMessage={handleMessage}
-          onLoadEnd={() => {
-            setLoadingPage(false);
-            setTimeout(() => {
-              webViewRef.current?.injectJavaScript(SOLVE_SCRIPT);
-            }, 1800);
+      {/* ── WebView fallback (only when the API path returned nothing) ── */}
+      {solveState !== "found-links" && (
+        <View
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            opacity:
+              solveState === "loading-api" || solveState === "loading-page"
+                ? 0
+                : 1,
+            zIndex:
+              solveState === "loading-api" || solveState === "loading-page"
+                ? -1
+                : 1,
           }}
-          onError={() => setLoadingPage(false)}
-        />
-      </View>
+        >
+          <WebView
+            ref={webViewRef}
+            source={{ uri: downloadUrl }}
+            style={{ flex: 1, backgroundColor: colors.playerBg }}
+            allowsFullscreenVideo={true}
+            allowsInlineMediaPlayback={true}
+            mediaPlaybackRequiresUserAction={false}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            sharedCookiesEnabled={true}
+            thirdPartyCookiesEnabled={true}
+            startInLoadingState={true}
+            injectedJavaScriptBeforeContentLoaded={AD_BLOCK_SCRIPT}
+            allowsBackForwardNavigationGestures={false}
+            setSupportMultipleWindows={false}
+            allowFileAccess={false}
+            javaScriptCanOpenWindowsAutomatically={false}
+            incognito={true}
+            onShouldStartLoadWithRequest={handleNavigation}
+            onMessage={handleMessage}
+            onLoadEnd={() => {
+              setLoadingPage(false);
+              setSolveState("solving");
+              setTimeout(() => {
+                webViewRef.current?.injectJavaScript(SOLVE_SCRIPT);
+              }, 1800);
+            }}
+            onError={() => setLoadingPage(false)}
+          />
+        </View>
+      )}
 
       {/* ── TV episode picker ── */}
       {isTV && (

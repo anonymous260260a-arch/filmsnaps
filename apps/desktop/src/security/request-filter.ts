@@ -650,6 +650,45 @@ export async function clearProviderSession(session: Session): Promise<void> {
  * stripped by provider JavaScript — unlike meta-tag-based CSP.
  */
 export function setupSecurityHeaders(session: Session): void {
+  // ── Cold-navigation Referer seed (main frame) ──
+  // Providers hot-link-gate their embed documents on the Referer header:
+  // MegaPlay (2026-08-23) serves its fake "Error Code: 410" error page to ANY
+  // /stream/* request that arrives without a Referer — verified empirically
+  // (identical 3545-byte error body for every episode without one; real
+  // player pages for all of them with `Referer: https://megaplay.buzz/`).
+  // Their docs state it explicitly: "Direct Access to Embed Links are
+  // Disabled. Links only work as Embed." An iframe embed inherits the host
+  // page's Referer, which is why their playground works — but OUR hybrid
+  // player navigates the WebContentsView straight to the embed URL, so the
+  // very first document request is cold (no referring page → no header;
+  // Referrer-Policy below only governs requests a loaded PAGE makes).
+  // Mobile parity: mobile has always sent `Referer: <provider baseUrl>` and
+  // never had this failure. Seeding the target's own origin is safe for
+  // providers that don't check (they ignore it) and reveals nothing beyond
+  // where the request is already going.
+  session.webRequest.onBeforeSendHeaders((details, callback) => {
+    const headers = details.requestHeaders;
+    if (
+      details.resourceType === "mainFrame" &&
+      !Object.keys(headers).some(
+        (k) => k.toLowerCase() === "referer" && headers[k],
+      )
+    ) {
+      try {
+        const origin = new URL(details.url).origin;
+        if (/^https?:/.test(origin)) {
+          headers["Referer"] = `${origin}/`;
+          console.log(
+            `[SecurityFilter] Seeded cold Referer ${origin}/ ← ${details.url}`,
+          );
+        }
+      } catch {
+        // unparseable URL — send as-is
+      }
+    }
+    callback({ requestHeaders: headers });
+  });
+
   session.webRequest.onHeadersReceived((details, callback) => {
     const responseHeaders = {
       ...details.responseHeaders,

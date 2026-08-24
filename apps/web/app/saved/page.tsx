@@ -1,13 +1,14 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { useWatchlist } from '@/hooks/useWatchlist';
-import { Header } from '@/components/Header';
-import { MovieCard } from '@/components/MovieCard';
-import { Bookmark, Film, BookOpen } from 'lucide-react';
-import Link from 'next/link';
-import { GlassButton } from '@/components/ui/glass-button';
-import { useToast } from '@/hooks/use-toast';
+import { useState } from "react";
+import { useWatchlist } from "@/hooks/useWatchlist";
+import { Header } from "@/components/Header";
+import { PageShell } from "@/components/PageShell";
+import { MovieCard } from "@/components/MovieCard";
+import { Bookmark, Film, BookOpen } from "lucide-react";
+import Link from "next/link";
+import { GlassButton } from "@/components/ui/glass-button";
+import { useToast } from "@/hooks/use-toast";
 
 export default function SavedPage() {
   const { savedMovies, loading, removeMovie } = useWatchlist();
@@ -18,7 +19,7 @@ export default function SavedPage() {
     const success = await removeMovie(id);
     if (success) {
       toast({
-        title: 'Removed from watchlist',
+        title: "Removed from watchlist",
         description: `${title} was removed`,
       });
     }
@@ -27,11 +28,13 @@ export default function SavedPage() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Header />
-      <main className="pt-24 px-4 sm:px-6 md:px-12 max-w-7xl mx-auto">
+      <PageShell maxWidth="5xl">
         {/* Header */}
         <div className="flex items-center justify-between mb-10">
           <div>
-            <h1 className="text-3xl md:text-4xl font-black tracking-tight">Your Watchlist</h1>
+            <h1 className="text-3xl md:text-4xl font-black tracking-tight">
+              Your Watchlist
+            </h1>
             <p className="text-sm text-muted-foreground/70 mt-1">
               Movies and shows you&apos;ve saved
             </p>
@@ -54,7 +57,7 @@ export default function SavedPage() {
             <button
               onClick={() => {
                 setShowGuestNotice(false);
-                localStorage.setItem('filmsnaps_hide_guest_notice', 'true');
+                localStorage.setItem("filmsnaps_hide_guest_notice", "true");
               }}
               className="text-muted-foreground/50 hover:text-foreground transition-colors ml-4"
               aria-label="Dismiss"
@@ -68,7 +71,10 @@ export default function SavedPage() {
         {loading && (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
             {Array.from({ length: 10 }).map((_, i) => (
-              <div key={i} className="aspect-[2/3] rounded-xl bg-secondary/30 animate-pulse" />
+              <div
+                key={i}
+                className="aspect-[2/3] rounded-xl bg-secondary/30 animate-pulse"
+              />
             ))}
           </div>
         )}
@@ -107,7 +113,7 @@ export default function SavedPage() {
             ))}
           </div>
         )}
-      </main>
+      </PageShell>
     </div>
   );
 }

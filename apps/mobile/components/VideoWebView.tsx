@@ -23,7 +23,10 @@ import PlayerWebView, { PlayerWebViewRef } from "../modules/player-webview";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
+  getNonAnimeProviders,
   getEnabledProviders,
+  filterAnimeProviders,
+  getProvidersForMode,
   getImageUrl,
   isSkipIntroEnabled,
   isUiEnabled,
@@ -35,9 +38,11 @@ import {
   buildEpisodeKey,
   MEDIA_HOOK_SCRIPT,
 } from "@filmsnaps/shared";
+import { malToAni, resolveShow } from "../lib/anime/resolve";
 import type { ProviderDefinition } from "@filmsnaps/shared";
 import * as ScreenOrientation from "expo-screen-orientation";
 import { useKeepAwake } from "expo-keep-awake";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   saveProgress,
   getResumePoint,
@@ -212,6 +217,52 @@ function minifyGuardScript(src: string): string {
 }
 
 /**
+ * MegaPlay "Error Code: 410" probe. Polls the settled page for the literal text
+ * "Error Code: 410" and posts an `anime-410` message so React Native can swap
+ * the MAL↔AniList id space.
+ *
+ * Settle-aware + stability-checked (desktop parity, verdict §9 Q5): MegaPlay
+ * shows a transient warmup interstitial on cold load that can briefly contain
+ * "410"-like text; an eager single-shot probe fires on that and burns BOTH id
+ * spaces before the real player renders. So we (a) wait ANIME_410_SCAN_DELAY_MS
+ * before the first check, and (b) only report a 410 if it PERSISTS across two
+ * consecutive checks — a real "no source" error stays; a transient one does not.
+ */
+const ANIME_410_SCAN_DELAY_MS = 2500;
+const ANIME_410_PROBE = `
+(function() {
+  function pageText() {
+    try { return (document.body && document.body.innerText) || ""; } catch (e) { return ""; }
+  }
+  function has410() { return pageText().indexOf("Error Code: 410") !== -1; }
+  try { console.log("[FS-410] probe injected, settle delay " + ${ANIME_410_SCAN_DELAY_MS} + "ms then poll"); } catch(e){}
+  // Snapshot the page text at first check so we can log what was actually shown.
+  var firstText = null;
+  // Align with desktop's post-settle scan: don't poll until the page has had a
+  // chance to render the real player (a transient warmup 410 would be gone by now).
+  setTimeout(function () {
+    var t = setInterval(function () {
+      var now = has410();
+      if (now && firstText === null) firstText = pageText().slice(0, 400);
+      // Stability check: require the 410 to persist across the previous tick too,
+      // so a transient warmup interstitial is ignored.
+      if (now && firstText !== null && has410()) {
+        try {
+          console.log("[FS-410] FOUND persistent 'Error Code: 410' (text='" + firstText + "'), posting anime-410");
+        } catch(e){}
+        window.ReactNativeWebView &&
+          window.ReactNativeWebView.postMessage &&
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: "anime-410" }));
+        clearInterval(t);
+      }
+    }, 1000);
+    // Don't poll forever — stop after 25s; a still-loading page is a different problem.
+    setTimeout(function () { clearInterval(t); }, 25000);
+  }, ${ANIME_410_SCAN_DELAY_MS});
+})();
+true;`;
+
+/**
  * Inject a floating "Next Episode" button into the WebView page.
  * On click, posts a next-episode message back to React Native.
  * Same style/position as skip buttons.
@@ -366,6 +417,11 @@ interface VideoWebViewProps {
   onClose?: () => void;
   initialProvider?: string;
   backdropUrl?: string;
+  /** Anime session flag — enables MegaPlay + resolves ids. */
+  isAnime?: boolean;
+  animeMalId?: number;
+  animeAnilistId?: number | null;
+  animeAudio?: "sub" | "dub";
 }
 
 export function VideoWebView({
@@ -376,6 +432,10 @@ export function VideoWebView({
   onClose,
   initialProvider,
   backdropUrl,
+  isAnime,
+  animeMalId,
+  animeAnilistId,
+  animeAudio = "sub",
 }: VideoWebViewProps) {
   useKeepAwake();
   const insets = useSafeAreaInsets();
@@ -543,13 +603,59 @@ export function VideoWebView({
   const nextEpBtnInjectedRef = useRef(false);
   const nextEpFetchingRef = useRef(false);
 
-  const providers = useMemo(() => getEnabledProviders(), []);
+  // Per-title session type wins over the global Hard Mode Split: a regular
+  // movie tapped in anime mode must NOT get anime-only servers (megaplay is
+  // keyed by MAL ids and can't play a TMDB movie), and an anime title tapped
+  // in movie_tv mode MUST still get anime-capable servers. The `isAnime` route
+  // param carries the per-title decision made by the detail page.
+  const providers = useMemo(() => {
+    if (isAnime) {
+      return filterAnimeProviders(getEnabledProviders());
+    }
+    return getNonAnimeProviders();
+  }, [isAnime]);
+
+  // ── Anime id-space fallback chain (desktop parity, verdict §9 Q5) ──
+  // Start on MAL; if MegaPlay returns "Error Code: 410", swap to AniList id
+  // space (via malToAni). Exhausted once both spaces are tried.
+  const [chainSpace, setChainSpace] = useState<"mal" | "ani">("mal");
 
   const [providerId, setProviderId] = useState<string>(
     initialProvider && providers.some((p) => p.id === initialProvider)
       ? initialProvider
       : (providers[0]?.id ?? ""),
   );
+
+  // ── MegaPlay sub/dub preference (persisted, per-title) ──
+  // MegaPlay's embed honors opts.audio (/stream/<space>/<id>/<ep>/<sub|dub>).
+  // We remember the last choice per TMDB id so re-opening the same anime keeps
+  // it. Defaults to the prop (usually "sub").
+  const [audio, setAudio] = useState<"sub" | "dub">(animeAudio ?? "sub");
+  const audioPrefKey = useMemo(
+    () => (id != null ? `megaplay:audio:${id}` : null),
+    [id],
+  );
+  useEffect(() => {
+    if (!audioPrefKey) return;
+    let alive = true;
+    AsyncStorage.getItem(audioPrefKey)
+      .then((v) => {
+        if (alive && (v === "sub" || v === "dub")) setAudio(v);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [audioPrefKey]);
+  const changeAudio = useCallback(
+    (next: "sub" | "dub") => {
+      setAudio(next);
+      if (audioPrefKey)
+        AsyncStorage.setItem(audioPrefKey, next).catch(() => {});
+    },
+    [audioPrefKey],
+  );
+
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Overlay auto-hide (only in fullscreen) Ã¢â€â‚¬Ã¢â€â‚¬
@@ -664,6 +770,43 @@ export function VideoWebView({
   seasonRef.current = currentSeason;
   episodeRef.current = currentEpisode;
 
+  // MegaPlay is keyed by MAL-relative episodes, not TMDB's. Translate the
+  // current TMDB (season, episode) through the twin map's cour offset so the
+  // right cour plays (verdict Q7 — never guess; fall back to raw TMDB ep only
+  // when the mapper has no entry for this title). Independent of chainSpace
+  // (the episode number is identical in both MAL/AniList id spaces).
+  const animeEpisode = useMemo(() => {
+    if (!isAnime || type !== "tv" || id == null) return undefined;
+    const r = resolveShow(id, currentSeason, currentEpisode);
+    return r.ok ? r.episode : currentEpisode;
+  }, [isAnime, type, id, currentSeason, currentEpisode]);
+
+  const animeResolved = useMemo(() => {
+    if (!isAnime || animeMalId == null) return null;
+    // The AniList id may arrive via the route param (aid) OR be derived from MAL
+    // via the map's m2a table when the deep-link omitted it. Without this, a 410
+    // chain with no threaded aid has nowhere to fall back to (see FS-410 logs).
+    const aniFromParam = animeAnilistId;
+    const aniDerived =
+      aniFromParam == null ? malToAni(animeMalId) : aniFromParam;
+    const useAni = chainSpace === "ani";
+    const resolvedId = useAni ? aniDerived : animeMalId;
+    if (resolvedId == null) return null;
+    return {
+      idSpace: useAni ? ("ani" as const) : ("mal" as const),
+      id: resolvedId,
+      // MAL-relative episode for MegaPlay; TMDB ep for non-anime providers.
+      episode: animeEpisode ?? currentEpisode,
+    };
+  }, [
+    isAnime,
+    animeMalId,
+    animeAnilistId,
+    chainSpace,
+    animeEpisode,
+    currentEpisode,
+  ]);
+
   const episodeKey = useMemo(
     () => buildEpisodeKey(type, id, currentSeason, currentEpisode),
     [type, id, currentSeason, currentEpisode],
@@ -684,8 +827,14 @@ export function VideoWebView({
       try {
         const resume =
           type === "tv"
-            ? await getResumePoint(id, "tv", currentSeason, currentEpisode)
-            : await getProgress(id, "movie");
+            ? await getResumePoint(
+                id,
+                "tv",
+                currentSeason,
+                currentEpisode,
+                isAnime,
+              )
+            : await getProgress(id, "movie", undefined, undefined, isAnime);
         if (
           resume &&
           resume.season != null &&
@@ -717,8 +866,14 @@ export function VideoWebView({
       try {
         const resume =
           type === "tv"
-            ? await getProgress(id, "tv", currentSeason, currentEpisode)
-            : await getProgress(id, "movie");
+            ? await getProgress(
+                id,
+                "tv",
+                currentSeason,
+                currentEpisode,
+                isAnime,
+              )
+            : await getProgress(id, "movie", undefined, undefined, isAnime);
         if (cancelled) return;
         let resumeSeconds = 0;
         // resume:'none' providers (e.g. screenscape) manage their OWN resume;
@@ -763,6 +918,7 @@ export function VideoWebView({
 
   const currentProvider = providers.find((p) => p.id === providerId);
   providerRef.current = currentProvider;
+  const onMegaplay = currentProvider?.animeOnly === true;
 
   // V6: peachify (#418) fix — reactSafe providers (Next.js) must NOT receive the
   // heavy guard bundle at document_start (it breaks React 18 hydration). The
@@ -946,12 +1102,45 @@ export function VideoWebView({
   const watchUrl = useMemo(() => {
     if (!currentProvider) return "";
     const startAt = startAtTime > 0 ? startAtTime : undefined;
+    const isAnimeProvider = isAnime && currentProvider.animeOnly;
+    // MegaPlay is MAL/AniList-keyed with a MAL-relative episode; other anime
+    // providers (nxsha) are TMDB-keyed, so they take the raw TMDB id/episode.
+    const embedId = isAnimeProvider
+      ? (animeResolved?.id?.toString() ?? id)
+      : id;
+    const embedEpisode =
+      isAnimeProvider && animeResolved ? animeResolved.episode : currentEpisode;
+    const opts =
+      isAnimeProvider && animeResolved
+        ? { idSpace: animeResolved.idSpace, audio }
+        : undefined;
     const embedPath =
       type === "tv" && currentSeason && currentEpisode
-        ? currentProvider.embed.tv(id, currentSeason, currentEpisode, startAt)
-        : currentProvider.embed.movie(id, startAt);
-    return `${currentProvider.baseUrl}${embedPath}`;
-  }, [currentProvider, type, id, currentSeason, currentEpisode, startAtTime]);
+        ? currentProvider.embed.tv(
+            embedId,
+            currentSeason,
+            embedEpisode,
+            startAt,
+            opts,
+          )
+        : currentProvider.embed.movie(embedId, startAt, opts);
+    const url = `${currentProvider.baseUrl}${embedPath}`;
+    if (__DEV__)
+      console.log(
+        `[FS-410] watchUrl chainSpace=${chainSpace} isAnimeProvider=${isAnimeProvider} embedId=${embedId} idSpace=${opts?.idSpace ?? "n/a"} url=${url}`,
+      );
+    return url;
+  }, [
+    currentProvider,
+    isAnime,
+    type,
+    id,
+    currentSeason,
+    currentEpisode,
+    startAtTime,
+    animeResolved,
+    audio,
+  ]);
 
   const seekTo = useCallback((time: number) => {
     webViewRef.current?.injectJavaScript(`
@@ -1063,6 +1252,7 @@ export function VideoWebView({
       saveProgress({
         tmdbId: id,
         mediaType: type,
+        isAnime,
         providerId,
         currentTime: prog.currentTime,
         duration: prog.duration,
@@ -1094,6 +1284,7 @@ export function VideoWebView({
         saveProgress({
           tmdbId: id,
           mediaType: type,
+          isAnime,
           providerId,
           currentTime: prog.currentTime,
           duration: prog.duration,
@@ -1117,6 +1308,7 @@ export function VideoWebView({
           saveProgress({
             tmdbId: id,
             mediaType: type,
+            isAnime,
             providerId,
             currentTime: prog.currentTime,
             duration: prog.duration,
@@ -1130,7 +1322,7 @@ export function VideoWebView({
       }
     });
     return () => sub.remove();
-  }, [id, type, providerId, isTV, currentSeason, currentEpisode]);
+  }, [id, type, isAnime, providerId, isTV, currentSeason, currentEpisode]);
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Save progress on unmount Ã¢â€â‚¬Ã¢â€â‚¬
   const unmountSavedRef = useRef(false);
@@ -1148,6 +1340,7 @@ export function VideoWebView({
         saveProgress({
           tmdbId: id,
           mediaType: type,
+          isAnime,
           providerId,
           currentTime: prog.currentTime,
           duration: prog.duration,
@@ -1159,7 +1352,7 @@ export function VideoWebView({
         }).catch((err: unknown) => console.warn("Unmount save failed", err));
       }
     };
-  }, [id, type, providerId, isTV, currentSeason, currentEpisode]);
+  }, [id, type, isAnime, providerId, isTV, currentSeason, currentEpisode]);
 
   // ── Next-Episode button: now event-driven from the PlaybackEngine (see
   // updateOverlaysFromEngine). The old 2 s poll is removed — the engine only
@@ -1306,6 +1499,7 @@ export function VideoWebView({
       saveProgress({
         tmdbId: id,
         mediaType: typeRef.current,
+        isAnime,
         providerId: provider?.id,
         currentTime: state.currentTime,
         duration: state.duration,
@@ -1317,9 +1511,13 @@ export function VideoWebView({
       }).catch(() => {});
     }
     if (isTV && prevPctRef.current < 0.95 && state.percent >= 0.95) {
-      markCompleted(id, "tv", seasonRef.current, episodeRef.current).catch(
-        () => {},
-      );
+      markCompleted(
+        id,
+        "tv",
+        seasonRef.current,
+        episodeRef.current,
+        isAnime,
+      ).catch(() => {});
     }
     prevPctRef.current = state.percent;
 
@@ -1422,6 +1620,9 @@ export function VideoWebView({
         }
         providerId={providerId}
         auditMode={auditMode}
+        onMegaplay={onMegaplay}
+        audio={audio}
+        onAudioChange={changeAudio}
       />
 
       {/* Server picker modal */}
@@ -1670,6 +1871,17 @@ export function VideoWebView({
                 seekTo(seekTime);
                 startAtRef.current = 0;
               }
+              // MegaPlay "Error Code: 410" probe (anime fallback chain).
+              if (onMegaplay) {
+                console.log(
+                  `[FS-410] onLoadingFinish — injecting probe (provider=${currentProvider?.id}, onMegaplay=${onMegaplay})`,
+                );
+                webViewRef.current?.injectJavaScript(ANIME_410_PROBE);
+              } else {
+                console.log(
+                  `[FS-410] onLoadingFinish — NOT injecting probe (onMegaplay=${onMegaplay}, provider=${currentProvider?.id})`,
+                );
+              }
             }}
             onHttpError={(syntheticEvent) => {
               const err = syntheticEvent.nativeEvent;
@@ -1757,6 +1969,38 @@ export function VideoWebView({
                 }
                 if (data.type === "next-episode") {
                   goToNextEpisode();
+                  return;
+                }
+                // MegaPlay "Error Code: 410" fallback chain (desktop parity,
+                // verdict §9 Q5): swap MAL↔AniList id space; exhaust when both tried.
+                if (data.type === "anime-410") {
+                  console.log(
+                    `[FS-410] received anime-410 — chainSpace=${chainSpace} animeAnilistId=${animeAnilistId} animeMalId=${animeMalId}`,
+                  );
+                  const hasAniFallback =
+                    animeAnilistId != null ||
+                    malToAni(animeMalId ?? "") != null;
+                  const willFlip = chainSpace === "mal" && hasAniFallback;
+                  setChainSpace((prev) => {
+                    const next =
+                      prev === "mal" && hasAniFallback ? "ani" : prev;
+                    console.log(`[FS-410] chainSpace ${prev} -> ${next}`);
+                    return next;
+                  });
+                  if (willFlip) {
+                    // The 410 page is a dead end — must actually reload the WebView
+                    // with the new id space. A source prop change alone does NOT
+                    // reload an RN WebView; bump the mount key to force it.
+                    console.log(
+                      `[FS-410] reloading WebView with watchUrl=${watchUrl}`,
+                    );
+                    setMountGen((g) => g + 1);
+                    webViewRef.current?.reload();
+                  } else {
+                    console.log(
+                      `[FS-410] no flip — chain exhausted (chainSpace=${chainSpace}, ani=${animeAnilistId}, mal=${animeMalId})`,
+                    );
+                  }
                   return;
                 }
                 // All native progress sources funnel into the single

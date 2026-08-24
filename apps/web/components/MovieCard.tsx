@@ -18,6 +18,8 @@ interface MovieCardProps {
   className?: string;
   variant?: "default" | "saved";
   onRemove?: (id: number, title: string) => void;
+  /** Optional watch-progress (0…1) to render a bar under the poster. */
+  progress?: number;
 }
 
 export function MovieCard({
@@ -26,6 +28,7 @@ export function MovieCard({
   className = "",
   variant = "default",
   onRemove,
+  progress,
 }: MovieCardProps) {
   const router = useRouter();
   const type = mediaType || item.media_type || "movie";
@@ -135,6 +138,18 @@ export function MovieCard({
           )}
         </div>
       </Link>
+
+      {/* In-progress progress bar (under poster) */}
+      {progress != null && progress > 0 && (
+        <div className="mt-1.5 h-1 w-full max-w-[92%] rounded-full overflow-hidden bg-white/[0.06]">
+          <div
+            className="h-full rounded-full bg-[#5B9CF6]"
+            style={{
+              width: `${Math.min(100, Math.max(0, Math.round(progress * 100)))}%`,
+            }}
+          />
+        </div>
+      )}
 
       {/* Info below card */}
       <Link

@@ -18,6 +18,7 @@ import React, {
   useRef,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import type { MediaType } from "@filmsnaps/shared";
 
 // ── Constants ──
 
@@ -26,6 +27,9 @@ const STORAGE_KEY = "@filmsnaps/settings/v1";
 // ── Types ──
 
 export interface AppSettings {
+  // Content mode — Hard Mode Split (Movies/TV vs Anime)
+  mode: MediaType;
+
   // Playback
   serverOrder: string[];
 
@@ -68,6 +72,9 @@ interface SettingsContextValue {
 // ── Defaults ──
 
 const DEFAULT_SETTINGS: AppSettings = {
+  // Content mode — default to Movies/TV (anime is opt-in via toggle)
+  mode: "movie_tv",
+
   // Playback
   serverOrder: [],
 

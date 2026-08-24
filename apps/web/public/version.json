@@ -1,6 +1,6 @@
 {
-  "latestVersion": "2.0.0",
-  "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.0.0/filmsnaps-v2.0.0.apk",
-  "releaseNotes": "v2.0.0 — Desktop security architecture overhaul · Android provider redirect fixes · Settings Community section + Star on GitHub · Download engine v2 + feedback portal",
+  "latestVersion": "2.1.0",
+  "downloadUrl": "https://filmsnap-pro.netlify.app/download",
+  "releaseNotes": "v2.1.0 — Full anime support: toggle Anime mode for MegaPlay streaming, AniList search, automatic MAL ↔ AniList 410 fallback, per-title server selection, and a version-gated release announcement.",
   "versionsUrl": "https://filmsnap-pro.netlify.app/versions"
 }

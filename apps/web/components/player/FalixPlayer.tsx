@@ -13,16 +13,22 @@
  * (Hindi, Tamil, Telugu, etc.). Chrome/WebView plays these natively.
  */
 
-'use client';
+"use client";
 
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import videojs from 'video.js';
-import 'video.js/dist/video-js.css';
-import { Clapperboard, RefreshCw } from 'lucide-react';
-import { WebCodecsPlayer } from './WebCodecsPlayer';
-import { checkHevcSupport } from '@/lib/streamingMkvParser';
-import { createLocalStorageAdapter } from '@filmsnaps/shared';
-import type { WatchProgress } from '@filmsnaps/shared';
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
+import videojs from "video.js";
+import "video.js/dist/video-js.css";
+import { Clapperboard, RefreshCw } from "lucide-react";
+import { WebCodecsPlayer } from "./WebCodecsPlayer";
+import { checkHevcSupport } from "@/lib/streamingMkvParser";
+import { createLocalStorageAdapter } from "@filmsnaps/shared";
+import type { WatchProgress } from "@filmsnaps/shared";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -56,7 +62,7 @@ interface FalixPlayerProps {
   /** TMDB content ID */
   tmdbId: string;
   /** Media type */
-  mediaType: 'movie' | 'tv';
+  mediaType: "movie" | "tv";
   /** Current season (TV only) */
   selectedSeason?: number;
   /** Current episode (TV only) */
@@ -70,24 +76,24 @@ interface FalixPlayerProps {
 // ── Language mapping (from filename patterns like "HIN-TAM-TEL") ──
 
 const LANG_MAP: Record<string, string> = {
-  HIN: 'Hindi',
-  TAM: 'Tamil',
-  TEL: 'Telugu',
-  ENG: 'English',
-  JAP: 'Japanese',
-  KOR: 'Korean',
-  SPA: 'Spanish',
-  FRE: 'French',
-  GER: 'German',
-  POR: 'Portuguese',
-  RUS: 'Russian',
-  ARA: 'Arabic',
-  BEN: 'Bengali',
-  PUN: 'Punjabi',
-  MAR: 'Marathi',
-  GUJ: 'Gujarati',
-  KAN: 'Kannada',
-  MAL: 'Malayalam',
+  HIN: "Hindi",
+  TAM: "Tamil",
+  TEL: "Telugu",
+  ENG: "English",
+  JAP: "Japanese",
+  KOR: "Korean",
+  SPA: "Spanish",
+  FRE: "French",
+  GER: "German",
+  POR: "Portuguese",
+  RUS: "Russian",
+  ARA: "Arabic",
+  BEN: "Bengali",
+  PUN: "Punjabi",
+  MAR: "Marathi",
+  GUJ: "Gujarati",
+  KAN: "Kannada",
+  MAL: "Malayalam",
 };
 
 /**
@@ -99,19 +105,26 @@ function parseAudioLanguages(name: string): string[] {
   // Multi-language pattern: "HIN-TAM-TEL" (3+ codes joined by dashes)
   const multi = name.match(/(?:^|[\s(])([A-Z]{3}(?:-[A-Z]{3})+)(?:\s|$|\))/);
   if (multi) {
-    const langs = multi[1].split('-').map((abbr) => LANG_MAP[abbr] || abbr);
-    console.log(`[Falix] parseAudioLanguages: multi match "${multi[1]}" →`, langs);
+    const langs = multi[1].split("-").map((abbr) => LANG_MAP[abbr] || abbr);
+    console.log(
+      `[Falix] parseAudioLanguages: multi match "${multi[1]}" →`,
+      langs,
+    );
     return langs;
   }
   // Single language
   const single = name.match(/(?:^|[\s(])([A-Z]{3})(?:\s|$|\))/);
   if (single) {
     const lang = LANG_MAP[single[1]] || single[1];
-    console.log(`[Falix] parseAudioLanguages: single match "${single[1]}" → ${lang}`);
+    console.log(
+      `[Falix] parseAudioLanguages: single match "${single[1]}" → ${lang}`,
+    );
     return [lang];
   }
-  console.log(`[Falix] parseAudioLanguages: no language pattern found in "${name.slice(0, 60)}"`);
-  return ['Default'];
+  console.log(
+    `[Falix] parseAudioLanguages: no language pattern found in "${name.slice(0, 60)}"`,
+  );
+  return ["Default"];
 }
 
 /** Check if a file name indicates H.264 (vs HEVC) encoding. */
@@ -136,7 +149,7 @@ export function FalixPlayer({
   const [error, setError] = useState<string | null>(null);
   const [selectedQualityIdx, setSelectedQualityIdx] = useState(0);
   const [activeAudioIdx, setActiveAudioIdx] = useState(0);
-  const [audioLabels, setAudioLabels] = useState<string[]>(['Default']);
+  const [audioLabels, setAudioLabels] = useState<string[]>(["Default"]);
   // HEVC WebCodecs support detection
   const [hevcSupported, setHevcSupported] = useState<boolean | null>(null);
 
@@ -148,9 +161,11 @@ export function FalixPlayer({
     setError(null);
     setSelectedQualityIdx(0);
     setActiveAudioIdx(0);
-    setAudioLabels(['Default']);
+    setAudioLabels(["Default"]);
 
-    console.log(`[Falix] Step 1: Fetching metadata for tmdbId=${tmdbId}, mediaType=${mediaType}, season=${selectedSeason}, episode=${activeEpisode}`);
+    console.log(
+      `[Falix] Step 1: Fetching metadata for tmdbId=${tmdbId}, mediaType=${mediaType}, season=${selectedSeason}, episode=${activeEpisode}`,
+    );
 
     fetch(`/api/player/falix?id=${tmdbId}`)
       .then((res) => {
@@ -160,7 +175,9 @@ export function FalixPlayer({
       })
       .then((data) => {
         if (cancelled) return;
-        console.log(`[Falix] Step 1b: API data received — tmdb_id=${data.tmdb_id}, media_type=${data.media_type}, has_telegram=${!!data.telegram}, has_seasons=${!!data.seasons}, telegram_len=${data.telegram?.length}, seasons_len=${data.seasons?.length}`);
+        console.log(
+          `[Falix] Step 1b: API data received — tmdb_id=${data.tmdb_id}, media_type=${data.media_type}, has_telegram=${!!data.telegram}, has_seasons=${!!data.seasons}, telegram_len=${data.telegram?.length}, seasons_len=${data.seasons?.length}`,
+        );
         setApiData(data);
         setLoading(false);
         loadingRef.current = false;
@@ -182,8 +199,11 @@ export function FalixPlayer({
   // ── 1b. Detect HEVC WebCodecs support ──
   useEffect(() => {
     // Allow user override via localStorage (set by "Try Anyway" button)
-    const stored = typeof window !== 'undefined' ? localStorage.getItem('falix_force_hevc') : null;
-    if (stored === 'true') {
+    const stored =
+      typeof window !== "undefined"
+        ? localStorage.getItem("falix_force_hevc")
+        : null;
+    if (stored === "true") {
       console.log(`[Falix] HEVC bypass active via localStorage`);
       setHevcSupported(true);
       return;
@@ -195,7 +215,9 @@ export function FalixPlayer({
       console.log(`[Falix] HEVC support detection result:`, supported);
       if (!cancelled) setHevcSupported(supported);
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ── 2. Resolve telegram entries for current media/episode ──
@@ -204,17 +226,30 @@ export function FalixPlayer({
 
     let entries: TelegramEntry[];
 
-    if (mediaType === 'movie' || apiData.media_type === 'movie') {
+    if (mediaType === "movie" || apiData.media_type === "movie") {
       entries = apiData.telegram || [];
-      console.log(`[Falix] Step 2a: Movie mode — telegram entries=${entries.length}`, entries.map(e => `${e.quality} ${e.size}`).join(', '));
+      console.log(
+        `[Falix] Step 2a: Movie mode — telegram entries=${entries.length}`,
+        entries.map((e) => `${e.quality} ${e.size}`).join(", "),
+      );
     } else if (apiData.seasons) {
-      const season = apiData.seasons.find((s) => s.season_number === selectedSeason);
+      const season = apiData.seasons.find(
+        (s) => s.season_number === selectedSeason,
+      );
       if (season) {
-        const episode = season.episodes.find((e) => e.episode_number === activeEpisode);
+        const episode = season.episodes.find(
+          (e) => e.episode_number === activeEpisode,
+        );
         entries = episode?.telegram || [];
-        console.log(`[Falix] Step 2b: TV mode — season=${selectedSeason} ep=${activeEpisode}, entries=${entries.length}`, entries.map(e => `${e.quality} ${e.size}`).join(', '));
+        console.log(
+          `[Falix] Step 2b: TV mode — season=${selectedSeason} ep=${activeEpisode}, entries=${entries.length}`,
+          entries.map((e) => `${e.quality} ${e.size}`).join(", "),
+        );
       } else {
-        console.warn(`[Falix] Step 2c: Season ${selectedSeason} not found. Available:`, apiData.seasons.map(s => s.season_number));
+        console.warn(
+          `[Falix] Step 2c: Season ${selectedSeason} not found. Available:`,
+          apiData.seasons.map((s) => s.season_number),
+        );
         return [];
       }
     } else {
@@ -233,7 +268,15 @@ export function FalixPlayer({
       return 0; // keep original order within same codec
     });
 
-    console.log(`[Falix] Step 2e: After sorting —`, entries.map(e => `${e.quality} ${e.size}${isH264(e.name) ? ' [H.264]' : ' [HEVC]'}`).join(', '));
+    console.log(
+      `[Falix] Step 2e: After sorting —`,
+      entries
+        .map(
+          (e) =>
+            `${e.quality} ${e.size}${isH264(e.name) ? " [H.264]" : " [HEVC]"}`,
+        )
+        .join(", "),
+    );
     return entries;
   }, [apiData, mediaType, selectedSeason, activeEpisode]);
 
@@ -242,13 +285,17 @@ export function FalixPlayer({
     if (telegramEntries.length === 0) return null;
     const idx = Math.min(selectedQualityIdx, telegramEntries.length - 1);
     const entry = telegramEntries[idx];
-    console.log(`[Falix] Step 2e: Selected quality idx=${idx}, entry=`, entry?.quality, entry?.name?.slice(0, 60));
+    console.log(
+      `[Falix] Step 2e: Selected quality idx=${idx}, entry=`,
+      entry?.quality,
+      entry?.name?.slice(0, 60),
+    );
     return entry;
   }, [telegramEntries, selectedQualityIdx]);
 
   // Build video URL from telegram entry
   const videoUrl = useMemo(() => {
-    if (!currentEntry) return '';
+    if (!currentEntry) return "";
     const url = `https://download-falix-falixmovies-backend-hf.hf.space/dl/${currentEntry.id}/${encodeURIComponent(currentEntry.name)}`;
     console.log(`[Falix] Step 2f: Video URL built — ${url}`);
     return url;
@@ -258,7 +305,9 @@ export function FalixPlayer({
   const initPlayer = useCallback(() => {
     if (playerRef.current) return playerRef.current;
     if (!videoRef.current) {
-      console.warn(`[Falix] Step 3a: videoRef.current is null — cannot init video.js yet`);
+      console.warn(
+        `[Falix] Step 3a: videoRef.current is null — cannot init video.js yet`,
+      );
       return null;
     }
 
@@ -268,7 +317,7 @@ export function FalixPlayer({
       autoplay: true,
       controls: true,
       fill: true,
-      preload: 'auto',
+      preload: "auto",
       html5: {
         nativeAudioTracks: true,
         nativeVideoTracks: true,
@@ -295,56 +344,59 @@ export function FalixPlayer({
   }, []);
 
   // ── 4. Discover native audio tracks from the MKV ──
-  const discoverAudioTracks = useCallback(
-    (entryName: string) => {
-      const player = playerRef.current;
-      if (!player) {
-        console.warn(`[Falix] Step 4a: player null in discoverAudioTracks`);
+  const discoverAudioTracks = useCallback((entryName: string) => {
+    const player = playerRef.current;
+    if (!player) {
+      console.warn(`[Falix] Step 4a: player null in discoverAudioTracks`);
+      return;
+    }
+
+    try {
+      // Safely access the native HTMLVideoElement
+      const tech = (player as any).tech();
+      if (!tech || !tech.el) {
+        console.warn(`[Falix] Step 4b: tech or tech.el unavailable`);
         return;
       }
+      const nativeVideo = tech.el() as HTMLVideoElement;
 
-      try {
-        // Safely access the native HTMLVideoElement
-        const tech = (player as any).tech();
-        if (!tech || !tech.el) {
-          console.warn(`[Falix] Step 4b: tech or tech.el unavailable`);
-          return;
+      // @ts-expect-error — audioTracks is not in HTMLVideoElement TS types
+      const nativeTracks: AudioTrackList | undefined = nativeVideo.audioTracks;
+
+      console.log(
+        `[Falix] Step 4c: audioTracks length=${nativeTracks?.length}, entryName=${entryName?.slice(0, 60)}`,
+      );
+
+      if (nativeTracks && nativeTracks.length > 0) {
+        const parsed = parseAudioLanguages(entryName);
+        const labels: string[] = [];
+
+        for (let i = 0; i < nativeTracks.length; i++) {
+          const label = parsed[i] || `Track ${i + 1}`;
+          console.log(
+            `[Falix] Step 4d: Track ${i}: lang=${nativeTracks[i].language}, label=${nativeTracks[i].label || label}, enabled=${nativeTracks[i].enabled}`,
+          );
+          labels.push(label);
         }
-        const nativeVideo = tech.el() as HTMLVideoElement;
 
-        // @ts-expect-error — audioTracks is not in HTMLVideoElement TS types
-        const nativeTracks: AudioTrackList | undefined = nativeVideo.audioTracks;
+        setAudioLabels(labels);
+        setActiveAudioIdx(0);
 
-        console.log(`[Falix] Step 4c: audioTracks length=${nativeTracks?.length}, entryName=${entryName?.slice(0, 60)}`);
-
-        if (nativeTracks && nativeTracks.length > 0) {
-          const parsed = parseAudioLanguages(entryName);
-          const labels: string[] = [];
-
-          for (let i = 0; i < nativeTracks.length; i++) {
-            const label = parsed[i] || `Track ${i + 1}`;
-            console.log(`[Falix] Step 4d: Track ${i}: lang=${nativeTracks[i].language}, label=${nativeTracks[i].label || label}, enabled=${nativeTracks[i].enabled}`);
-            labels.push(label);
-          }
-
-          setAudioLabels(labels);
-          setActiveAudioIdx(0);
-
-          // Enable first track by default, disable others
-          for (let i = 0; i < nativeTracks.length; i++) {
-            nativeTracks[i].enabled = i === 0;
-          }
-        } else {
-          console.log(`[Falix] Step 4e: No native audio tracks found — fall back to Default`);
-          setAudioLabels(['Default']);
+        // Enable first track by default, disable others
+        for (let i = 0; i < nativeTracks.length; i++) {
+          nativeTracks[i].enabled = i === 0;
         }
-      } catch (e) {
-        console.warn(`[Falix] Step 4f: audioTracks API error —`, e);
-        setAudioLabels(['Default']);
+      } else {
+        console.log(
+          `[Falix] Step 4e: No native audio tracks found — fall back to Default`,
+        );
+        setAudioLabels(["Default"]);
       }
-    },
-    [],
-  );
+    } catch (e) {
+      console.warn(`[Falix] Step 4f: audioTracks API error —`, e);
+      setAudioLabels(["Default"]);
+    }
+  }, []);
 
   // ── 5. Set video source and wire loadedmetadata — lazily inits video.js if needed ──
   useEffect(() => {
@@ -360,22 +412,27 @@ export function FalixPlayer({
       return;
     }
 
-    console.log(`[Falix] Step 5b: Setting video source —`, videoUrl.slice(0, 120));
+    console.log(
+      `[Falix] Step 5b: Setting video source —`,
+      videoUrl.slice(0, 120),
+    );
 
     // Reset audio state for new source
     setActiveAudioIdx(0);
-    setAudioLabels(['Default']);
+    setAudioLabels(["Default"]);
 
     const onMeta = () => {
       console.log(`[Falix] Step 5c: loadedmetadata fired — video is ready`);
       onLoad?.();
-      discoverAudioTracks(currentEntry?.name || '');
+      discoverAudioTracks(currentEntry?.name || "");
     };
 
     const onError = () => {
-      const videoEl = player.el().querySelector('video');
+      const videoEl = player.el().querySelector("video");
       const mediaErr = videoEl?.error;
-      console.error(`[Falix] Step 5d: video.js error event — code=${mediaErr?.code}, message=${mediaErr?.message}`);
+      console.error(
+        `[Falix] Step 5d: video.js error event — code=${mediaErr?.code}, message=${mediaErr?.message}`,
+      );
     };
 
     const onPlay = () => {
@@ -394,29 +451,32 @@ export function FalixPlayer({
       console.log(`[Falix] Step 5h: canplay event — enough data to play`);
     };
 
-    player.one('loadedmetadata', onMeta);
-    player.one('error', onError);
-    player.one('play', onPlay);
-    player.on('stalled', onStalled);
-    player.on('waiting', onWaiting);
-    player.one('canplay', onCanPlay);
+    player.one("loadedmetadata", onMeta);
+    player.one("error", onError);
+    player.one("play", onPlay);
+    player.on("stalled", onStalled);
+    player.on("waiting", onWaiting);
+    player.one("canplay", onCanPlay);
 
-    player.src({ src: videoUrl, type: 'video/x-matroska' });
+    player.src({ src: videoUrl, type: "video/x-matroska" });
 
     const playPromise = player.play();
-    if (playPromise && typeof playPromise.catch === 'function') {
+    if (playPromise && typeof playPromise.catch === "function") {
       playPromise.catch((e: any) => {
-        console.warn(`[Falix] Step 5i: player.play() rejected —`, e?.message || e);
+        console.warn(
+          `[Falix] Step 5i: player.play() rejected —`,
+          e?.message || e,
+        );
       });
     }
 
     return () => {
-      player.off('loadedmetadata', onMeta);
-      player.off('error', onError);
-      player.off('play', onPlay);
-      player.off('stalled', onStalled);
-      player.off('waiting', onWaiting);
-      player.off('canplay', onCanPlay);
+      player.off("loadedmetadata", onMeta);
+      player.off("error", onError);
+      player.off("play", onPlay);
+      player.off("stalled", onStalled);
+      player.off("waiting", onWaiting);
+      player.off("canplay", onCanPlay);
     };
   }, [videoUrl, onLoad, discoverAudioTracks, currentEntry, initPlayer]);
 
@@ -441,7 +501,7 @@ export function FalixPlayer({
 
         // Micro-seek to force the browser to apply the new audio track
         const ct = player.currentTime();
-        if (typeof ct === 'number' && ct > 0.2) {
+        if (typeof ct === "number" && ct > 0.2) {
           player.currentTime(ct + 0.1);
         }
       }
@@ -463,7 +523,7 @@ export function FalixPlayer({
     setError(null);
     setSelectedQualityIdx(0);
     setActiveAudioIdx(0);
-    setAudioLabels(['Default']);
+    setAudioLabels(["Default"]);
 
     fetch(`/api/player/falix?id=${tmdbId}`)
       .then((res) => {
@@ -491,14 +551,14 @@ export function FalixPlayer({
           <div className="absolute inset-0 rounded-full border-2 border-[#222226]" />
           <div
             className="absolute inset-0 rounded-full border-t-2 border-[#D4A237] animate-spin"
-            style={{ animationDuration: '1.2s' }}
+            style={{ animationDuration: "1.2s" }}
           />
           <div className="absolute inset-3 rounded-full border-2 border-[#222226]" />
           <div className="absolute inset-[18px] rounded-full bg-[#D4A237]/30" />
         </div>
         <p
-          className="text-xs font-black text-[#52525B] uppercase tracking-[0.3em] animate-pulse"
-          style={{ fontFamily: 'var(--font-display)' }}
+          className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse"
+          style={{ fontFamily: "var(--font-display)" }}
         >
           Scanning Projection Room
         </p>
@@ -512,12 +572,12 @@ export function FalixPlayer({
       <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070708] z-40 gap-4 px-6">
         <Clapperboard className="text-[#D4A237]" size={48} strokeWidth={1.5} />
         <p
-          className="text-xl text-[#F4F4F5] font-bold text-center"
-          style={{ fontFamily: 'var(--font-display)' }}
+          className="text-xl text-foreground font-bold text-center"
+          style={{ fontFamily: "var(--font-display)" }}
         >
           Projection Reel Snapped
         </p>
-        <p className="text-sm text-[#A1A1AA] text-center max-w-xs">
+        <p className="text-sm text-muted-foreground text-center max-w-xs">
           Couldn&apos;t reach the media source. The server may be offline.
         </p>
         <button
@@ -535,13 +595,15 @@ export function FalixPlayer({
   if (!currentEntry) {
     return (
       <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0E0E11] z-30 gap-3">
-        <p className="text-sm text-[#52525B]">No media available for this selection.</p>
+        <p className="text-sm text-faint">
+          No media available for this selection.
+        </p>
       </div>
     );
   }
 
   // ── Codec detection gate: HEVC → WebCodecs, H.264 → video.js ──
-  const entryIsHevc = currentEntry && !isH264Encoding(currentEntry.name || '');
+  const entryIsHevc = currentEntry && !isH264Encoding(currentEntry.name || "");
 
   // HEVC supported → WebCodecs pipeline
   if (entryIsHevc && hevcSupported === true) {
@@ -560,20 +622,22 @@ export function FalixPlayer({
     return (
       <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070708] z-40 gap-4 px-6">
         <p
-          className="text-xl text-[#F4F4F5] font-bold text-center"
-          style={{ fontFamily: 'var(--font-display)' }}
+          className="text-xl text-foreground font-bold text-center"
+          style={{ fontFamily: "var(--font-display)" }}
         >
           HEVC Not Supported
         </p>
-        <p className="text-sm text-[#A1A1AA] text-center max-w-xs">
-          Your browser does not support HEVC decoding. Try selecting an H.264 (x264) quality option instead.
+        <p className="text-sm text-muted-foreground text-center max-w-xs">
+          Your browser does not support HEVC decoding. Try selecting an H.264
+          (x264) quality option instead.
         </p>
-        <p className="text-xs text-[#52525B] text-center max-w-sm">
-          HEVC WebCodecs is available on macOS Chrome, Android Chrome, and Windows Chrome with the HEVC Video Extensions.
+        <p className="text-xs text-faint text-center max-w-sm">
+          HEVC WebCodecs is available on macOS Chrome, Android Chrome, and
+          Windows Chrome with the HEVC Video Extensions.
         </p>
         <button
           onClick={() => {
-            localStorage.setItem('falix_force_hevc', 'true');
+            localStorage.setItem("falix_force_hevc", "true");
             setHevcSupported(true);
           }}
           className="px-5 py-2.5 rounded-full border border-[#D4A237]/40 text-[#D4A237] text-xs font-bold hover:bg-[#D4A237]/10 transition-colors active:scale-95"
@@ -592,14 +656,14 @@ export function FalixPlayer({
           <div className="absolute inset-0 rounded-full border-2 border-[#222226]" />
           <div
             className="absolute inset-0 rounded-full border-t-2 border-[#D4A237] animate-spin"
-            style={{ animationDuration: '1.2s' }}
+            style={{ animationDuration: "1.2s" }}
           />
           <div className="absolute inset-3 rounded-full border-2 border-[#222226]" />
           <div className="absolute inset-[18px] rounded-full bg-[#D4A237]/30" />
         </div>
         <p
-          className="text-xs font-black text-[#52525B] uppercase tracking-[0.3em] animate-pulse"
-          style={{ fontFamily: 'var(--font-display)' }}
+          className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse"
+          style={{ fontFamily: "var(--font-display)" }}
         >
           Checking HEVC Capabilities
         </p>
@@ -621,7 +685,12 @@ export function FalixPlayer({
           className="video-js vjs-big-play-centered vjs-default-skin"
           playsInline
           webkit-playsinline="true"
-          onError={(e) => console.error(`[Falix] Native video onError —`, (e.target as HTMLVideoElement)?.error)}
+          onError={(e) =>
+            console.error(
+              `[Falix] Native video onError —`,
+              (e.target as HTMLVideoElement)?.error,
+            )
+          }
         />
       </div>
 
@@ -630,15 +699,17 @@ export function FalixPlayer({
         {/* Quality pills */}
         {telegramEntries.length > 1 && (
           <div className="flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-1.5 rounded-lg border border-white/[0.08]">
-            <span className="text-[9px] font-bold uppercase tracking-wider text-white/30 mr-1">Q</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-white/30 mr-1">
+              Q
+            </span>
             {telegramEntries.map((entry, idx) => (
               <button
                 key={`q-${idx}`}
                 onClick={() => handleQualityChange(idx)}
-                className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-all active:scale-95 ${
+                className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all active:scale-95 ${
                   selectedQualityIdx === idx
-                    ? 'bg-[#D4A237] text-[#070708]'
-                    : 'text-white/70 hover:text-white hover:bg-white/10'
+                    ? "bg-[#D4A237] text-[#070708]"
+                    : "text-white/70 hover:text-white hover:bg-white/10"
                 }`}
               >
                 {entry.quality}
@@ -650,15 +721,17 @@ export function FalixPlayer({
         {/* Audio language pills */}
         {audioLabels.length > 1 && (
           <div className="flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-1.5 rounded-lg border border-white/[0.08]">
-            <span className="text-[9px] font-bold uppercase tracking-wider text-white/30 mr-1">A</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-white/30 mr-1">
+              A
+            </span>
             {audioLabels.map((lang, idx) => (
               <button
                 key={`a-${idx}`}
                 onClick={() => handleAudioChange(idx)}
-                className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-all active:scale-95 ${
+                className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all active:scale-95 ${
                   activeAudioIdx === idx
-                    ? 'bg-[#D4A237] text-[#070708]'
-                    : 'text-white/70 hover:text-white hover:bg-white/10'
+                    ? "bg-[#D4A237] text-[#070708]"
+                    : "text-white/70 hover:text-white hover:bg-white/10"
                 }`}
               >
                 {lang}

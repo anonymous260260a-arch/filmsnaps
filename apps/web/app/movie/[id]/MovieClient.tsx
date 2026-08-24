@@ -1,21 +1,22 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import Image from 'next/image';
-import Link from 'next/link';
-import { Star, Clock, ArrowLeft, Play, Youtube } from 'lucide-react';
-import { getImageUrl, getTrailerKey } from '@/lib/tmdb';
-import dynamic from 'next/dynamic';
-import { MediaCarousel } from '@/components/MediaCarousel';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { SaveButton } from '@/components/SaveButton';
-import { Suspense } from 'react';
-import VideoSkeleton from '@/components/VideoSkeleton';
-import { useRouter } from 'next/navigation';
+import React, { useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
+import { Star, Clock, ArrowLeft, Play, Youtube } from "lucide-react";
+import { getImageUrl, getTrailerKey } from "@/lib/tmdb";
+import dynamic from "next/dynamic";
+import { MediaCarousel } from "@/components/MediaCarousel";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { SaveButton } from "@/components/SaveButton";
+import { useResumeTarget } from "@/hooks/useResumeTarget";
+import { Suspense } from "react";
+import VideoSkeleton from "@/components/VideoSkeleton";
+import { useRouter, useSearchParams } from "next/navigation";
 
 const VideoPlayer = dynamic(
-  () => import('@/components/VideoPlayer').then((m) => m.VideoPlayer),
+  () => import("@/components/VideoPlayer").then((m) => m.VideoPlayer),
   {
     ssr: false,
     loading: () => (
@@ -24,13 +25,35 @@ const VideoPlayer = dynamic(
   },
 );
 
-import { CastCarousel } from '@/components/CastCarousel';
-import { TrailerModal } from '@/components/TrailerModal';
+import { CastCarousel } from "@/components/CastCarousel";
+import { TrailerModal } from "@/components/TrailerModal";
+import DownloadBadge from "@/components/download/DownloadBadge";
+import DownloadButton from "@/components/download/DownloadButton";
 
 export default function MovieClient({ movie }: { movie: any }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [trailerOpen, setTrailerOpen] = useState(false);
   const trailerKey = getTrailerKey(movie.videos);
+  // Resume-aware watch target: when the user has progress here, the primary
+  // button relabels to "Resume" and carries the ?t= seek offset.
+  const resume = useResumeTarget(
+    String(movie.id),
+    "movie",
+    `/watch/movie/${movie.id}`,
+  );
+  // Anime identity passthrough (TMDB spine): arrivals from anime search carry
+  // ?mid=<mal>&aid=<anilist>; thread them into the watch href so the watch
+  // session stays anime-profiled (defaults to MegaPlay).
+  const mid = searchParams.get("mid");
+  const aid = searchParams.get("aid");
+  const animeQs = [mid ? `mid=${mid}` : "", aid ? `aid=${aid}` : ""]
+    .filter(Boolean)
+    .join("&");
+  const watchHref =
+    !animeQs || resume.href.includes("mid=")
+      ? resume.href
+      : `${resume.href}${resume.href.includes("?") ? "&" : "?"}${animeQs}`;
   const runtime = movie.runtime
     ? `${Math.floor(movie.runtime / 60)}h ${movie.runtime % 60}m`
     : null;
@@ -47,7 +70,7 @@ export default function MovieClient({ movie }: { movie: any }) {
           {movie.backdrop_path && (
             <div className="absolute inset-0 h-[60vh]">
               <Image
-                src={getImageUrl(movie.backdrop_path ?? '', 'w1280')}
+                src={getImageUrl(movie.backdrop_path ?? "", "w1280")}
                 alt={movie.title}
                 fill
                 priority
@@ -62,7 +85,10 @@ export default function MovieClient({ movie }: { movie: any }) {
 
           <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
             <Link href="/">
-              <Button variant="ghost" className="mb-6 gap-2 text-muted-foreground hover:text-foreground -ml-3">
+              <Button
+                variant="ghost"
+                className="mb-6 gap-2 text-muted-foreground hover:text-foreground -ml-3"
+              >
                 <ArrowLeft className="h-4 w-4" />
                 Back to Home
               </Button>
@@ -74,7 +100,7 @@ export default function MovieClient({ movie }: { movie: any }) {
                 {movie.poster_path && (
                   <div className="relative aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl shadow-black/40 ring-1 ring-white/[0.06]">
                     <Image
-                      src={getImageUrl(movie.poster_path ?? '', 'w500')}
+                      src={getImageUrl(movie.poster_path ?? "", "w500")}
                       alt={movie.title}
                       fill
                       priority
@@ -115,11 +141,14 @@ export default function MovieClient({ movie }: { movie: any }) {
 
                     {movie.release_date && (
                       <span className="text-sm text-muted-foreground">
-                        {new Date(movie.release_date).toLocaleDateString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric',
-                        })}
+                        {new Date(movie.release_date).toLocaleDateString(
+                          "en-US",
+                          {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          },
+                        )}
                       </span>
                     )}
                   </div>
@@ -143,12 +172,14 @@ export default function MovieClient({ movie }: { movie: any }) {
                 {/* Action buttons */}
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
-                    onClick={() => router.push(`/watch/movie/${movie.id}`)}
+                    onClick={() => router.push(watchHref)}
                     className="group gap-2.5 px-7 py-3.5 h-auto rounded-full font-bold text-sm text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
                   >
                     <Play className="w-5 h-5 fill-current" />
-                    Watch Now
+                    {resume.point ? "Resume" : "Watch Now"}
                   </Button>
+                  <DownloadButton tmdbId={movie.id} mediaType="movie" />
+                  <DownloadBadge />
                   <SaveButton
                     movie={movie}
                     size="lg"
@@ -194,7 +225,10 @@ export default function MovieClient({ movie }: { movie: any }) {
                     </div>
                     <Suspense fallback={<VideoSkeleton />}>
                       <div className="rounded-2xl overflow-hidden ring-1 ring-white/[0.06] shadow-xl">
-                        <VideoPlayer videoKey={trailerKey} title={movie.title} />
+                        <VideoPlayer
+                          videoKey={trailerKey}
+                          title={movie.title}
+                        />
                       </div>
                     </Suspense>
                   </div>

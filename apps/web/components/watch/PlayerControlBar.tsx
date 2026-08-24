@@ -41,7 +41,7 @@ export function PlayerControlBar({
         {isPending && !isPlayerReady && (
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full border-2 border-[#D4A237] border-t-transparent animate-spin" />
-            <span className="text-[10px] text-zinc-500 font-medium tracking-wide">
+            <span className="text-[11px] text-zinc-500 font-medium tracking-wide">
               Buffering...
             </span>
           </div>

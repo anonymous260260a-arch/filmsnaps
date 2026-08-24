@@ -29,9 +29,12 @@ import {
   Tv,
   CornerDownLeft,
   X,
+  Sparkles,
 } from "lucide-react";
 import { getImageUrl, rankSearchResults, smartSearch } from "@/lib/tmdb";
 import type { ScoredResult } from "@/lib/tmdb";
+import { animeSearch, rankAnimeSearchResults } from "@/lib/anime/search";
+import type { ScoredAnimeResult } from "@/lib/anime/search";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useQuery } from "@tanstack/react-query";
 
@@ -66,6 +69,26 @@ function removeRecent(query: string) {
   localStorage.setItem(RECENT_KEY, JSON.stringify(list));
 }
 
+/* ── Anime toggle (F9) — shared with /search via the same storage key ── */
+
+const ANIME_TOGGLE_KEY = "fs:search-anime";
+
+function loadAnimeMode(): boolean {
+  try {
+    return localStorage.getItem(ANIME_TOGGLE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveAnimeMode(on: boolean) {
+  try {
+    localStorage.setItem(ANIME_TOGGLE_KEY, on ? "1" : "0");
+  } catch {
+    /* non-fatal */
+  }
+}
+
 /* ── Component ─────────────────────────────────────────────────────────── */
 
 export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
@@ -73,6 +96,8 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
   const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(-1);
   const [recents, setRecents] = useState<string[]>([]);
+  // Anime mode — read lazily so first open reflects /search's last state.
+  const [animeMode, setAnimeMode] = useState(loadAnimeMode);
   const debouncedQuery = useDebounce(query, 250);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -101,9 +126,12 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
     };
   }, [open]);
 
-  /* ── Search query ── */
+  /* ── Search query ──
+     Both queries stay enabled so flipping the anime toggle swaps between
+     cached result sets instantly (no refetch flash). AniList traffic goes
+     through the edge-cached proxy — keeping it warm costs nothing upstream. */
 
-  const { data: searchResults, isFetching } = useQuery({
+  const { data: searchResults, isFetching: tmdbFetching } = useQuery({
     queryKey: ["palette-search", debouncedQuery],
     queryFn: () => smartSearch(debouncedQuery),
     enabled: debouncedQuery.length > 1,
@@ -111,10 +139,35 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
     gcTime: 60_000,
   });
 
-  const suggestions: ScoredResult[] = useMemo(() => {
+  const { data: animeData, isFetching: animeFetching } = useQuery({
+    queryKey: ["palette-anime-search", debouncedQuery],
+    queryFn: () => animeSearch(debouncedQuery),
+    enabled: debouncedQuery.length > 1,
+    staleTime: 24 * 60 * 60 * 1000,
+    gcTime: 7 * 24 * 60 * 60 * 1000,
+    // Upstream ceiling is ~90 req/min on AniList — no client retry storm
+    // when the proxy reports an outage; the next keystroke re-fires anyway.
+    retry: false,
+  });
+
+  const isFetching = animeMode ? animeFetching : tmdbFetching;
+
+  const suggestions = useMemo<(ScoredResult | ScoredAnimeResult)[]>(() => {
+    if (animeMode) {
+      return animeData?.results
+        ? rankAnimeSearchResults(animeData.results, debouncedQuery, 7)
+        : [];
+    }
     if (!searchResults?.results) return [];
     return rankSearchResults(searchResults.results, debouncedQuery, 7);
-  }, [searchResults, debouncedQuery]);
+  }, [animeMode, animeData, searchResults, debouncedQuery]);
+
+  const toggleAnimeMode = useCallback(() => {
+    setAnimeMode((v) => {
+      saveAnimeMode(!v);
+      return !v;
+    });
+  }, []);
 
   // reset keyboard selection when results change
   useEffect(() => {
@@ -133,10 +186,19 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
   const close = useCallback(() => onOpenChange(false), [onOpenChange]);
 
   const goToResult = useCallback(
-    (item: ScoredResult) => {
+    (item: ScoredResult | ScoredAnimeResult) => {
       saveRecent(query.trim());
       setRecents(loadRecents());
       close();
+      if ("malId" in item) {
+        // Anime result → TMDB-spine detail route carrying the anime identity
+        // params (?mid=<mal>&aid=<anilist>) so the watch session is profiled.
+        const type = item.tmdbShowId != null ? "tv" : "movie";
+        const tmdbId = item.tmdbShowId ?? item.tmdbMovieId!;
+        const aid = item.anilistId != null ? `&aid=${item.anilistId}` : "";
+        router.push(`/${type}/${tmdbId}?mid=${item.malId}${aid}`);
+        return;
+      }
       const type = item.media_type || "movie";
       router.push(`/${type}/${item.id}`);
     },
@@ -149,9 +211,11 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
       if (!term) return;
       saveRecent(term);
       close();
-      router.push(`/search?q=${encodeURIComponent(term)}`);
+      router.push(
+        `/search?q=${encodeURIComponent(term)}${animeMode ? "&anime=1" : ""}`,
+      );
     },
-    [query, close, router],
+    [query, close, router, animeMode],
   );
 
   const goToCategory = useCallback(
@@ -241,13 +305,30 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search movies & TV shows…"
+            placeholder={
+              animeMode ? "Search MyAnimeList…" : "Search movies & TV shows…"
+            }
             className="h-[52px] w-full bg-transparent text-[15px] text-zinc-100
               placeholder:text-zinc-600 outline-none"
             aria-label="Search query"
             autoComplete="off"
             spellCheck={false}
           />
+          {/* Anime mode toggle — same storage key as /search */}
+          <button
+            onClick={toggleAnimeMode}
+            title="Anime search (MyAnimeList)"
+            aria-pressed={animeMode}
+            className={`flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[11px]
+              font-semibold transition-colors ${
+                animeMode
+                  ? "bg-[#D4A237]/15 text-[#D4A237] ring-1 ring-inset ring-[#D4A237]/30"
+                  : "text-zinc-600 hover:bg-white/[0.06] hover:text-zinc-400"
+              }`}
+          >
+            <Sparkles size={13} />
+            Anime
+          </button>
           {query ? (
             <button
               onClick={() => {
@@ -263,7 +344,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
           ) : (
             <kbd
               className="shrink-0 rounded border border-white/[0.08] bg-white/[0.04]
-              px-1.5 py-0.5 text-[10px] font-medium text-zinc-600"
+              px-1.5 py-0.5 text-[11px] font-medium text-zinc-600"
             >
               ESC
             </kbd>
@@ -277,7 +358,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
             <div className="p-2">
               {recents.length > 0 && (
                 <>
-                  <p className="px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
+                  <p className="px-3 pb-1.5 pt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
                     Recent
                   </p>
                   {recents.map((q) => (
@@ -308,7 +389,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
                 </>
               )}
 
-              <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
+              <p className="px-3 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
                 Quick Links
               </p>
               <button
@@ -354,70 +435,90 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
           {/* Results */}
           {showResults && !isFetching && suggestions.length > 0 && (
             <div className="p-2">
-              <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
+              <p className="px-3 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
                 Results
               </p>
-              {suggestions.map((item, i) => (
-                <button
-                  key={`${item.media_type}-${item.id}`}
-                  ref={(el) => {
-                    itemRefs.current[i] = el;
-                  }}
-                  onClick={() => goToResult(item)}
-                  onMouseEnter={() => setActiveIdx(i)}
-                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left
+              {suggestions.map((item, i) => {
+                const isAnime = "malId" in item;
+                const thumbSrc = isAnime
+                  ? (item.image ?? "")
+                  : getImageUrl(item.poster_path || item.poster, "w92") || "";
+                const typeLabel = isAnime
+                  ? `${item.type ?? "Anime"} · Anime`
+                  : item.media_type === "tv"
+                    ? "TV Show"
+                    : "Movie";
+                return (
+                  <button
+                    key={
+                      isAnime
+                        ? `a-${item.malId}`
+                        : `${item.media_type}-${item.id}`
+                    }
+                    ref={(el) => {
+                      itemRefs.current[i] = el;
+                    }}
+                    onClick={() => goToResult(item)}
+                    onMouseEnter={() => setActiveIdx(i)}
+                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left
                     transition-colors ${i === activeIdx ? "bg-[#D4A237]/[0.08] ring-1 ring-inset ring-[#D4A237]/[0.15]" : "hover:bg-white/[0.04]"}`}
-                >
-                  {/* Poster thumbnail */}
-                  <div className="h-12 w-9 shrink-0 overflow-hidden rounded-md bg-white/[0.05]">
-                    {(item.poster_path || item.poster) && (
-                      <img
-                        src={
-                          getImageUrl(item.poster_path || item.poster, "w92") ||
-                          ""
-                        }
-                        alt=""
-                        className="h-full w-full object-cover"
-                        loading="lazy"
+                  >
+                    {/* Poster thumbnail */}
+                    <div className="h-12 w-9 shrink-0 overflow-hidden rounded-md bg-white/[0.05]">
+                      {thumbSrc && (
+                        <img
+                          src={thumbSrc}
+                          alt=""
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      )}
+                    </div>
+                    {/* Meta */}
+                    <div className="min-w-0 flex-1">
+                      <p
+                        className={`truncate text-sm ${i === activeIdx ? "font-semibold text-zinc-100" : "font-medium text-zinc-200"}`}
+                      >
+                        {isAnime
+                          ? item.titleEnglish || item.title
+                          : item.title || item.name}
+                      </p>
+                      <p className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-500">
+                        <span
+                          className={`inline-block h-1.5 w-1.5 rounded-full ${
+                            isAnime
+                              ? "bg-violet-400/70"
+                              : item.media_type === "tv"
+                                ? "bg-sky-400/70"
+                                : "bg-[#D4A237]/70"
+                          }`}
+                        />
+                        <span>{typeLabel}</span>
+                        {(isAnime
+                          ? item.year != null
+                          : !!(item.release_date || item.first_air_date)) && (
+                          <>
+                            <span className="text-zinc-700">·</span>
+                            <span>
+                              {isAnime
+                                ? String(item.year)
+                                : (item.release_date ||
+                                    item.first_air_date)!.slice(0, 4)}
+                            </span>
+                          </>
+                        )}
+                      </p>
+                    </div>
+                    {/* Enter hint on active */}
+                    {i === activeIdx && (
+                      <CornerDownLeft
+                        size={13}
+                        className="shrink-0 text-zinc-600"
                       />
                     )}
-                  </div>
-                  {/* Meta */}
-                  <div className="min-w-0 flex-1">
-                    <p
-                      className={`truncate text-sm ${i === activeIdx ? "font-semibold text-zinc-100" : "font-medium text-zinc-200"}`}
-                    >
-                      {item.title || item.name}
-                    </p>
-                    <p className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-500">
-                      <span
-                        className={`inline-block h-1.5 w-1.5 rounded-full ${item.media_type === "tv" ? "bg-sky-400/70" : "bg-[#D4A237]/70"}`}
-                      />
-                      <span>
-                        {item.media_type === "tv" ? "TV Show" : "Movie"}
-                      </span>
-                      {(item.release_date || item.first_air_date) && (
-                        <>
-                          <span className="text-zinc-700">·</span>
-                          <span>
-                            {(item.release_date || item.first_air_date)!.slice(
-                              0,
-                              4,
-                            )}
-                          </span>
-                        </>
-                      )}
-                    </p>
-                  </div>
-                  {/* Enter hint on active */}
-                  {i === activeIdx && (
-                    <CornerDownLeft
-                      size={13}
-                      className="shrink-0 text-zinc-600"
-                    />
-                  )}
-                </button>
-              ))}
+                  </button>
+                );
+              })}
 
               {/* See all results */}
               <button
@@ -459,19 +560,19 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
         {/* ── Keyboard hints footer ── */}
         <div className="flex items-center gap-4 border-t border-white/[0.06] px-4 py-2.5">
           <span className="flex items-center gap-1.5 text-[11px] text-zinc-600">
-            <kbd className="rounded border border-white/[0.08] bg-white/[0.04] px-1 py-px text-[10px]">
+            <kbd className="rounded border border-white/[0.08] bg-white/[0.04] px-1 py-px text-[11px]">
               ↑↓
             </kbd>
             navigate
           </span>
           <span className="flex items-center gap-1.5 text-[11px] text-zinc-600">
-            <kbd className="rounded border border-white/[0.08] bg-white/[0.04] px-1 py-px text-[10px]">
+            <kbd className="rounded border border-white/[0.08] bg-white/[0.04] px-1 py-px text-[11px]">
               ↵
             </kbd>
             open
           </span>
           <span className="flex items-center gap-1.5 text-[11px] text-zinc-600">
-            <kbd className="rounded border border-white/[0.08] bg-white/[0.04] px-1 py-px text-[10px]">
+            <kbd className="rounded border border-white/[0.08] bg-white/[0.04] px-1 py-px text-[11px]">
               esc
             </kbd>
             close

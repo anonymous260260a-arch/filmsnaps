@@ -11,6 +11,29 @@ export interface ProviderProtection {
 }
 
 /**
+ * Content mode for the Hard Mode Split. A provider advertises which modes it
+ * can serve via `mediaTypes`; the app picks providers with
+ * `p.mediaTypes.includes(currentMode)`.
+ */
+export type MediaType = "movie_tv" | "anime";
+
+/**
+ * Extra context threaded to embed URL builders. Providers that key their
+ * URLs by non-TMDB ID spaces (anime providers use MAL / AniList ids) read
+ * `idSpace`; audio-track selection reads `audio`. All fields optional —
+ * absent values fall back to the provider's documented default.
+ */
+export interface EmbedOptions {
+  /**
+   * Which ID space `id` belongs to. Default `'mal'`.
+   * MegaPlay: `/stream/mal/<id>/…` vs `/stream/ani/<id>/…`.
+   */
+  idSpace?: "mal" | "ani";
+  /** Audio track path segment. Default `'sub'` (v1 ships sub-only UI). */
+  audio?: "sub" | "dub";
+}
+
+/**
  * Single provider definition — the source of truth
  */
 export interface ProviderDefinition {
@@ -32,16 +55,33 @@ export interface ProviderDefinition {
   baseUrl: string;
   /** Master toggle — disable a provider entirely */
   enabled?: boolean;
-  /** Embed URL builders */
+  /** Embed URL builders. `opts` carries ID-space/audio context (see EmbedOptions). */
   embed: {
-    movie: (id: string, startAt?: number) => string;
+    movie: (id: string, startAt?: number, opts?: EmbedOptions) => string;
     tv: (
       id: string,
       season: number,
       episode: number,
       startAt?: number,
+      opts?: EmbedOptions,
     ) => string;
   };
+
+  /**
+   * Anime-exclusive provider keyed by MAL/AniList ids (never TMDB). Such
+   * providers are excluded from movie/TV server pickers on every platform and
+   * appear only when a watch session is anime-profiled (ANIME_PROVIDER_IDS
+   * allowlist in registry.ts). Default: false.
+   */
+  animeOnly?: boolean;
+  /**
+   * Hard-mode-split capabilities (mobile-first). Replaces the brittle
+   * `animeOnly` boolean + `ANIME_PROVIDER_IDS` array as the picker source of
+   * truth. A provider may serve both worlds (hybrid: `['movie_tv','anime']`).
+   * Picker logic: `providers.filter(p => p.mediaTypes.includes(currentMode))`.
+   * Additive — `animeOnly` is retained for web/desktop until they migrate.
+   */
+  mediaTypes?: MediaType[];
   /** Security protection config (per-provider toggle) */
   protection?: ProviderProtection;
 

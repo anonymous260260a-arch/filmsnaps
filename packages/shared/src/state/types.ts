@@ -8,10 +8,17 @@
 
 // ── Data types ────────────────────────────────────────────────────
 
+/** Per-provider position snapshot (store v2 — expert verdict §8 Q2). */
+export interface ProviderPosition {
+  currentTime: number;
+  duration: number;
+  updatedAt: number;
+}
+
 export interface WatchProgress {
   /** TMDB id of the movie or TV show */
   tmdbId: string;
-  mediaType: 'movie' | 'tv';
+  mediaType: "movie" | "tv";
   /** Which provider was used (e.g. nxsha, peachify) */
   providerId?: string;
   /** Last playback position in seconds */
@@ -28,6 +35,15 @@ export interface WatchProgress {
   updatedAt: number;
   /** Explicitly marked as fully watched */
   completed: boolean;
+  /**
+   * Position as reported by each provider that played this item (v2).
+   * Providers report different durations for the same title, so absolute
+   * seconds are only comparable intra-provider; cross-provider resume maps
+   * percent × new duration instead of reusing raw seconds.
+   */
+  perProvider?: Record<string, ProviderPosition>;
+  /** Provider whose position is authoritative — the most recent writer. */
+  primaryProviderId?: string;
 }
 
 // ── Storage adapter interface ─────────────────────────────────────

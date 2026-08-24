@@ -298,6 +298,12 @@ experience lives in the desktop and mobile apps.
   - `apiIntercepts` (synthetic API responses, e.g. screenscape `/api/ads/cycles`)
   - `cosmeticRules` (CSS injected at HTML-bytes level)
   - `adblockDisabled` (true for providers whose ad scripts double as video auth)
+- **Anime providers** (e.g. **MegaPlay**) are `animeOnly` — their embed URLs are
+  keyed by **MAL/AniList IDs**, not TMDB. They are excluded from movie/TV pickers
+  (`getNonAnimeProviders`) and selected only in anime sessions (`filterAnimeProviders`
+  / `getProvidersForMode('anime')`). MegaPlay relies on a **Referer-presence gate**
+  on its 410 path, so the player keeps the provider base URL as the referrer (no
+  stripping) and auto-falls-back to the alternate ID space (MAL ↔ AniList) on a 410.
 - OTA: signed fetch on launch + every 2h; signature verified before apply; ring-buffer rollback (3 configs); 3×-failure watchdog → `heal-events.log`
 - V5 schema fields: `version`, `providers[]`, `providerProfiles`, `navigationGuard`, `rules.videoDetection`, `rules.alwaysBlock`, `allowedCdnHosts`, `providerRootHosts`
 
