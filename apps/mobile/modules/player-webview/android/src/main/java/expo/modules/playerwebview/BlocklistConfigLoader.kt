@@ -428,10 +428,20 @@ object BlocklistConfigLoader {
     /** Load the Ed25519 public key from assets. */
     private fun loadPublicKey(context: Context): PublicKey? {
         return try {
-            val inputStream = context.assets.open(PUBLIC_KEY_ASSET)
-            val bytes = inputStream.readBytes()
-            inputStream.close()
-            val spec = X509EncodedKeySpec(bytes)
+            val raw = context.assets.open(PUBLIC_KEY_ASSET).bufferedReader().readText()
+            // Asset is PEM (-----BEGIN PUBLIC KEY-----). Strip armor + whitespace
+            // and base64-decode to the DER bytes X509EncodedKeySpec expects.
+            // Passing the raw PEM text to X509EncodedKeySpec makes conscrypt
+            // route it through the X.509 *certificate* factory, which throws
+            // "Error parsing public key" and silently fails verification.
+            val b64 = raw
+                .replace("-----BEGIN PUBLIC KEY-----", "")
+                .replace("-----END PUBLIC KEY-----", "")
+                .replace("\r", "")
+                .replace("\n", "")
+                .trim()
+            val der = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+            val spec = X509EncodedKeySpec(der)
             val kf = KeyFactory.getInstance("Ed25519")
             kf.generatePublic(spec)
         } catch (e: Exception) {
