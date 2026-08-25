@@ -217,48 +217,173 @@ function minifyGuardScript(src: string): string {
 }
 
 /**
- * MegaPlay "Error Code: 410" probe. Polls the settled page for the literal text
- * "Error Code: 410" and posts an `anime-410` message so React Native can swap
- * the MAL↔AniList id space.
+ * MEGAPLAY_410_MASK — document-side blind for the MegaPlay anime fallback chain.
  *
- * Settle-aware + stability-checked (desktop parity, verdict §9 Q5): MegaPlay
- * shows a transient warmup interstitial on cold load that can briefly contain
- * "410"-like text; an eager single-shot probe fires on that and burns BOTH id
- * spaces before the real player renders. So we (a) wait ANIME_410_SCAN_DELAY_MS
- * before the first check, and (b) only report a 410 if it PERSISTS across two
- * consecutive checks — a real "no source" error stays; a transient one does not.
+ * Two-layer 410 defense (expert verdict §7, megaplay-410-flash-expert-consultation.md):
+ *
+ *   PRIMARY  — `providerConfigs.megaplay.cssRules` in providerConfig.ts, injected at
+ *              document_start via the shared doc-start bundle. A `<style>` rule is applied
+ *              by the renderer's style engine AT PAINT, so `.error-content` is hidden and
+ *              the dark `#070708` canvas shows from the first frame. It cannot over-blind the
+ *              real player (the working document has no `.error-content`), and needs no removal.
+ *
+ *   SECONDARY — this JS overlay (backstop) + the 410-detection engine. Only matters if the
+ *              CSS injection misses the first paint; it still polls innerText every 100ms
+ *              (bypassing the 12s onLoadingFinish latency) and advances the chain.
+ *
+ * The WebView is a native window-overlay, so RN opacity can't reach it. Body stays visible
+ * (opacity:1) so MegaPlay's autoplay runs. `window.__fs410MaskArmed` guards per-document;
+ * handleLoadingStart re-arms on each chain-advance. OTA-shippable; no native code touched.
  */
-const ANIME_410_SCAN_DELAY_MS = 2500;
-const ANIME_410_PROBE = `
-(function() {
-  function pageText() {
-    try { return (document.body && document.body.innerText) || ""; } catch (e) { return ""; }
+const MEGAPLAY_410_MASK = `
+(function(){
+  if(window.__fs410MaskArmed) return;
+  window.__fs410MaskArmed = true;
+
+  var OVERLAY_ID = '__fs_410_overlay__';
+  var maskRemoved = false;
+  var fast410Timer = null;
+  var videoCheckTimer = null;
+  var errorTicks = 0;
+
+  // 1. Overlay backstop (secondary). CSS rule in providerConfigs.megaplay is the
+  //    primary paint-level hide; this only covers the 1-frame window if that misses.
+  function createOverlay() {
+    if (document.getElementById(OVERLAY_ID)) return;
+    var overlay = document.createElement('div');
+    overlay.id = OVERLAY_ID;
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483647;background:#070708;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;font-family:sans-serif;';
+    overlay.innerHTML = '<style>@keyframes __fs_spin__{to{transform:rotate(360deg)}}</style>' +
+                        '<div style="width:32px;height:32px;border:3px solid rgba(212,162,55,0.2);border-top-color:#D4A237;border-radius:50%;animation:__fs_spin__ .8s linear infinite"></div>' +
+                        '<div style="color:#A1A1AA;font-size:13px;">Connecting to source\\u2026</div>';
+    document.documentElement.appendChild(overlay);
   }
-  function has410() { return pageText().indexOf("Error Code: 410") !== -1; }
-  try { console.log("[FS-410] probe injected, settle delay " + ${ANIME_410_SCAN_DELAY_MS} + "ms then poll"); } catch(e){}
-  // Snapshot the page text at first check so we can log what was actually shown.
-  var firstText = null;
-  // Align with desktop's post-settle scan: don't poll until the page has had a
-  // chance to render the real player (a transient warmup 410 would be gone by now).
-  setTimeout(function () {
-    var t = setInterval(function () {
-      var now = has410();
-      if (now && firstText === null) firstText = pageText().slice(0, 400);
-      // Stability check: require the 410 to persist across the previous tick too,
-      // so a transient warmup interstitial is ignored.
-      if (now && firstText !== null && has410()) {
-        try {
-          console.log("[FS-410] FOUND persistent 'Error Code: 410' (text='" + firstText + "'), posting anime-410");
-        } catch(e){}
-        window.ReactNativeWebView &&
-          window.ReactNativeWebView.postMessage &&
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: "anime-410" }));
-        clearInterval(t);
+  createOverlay();
+
+  function removeMask() {
+    if (maskRemoved) return;
+    maskRemoved = true;
+    var o = document.getElementById(OVERLAY_ID);
+    if (o) o.remove();
+    if (fast410Timer) clearInterval(fast410Timer);
+    if (videoCheckTimer) clearInterval(videoCheckTimer);
+    // Safety net: nudge autoplay now that the page is visible (try/catch swallows
+    // autoplay-policy rejections — body stays opacity:1 so the player's own
+    // visibility-gated autoplay still runs).
+    var vs = document.querySelectorAll('video');
+    for (var i = 0; i < vs.length; i++) {
+      try { if (vs[i].paused) vs[i].play().catch(function(){}); } catch (e) {}
+    }
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'anime-playing' }));
+    }
+  }
+
+  // 2. Fast 410 detection — polls innerText every 100ms from document_start, so the
+  //    error text is caught the instant the HTML parses (bypasses the 12s onLoadingFinish
+  //    + 2.5s settle delays → chain advances in ~300ms). errorTicks debounce (~3 ticks)
+  //    avoids transient interstitial text firing a false 410.
+  fast410Timer = setInterval(function() {
+    if (!document.body) return;
+    // textContent INCLUDES text inside display:none subtrees (unlike innerText),
+    // so the PRIMARY CSS hide (providerConfigs.megaplay) does NOT blind detection.
+    var errEl = document.querySelector('.error-content, .error-code, div[class*="error"]');
+    var text = (errEl && errEl.textContent) ? errEl.textContent : (document.body.textContent || '');
+    // 410 AND 404/not-found are RETRYABLE per id-space. MegaPlay returns a 404 for
+    // a specific id-space (e.g. mal) when the title only lives in the other
+    // (ani) — so a 404 must advance the chain, NOT terminate (verified by logs:
+    // mal/21/1175 → 404, ani/21/1175 → plays). Only when all 4 space×audio combos
+    // fail does RN exhaust and show "No sources available on MegaPlay".
+    if (text.includes('Error Code: 410') || text.includes('404') || text.toLowerCase().includes('not found')) {
+      errorTicks++;
+      if (errorTicks >= 3) {
+        clearInterval(fast410Timer);
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'anime-410' }));
+        }
       }
-    }, 1000);
-    // Don't poll forever — stop after 25s; a still-loading page is a different problem.
-    setTimeout(function () { clearInterval(t); }, 25000);
-  }, ${ANIME_410_SCAN_DELAY_MS});
+    } else {
+      errorTicks = 0;
+    }
+  }, 100);
+
+  // 3. Relaxed video monitor — reveal on actively-playing video OR metadata loaded
+  //    with real dimensions (JWPlayer keeps video paused / zero-dim during MSE buffering).
+  videoCheckTimer = setInterval(function() {
+    var videos = document.querySelectorAll('video');
+    for (var i = 0; i < videos.length; i++) {
+      var v = videos[i];
+      if (v.error) continue;
+      if (!v.paused && v.currentTime > 0.1) { removeMask(); return; }
+      if (v.readyState >= 1 && v.videoWidth > 0 && v.videoHeight > 0) { removeMask(); return; }
+    }
+  }, 500);
+
+  // 4. Safety timeout (15s) — if no video AND no 410 detected by now, the page is
+  //    definitively dead/blank/hung. Do NOT removeMask() (that reveals the broken
+  //    hidden page = black void). Instead post anime-410 so RN advances the chain;
+  //    on the final combo RN triggers __fs410Exhaust → "No sources available"
+  //    message (expert verdict §3). Clears fast410Timer so it cannot double-post
+  //    after RN advances.
+  setTimeout(function() {
+    if (!maskRemoved) {
+      clearInterval(fast410Timer);
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(
+          JSON.stringify({ type: 'anime-410', reason: 'timeout' }),
+        );
+      }
+    }
+  }, 15000);
+
+  // 5. Hooks (RN-side).
+  window.__fs410Reveal = function() { removeMask(); };
+  window.__fs410Exhaust = function() {
+    clearInterval(fast410Timer);
+    clearInterval(videoCheckTimer);
+    maskRemoved = true;
+    // (Re)create the overlay if a prior removeMask() (e.g. a dead <video> with
+    // bogus dimensions, or a 15s timeout race) already stripped it — otherwise the
+    // terminal message would never render and the user sees a blank dark canvas.
+    var el = document.getElementById(OVERLAY_ID);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = OVERLAY_ID;
+      el.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483647;background:#070708;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;font-family:sans-serif;';
+      document.documentElement.appendChild(el);
+    }
+    el.innerHTML = '<div style="color:#D4A237;font-size:14px;text-align:center;padding:20px;">No sources available on MegaPlay</div>';
+  };
+})();
+true;`;
+
+/**
+ * Self-contained terminal overlay for the MegaPlay 410/404 fallback chain. Unlike
+ * `window.__fs410Exhaust` (which only exists if MEGAPLAY_410_MASK armed on the current
+ * document), this script force-renders the "No sources available on MegaPlay" message
+ * regardless of prior mask state — so the user always sees it on true exhaustion instead
+ * of a blank dark canvas. RN injects this directly on chain exhaustion. JS-only / OTA.
+ */
+const MEGAPLAY_410_EXHAUST = `
+(function(){
+  try {
+    var OVERLAY_ID = '__fs_410_overlay__';
+    var el = document.getElementById(OVERLAY_ID);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = OVERLAY_ID;
+      el.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483647;background:#070708;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;font-family:sans-serif;';
+      (document.head || document.documentElement).appendChild(el);
+    }
+    el.innerHTML = '<div style="color:#D4A237;font-size:14px;text-align:center;padding:20px;">No sources available on MegaPlay</div>';
+    // Un-hide any error markup the PRIMARY CSS hid, so the user sees WHY (the 410/404).
+    var errs = document.querySelectorAll('.error-content, .error-code, div[class*="error"]');
+    for (var i = 0; i < errs.length; i++) {
+      errs[i].style.setProperty('display', 'block', 'important');
+      errs[i].style.setProperty('visibility', 'visible', 'important');
+      errs[i].style.setProperty('opacity', '1', 'important');
+    }
+  } catch (e) {}
 })();
 true;`;
 
@@ -615,11 +740,6 @@ export function VideoWebView({
     return getNonAnimeProviders();
   }, [isAnime]);
 
-  // ── Anime id-space fallback chain (desktop parity, verdict §9 Q5) ──
-  // Start on MAL; if MegaPlay returns "Error Code: 410", swap to AniList id
-  // space (via malToAni). Exhausted once both spaces are tried.
-  const [chainSpace, setChainSpace] = useState<"mal" | "ani">("mal");
-
   const [providerId, setProviderId] = useState<string>(
     initialProvider && providers.some((p) => p.id === initialProvider)
       ? initialProvider
@@ -769,6 +889,44 @@ export function VideoWebView({
   const [currentEpisode, setCurrentEpisode] = useState<number>(episode ?? 1);
   seasonRef.current = currentSeason;
   episodeRef.current = currentEpisode;
+
+  // ── Anime fallback chain (desktop parity, verdict §9 Q5) ──
+  // 2D state machine (FS-410 fix, consultation §8): exhausts (id-space × audio)
+  // per (title, episode). Previously a single global `chainSpace` leaked across
+  // episodes — once flipped to "ani" it never reset, so later episodes started on
+  // "ani" and the chain declared exhausted without ever trying "mal".
+  type ChainSpace = "mal" | "ani";
+  type ChainAudio = "sub" | "dub";
+  type ChainCombo = `${ChainSpace}:${ChainAudio}`;
+
+  // Preferred audio drives the queue order: a Dub fan tolerates a missing MAL
+  // episode if AniList has the Dub, but NOT being forced to Sub on MAL.
+  const preferredAudio: ChainAudio = audio; // current state is the user's choice
+  const altAudio: ChainAudio = preferredAudio === "sub" ? "dub" : "sub";
+  const FALLBACK_QUEUE = useMemo<
+    Array<{ space: ChainSpace; audio: ChainAudio }>
+  >(
+    () => [
+      { space: "mal", audio: preferredAudio },
+      { space: "ani", audio: preferredAudio },
+      { space: "mal", audio: altAudio },
+      { space: "ani", audio: altAudio },
+    ],
+    [preferredAudio, altAudio],
+  );
+
+  const [chainSpace, setChainSpace] = useState<ChainSpace>("mal");
+  // Single source of truth for which combos we've tried this episode. A Set is
+  // O(1) and resets instantly on episode change (below) — no state-machine lib.
+  const triedCombos = useRef<Set<ChainCombo>>(new Set());
+
+  // Per-(title, episode) scope: clear tried combos + reset to MAL on change.
+  // We intentionally DO NOT reset `audio` here — if the user prefers Dub, the next
+  // episode should also start on Dub.
+  useEffect(() => {
+    triedCombos.current.clear();
+    setChainSpace("mal");
+  }, [id, currentEpisode, currentSeason]);
 
   // MegaPlay is keyed by MAL-relative episodes, not TMDB's. Translate the
   // current TMDB (season, episode) through the twin map's cour offset so the
@@ -1039,7 +1197,24 @@ export function VideoWebView({
       webViewRef.current?.injectJavaScript(docStartScript);
     }, 300);
     injectionTimersRef.current = [t1, t2];
-  }, [docStartScript]);
+
+    // MegaPlay 410 blind (§10 Q13/Q14): RN's injectedJavaScriptBeforeContentLoaded
+    // runs once per WebView instance, NOT per in-document navigation. The 410 chain
+    // advances via the `source` prop (same WebView, new document), so on each
+    // advance the mask must be re-injected or the raw 410 page flashes. Re-arm it on
+    // every onLoadingStart (mirrors the guard spray above). The mask's boot guard
+    // (an id check) makes a re-injection a no-op if it already ran in this document.
+    if (onMegaplay) {
+      webViewRef.current?.injectJavaScript(MEGAPLAY_410_MASK);
+      const m1 = setTimeout(() => {
+        webViewRef.current?.injectJavaScript(MEGAPLAY_410_MASK);
+      }, 100);
+      const m2 = setTimeout(() => {
+        webViewRef.current?.injectJavaScript(MEGAPLAY_410_MASK);
+      }, 300);
+      injectionTimersRef.current.push(m1, m2);
+    }
+  }, [docStartScript, onMegaplay]);
 
   const isTV = type === "tv";
 
@@ -1830,7 +2005,11 @@ export function VideoWebView({
               suppressInjection
                 ? ""
                 : (devtoolPatchScript ? devtoolPatchScript + "\n" : "") +
-                  docStartScript
+                  docStartScript +
+                  // MegaPlay 410 blind: document-side mask (§10 Q13/Q14). Runs at
+                  // document_start so the raw 410 page never paints a visible frame.
+                  // RN opacity can't reach the native window-overlay WebView.
+                  (onMegaplay ? "\n" + MEGAPLAY_410_MASK : "")
             }
             injectedJavaScriptAfterLoad={
               suppressInjection ? "" : afterLoadScript
@@ -1871,17 +2050,11 @@ export function VideoWebView({
                 seekTo(seekTime);
                 startAtRef.current = 0;
               }
-              // MegaPlay "Error Code: 410" probe (anime fallback chain).
-              if (onMegaplay) {
-                console.log(
-                  `[FS-410] onLoadingFinish — injecting probe (provider=${currentProvider?.id}, onMegaplay=${onMegaplay})`,
-                );
-                webViewRef.current?.injectJavaScript(ANIME_410_PROBE);
-              } else {
-                console.log(
-                  `[FS-410] onLoadingFinish — NOT injecting probe (onMegaplay=${onMegaplay}, provider=${currentProvider?.id})`,
-                );
-              }
+              // MegaPlay 410 detection now lives inside MEGAPLAY_410_MASK (fast 200ms
+              // innerText poll posts anime-410 from document_start) — no separate probe.
+              // The mask is injected via injectedJavaScriptBeforeContentLoaded + re-armed
+              // on every onLoadingStart, so injecting ANIME_410_PROBE here is redundant and
+              // would double-post anime-410 on doc 1 (skipping the working source).
             }}
             onHttpError={(syntheticEvent) => {
               const err = syntheticEvent.nativeEvent;
@@ -1975,31 +2148,76 @@ export function VideoWebView({
                 // verdict §9 Q5): swap MAL↔AniList id space; exhaust when both tried.
                 if (data.type === "anime-410") {
                   console.log(
-                    `[FS-410] received anime-410 — chainSpace=${chainSpace} animeAnilistId=${animeAnilistId} animeMalId=${animeMalId}`,
+                    `[FS-410] received anime-410 — chainSpace=${chainSpace} audio=${audio} tried=${Array.from(triedCombos.current).join(",")}`,
                   );
-                  const hasAniFallback =
-                    animeAnilistId != null ||
-                    malToAni(animeMalId ?? "") != null;
-                  const willFlip = chainSpace === "mal" && hasAniFallback;
-                  setChainSpace((prev) => {
-                    const next =
-                      prev === "mal" && hasAniFallback ? "ani" : prev;
-                    console.log(`[FS-410] chainSpace ${prev} -> ${next}`);
-                    return next;
-                  });
-                  if (willFlip) {
-                    // The 410 page is a dead end — must actually reload the WebView
-                    // with the new id space. A source prop change alone does NOT
-                    // reload an RN WebView; bump the mount key to force it.
-                    console.log(
-                      `[FS-410] reloading WebView with watchUrl=${watchUrl}`,
+                  // Mark the combo we just loaded as tried.
+                  const currentCombo: ChainCombo = `${chainSpace}:${audio}`;
+                  triedCombos.current.add(currentCombo);
+
+                  // Find the next untried combo in the preferred-audio-first queue.
+                  const nextCombo = FALLBACK_QUEUE.find(
+                    (c) => !triedCombos.current.has(`${c.space}:${c.audio}`),
+                  );
+
+                  if (!nextCombo) {
+                    // Exhausted: all 4 (space × audio) combos failed. Surface the
+                    // terminal error UI instead of silently staying on a dead page.
+                    console.warn(
+                      `[FS-410] fallback chain EXHAUSTED for id=${id} ep=${currentEpisode} (tried=${Array.from(triedCombos.current).join(",")})`,
                     );
-                    setMountGen((g) => g + 1);
-                    webViewRef.current?.reload();
-                  } else {
+                    setLoadState({
+                      type: "FAILED",
+                      reason:
+                        "This episode isn't available on MegaPlay (tried sub & dub). Try another source.",
+                    });
+                    // RN's FAILED overlay sits behind the native window-overlay
+                    // WebView and can't cover it, so render a self-contained
+                    // in-document overlay (force-rendered regardless of whether the
+                    // 410 mask armed on this document — that's why a bare
+                    // window.__fs410Exhaust() could silently no-op and leave blank).
+                    webViewRef.current?.injectJavaScript(MEGAPLAY_410_EXHAUST);
+                    return;
+                  }
+
+                  // Apply the next combo. Navigation happens automatically because
+                  // watchUrl depends on chainSpace + audio; the probe re-injects on
+                  // the next onLoadingFinish. No remount, no forced reload (see
+                  // consultation §7 — reload-in-place re-fetches the dead 410 doc).
+                  setChainSpace(nextCombo.space);
+                  if (nextCombo.audio !== audio) {
+                    // changeAudio updates state AND persists to AsyncStorage, so the
+                    // UI toggle reflects the working audio.
+                    changeAudio(nextCombo.audio);
+                  }
+                  console.log(
+                    `[FS-410] advancing -> space=${nextCombo.space} audio=${nextCombo.audio} (watchUrl follows via source prop): ${watchUrl}`,
+                  );
+                  return;
+                }
+                // Definitive "all clear": the 410 probe polled twice post-settle and
+                // found NO 410/404/not-found text. Force-reveal the in-document mask
+                // immediately — this is the source of truth and bypasses in-page video
+                // heuristics (JWPlayer keeps the video paused / zero-dimensions during
+                // MSE buffering, so the relaxed shouldUnmask() alone can lag). The mask
+                // exposes a real playing source underneath the blind.
+                // The in-document 410 mask confirmed an actively-playing <video> and
+                // removed itself (removeMask posts anime-playing). Flip RN to PLAYING
+                // so the LOADING/SLOW UI clears; the live video is already rendering
+                // behind the now-removed mask. (The old anime-410-clear probe signal
+                // is gone — the mask self-reveals before the chain even needs it.)
+                if (data.type === "anime-playing") {
+                  if (onMegaplay) {
                     console.log(
-                      `[FS-410] no flip — chain exhausted (chainSpace=${chainSpace}, ani=${animeAnilistId}, mal=${animeMalId})`,
+                      `[FS-410] received anime-playing — video confirmed, clearing load state`,
                     );
+                    setLoadState({ type: "PLAYING" });
+                    navigationReceivedRef.current = true;
+                    pageLoadedRef.current = true;
+                    const seekTime = startAtRef.current;
+                    if (seekTime > 5) {
+                      seekTo(seekTime);
+                      startAtRef.current = 0;
+                    }
                   }
                   return;
                 }

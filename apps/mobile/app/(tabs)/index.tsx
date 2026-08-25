@@ -704,7 +704,24 @@ export default function HomeScreen() {
 
         {/* ── Hard Mode Split: anime mode swaps the data hook, not the layout ── */}
         {settings.mode === "anime" ? (
-          <AnimeHomeFeed nav={nav} />
+          <View>
+            {/* Continue Watching (anime-scoped history) — the movie_tv branch
+                renders this via the orderedSections switch, but the anime branch
+                only rendered <AnimeHomeFeed>, so CW was missing in anime mode.
+                The store already scopes history to anime when mode==="anime"
+                (:103-105) and ContinueWatchingSection handles p.isAnime nav. */}
+            {historyEntries.length > 0 ? (
+              <ContinueWatchingSection
+                historyEntries={historyEntries}
+                historyMeta={historyMeta}
+                nav={nav}
+                SCREEN_WIDTH={SCREEN_WIDTH}
+                providerLabelMap={PROVIDER_LABELS}
+                onRemoveItem={handleRemoveHistoryItem}
+              />
+            ) : null}
+            <AnimeHomeFeed nav={nav} />
+          </View>
         ) : (
           /* ── Remaining TMDB sections ordered by settings.homeRowOrder
               (Continue Watching is included in homeRowOrder, so it renders
