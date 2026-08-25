@@ -131,6 +131,19 @@ export const providerConfigs: Record<string, ProviderConfig> = {
       },
     ],
   },
+  megaplay: {
+    // Paint-level 410 defense (expert verdict §7): a <style> rule applied by the
+    // renderer at paint beats the native first paint far more reliably than the JS
+    // overlay div, and crucially it cannot over-blind the real player (the working
+    // document has no .error-content). This is the PRIMARY hide; MEGAPLAY_410_MASK
+    // in VideoWebView.tsx is the secondary backstop overlay + 410-detection engine.
+    // The dark-canvas background makes any residual 1-frame flash an imperceptible
+    // dark flash instead of alarming "Error 410" text.
+    cssRules: [
+      "html, body { background-color: #070708 !important; }",
+      '.error-content, .error-code, div[class*="error"] { display: none !important; visibility: hidden !important; opacity: 0 !important; }',
+    ],
+  },
   cinemaos: {
     // Right-side player-tools rail (server/source picker, details,
     // "Switch to Classic UI", "Hide player tools"). Same Tailwind rail as

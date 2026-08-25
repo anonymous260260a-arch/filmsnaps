@@ -46,6 +46,28 @@ export function EpisodeRail({
     nextUpFound.current = false;
   }, [pickerSeason]);
 
+  // Scroll anchors: store each season pill's x and each episode row's y as they
+  // lay out, so we can scroll the active item into view when the sheet opens.
+  const seasonScrollRef = useRef<ScrollView>(null);
+  const episodeScrollRef = useRef<ScrollView>(null);
+  const seasonPillX = useRef<Record<number, number>>({});
+  const epRowY = useRef<Record<number, number>>({});
+
+  // Scroll the season pills + current episode into view the moment the sheet opens.
+  useEffect(() => {
+    if (!visible) return;
+    const t = setTimeout(() => {
+      const sx = seasonPillX.current[currentSeason];
+      if (sx != null && seasonScrollRef.current) {
+        seasonScrollRef.current.scrollTo({
+          x: Math.max(0, sx - 24),
+          animated: false,
+        });
+      }
+    }, 60);
+    return () => clearTimeout(t);
+  }, [visible, currentSeason]);
+
   const {
     data: seasonData,
     isLoading,
@@ -58,6 +80,22 @@ export function EpisodeRail({
     (tvData?.seasons as any[])
       ?.filter((s: any) => s.season_number > 0 && s.episode_count > 0)
       ?.map((s: any) => s.season_number) ?? [];
+
+  // Scroll the episode list to the currently-playing episode whenever we're viewing
+  // that season (covers open + returning to the current season via the pills).
+  useEffect(() => {
+    if (!visible || pickerSeason !== currentSeason) return;
+    const t = setTimeout(() => {
+      const ey = epRowY.current[currentEpisode];
+      if (ey != null && episodeScrollRef.current) {
+        episodeScrollRef.current.scrollTo({
+          y: Math.max(0, ey - 80),
+          animated: false,
+        });
+      }
+    }, 90);
+    return () => clearTimeout(t);
+  }, [visible, pickerSeason, currentSeason, currentEpisode, episodes.length]);
 
   // Reset picker season when modal opens
   useEffect(() => {
@@ -122,6 +160,7 @@ export function EpisodeRail({
           {seasons.length > 0 && (
             <View className="pb-2 border-b border-zinc-800/50">
               <ScrollView
+                ref={seasonScrollRef}
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={{ paddingHorizontal: 12, gap: 6 }}
@@ -130,6 +169,9 @@ export function EpisodeRail({
                   <TouchableOpacity
                     key={s}
                     onPress={() => setPickerSeason(s)}
+                    onLayout={(e) => {
+                      seasonPillX.current[s] = e.nativeEvent.layout.x;
+                    }}
                     activeOpacity={0.7}
                     className={`px-3.5 py-1.5 rounded-full ${
                       s === pickerSeason
@@ -182,6 +224,7 @@ export function EpisodeRail({
             </View>
           ) : (
             <ScrollView
+              ref={episodeScrollRef}
               className="flex-1 px-3 pt-1.5"
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 8 }}
@@ -205,6 +248,10 @@ export function EpisodeRail({
                 return (
                   <TouchableOpacity
                     key={ep.id ?? index}
+                    onLayout={(e) => {
+                      if (epNum != null)
+                        epRowY.current[epNum] = e.nativeEvent.layout.y;
+                    }}
                     onPress={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                       onSelect(pickerSeason, epNum ?? 1);
