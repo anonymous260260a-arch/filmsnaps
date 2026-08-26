@@ -39,7 +39,7 @@ export function DownloadInfraProvider({
   storeOverride?: DownloadStore;
 }) {
   const managerRef = useRef<DownloadManager | null>(null);
-  const storeRef = useRef<IDownloadStore | null>(null);
+  const storeRef = useRef<DownloadStore | null>(null);
   const initStartedRef = useRef(false);
   const [loaded, setLoaded] = React.useState(false);
 
@@ -114,7 +114,7 @@ export function DownloadInfraProvider({
     const unsubStatus = manager.onStatus((s) => {
       logger.debug("status change", s.taskId, s.status);
       if (s.removed) {
-        store.remove(s.taskId).catch(() => {});
+        store.remove(s.taskId);
         return;
       }
 

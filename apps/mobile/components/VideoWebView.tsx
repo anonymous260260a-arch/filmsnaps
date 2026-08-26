@@ -1038,7 +1038,8 @@ export function VideoWebView({
         // seeding startAt would double-seek and fight them. We still load the
         // engine resume point below so progress tracking + the backward-clamp
         // settle window work, but we don't drive the native seek for them.
-        const canSeedSeek = getResumeMode(currentProvider) !== "none";
+        const canSeedSeek =
+          currentProvider && getResumeMode(currentProvider) !== "none";
         if (
           resume &&
           resume.currentTime > 5 &&
@@ -1153,7 +1154,9 @@ export function VideoWebView({
   // bundle so it survives the provider's own lifecycle. Native providers don't
   // emit nothing, so they don't need it (and we avoid a redundant 1 Hz poll).
   const mediaHookScript =
-    !suppressInjection && getProgressMode(currentProvider) === "app"
+    !suppressInjection &&
+    currentProvider &&
+    getProgressMode(currentProvider) === "app"
       ? MEDIA_HOOK_SCRIPT
       : "";
 
@@ -1742,7 +1745,7 @@ export function VideoWebView({
         nextEpFetchingRef.current = true;
         const s = seasonRef.current;
         const e = episodeRef.current;
-        getNextEpisode(id, s, e)
+        getNextEpisode(id, s ?? 1, e ?? 1)
           .then(({ nextSeason, nextEpisode }) => {
             // Changed again while we were fetching — abort.
             if (state.episodeKey !== armedEpisodeRef.current) return;

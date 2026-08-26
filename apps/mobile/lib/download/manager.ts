@@ -375,7 +375,7 @@ export class DownloadManager {
     const filePath = this.adapter.getDestinationPath(fileName);
     try {
       const info = await getInfoAsync(filePath);
-      return info.exists ? info.size : 0;
+      return info.exists ? (info.size ?? 0) : 0;
     } catch {
       return 0;
     }
@@ -1169,7 +1169,7 @@ export class DownloadManager {
 
           if (calculatedPath !== resolvedPath) {
             const altInfo = await getInfoAsync(calculatedPath);
-            if (altInfo.exists && altInfo.size > 0) {
+            if (altInfo.exists && (altInfo.size ?? 0) > 0) {
               logger.debug(
                 "Manager handleNativeDone: found at calculated path",
                 calculatedPath,
@@ -1177,8 +1177,8 @@ export class DownloadManager {
               await this.completeTask(
                 taskId,
                 calculatedPath,
-                altInfo.size,
-                task.totalBytes ?? altInfo.size,
+                altInfo.size ?? 0,
+                task.totalBytes ?? altInfo.size ?? 0,
                 realExt,
                 realFileName,
               );
@@ -1195,7 +1195,7 @@ export class DownloadManager {
       }
 
       // Verify file size — guard against 0-byte file
-      const actualSize = info.size;
+      const actualSize = info.size ?? 0;
       if (actualSize === 0 && task) {
         await this.failTask(task, "Downloaded file is empty after completion");
         return;

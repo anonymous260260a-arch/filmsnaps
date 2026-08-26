@@ -709,7 +709,7 @@ export default function SearchScreen() {
             ) : null
           }
           ListFooterComponent={
-            allResults.length > 0 && (
+            allResults.length > 0 ? (
               <View
                 className="self-center mt-4 mb-8 py-1"
                 style={{ minHeight: 40 }}
@@ -739,7 +739,7 @@ export default function SearchScreen() {
                   </Text>
                 ) : null}
               </View>
-            )
+            ) : null
           }
           renderItem={({ item }) => (
             <View style={{ width: itemWidth }}>

@@ -33,9 +33,14 @@ export function useEpisodeDownloads(
   const { store, manager, control } = useDownloadInfra();
 
   const episodes = useMemo(() => {
-    return store.getBySeason(tmdbId, season).sort((a, b) => {
-      return (a.episode ?? 0) - (b.episode ?? 0);
-    });
+    return store
+      .getAll()
+      .filter(
+        (t: DownloadTask) => t.tmdbId === tmdbId && (t.season ?? 1) === season,
+      )
+      .sort((a, b) => {
+        return (a.episode ?? 0) - (b.episode ?? 0);
+      });
   }, [store, tmdbId, season]);
 
   const progress = useMemo<AggregateProgress>(() => {

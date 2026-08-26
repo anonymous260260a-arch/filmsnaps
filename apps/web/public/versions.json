@@ -4,7 +4,7 @@
       "version": "2.1.0",
       "date": "2026-08-24",
       "releaseNotes": "Full anime support: Anime mode toggle surfaces anime titles via AniList search and routes playback to MegaPlay. Every anime title auto-matches to its MyAnimeList / AniList ID with automatic 410 fallback between ID spaces. Movie/TV and anime libraries stay separate — watch history, continue-watching, and saved lists are organized by content type, and any title always opens with the correct set of servers regardless of active mode. Search filter simplified to Movies/TV and Anime. Version-gated in-app announcement drives users to the website download.",
-      "downloadUrl": "https://filmsnap-pro.netlify.app/download",
+      "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.1.0/filmsnaps-v2.1.0.apk",
       "size": "~90 MB"
     },
     {

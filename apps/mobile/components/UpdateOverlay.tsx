@@ -168,7 +168,7 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   errorBar: {
-    borderTopColor: colors.red900,
+    borderTopColor: colors.red400,
   },
   errorText: {
     color: colors.red400,

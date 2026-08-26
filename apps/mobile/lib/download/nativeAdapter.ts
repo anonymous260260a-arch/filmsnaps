@@ -33,7 +33,7 @@ interface PerTaskCallbacks {
  * resume offsets in JS, which was the second half of the corrupted-offset bug.
  */
 export class NativeDownloaderAdapter {
-  private subscriptions: Array<{ remove: () => void }> = [];
+  private subscriptions: Array<() => void> = [];
   private globalListenersAttached = false;
   private activeCallbacks = new Map<string, PerTaskCallbacks>();
   private pauseWaiters = new Map<
@@ -97,7 +97,7 @@ export class NativeDownloaderAdapter {
   }
 
   destroy(): void {
-    this.subscriptions.forEach((s) => s.remove());
+    this.subscriptions.forEach((s) => s());
     this.subscriptions = [];
     this.globalListenersAttached = false;
     this.activeCallbacks.clear();
@@ -121,6 +121,7 @@ export class NativeDownloaderAdapter {
     filePath: string;
     headers?: Record<string, string>;
     externalId?: string;
+    speedLimit?: number;
     onProgress?: (receivedBytes: number, totalBytes: number) => void;
     onDone?: (
       filePath: string,
