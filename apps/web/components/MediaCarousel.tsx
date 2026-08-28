@@ -1,13 +1,13 @@
-'use client';
+"use client";
 
-import { useRef, useEffect, useState, useMemo, useCallback } from 'react';
-import { Navigation, A11y, Autoplay } from 'swiper/modules';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { MovieCard } from '@/components/MovieCard';
+import { useRef, useEffect, useState, useMemo, useCallback } from "react";
+import { Navigation, A11y, Autoplay } from "swiper/modules";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { MovieCard } from "@/components/MovieCard";
 
-import { Swiper, SwiperSlide } from 'swiper/react';
-import 'swiper/css';
-import 'swiper/css/navigation';
+import { Swiper, SwiperSlide } from "swiper/react";
+import "swiper/css";
+import "swiper/css/navigation";
 
 export function MediaCarousel({
   title,
@@ -34,7 +34,7 @@ export function MediaCarousel({
 
     const observer = new IntersectionObserver(
       ([entry]) => setIsInView(entry.isIntersecting),
-      { threshold: 0.5 }
+      { threshold: 0.5 },
     );
 
     observer.observe(containerRef.current);
@@ -54,7 +54,7 @@ export function MediaCarousel({
 
   const handleBeforeInit = useCallback((swiper: any) => {
     if (
-      typeof swiper.params.navigation === 'object' &&
+      typeof swiper.params.navigation === "object" &&
       swiper.params.navigation !== null
     ) {
       swiper.params.navigation.prevEl = prevRef.current;
@@ -69,14 +69,14 @@ export function MediaCarousel({
           <MovieCard item={item} mediaType={mediaType} />
         </SwiperSlide>
       )),
-    [items, mediaType]
+    [items, mediaType],
   );
 
   return (
     <section ref={containerRef} className="relative">
       {/* Title */}
       <div className="flex items-center justify-between px-5 sm:px-6 lg:px-8 mb-4">
-        <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
+        <h2 className="font-sans text-xl sm:text-2xl font-bold tracking-tight text-foreground">
           {title}
         </h2>
         <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground/50">
@@ -109,6 +109,7 @@ export function MediaCarousel({
         {/* Swiper */}
         <Swiper
           modules={[Navigation, A11y, Autoplay]}
+          grabCursor
           speed={700}
           autoplay={{
             delay: 4500,

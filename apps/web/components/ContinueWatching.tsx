@@ -173,7 +173,7 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
 
               {/* Info below card */}
               <Link href={href} className="block mt-2.5 space-y-0.5 px-0.5">
-                <h3 className="text-sm font-semibold text-foreground/90 line-clamp-1 group-hover:text-primary transition-colors duration-200">
+                <h3 className="font-sans text-sm font-semibold text-foreground/90 line-clamp-1 group-hover:text-primary transition-colors duration-200">
                   {meta?.title ||
                     (entry.mediaType === "tv"
                       ? `S${entry.season ?? "?"} E${entry.episode ?? "?"}`
@@ -227,6 +227,7 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
         {/* Swiper — no autoplay: a resume rail must not scroll itself */}
         <Swiper
           modules={[Navigation, A11y]}
+          grabCursor
           speed={700}
           navigation={{
             prevEl: prevRef.current,

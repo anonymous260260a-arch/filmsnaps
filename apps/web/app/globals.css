@@ -11,7 +11,7 @@
  * lavender #8B5CF6 (mobile uses it as a real accent), while the web Cinematic
  * Void theme uses a neutral elevated surface so skeletons/inputs/secondary
  * buttons stay gray-on-black.
- * Font families: --font-display (Playfair Display), --font-body (Geist)
+ * Font families: --font-display (Fraunces, was Playfair Display), --font-body (Geist)
  */
 @layer base {
   :root {
@@ -120,9 +120,10 @@
     color: #F4F4F5;
   }
 
-  /* Playfair Display for headings */
+  /* Fraunces for headings (was Playfair Display — high-contrast didone washed
+     out on dark UI; Fraunces is optical-sized + low-contrast, far more legible) */
   h1, h2, h3, h4 {
-    font-family: var(--font-display), 'Playfair Display', Georgia, serif;
+    font-family: var(--font-display), 'Fraunces', Georgia, serif;
   }
 }
 
@@ -189,7 +190,11 @@
 .desktop-shell {
   --shell-top-offset: 48px; /* h-12 GlobalTopBar */
 }
-.desktop-shell main {
+/* Reset only the shell's OWN content main (direct child of the flex row).
+   Scoped with `> div > main` so nested mains — e.g. the watch page's own
+   <main> (which lives inside this content main) — are NOT zeroed and can
+   apply their own top padding (pt-12) to clear the GlobalTopBar. */
+.desktop-shell > div > main {
   padding-top: 0;
 }
 
@@ -204,6 +209,17 @@
 }
 .desktop-shell main.page-shell-hero {
   padding-top: calc(var(--desktop-main-pt) + 0.5rem);
+}
+
+/* Home feed: on web the Header is fixed, so the anime branch needs pt-16 to
+   clear it. On desktop the GlobalTopBar is in-flow (reserves its own 48px) and
+   the shell main is padding-top:0, so any feed top-padding reads as a blank bar
+   — zero it there. The Hero (movie_tv branch) is full-bleed on both platforms. */
+.home-anime-feed {
+  padding-top: 4rem; /* pt-16 — clears the fixed web Header */
+}
+html.fs-desktop .home-anime-feed {
+  padding-top: 0;
 }
 
 /* ── Desktop couch-distance scaling ──
@@ -337,6 +353,19 @@ html.fs-desktop {
 }
 
 /* â”€â”€ Swiper overrides for Hero â”€â”€ */
+/* ── Swiper: stop mouse-drag from selecting cards instead of swiping ── */
+.swiper {
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* Prevent native image drag (ghost image) stealing the swipe gesture. */
+.swiper img,
+.swiper .swiper-slide img {
+  -webkit-user-drag: none;
+  user-select: none;
+  pointer-events: none;
+}
+
 .hero-swiper .swiper-slide {
   transition: opacity 0.8s ease !important;
 }
