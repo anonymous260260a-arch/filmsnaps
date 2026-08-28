@@ -61,6 +61,197 @@
   };
 
   // ═══════════════════════════════════════════════════════════════
+  // 0.1 PROVIDER FULLSCREEN BRIDGE (desktop WebContentsView).
+  //
+  // The provider embed renders in a NATIVE Electron WebContentsView. When the
+  // provider's OWN player button calls Element.requestFullscreen() (or a "fake
+  // fullscreen" that ends up calling it), the native API would fullscreen only
+  // the small view — or trigger the window fullscreen and leave the video at its
+  // small rect — never correctly filling the screen. We intercept the call,
+  // PREVENT the native element-fullscreen, and instead IPC to main, which
+  // fullscreens the frameless window and fills the whole WebContentsView. We then
+  // mock document.fullscreenElement + dispatch a synthetic `fullscreenchange` so
+  // the provider's own UI expands to our now-fullscreen-sized view (the provider
+  // never sees a difference). Esc exits via the same bridge.
+  //
+  // This is the AUTHORITATIVE trigger: it works for players that use the real
+  // Fullscreen API AND for "fake fullscreen" (CSS fixed 100vw/100vh) players that
+  // never fire Electron's enter-html-full-screen event. The provider page has NO
+  // window.electronAPI, so we use raw ipcRenderer.send — main listens on
+  // 'provider:requestFullscreen' / 'provider:exitFullscreen'.
+  // ═══════════════════════════════════════════════════════════════
+  try {
+    const fsElectron = require("electron") as {
+      ipcRenderer?: { send: (channel: string, payload?: unknown) => void };
+    };
+    const fsIpc = fsElectron?.ipcRenderer;
+    if (
+      fsIpc &&
+      typeof Element !== "undefined" &&
+      typeof document !== "undefined"
+    ) {
+      // Diagnostic logging — only meaningful when FS_DEBUG is on in main, but
+      // harmless otherwise. We route it through console so it surfaces in the
+      // main terminal via wc.on('console-message').
+      const fsLog = (...args: unknown[]): void => {
+        console.log("[FS-PRELOAD]", ...args);
+      };
+      let fsActive = false;
+
+      // Intercept the element-level Fullscreen API.
+      // IMPORTANT: we do NOT mock document.fullscreenElement or dispatch a
+      // synthetic fullscreenchange. nxsha's player calls the REAL
+      // requestFullscreen() on its `controls-bg-target` DIV; if we mocked the
+      // state its own toggle handler would see `fullscreenElement` set and
+      // immediately call exitFullscreen (the DIV -> none -> exit flash seen in
+      // logs). Instead we let the NATIVE call run (so the provider's `:fullscreen`
+      // CSS genuinely expands the video and fullscreenElement is real) and ALSO
+      // tell main to fullscreen the window on top. Native owns fullscreenElement
+      // → the provider never self-exits.
+      const nativeRequest = (Element.prototype as any).requestFullscreen;
+      (Element.prototype as any).requestFullscreen = function (
+        this: Element,
+        ...args: unknown[]
+      ): Promise<void> {
+        fsActive = true;
+        fsLog(
+          "requestFullscreen intercepted on",
+          this?.tagName,
+          this?.className || "",
+          "| calling player:",
+          (this as any)?.currentSrc || (this as any)?.src || "",
+        );
+        // Drive the window fullscreen (main fills the WebContentsView).
+        fsIpc.send("provider:requestFullscreen", true);
+        // Let the REAL Fullscreen API run on this element (gives the provider its
+        // genuine `:fullscreen` layout). Return its promise so the player resolves.
+        if (typeof nativeRequest === "function") {
+          try {
+            return nativeRequest.call(this, ...args);
+          } catch {
+            /* best-effort */
+          }
+        }
+        return Promise.resolve();
+      };
+
+      // ── Fake-fullscreen OBSERVER (diagnostic, NEVER triggers) ──
+      // The authoritative fullscreen trigger is the Element.prototype.requestFullscreen
+      // override above — nxsha's player DOES call requestFullscreen() on its
+      // `controls-bg-target` DIV (see the "requestFullscreen intercepted" log), so
+      // the bridge fires on the real user gesture. This observer is OBSERVE-ONLY:
+      // it logs what the provider does for diagnostics but must NOT fire the bridge.
+      //
+      // Reason it must not trigger: a player's fullscreen container is permanently
+      // `position:fixed; inset:0` in the page. Any trigger logic re-fires on the
+      // first post-arm poll (page-load click, play, stop, pause) and steals
+      // fullscreen on every stray click. The override bridge already owns the real
+      // gesture, so triggering here is redundant and harmful.
+      try {
+        const seenFakeFs = new WeakSet<Element>();
+        const detectFakeFs = (): void => {
+          try {
+            const candidates = document.querySelectorAll<HTMLElement>(
+              "div, video, iframe, section, article",
+            );
+            for (let i = 0; i < candidates.length; i++) {
+              const el = candidates[i]!;
+              if (seenFakeFs.has(el)) continue;
+              const cs = getComputedStyle(el);
+              const vw = window.innerWidth;
+              const vh = window.innerHeight;
+              const isFixed =
+                cs.position === "fixed" || cs.position === "absolute";
+              const fillsScreen =
+                parseFloat(cs.width) >= vw * 0.98 &&
+                parseFloat(cs.height) >= vh * 0.98 &&
+                parseFloat(cs.top) <= 2 &&
+                parseFloat(cs.left) <= 2 &&
+                (cs.zIndex === "auto" || parseInt(cs.zIndex, 10) >= 100);
+              if (isFixed && fillsScreen) {
+                seenFakeFs.add(el);
+                // Observe-only: report the element the provider keeps full-viewport.
+                if (fsActive || document.fullscreenElement) continue;
+                fsLog(
+                  "OBSERVE fixed-fullscreen-element:",
+                  el.tagName,
+                  el.className || "",
+                  "| pos=" + cs.position,
+                  "z=" + cs.zIndex,
+                );
+              }
+            }
+          } catch {
+            /* best-effort */
+          }
+        };
+        setInterval(detectFakeFs, 400);
+        // Also log the provider's own document.fullscreenElement usage.
+        document.addEventListener(
+          "fullscreenchange",
+          () => {
+            fsLog(
+              "native fullscreenchange:",
+              document.fullscreenElement
+                ? document.fullscreenElement.tagName +
+                    " " +
+                    (document.fullscreenElement.className || "")
+                : "none",
+            );
+          },
+          true,
+        );
+        registerHook("provider-fullscreen-fakedetector");
+      } catch {
+        /* best-effort */
+      }
+
+      // Some players call requestFullscreen with vendor variants.
+      const nativeWebkit = (Element.prototype as any).webkitRequestFullscreen;
+      if (nativeWebkit) {
+        (Element.prototype as any).webkitRequestFullscreen = function (
+          this: Element,
+        ): void {
+          (Element.prototype as any).requestFullscreen.call(this);
+        };
+      }
+
+      // Intercept document.exitFullscreen so the provider's own exit button also
+      // collapses the WINDOW fullscreen (main restores the renderer rect). We do
+      // NOT mock fullscreenElement here — the native exit runs and genuinely
+      // collapses the provider's `:fullscreen` layout. fsActive is just a guard so
+      // we only send the IPC when we were actually fullscreen.
+      const nativeExit = (document as any).exitFullscreen;
+      (document as any).exitFullscreen = function (): Promise<void> {
+        if (fsActive) {
+          fsActive = false;
+          fsLog("exit -> IPC provider:exitFullscreen");
+          fsIpc.send("provider:exitFullscreen", false);
+        }
+        if (typeof nativeExit === "function") {
+          try {
+            return nativeExit.call(document);
+          } catch {
+            /* ignore */
+          }
+        }
+        return Promise.resolve();
+      };
+      const nativeWebkitExit = (document as any).webkitExitFullscreen;
+      if (nativeWebkitExit) {
+        (document as any).webkitExitFullscreen = function (): void {
+          (document as any).exitFullscreen();
+        };
+      }
+
+      registerHook("provider-fullscreen-bridge");
+      void nativeRequest;
+    }
+  } catch {
+    /* preload fullscreen bridge best-effort */
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // 0. FULL MOBILE PROTECTION BUNDLE — injected at build time.
   //
   // The build step (scripts/build-provider-preload.js) replaces the

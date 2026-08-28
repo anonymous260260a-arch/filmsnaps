@@ -67,7 +67,11 @@ export {
   createAsyncStorageAdapter,
   createMemoryAdapter,
 } from "./state/storage";
-export { useWatchHistory, buildStorageKey } from "./state/useWatchHistory";
+export {
+  useWatchHistory,
+  buildStorageKey,
+  aggregateHistory,
+} from "./state/useWatchHistory";
 export type {
   StorageAdapter,
   WatchProgress,

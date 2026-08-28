@@ -31,6 +31,8 @@ export interface WatchProgress {
   season?: number;
   /** TV-specific — current episode number */
   episode?: number;
+  /** Whether this entry belongs to the anime mode (Hard Mode Split scoping) */
+  isAnime?: boolean;
   /** Timestamp of last update (ms) */
   updatedAt: number;
   /** Explicitly marked as fully watched */

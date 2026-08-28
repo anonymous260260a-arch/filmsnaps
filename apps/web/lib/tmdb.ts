@@ -126,6 +126,20 @@ function generateVariants(query: string): string[] {
 }
 
 /**
+ * Classify a TMDB movie/TV result as anime. Mirrors mobile's filterTmdbAnime:
+ * Animation genre (id 16) AND Japanese original language — both required, so
+ * Japanese live-action titles are kept. This is the same signal mobile uses to
+ * keep anime out of the standard movie/TV search (anime lives in the AniList
+ * surface, not TMDB).
+ */
+function isAnimeTMDB(item: any): boolean {
+  const isJa = item?.original_language === "ja";
+  const gids: number[] = item?.genre_ids ?? [];
+  const isAnimation = gids.includes(16);
+  return isJa && isAnimation;
+}
+
+/**
  * Smart search — tries multiple query variants in parallel,
  * merges results deduplicated by TMDB ID.
  *
@@ -148,15 +162,16 @@ export async function smartSearch(query: string): Promise<{
     ),
   );
 
-  // Merge results, dedup by ID (first variant's results keep priority)
+  // Merge results, dedup by ID (first variant's results keep priority).
+  // Drop anime from the standard movie/TV search (mirrors mobile — anime lives
+  // in the AniList search surface, not TMDB).
   const seen = new Set<number>();
   const merged: any[] = [];
   for (const resp of responses) {
     for (const item of resp.results || []) {
-      if (!seen.has(item.id)) {
-        seen.add(item.id);
-        merged.push(item);
-      }
+      if (seen.has(item.id) || isAnimeTMDB(item)) continue;
+      seen.add(item.id);
+      merged.push(item);
     }
   }
 
@@ -193,7 +208,8 @@ export function rankSearchResults(
   if (!q) return [];
 
   const candidates = results.filter(
-    (r: any) => r.media_type === "movie" || r.media_type === "tv",
+    (r: any) =>
+      (r.media_type === "movie" || r.media_type === "tv") && !isAnimeTMDB(r),
   );
   if (!candidates.length) return [];
 

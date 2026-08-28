@@ -24,6 +24,7 @@ import React, {
   useSyncExternalStore,
 } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   X,
@@ -31,6 +32,8 @@ import {
   ArrowLeft,
   Clapperboard,
   RefreshCw,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { getSeasonAction } from "@/lib/actions";
 import {
@@ -49,11 +52,14 @@ import { SecureIframe } from "@/components/player/SecureIframe";
 import { DesktopSecureWebview } from "@/components/player/DesktopSecureWebview";
 import { FalixPlayer } from "@/components/player/FalixPlayer";
 import { ServerPickerSheet } from "@/components/player/ServerPickerSheet";
-import { EpisodeRail } from "@/components/player/EpisodeRail";
+import { MobileEpisodeSheet } from "@/components/player/MobileEpisodeSheet";
+import { EpisodeSidebar } from "@/components/player/EpisodeSidebar";
+import { AudioToggle } from "@/components/player/AudioToggle";
 import { PlayerControlOverlay } from "@/components/player/PlayerControlOverlay";
 import { buildIframeCSP } from "@/lib/movieProviders/cspBuilder";
 import { useIsDesktop } from "@/hooks/useIsDesktop";
 import { useWatchKeyboardShortcuts } from "@/hooks/useWatchKeyboardShortcuts";
+import { getSettings } from "@/hooks/useSettings";
 import { usePlaybackRecorder } from "@/hooks/usePlaybackRecorder";
 import { DesktopWatchLayout } from "@/components/watch/DesktopWatchLayout";
 import { WebLegalGate } from "@/components/legal/WebLegalGate";
@@ -118,6 +124,7 @@ function buildEmbedUrl(
   activeEpisode: number,
   resumeT?: number,
   mega?: { idSpace: "mal" | "ani"; id: number; episode: number } | null,
+  audio: "sub" | "dub" = "sub",
 ): string {
   // Providers that natively honor a resume param are strictly better than a
   // post-load JS seek — thread the saved position into the embed URL when the
@@ -140,12 +147,12 @@ function buildEmbedUrl(
             startAt,
             {
               idSpace: mega.idSpace,
-              audio: "sub",
+              audio,
             },
           )
         : provider.embed.movie(String(mega.id), startAt, {
             idSpace: mega.idSpace,
-            audio: "sub",
+            audio,
           })
     }`;
   }
@@ -339,6 +346,10 @@ function WatchClientContent({
     iframeLoadError,
     setIframeLoadError,
     mediaType,
+    goToNextEpisode,
+    goToPrevEpisode,
+    audio,
+    setAudio,
   } = usePlayer();
 
   // ── Desktop Electron integration ──
@@ -347,6 +358,7 @@ function WatchClientContent({
 
   // ── Desktop viewport check (≥1280px layout) ──
   const isDesktopVp = useIsDesktop();
+  const router = useRouter();
 
   // ── Anime session detection ──
   // Two origins (consultation §3.1):
@@ -559,6 +571,7 @@ function WatchClientContent({
     season: selectedSeason,
     episode: activeEpisode,
     providerId: currentProvider?.id,
+    isAnime: isAnimeSession,
     resumeAt: initialResumeT,
   });
 
@@ -572,6 +585,7 @@ function WatchClientContent({
         activeEpisode,
         initialResumeT,
         currentProvider.animeOnly ? megaBuild : null,
+        audio,
       )
     : "";
 
@@ -695,8 +709,8 @@ function WatchClientContent({
 
   // ── Determine the webview/iframe key so it remounts on refresh ──
   const playerKey = isElectronEnv
-    ? `dp-${selectedProviderId}-${selectedSeason}-${activeEpisode}-${refreshKey}`
-    : `wp-${selectedProviderId}-${selectedSeason}-${activeEpisode}-${refreshKey}`;
+    ? `dp-${selectedProviderId}-${selectedSeason}-${activeEpisode}-${audio}-${refreshKey}`
+    : `wp-${selectedProviderId}-${selectedSeason}-${activeEpisode}-${audio}-${refreshKey}`;
 
   // ── Desktop: two-zone immersive layout ──
   // Gate on hydrated to prevent SSR/hydration mismatch — without this guard
@@ -742,24 +756,42 @@ function WatchClientContent({
     );
   }
 
-  // ── Render (Mobile/Tablet: <1280px existing layout) ──
+  // ── Render (Web <1280px: tablet + phone) ──
+  // SINGLE TREE. The player mounts EXACTLY ONCE (a CSS-hidden fork would
+  // double-mount the iframe/webview + its watchdog timers → double playback).
+  // Surfaces are differentiated with pure Tailwind breakpoints + orientation
+  // media variants — no JS media queries, so SSR/CSR hydration stays clean.
+  //
+  //   Phone (<640):        viewport-locked flex-col — full-bleed video, one
+  //                        cohesive episode card (tab dock / season bar / jump
+  //                        strip / scroll list / pinned prev-next).
+  //   Tablet landscape:    side grid (video col-span-8, episode card col-span-4).
+  //   Tablet portrait:     video top + episode card below (vertical list).
+  //
   return (
-    <div className="min-h-screen bg-[#070708] text-muted-foreground">
+    <div className="flex flex-col h-[100dvh] w-full overflow-hidden bg-[#070708] text-muted-foreground select-none">
       {/* Film grain */}
       <div className="fixed inset-0 pointer-events-none opacity-[0.03] bg-[url('/noise.svg')] mix-blend-overlay -z-10" />
 
-      <div className="mx-auto w-full max-w-[1200px] px-3 sm:px-4 lg:px-6">
-        {/* ── Title + Server area ── */}
-        {!minimal && (
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 pb-2">
-            <div className="min-w-0">
+      {/* ── Top bar: back + server (Compact & Clean on Mobile) ── */}
+      {!minimal && (
+        <header className="shrink-0 flex items-center justify-between gap-2.5 px-3 py-2 bg-[#0A0A0D]/95 backdrop-blur-md border-b border-white/[0.06] z-30">
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={() => router.back()}
+              className="flex items-center justify-center h-8 w-8 rounded-full bg-white/[0.06] border border-white/[0.08] hover:bg-white/[0.12] active:scale-95 transition-all shrink-0"
+              aria-label="Back"
+            >
+              <ArrowLeft className="h-4 w-4 text-foreground" />
+            </button>
+            <div className="hidden sm:block min-w-0">
               <h1
-                className="text-lg sm:text-xl font-bold text-foreground truncate"
+                className="text-xs sm:text-sm font-bold text-foreground truncate leading-tight tracking-wide"
                 style={{ fontFamily: "var(--font-display)" }}
               >
                 {displayTitle}
               </h1>
-              <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500">
+              <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500 leading-tight mt-0.5">
                 <span className="text-[#D4A237]">
                   {plat === "tv" ? "Series" : "Film"}
                 </span>
@@ -767,219 +799,200 @@ function WatchClientContent({
                 <span>{year}</span>
               </div>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <ServerPickerSheet
-                onSelect={handleProviderSelect}
-                selectedId={selectedProviderId}
-                providers={providers}
+          </div>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {onMegaplay && (
+              <AudioToggle audio={audio} onAudioChange={setAudio} />
+            )}
+            <ServerPickerSheet
+              onSelect={handleProviderSelect}
+              selectedId={selectedProviderId}
+              providers={providers}
+            />
+          </div>
+        </header>
+      )}
+
+      {/* ── Main: portrait = flex-col; tablet-landscape = 12-col grid ── */}
+      <main className="flex-1 min-h-0 flex flex-col [@media(orientation:landscape)]:sm:grid [@media(orientation:landscape)]:sm:grid-cols-12 [@media(orientation:landscape)]:sm:gap-4 xl:gap-6 xl:max-w-[1700px] xl:mx-auto xl:w-full xl:px-6 xl:py-4 overflow-hidden">
+        {/* ── Video cell (generous height on phone; framed on tablet/desktop) ── */}
+        <section className="shrink-0 w-full [@media(orientation:landscape)]:sm:col-span-7 lg:col-span-8 [@media(orientation:landscape)]:sm:shrink [@media(orientation:landscape)]:sm:h-full flex flex-col justify-center">
+          <div className="w-full px-0 sm:px-3 [@media(orientation:landscape)]:sm:px-0">
+            {/* Phone: generous cinematic height (38vh / min 250px) so video is large and prominent */}
+            <div className="relative w-full h-[38vh] min-h-[245px] max-h-[46vh] sm:h-auto sm:aspect-video bg-[#070708] sm:bg-[#0E0E11] sm:rounded-2xl overflow-hidden shadow-[0_12px_50px_rgba(0,0,0,0.9)] sm:ring-1 sm:ring-white/[0.08] group/player flex items-center justify-center">
+              {/* Ambient glow */}
+              <div className="absolute -inset-10 bg-gradient-radial from-[#D4A237]/10 via-transparent to-transparent opacity-40 pointer-events-none z-0 transition-opacity duration-700 group-hover/player:opacity-70" />
+
+              {/* CPU Warning */}
+              {cpuWarning && currentProvider && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#070708]/85 backdrop-blur-md p-4">
+                  <div className="flex items-start gap-3 text-xs sm:text-sm text-[#E05252] bg-red-500/10 p-4 rounded-xl border border-red-500/20 max-w-md shadow-2xl">
+                    <AlertCircle
+                      size={18}
+                      className="text-[#E05252] shrink-0 mt-0.5"
+                    />
+                    <div className="flex-1">
+                      <span className="font-bold block text-foreground mb-0.5">
+                        Server Overloaded
+                      </span>
+                      This server is using too much CPU — it has been stopped.
+                      <span className="block mt-1 text-muted-foreground">
+                        Switch to a different server above to continue watching.
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => {}}
+                      className="text-faint hover:text-foreground transition-colors p-1 flex-shrink-0"
+                      aria-label="Dismiss"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Error State */}
+              {(iframeLoadError || showAnimeExhausted) && !cpuWarning && (
+                <PlayerErrorState
+                  onRetry={showAnimeExhausted ? handleAnimeRetry : handleRetry}
+                  variant={showAnimeExhausted ? "anime-exhausted" : "standard"}
+                  tried={showAnimeExhausted ? animeTriedList : undefined}
+                />
+              )}
+
+              {/* Direct-video player (Falix) */}
+              {!cpuWarning &&
+                currentProvider &&
+                DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
+                  <FalixPlayer
+                    tmdbId={contentid}
+                    mediaType={plat}
+                    selectedSeason={selectedSeason}
+                    activeEpisode={activeEpisode}
+                    onLoad={handleIframeLoad}
+                  />
+                )}
+
+              {/* Desktop: native WebContentsView (Phase 3 hybrid). Kept MOUNTED
+                  for the whole session; keyed on refreshKey only. */}
+              {isElectronEnv &&
+                sessionReady &&
+                appliedEmbedUrl &&
+                currentProvider &&
+                !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
+                  <div className="absolute inset-0 z-10">
+                    <DesktopSecureWebview
+                      key={`${refreshKey}-electron`}
+                      src={appliedEmbedUrl}
+                      onLoad={handleIframeLoad}
+                      onError={handleIframeError}
+                    />
+                  </div>
+                )}
+
+              {/* Web: SecureIframe with JS-level guards */}
+              {!isElectronEnv &&
+                !cpuWarning &&
+                !iframeLoadError &&
+                embedUrl &&
+                currentProvider &&
+                !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
+                  <SecureIframe
+                    key={playerKey}
+                    src={embedUrl}
+                    sandbox={currentProvider?.sandbox}
+                    csp={
+                      currentProvider &&
+                      !PROXIED_PROVIDERS.has(currentProvider.id)
+                        ? buildIframeCSP(currentProvider)
+                        : undefined
+                    }
+                    onLoad={handleIframeLoad}
+                    onError={handleIframeError}
+                  />
+                )}
+
+              {/* Cover overlays */}
+              {currentProvider?.coverOverlays?.map((o, i) => (
+                <div
+                  key={`cover-${i}`}
+                  className="absolute z-20 pointer-events-none"
+                  style={{
+                    top: o.top,
+                    left: o.left,
+                    width: o.width,
+                    height: o.height,
+                    borderRadius: "20px",
+                    background: "rgba(14, 14, 17, 0.9)",
+                  }}
+                />
+              ))}
+
+              {/* Loading / controls overlay */}
+              <PlayerControlOverlay
+                isPending={
+                  (!playerReady || isPending) &&
+                  !DIRECT_VIDEO_PROVIDERS.has(currentProvider?.id)
+                }
               />
             </div>
           </div>
-        )}
+        </section>
 
-        {/* ── Video Player ── */}
-        <div className="relative w-full aspect-video rounded-xl sm:rounded-2xl overflow-hidden bg-[#0E0E11] shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08] group/player">
-          {/* Ambient glow */}
-          <div className="absolute -inset-4 bg-gradient-radial from-[#D4A237]/5 via-transparent to-transparent opacity-60 pointer-events-none z-0" />
-
-          {/* CPU Warning */}
-          {cpuWarning && currentProvider && (
-            <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#070708]/80 backdrop-blur-sm">
-              <div className="flex items-center gap-3 text-sm text-[#E05252] bg-red-500/10 px-5 py-4 rounded-xl border border-red-500/20 max-w-md mx-4">
-                <AlertCircle
-                  size={16}
-                  className="text-[#E05252] flex-shrink-0"
+        {/* ── Below-Video Area: Phone & Tablet Portrait uses MobileEpisodeSheet (TV) or Overview (Movie) ── */}
+        <section className="flex-1 min-h-0 flex flex-col overflow-hidden [@media(orientation:landscape)]:sm:col-span-5 lg:col-span-4 [@media(orientation:landscape)]:sm:h-full">
+          {plat === "tv" ? (
+            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+              {/* Tablet landscape shows EpisodeSidebar; Phone + Tablet Portrait shows MobileEpisodeSheet */}
+              <div className="hidden [@media(orientation:landscape)]:sm:flex flex-col h-full min-h-0">
+                <EpisodeSidebar
+                  seasonData={seasonData}
+                  seasons={initialMeta?.seasons}
+                  onSeasonChange={handleSeasonChange}
+                  title={displayTitle}
                 />
-                <div className="flex-1 text-xs sm:text-sm">
-                  This server is using too much CPU — it has been stopped.
-                  <span className="block mt-1 text-muted-foreground">
-                    Switch to a different server above to continue watching.
-                  </span>
+              </div>
+              <div className="flex-1 min-h-0 flex flex-col [@media(orientation:landscape)]:sm:hidden overflow-hidden">
+                <MobileEpisodeSheet
+                  seasonData={seasonData}
+                  seasons={initialMeta?.seasons}
+                  onSeasonChange={handleSeasonChange}
+                  seriesTitle={displayTitle}
+                  seriesOverview={initialMeta?.overview}
+                />
+              </div>
+            </div>
+          ) : (
+            // ── Movie: Overview ──
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 bg-[#0E0E12] border-t border-white/[0.08] sm:border sm:rounded-2xl space-y-3">
+              <div>
+                <h3 className="text-sm font-bold text-foreground">Overview</h3>
+                {initialMeta?.overview ? (
+                  <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                    {initialMeta.overview}
+                  </p>
+                ) : (
+                  <p className="text-xs text-zinc-600 mt-1">
+                    No overview available.
+                  </p>
+                )}
+              </div>
+              {initialMeta?.genres && initialMeta.genres.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-2">
+                  {initialMeta.genres.map((g: any) => (
+                    <span
+                      key={g.id}
+                      className="px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.08] text-[10px] text-zinc-400 font-medium"
+                    >
+                      {g.name}
+                    </span>
+                  ))}
                 </div>
-                <button
-                  onClick={() => {}}
-                  className="text-faint hover:text-foreground transition-colors p-1 flex-shrink-0"
-                  aria-label="Dismiss"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Error State */}
-          {(iframeLoadError || showAnimeExhausted) && !cpuWarning && (
-            <PlayerErrorState
-              onRetry={showAnimeExhausted ? handleAnimeRetry : handleRetry}
-              variant={showAnimeExhausted ? "anime-exhausted" : "standard"}
-              tried={showAnimeExhausted ? animeTriedList : undefined}
-            />
-          )}
-
-          {/* Direct-video player (Falix) */}
-          {!cpuWarning &&
-            currentProvider &&
-            DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
-              <FalixPlayer
-                tmdbId={contentid}
-                mediaType={plat}
-                selectedSeason={selectedSeason}
-                activeEpisode={activeEpisode}
-                onLoad={handleIframeLoad}
-              />
-            )}
-
-          {/* ── Desktop: native WebContentsView (Phase 3 hybrid). Kept MOUNTED
-               for the whole session — even across error/CPU-warning states —
-               because the singleton view must never be torn down by a React
-               gate. Its own visibility (player:set-visible) reconciles with the
-               overlays above, so this error/CPU-warning overlay wins the z-order
-               over the rect when it must. Gates here are mount-vs-not: session
-               ready + a real URL + a non-direct provider decide existence. */}
-          {isElectronEnv &&
-            sessionReady &&
-            appliedEmbedUrl &&
-            currentProvider &&
-            !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
-              <div className="absolute inset-0 z-10">
-                {/* key on refreshKey ONLY (NOT the provider/episode/season):
-                    safe here (main owns the WebContents — a remount resets the
-                    controller, never tearing the singleton down), but must not
-                    fire on provider/episode/season switches — those navigate in
-                    place via the src effect. Retry bumps refreshKey → remount
-                    → re-open (true reload, clean local state). */}
-                <DesktopSecureWebview
-                  key={`${refreshKey}-electron`}
-                  src={appliedEmbedUrl}
-                  onLoad={handleIframeLoad}
-                  onError={handleIframeError}
-                />
-              </div>
-            )}
-
-          {/* ── Web: SecureIframe with JS-level guards ── */}
-          {!isElectronEnv &&
-            !cpuWarning &&
-            !iframeLoadError &&
-            embedUrl &&
-            currentProvider &&
-            !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
-              <SecureIframe
-                key={playerKey}
-                src={embedUrl}
-                sandbox={currentProvider?.sandbox}
-                csp={
-                  currentProvider && !PROXIED_PROVIDERS.has(currentProvider.id)
-                    ? buildIframeCSP(currentProvider)
-                    : undefined
-                }
-                onLoad={handleIframeLoad}
-                onError={handleIframeError}
-              />
-            )}
-
-          {/* Cover overlays — visual band-aid, never block clicks */}
-          {currentProvider?.coverOverlays?.map((o, i) => (
-            <div
-              key={`cover-${i}`}
-              className="absolute z-20 pointer-events-none"
-              style={{
-                top: o.top,
-                left: o.left,
-                width: o.width,
-                height: o.height,
-                borderRadius: "20px",
-                background: "rgba(14, 14, 17, 0.9)",
-              }}
-            />
-          ))}
-
-          {/* Loading / controls overlay — skip for direct-video providers (FalixPlayer manages its own UI) */}
-          <PlayerControlOverlay
-            isPending={
-              (!playerReady || isPending) &&
-              !DIRECT_VIDEO_PROVIDERS.has(currentProvider?.id)
-            }
-          />
-        </div>
-
-        {/* ── Anime chain affordances (consultation §3.2) ── */}
-        {onMegaplay &&
-          playerReady &&
-          !showAnimeExhausted &&
-          megaCtx?.aniId != null && (
-            <div className="flex items-center justify-between gap-2.5 px-3 py-2.5 mt-2 rounded-xl bg-violet-500/[0.07] border border-violet-400/15">
-              <p className="text-xs sm:text-sm text-zinc-400">
-                Source not playing?
-              </p>
-              <button
-                onClick={advanceSource}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full
-                bg-violet-400/10 border border-violet-400/30 text-violet-300
-                text-xs font-bold hover:bg-violet-400/20 transition-all active:scale-95 shrink-0"
-              >
-                Try next anime source
-                <span className="font-mono text-[10px] text-violet-400/70">
-                  {chainSpace === "mal" ? "MAL → AniList" : "AniList"}
-                </span>
-              </button>
-            </div>
-          )}
-
-        {/* TMDB-origin anime affordance — enter MegaPlay with mapped ids */}
-        {isAnimeSession &&
-          !paramAnime &&
-          megaplayAvailable &&
-          !onMegaplay &&
-          !showAnimeExhausted && (
-            <div className="flex items-center justify-between gap-2.5 px-3 py-2.5 mt-2 rounded-xl bg-[#D4A237]/8 border border-[#D4A237]/15">
-              <p className="text-xs sm:text-sm text-zinc-400">
-                {megaCtx || !megaMissReason
-                  ? "Found nothing here? This title has anime servers."
-                  : "Could not auto-map this season to MyAnimeList. MegaPlay disabled for this episode."}
-              </p>
-              {megaCtx && (
-                <button
-                  onClick={handleTryAnimeServers}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full
-                    bg-[#D4A237]/10 border border-[#D4A237]/30 text-[#D4A237]
-                    text-xs font-bold hover:bg-[#D4A237]/20 transition-all active:scale-95 shrink-0"
-                >
-                  Try anime servers
-                </button>
               )}
             </div>
           )}
-
-        {/* ── Stuck-video hint (hidden when an anime affordance is showing) ── */}
-        {!onMegaplay &&
-          !(isAnimeSession && !paramAnime && megaplayAvailable) && (
-            <div className="flex items-center gap-2.5 px-3 py-2.5 mt-2 rounded-xl bg-[#D4A237]/8 border border-[#D4A237]/15">
-              <AlertCircle size={14} className="text-[#D4A237] shrink-0" />
-              <p className="text-xs sm:text-sm text-zinc-400">
-                Video stuck? Switch the source server at the top.
-              </p>
-            </div>
-          )}
-
-        {/* ── Episode Rail (TV only) ── */}
-        {plat === "tv" && (
-          <EpisodeRail
-            seasonData={seasonData}
-            seasons={initialMeta?.seasons}
-            onSeasonChange={handleSeasonChange}
-          />
-        )}
-
-        {/* ── Movie overview ── */}
-        {plat === "movie" && !minimal && initialMeta?.overview && (
-          <div className="mt-4 pb-4">
-            <p className="text-xs sm:text-sm text-zinc-500 leading-relaxed line-clamp-3">
-              {initialMeta.overview}
-            </p>
-          </div>
-        )}
-      </div>
+        </section>
+      </main>
     </div>
   );
 }
@@ -1040,6 +1053,8 @@ interface WatchClientProps {
   initialMeta: any;
   initialSeasonData: any;
   defaultProvider?: string;
+  /** Explicit provider forced by the route (?provider=) — wins over all. */
+  routeProvider?: string | null;
   minimal?: boolean;
   initialSeason?: number;
   initialEpisode?: number;
@@ -1053,6 +1068,7 @@ export default function WatchClient({
   initialMeta,
   initialSeasonData,
   defaultProvider,
+  routeProvider,
   minimal = false,
   initialSeason = 1,
   initialEpisode = 1,
@@ -1067,7 +1083,12 @@ export default function WatchClient({
       <PlayerProvider
         mediaType={plat}
         contentId={contentid}
-        initialProviderId={defaultProvider}
+        initialProviderId={
+          routeProvider ||
+          getSettings().defaultServer ||
+          defaultProvider ||
+          undefined
+        }
         initialSeason={initialSeason}
         initialEpisode={initialEpisode}
         minimal={minimal}

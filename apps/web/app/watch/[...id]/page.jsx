@@ -11,13 +11,13 @@ const Page = async ({ params, searchParams }) => {
   const hdrs = await headers();
   const userAgent = hdrs.get("user-agent") || "";
   // Desktop (Electron) → default nxsha, Web → default cinemaos.
-  // Anime-profiled sessions (?mid= / ?aid= from anime search) default to
-  // MegaPlay instead — its builders need those IDs, not TMDB ones.
+  // Anime-profiled sessions default to MegaPlay — its builders need the
+  // MAL/AniList IDs, not TMDB ones. "Anime" = explicit origin (?mid=/?aid=)
+  // OR the heuristic (Animation genre + Japanese original language), which
+  // matches the client's isAnimeSession rule so the default agrees with the
+  // provider allowlist (MegaPlay/Screenscape/Nxsha).
   const isDesktop = userAgent.includes("Electron");
   const animeOrigin = Boolean(sp.mid || sp.aid);
-  const defaultProvider =
-    sp.provider ||
-    (animeOrigin ? "megaplay" : isDesktop ? "nxsha" : "screenscape");
 
   let meta;
   let initialSeasonData = null;
@@ -53,6 +53,20 @@ const Page = async ({ params, searchParams }) => {
     meta = await tmdb(`/${plat}/${contentid}`);
   }
 
+  const isAnimeMeta =
+    Boolean(meta?.genres?.some?.((g) => g.id === 16)) &&
+    meta?.original_language === "ja";
+  const defaultProvider =
+    animeOrigin || isAnimeMeta
+      ? "megaplay"
+      : isDesktop
+        ? "nxsha"
+        : "screenscape";
+  // Explicit route provider (a deep link or server switch) wins over the
+  // platform/anime default. The user's Settings → Default Source preference
+  // is layered in client-side (WatchClient) so it can sit between the two.
+  const routeProvider = sp.provider || null;
+
   return (
     <WatchClient
       contentid={contentid}
@@ -60,6 +74,7 @@ const Page = async ({ params, searchParams }) => {
       initialMeta={meta}
       initialSeasonData={initialSeasonData}
       defaultProvider={defaultProvider}
+      routeProvider={routeProvider}
       minimal={sp.minimal === "1"}
       initialSeason={initialSeason}
       initialEpisode={initialEpisode}

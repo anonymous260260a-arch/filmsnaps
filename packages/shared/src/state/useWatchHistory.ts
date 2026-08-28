@@ -22,7 +22,7 @@
  * then deletes the old key — existing history survives the upgrade transparently.
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type {
   StorageAdapter,
   WatchProgress,
@@ -46,9 +46,22 @@ interface IndexEntry {
   t: number;
 }
 
+export interface AggregatedHistoryEntry {
+  /** Most recently updated entry for the group (the card's resume target). */
+  latest: WatchProgress;
+  /** Number of episodes watched for this TMDB id (TV); 1 for movies. */
+  episodeCount: number;
+  /** True when every stored episode of the group is marked completed. */
+  fullyWatched: boolean;
+}
+
 export interface WatchHistoryState {
   /** All history entries, newest first */
   entries: WatchProgress[];
+  /** TV episodes collapsed into one show card per TMDB id — mirrors mobile's
+   *  getAggregatedHistory so Continue Watching / History show a single card per
+   *  series (not one per episode). Movies are passed through unchanged. */
+  aggregated: AggregatedHistoryEntry[];
   /** Whether history is still loading */
   loading: boolean;
   /** Total number of entries */
@@ -104,6 +117,34 @@ export function buildStorageKey(
     return `tv:${tmdbId}:season:${season}:episode:${episode}`;
   }
   return `${mediaType}:${tmdbId}`;
+}
+
+/**
+ * Collapse per-episode TV entries into ONE card per TMDB id — mirrors mobile's
+ * getAggregatedHistory. Movies pass through (episodeCount 1). Keeps anime and
+ * movie/TV physically/semantically separate even when they share a twin TMDB id
+ * (the `isAnime` flag drives the group key, not the storage key).
+ */
+export function aggregateHistory(
+  entries: WatchProgress[],
+): AggregatedHistoryEntry[] {
+  const groups = new Map<string, WatchProgress[]>();
+  for (const entry of entries) {
+    const key = `${entry.isAnime === true ? "anime:" : ""}${entry.mediaType}:${entry.tmdbId}`;
+    const existing = groups.get(key) ?? [];
+    existing.push(entry);
+    groups.set(key, existing);
+  }
+  return Array.from(groups.values())
+    .map((entries) => {
+      entries.sort((a, b) => b.updatedAt - a.updatedAt);
+      return {
+        latest: entries[0],
+        episodeCount: entries.length,
+        fullyWatched: entries.every((e) => e.completed),
+      };
+    })
+    .sort((a, b) => b.latest.updatedAt - a.latest.updatedAt);
 }
 
 // ── Migration ─────────────────────────────────────────────────────
@@ -208,6 +249,10 @@ export function useWatchHistory(
     setEntries(list);
     setLoading(false);
   }, [loadMap]);
+
+  // Collapse TV episodes into one card per show (mobile parity), recomputed
+  // whenever the raw entries change.
+  const aggregated = useMemo(() => aggregateHistory(entries), [entries]);
 
   /**
    * Persist the map as per-item keys + rebuild the MRU index.
@@ -589,6 +634,7 @@ export function useWatchHistory(
 
   return {
     entries,
+    aggregated,
     loading,
     totalCount: entries.length,
     saveProgress,

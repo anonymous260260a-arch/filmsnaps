@@ -37,12 +37,15 @@ import { animeSearch, rankAnimeSearchResults } from "@/lib/anime/search";
 import type { ScoredAnimeResult } from "@/lib/anime/search";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useQuery } from "@tanstack/react-query";
+import { useAppMode } from "@/lib/useAppMode";
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
 
 interface SearchPaletteProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Seed the query field (e.g. from a /search?q= deep link). */
+  initialQuery?: string;
 }
 
 /* ── Recent searches (localStorage) ────────────────────────────────────── */
@@ -73,14 +76,6 @@ function removeRecent(query: string) {
 
 const ANIME_TOGGLE_KEY = "fs:search-anime";
 
-function loadAnimeMode(): boolean {
-  try {
-    return localStorage.getItem(ANIME_TOGGLE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
 function saveAnimeMode(on: boolean) {
   try {
     localStorage.setItem(ANIME_TOGGLE_KEY, on ? "1" : "0");
@@ -91,13 +86,19 @@ function saveAnimeMode(on: boolean) {
 
 /* ── Component ─────────────────────────────────────────────────────────── */
 
-export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
+export function SearchPalette({
+  open,
+  onOpenChange,
+  initialQuery,
+}: SearchPaletteProps) {
   const router = useRouter();
-  const [query, setQuery] = useState("");
+  const { mode: appMode } = useAppMode();
+  const [query, setQuery] = useState(initialQuery ?? "");
   const [activeIdx, setActiveIdx] = useState(-1);
   const [recents, setRecents] = useState<string[]>([]);
-  // Anime mode — read lazily so first open reflects /search's last state.
-  const [animeMode, setAnimeMode] = useState(loadAnimeMode);
+  // Anime mode — defaults to follow the global Hard Mode Split (anime → ON,
+  // movie → OFF), and is freely flippable in any mode via toggleAnimeMode.
+  const [animeMode, setAnimeMode] = useState(appMode === "anime");
   const debouncedQuery = useDebounce(query, 250);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -106,9 +107,21 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
 
   /* ── Lifecycle: focus, scroll lock, recents load ── */
 
+  // When the global Hard Mode Split changes, the toggle follows it (anime →
+  // ON, movie → OFF) and the choice is mirrored. This is the only place the
+  // global mode drives the toggle — a manual flip below sticks until the next
+  // mode change (and across reopens within the same mode).
+  useEffect(() => {
+    setAnimeMode(appMode === "anime");
+    saveAnimeMode(appMode === "anime");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appMode]);
+
   useEffect(() => {
     if (open) {
       setRecents(loadRecents());
+      // Keep the current toggle state (a prior manual flip persists across
+      // reopen); do NOT re-force it to the global mode here.
       // slight delay so the panel's mount animation doesn't fight focus
       requestAnimationFrame(() => inputRef.current?.focus());
       document.body.style.overflow = "hidden";
@@ -163,9 +176,13 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
   }, [animeMode, animeData, searchResults, debouncedQuery]);
 
   const toggleAnimeMode = useCallback(() => {
+    // Independent of the global Hard Mode Split — the toggle flips freely in
+    // either mode without forcing the home/header split to change (spec).
+    // Only the fs:search-anime mirror is updated (read on open for parity).
     setAnimeMode((v) => {
-      saveAnimeMode(!v);
-      return !v;
+      const next = !v;
+      saveAnimeMode(next);
+      return next;
     });
   }, []);
 
