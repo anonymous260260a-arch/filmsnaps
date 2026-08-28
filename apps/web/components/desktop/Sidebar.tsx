@@ -27,7 +27,6 @@ import {
   Bookmark,
   Clock,
   Download,
-  Library,
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
@@ -115,7 +114,6 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
       {
         label: "Library",
         items: [
-          { href: "/library", label: "Library", icon: Library },
           {
             href: "/saved",
             label: "Saved",
@@ -465,11 +463,11 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
             Privacy Policy
           </Link>
           <Link
-            href="/how-it-works"
+            href="/transparency"
             className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-zinc-600 transition-colors hover:bg-white/[0.04] hover:text-zinc-300"
           >
             <ScrollText size={14} className="shrink-0" />
-            How Content Works
+            Transparency & Security
           </Link>
         </div>
       )}

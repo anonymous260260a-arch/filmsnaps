@@ -15,6 +15,7 @@ import {
   ArrowLeft,
   ArrowRight,
   RotateCw,
+  Home,
   Search,
   Minus,
   Square,
@@ -23,6 +24,7 @@ import {
 } from "lucide-react";
 import { useChromeStore } from "./chrome-store";
 import { SearchPalette } from "./SearchPalette";
+import { ModeSplitToggle } from "@/components/ModeSplitToggle";
 
 /* ── Constants ─────────────────────────────────────────────────────────── */
 
@@ -42,7 +44,7 @@ const PAGE_TITLES: Array<{ prefix: string; title: string }> = [
   { prefix: "/versions", title: "Versions" },
   { prefix: "/legal", title: "Legal & DMCA" },
   { prefix: "/privacy", title: "Privacy Policy" },
-  { prefix: "/how-it-works", title: "How Content Works" },
+  { prefix: "/transparency", title: "Transparency & Security" },
 ];
 
 function titleForPath(pathname: string): string {
@@ -277,6 +279,15 @@ export function GlobalTopBar() {
             className={spinning || loading ? "tb-spin" : "transition-transform"}
           />
         </button>
+        <button
+          onClick={() => router.push("/")}
+          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl
+            text-zinc-500 transition-all hover:bg-white/[0.06] hover:text-zinc-200 active:scale-95"
+          aria-label="Home"
+          title="Home"
+        >
+          <Home size={15} strokeWidth={2} />
+        </button>
       </div>
 
       {/* Spacer pushes the right cluster to the far edge */}
@@ -308,6 +319,9 @@ export function GlobalTopBar() {
             {mod}K
           </kbd>
         </button>
+
+        {/* Hard Mode Split toggle (desktop — only chrome surface that renders) */}
+        <ModeSplitToggle className="ml-1" />
       </div>
 
       {/* Window controls — Windows / Linux only */}
@@ -369,10 +383,7 @@ export function GlobalTopBar() {
             key={titleKey}
             className="tb-fade flex min-w-0 items-center gap-3"
           >
-            <span
-              className="max-w-[300px] truncate text-sm font-bold text-foreground"
-              style={{ fontFamily: "var(--font-display)" }}
-            >
+            <span className="font-sans max-w-[300px] truncate text-sm font-bold text-foreground">
               {title}
             </span>
             {seasonLabel && (

@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "How Content Works",
+  title: "Transparency & Security",
   description:
     "How FilmSnaps sources content, blocks ads at the network and page level, and protects your privacy.",
   alternates: {
-    canonical: "https://filmsnap-pro.netlify.app/how-it-works",
+    canonical: "https://filmsnap-pro.netlify.app/transparency",
   },
 };
 
