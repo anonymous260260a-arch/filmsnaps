@@ -8,7 +8,7 @@
 - [Browse Movies](https://filmsnap-pro.netlify.app/movie)
 - [Browse TV Shows](https://filmsnap-pro.netlify.app/tv)
 - [Search](https://filmsnap-pro.netlify.app/search)
-- [How Content Works (ad blocking, privacy, FAQ)](https://filmsnap-pro.netlify.app/how-it-works)
+- [Transparency & Security (ad blocking, privacy, FAQ)](https://filmsnap-pro.netlify.app/transparency)
 - [Legal & DMCA](https://filmsnap-pro.netlify.app/legal)
 - [Privacy Policy](https://filmsnap-pro.netlify.app/privacy)
 

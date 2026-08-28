@@ -1,6 +1,29 @@
 {
   "versions": [
     {
+      "version": "2.0.0",
+      "date": "2026-08-28",
+      "releaseNotes": "v2.0.0 — Desktop app release\n\nFalix downloads fixed (dead host replaced with the live backend)\nWorking download speed limiter (Balanced / Slower caps) — now real pause/resume pacing, previously a silent no-op, and synced between Settings and Downloads\nClear Watch History now asks for confirmation before wiping\nCarousels swipe correctly on mouse drag (no more accidental card selection)\nAnime home feed with a movie/TV / anime mode toggle\nRewritten Transparency, Privacy and Legal pages (GPL-3.0, /how-it-works renamed to /transparency)\nPlayer and desktop-shell improvements: secure webview, episode sidebar, mobile episode sheet, audio toggle, playback recorder",
+      "platforms": {
+        "win": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.0.0-desktop/FilmSnaps-Setup-2.0.0.exe",
+          "size": "119 MB"
+        },
+        "mac": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.0.0-desktop/FilmSnaps-2.0.0-x64.dmg",
+          "size": "~110 MB"
+        },
+        "mac-arm": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.0.0-desktop/FilmSnaps-2.0.0-arm64.dmg",
+          "size": "~105 MB"
+        },
+        "linux": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.0.0-desktop/FilmSnaps-2.0.0.AppImage",
+          "size": "~95 MB"
+        }
+      }
+    },
+    {
       "version": "1.0.4",
       "date": "2026-08-09",
       "releaseNotes": "v1.0.4 — Desktop watch-security hardening + Screenscape ad-suppression, no-rebuild config prep",

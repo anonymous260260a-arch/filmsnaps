@@ -11,7 +11,7 @@ import { DesktopGate } from "@/components/desktop/DesktopGate";
 const LINKS = [
   { href: "/legal", label: "Legal & DMCA" },
   { href: "/privacy", label: "Privacy Policy" },
-  { href: "/how-it-works", label: "How Content Works" },
+  { href: "/transparency", label: "Transparency & Security" },
 ];
 
 export function LegalFooter() {

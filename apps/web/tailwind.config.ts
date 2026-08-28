@@ -12,6 +12,9 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
+        // Body/UI font (Geist) — used where the display serif (Fraunces) is
+        // unreadable at small sizes, e.g. movie/TV card titles (text-sm).
+        sans: ["var(--font-body)", ...defaultTheme.fontFamily.sans],
         // Tabular data (sizes, speeds, ETAs) renders in Geist Mono — prevents
         // horizontal jitter as numbers update (expert verdict Q4).
         mono: ["var(--font-mono)", ...defaultTheme.fontFamily.mono],

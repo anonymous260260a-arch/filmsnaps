@@ -43,6 +43,8 @@ export interface PlaybackRecorderOptions {
   episode?: number;
   /** Which provider is playing (recorded for diagnostics) */
   providerId?: string;
+  /** Whether this title is an anime session (Hard Mode Split history scoping) */
+  isAnime?: boolean;
   /**
    * Resume position in seconds (from ?t=). Once the first playback sample
    * proves the embed's video exists, a one-shot seek is sent to the view.
@@ -57,6 +59,7 @@ export function usePlaybackRecorder({
   season,
   episode,
   providerId,
+  isAnime,
   resumeAt,
 }: PlaybackRecorderOptions): void {
   // Module-level adapter (same pattern as ContinueWatchingWrapper) — the
@@ -72,8 +75,16 @@ export function usePlaybackRecorder({
     season,
     episode,
     providerId,
+    isAnime,
   });
-  identityRef.current = { tmdbId, mediaType, season, episode, providerId };
+  identityRef.current = {
+    tmdbId,
+    mediaType,
+    season,
+    episode,
+    providerId,
+    isAnime,
+  };
 
   const persist = useRef((sample: PlaybackSample) => {
     const id = identityRef.current;
@@ -99,6 +110,7 @@ export function usePlaybackRecorder({
       percent: duration > 0 ? Math.min(sample.currentTime / duration, 1) : 0,
       season: id.mediaType === "tv" ? id.season : undefined,
       episode: id.mediaType === "tv" ? id.episode : undefined,
+      isAnime: id.isAnime,
       updatedAt: Date.now(),
       completed: false, // saveProgress upgrades to completed at >= 95%
     });

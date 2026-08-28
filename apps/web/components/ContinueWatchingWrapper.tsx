@@ -10,22 +10,28 @@ import { createLocalStorageAdapter } from "@filmsnaps/shared";
 import { useWatchHistory } from "@filmsnaps/shared";
 import { ContinueWatching } from "@/components/ContinueWatching";
 import type { WatchProgress } from "@filmsnaps/shared";
+import { useAppMode } from "@/lib/useAppMode";
 
 const storage = createLocalStorageAdapter();
 
 export function ContinueWatchingWrapper() {
-  const { entries, loading, refresh } = useWatchHistory(storage);
+  const { aggregated, loading, refresh } = useWatchHistory(storage);
+  const { mode } = useAppMode();
   const [inProgress, setInProgress] = useState<WatchProgress[]>([]);
 
   // Recompute the visible rail whenever the underlying history changes.
   useEffect(() => {
-    // Only show items that aren't fully watched and have meaningful progress,
-    // most-recently-watched first.
-    const filtered = entries
+    // `aggregated` already collapses every TV episode of a show into ONE card
+    // (latest episode wins, mirroring mobile's getAggregatedHistory). Then scope
+    // by the Hard Mode Split: anime mode shows only anime entries, movie_tv mode
+    // shows only non-anime entries.
+    const filtered = aggregated
+      .map((a) => a.latest)
       .filter((e) => !e.completed && e.currentTime > 10)
+      .filter((e) => (mode === "anime" ? !!e.isAnime : !e.isAnime))
       .sort((a, b) => b.updatedAt - a.updatedAt);
     setInProgress(filtered);
-  }, [entries]);
+  }, [aggregated, mode]);
 
   // Refocus refresh: when the user returns to the tab, re-read history so
   // recently-saved progress (e.g. from a concurrent window) is reflected.

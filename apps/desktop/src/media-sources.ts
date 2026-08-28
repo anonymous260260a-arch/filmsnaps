@@ -42,7 +42,7 @@ const NXSHA_UA =
 /** Per-provider politeness gap between /api/sources calls. */
 const NXSHA_PROVIDER_DELAY_MS = 600;
 const NXSHA_API_TIMEOUT_MS = 15000;
-const FALIX_API_BASE = "https://download-falix-falixmovies-backend-hf.hf.space";
+const FALIX_API_BASE = "https://download-falixm.koyeb.app";
 
 // ── Nxsha private-API crypto (replicates the site's encodeData/decodeData) ──
 
@@ -398,6 +398,12 @@ class MediaSources {
       if (!res.ok) {
         if (res.status === 404) throw new Error("Falix not found (404)");
         throw new Error(`Falix API error: ${res.status}`);
+      }
+      // Guard against HTML (host down / sleep page) so we throw a clean error
+      // instead of a cryptic "Unexpected token '<'" JSON.parse crash.
+      const ctype = res.headers.get("content-type") || "";
+      if (!ctype.includes("json")) {
+        throw new Error("Falix API returned non-JSON (host down?)");
       }
       return res.json();
     });

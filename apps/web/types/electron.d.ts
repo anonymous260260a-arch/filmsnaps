@@ -147,6 +147,7 @@ interface ElectronAPI {
     open: (id: string) => Promise<void>;
     clear: (id: string, deleteFile?: boolean) => Promise<void>;
     setSpeedLimit: (level: "full" | "balanced" | "slower") => Promise<void>;
+    setSaveDir: (dir: string) => Promise<void>;
     onProgress: (callback: (tasks: DownloadTask[]) => void) => () => void;
   };
 

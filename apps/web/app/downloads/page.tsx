@@ -12,7 +12,7 @@
  * remains reachable from here so its SEO/value is preserved.
  */
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Download,
@@ -42,6 +42,7 @@ import {
   isDownloadAvailable,
   type DownloadTask,
 } from "@/lib/downloadStore";
+import { useSettings } from "@/hooks/useSettings";
 import { formatBytes, formatSpeed, formatEta, formatDate } from "@/lib/format";
 
 const SPEED_LEVELS: Array<{
@@ -57,9 +58,19 @@ export default function DownloadsPage() {
   const available = isDownloadAvailable();
   const tasks = useDownloadList();
   const groups = useMemo(() => groupByStatus(tasks), [tasks]);
-  const [speed, setSpeed] = useState<"full" | "balanced" | "slower">("full");
+  const { settings, updateSetting } = useSettings();
+  // Single source of truth: the shared settings store (mirrors Settings page).
+  const speed = settings.downloadSpeedLimit;
+  const setSpeed = (level: "full" | "balanced" | "slower") =>
+    updateSetting("downloadSpeedLimit", level);
   const [url, setUrl] = useState("");
   const [urlError, setUrlError] = useState("");
+
+  // Apply the saved limit to the desktop manager once on mount (and whenever the
+  // saved value changes — e.g. the user switches it on the Settings page).
+  useEffect(() => {
+    if (available) setDownloadSpeedLimit(speed);
+  }, [available, speed]);
 
   const handleAdd = () => {
     const trimmed = url.trim();
@@ -134,10 +145,7 @@ export default function DownloadsPage() {
               {SPEED_LEVELS.map((s) => (
                 <button
                   key={s.level}
-                  onClick={() => {
-                    setSpeed(s.level);
-                    setDownloadSpeedLimit(s.level);
-                  }}
+                  onClick={() => setSpeed(s.level)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                     speed === s.level
                       ? "bg-[#D4A237] text-[#070708]"

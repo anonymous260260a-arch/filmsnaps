@@ -32,7 +32,7 @@ const STATIC_ROUTES: {
   { path: "/movie", changeFrequency: DAILY, priority: 0.8 },
   { path: "/tv", changeFrequency: DAILY, priority: 0.8 },
   { path: "/search", changeFrequency: DAILY, priority: 0.6 },
-  { path: "/how-it-works", changeFrequency: DAILY, priority: 0.6 },
+  { path: "/transparency", changeFrequency: DAILY, priority: 0.6 },
   { path: "/download", changeFrequency: DAILY, priority: 0.7 },
   { path: "/versions", changeFrequency: DAILY, priority: 0.4 },
   { path: "/legal", changeFrequency: YEARLY, priority: 0.3 },

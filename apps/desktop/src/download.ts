@@ -75,12 +75,15 @@ export interface DownloadTask {
   updatedAt: number;
 }
 
-/** Throttle tiers → percent passed to DownloadItem.setThrottle (0 = unlimited). */
-const SPEED_LIMIT_PERCENT: Record<string, number> = {
+/** Throttle tiers → fraction of measured link speed (null = unlimited). */
+const SPEED_LIMIT_FRACTION: Record<string, number> = {
   full: 0,
-  balanced: 60,
-  slower: 30,
+  balanced: 0.64,
+  slower: 0.32,
 };
+
+/** Pacemaker tick (ms). Budget = linkRate * fraction * TICK/1000. */
+const PACE_TICK_MS = 500;
 
 const SESSION_PARTITION = "persist:filmsnaps-provider";
 /**
@@ -99,7 +102,13 @@ class DownloadManager {
   private items = new Map<string, DownloadItem>();
   /** FIFO of metadata for downloads started via download:start (redirect-safe). */
   private pendingMeta: DownloadMeta[] = [];
-  private speedLimitPercent = 0;
+  private speedLimitFraction = 0;
+  /** Duty-cycle pacemaker (real throttle — Electron 42 has no bandwidth API). */
+  private pacemaker: NodeJS.Timeout | null = null;
+  private pacePhase = 0;
+  private lastPaceOn = false;
+  /** Download ids the user explicitly paused — never auto-resumed by pacemaker. */
+  private userPaused = new Set<string>();
   private saveDir = "";
   private manifestPath = "";
   private getWindow: WindowGetter;
@@ -107,7 +116,15 @@ class DownloadManager {
 
   constructor(getWindow: WindowGetter) {
     this.getWindow = getWindow;
-    this.saveDir = join(app.getPath("downloads"), "FilmSnaps");
+    // Honour a user-configured download folder (Settings → Downloads Storage).
+    // Falls back to ~/Downloads/FilmSnaps when unset.
+    const configured = (globalThis as any).__filmsnapsDownloadDir as
+      | string
+      | undefined;
+    this.saveDir =
+      configured && configured.trim()
+        ? configured
+        : join(app.getPath("downloads"), "FilmSnaps");
     this.manifestPath = join(app.getPath("userData"), "downloads.json");
     try {
       mkdirSync(this.saveDir, { recursive: true });
@@ -192,7 +209,7 @@ class DownloadManager {
 
     // Take over the save path so no native dialog appears.
     item.setSavePath(filePath);
-    applyThrottle(item, this.speedLimitPercent);
+    this.registerPacemaker(id, item);
 
     const task: DownloadTask = {
       id,
@@ -272,14 +289,17 @@ class DownloadManager {
   }
 
   pause(id: string): void {
+    this.userPaused.add(id);
     this.items.get(id)?.pause();
   }
 
   resume(id: string): void {
+    this.userPaused.delete(id);
     this.items.get(id)?.resume();
   }
 
   cancel(id: string): void {
+    this.userPaused.delete(id);
     this.items.get(id)?.cancel();
     // 'done' with state !== 'completed' will fire and demote to failed; the
     // renderer can instead clear it. Force-clear here for a clean UX.
@@ -311,11 +331,67 @@ class DownloadManager {
     this.broadcast();
   }
 
-  setSpeedLimit(level: keyof typeof SPEED_LIMIT_PERCENT): void {
-    this.speedLimitPercent = SPEED_LIMIT_PERCENT[level] ?? 0;
-    // Apply to all live downloads immediately.
-    for (const item of this.items.values()) {
-      applyThrottle(item, this.speedLimitPercent);
+  setSpeedLimit(level: keyof typeof SPEED_LIMIT_FRACTION): void {
+    this.speedLimitFraction = SPEED_LIMIT_FRACTION[level] ?? 0;
+    if (this.speedLimitFraction === 0) {
+      // Full speed — stop the pacemaker and let everything run unthrottled.
+      if (this.pacemaker) {
+        clearInterval(this.pacemaker);
+        this.pacemaker = null;
+      }
+      this.pacePhase = 0;
+      this.lastPaceOn = false;
+      for (const item of this.items.values()) {
+        if (item.getState() === "progressing" && item.isPaused()) item.resume();
+      }
+    } else {
+      this.ensurePacemaker();
+    }
+  }
+
+  /**
+   * Real throttle. Electron 42 has no bandwidth-limiting API on DownloadItem
+   * (no setThrottle), so we duty-cycle pause/resume: each download runs free
+   * for `fraction` of a fixed cycle and is paused for the remainder. Average
+   * throughput ≈ fraction × link rate. Only toggles on cycle-boundary crossings
+   * to minimise pause/resume churn. User-paused items are never touched.
+   */
+  private ensurePacemaker(): void {
+    if (this.pacemaker) return;
+    const CYCLE_MS = 3000;
+    this.pacemaker = setInterval(() => {
+      const fraction = this.speedLimitFraction;
+      if (fraction <= 0) return;
+      this.pacePhase = (this.pacePhase + PACE_TICK_MS) % CYCLE_MS;
+      const onMs = Math.round(CYCLE_MS * fraction);
+      const on = this.pacePhase < onMs;
+      if (on === this.lastPaceOn) return; // no boundary crossing — skip
+      this.lastPaceOn = on;
+      for (const id of this.items.keys()) {
+        if (this.userPaused.has(id)) continue;
+        const item = this.items.get(id)!;
+        if (item.getState() !== "progressing") continue;
+        if (on && item.isPaused()) item.resume();
+        else if (!on && !item.isPaused()) item.pause();
+      }
+    }, PACE_TICK_MS);
+  }
+
+  /** Capture each live DownloadItem so the pacemaker can throttle it. */
+  private registerPacemaker(id: string, item: DownloadItem): void {
+    if (this.speedLimitFraction > 0) this.ensurePacemaker();
+  }
+
+  /** Point new downloads at a user-chosen folder (Settings → Downloads Storage).
+   *  Applies immediately; in-flight downloads keep their already-committed path. */
+  setSaveDir(dir: string): void {
+    const trimmed = dir?.trim();
+    if (!trimmed) return;
+    this.saveDir = trimmed;
+    try {
+      mkdirSync(this.saveDir, { recursive: true });
+    } catch {
+      /* best-effort */
     }
   }
 
@@ -343,28 +419,23 @@ class DownloadManager {
     });
     ipcMain.handle(
       "download:set-speed-limit",
-      (_e, level: keyof typeof SPEED_LIMIT_PERCENT) =>
+      (_e, level: keyof typeof SPEED_LIMIT_FRACTION) =>
         this.setSpeedLimit(level),
     );
+    ipcMain.handle("download:set-save-dir", (_e, dir: string) => {
+      this.setSaveDir(dir);
+    });
   }
 }
 
-/** Replace filesystem-unsafe characters; keep a sensible extension. */
+/**
+ * Replace filesystem-unsafe characters; keep a sensible extension.
+ * (Real bandwidth throttling is done via the duty-cycle pacemaker in
+ * DownloadManager.setSpeedLimit — Electron exposes no per-download rate API.)
+ */
 function sanitizeFileName(name: string): string {
   const trimmed = name.replace(/[\\/:*?"<>|]/g, "_").trim();
   return trimmed.length > 0 ? trimmed.slice(0, 200) : "download";
-}
-
-/**
- * Apply a speed-limit throttle tier to a live DownloadItem. Some Electron
- * type defs omit `setThrottle`, so we guard the call behind a structural check
- * rather than relying on the typed method existing.
- */
-function applyThrottle(item: DownloadItem, percent: number): void {
-  const it = item as unknown as {
-    setThrottle?: (p: number) => void;
-  };
-  it.setThrottle?.(percent);
 }
 
 let manager: DownloadManager | null = null;

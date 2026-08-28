@@ -1,6 +1,6 @@
 /**
  * LegalPageShell — shared layout for the static legal pages
- * (/legal, /privacy, /how-it-works).
+ * (/legal, /privacy, /transparency).
  *
  * Mirrors the /versions page structure: the page owns a website header
  * (logo + Home link) wrapped in DesktopGate so it's hidden inside the

@@ -189,6 +189,7 @@ export interface ElectronAPI {
     open: (id: string) => Promise<void>;
     clear: (id: string, deleteFile?: boolean) => Promise<void>;
     setSpeedLimit: (level: "full" | "balanced" | "slower") => Promise<void>;
+    setSaveDir: (dir: string) => Promise<void>;
     onProgress: (callback: (tasks: DownloadTask[]) => void) => () => void;
   };
 
@@ -382,6 +383,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("download:clear", id, deleteFile),
     setSpeedLimit: (level: "full" | "balanced" | "slower") =>
       ipcRenderer.invoke("download:set-speed-limit", level),
+    setSaveDir: (dir: string) =>
+      ipcRenderer.invoke("download:set-save-dir", dir),
     onProgress: (callback: (tasks: DownloadTask[]) => void) => {
       const listener = (_event: unknown, tasks: DownloadTask[]) =>
         callback(tasks);

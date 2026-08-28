@@ -44,6 +44,8 @@ export interface PlayerProviderState {
   contentId: string;
   /** Whether the page is in minimal/embedded mode */
   minimal: boolean;
+  /** Audio track for anime providers that expose sub/dub (MegaPlay). */
+  audio: "sub" | "dub";
   /** Whether ANY React overlay is open that must sit above the native view (server dropdown, CPU warning, error state, loading). */
   overlayActive: boolean;
 }
@@ -63,6 +65,7 @@ export interface PlayerProviderActions {
   goToPrevEpisode: () => void;
   /** Signal that a React overlay (server dropdown, CPU warning, error, loading) is open/closed so the native view can hide/show. */
   setOverlayActive: (active: boolean) => void;
+  setAudio: (audio: "sub" | "dub") => void;
 }
 
 type PlayerContextValue = PlayerProviderState & PlayerProviderActions;
@@ -102,6 +105,7 @@ export function PlayerProvider({
   const [buffering, setBuffering] = useState(false);
   const [playerReady, setPlayerReady] = useState(false);
   const [overlayActive, setOverlayActive] = useState(false);
+  const [audio, setAudio] = useState<"sub" | "dub">("sub");
   const refreshKeyRef = useRef(0);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -174,6 +178,7 @@ export function PlayerProvider({
     mediaType,
     contentId,
     minimal,
+    audio,
     overlayActive,
     setSelectedProvider,
     setSelectedSeason,
@@ -188,6 +193,7 @@ export function PlayerProvider({
     goToNextEpisode,
     goToPrevEpisode,
     setOverlayActive,
+    setAudio,
   };
 
   return (

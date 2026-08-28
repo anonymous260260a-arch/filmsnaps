@@ -88,3 +88,8 @@ build_commands.txt
 
 # planning / design docs (not part of the app source)
 apps/feedback/.wrangler
+
+# local signing/response artifacts (never push)
+_rp.json
+_rs.sig
+expertResponseFiles_TEMP/

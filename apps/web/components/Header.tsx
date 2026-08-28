@@ -1,18 +1,15 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Search, Menu, X, ArrowLeft, Download, Clock } from "lucide-react";
 import { useWatchlist } from "@/hooks/useWatchlist";
-import {
-  tmdbApi,
-  getImageUrl,
-  rankSearchResults,
-  smartSearch,
-} from "@/lib/tmdb";
+import { getImageUrl, rankSearchResults, smartSearch } from "@/lib/tmdb";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useQuery } from "@tanstack/react-query";
+import { ModeSplitToggle } from "@/components/ModeSplitToggle";
+import { SearchPalette } from "@/components/desktop/SearchPalette";
 
 export function Header() {
   const pathname = usePathname();
@@ -23,8 +20,6 @@ export function Header() {
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedQuery = useDebounce(searchQuery, 300);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const searchDropdownRef = useRef<HTMLDivElement>(null);
-  const searchBtnRef = useRef<HTMLButtonElement>(null);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
 
@@ -91,29 +86,6 @@ export function Header() {
     setMobileSearchOpen(false);
     setSearchQuery("");
   }, [pathname]);
-
-  // Close desktop search dropdown when clicking outside
-  useEffect(() => {
-    if (!searchOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (
-        searchDropdownRef.current &&
-        !searchDropdownRef.current.contains(e.target as Node) &&
-        searchBtnRef.current &&
-        !searchBtnRef.current.contains(e.target as Node)
-      ) {
-        setSearchOpen(false);
-        setSearchQuery("");
-      }
-    };
-    const timer = setTimeout(() => {
-      document.addEventListener("mousedown", handleClick);
-    }, 0);
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener("mousedown", handleClick);
-    };
-  }, [searchOpen]);
 
   // Disable body scroll when menu is open
   useEffect(() => {
@@ -206,112 +178,32 @@ export function Header() {
               </Link>
             ))}
 
-            {/* Search trigger (desktop) */}
-            <button
-              ref={searchBtnRef}
-              onClick={openDesktopSearch}
-              className="ml-2 flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-white/[0.04] relative"
-              aria-label="Open search"
-            >
-              <Search className="h-4 w-4" />
-              <span className="hidden lg:inline">Search</span>
-              <kbd className="hidden lg:inline-flex items-center gap-0.5 ml-1 px-1.5 py-0.5 text-[11px] font-mono text-muted-foreground/60 bg-white/[0.04] rounded border border-white/[0.06]">
-                ⌘K
-              </kbd>
+            {/* Search trigger (desktop) + Hard Mode Split toggle.
+                The toggle is a SIBLING of the search button (not nested inside
+                it) so clicking it switches mode without opening search. */}
+            <div className="hidden lg:flex items-center gap-2">
+              <button
+                onClick={openDesktopSearch}
+                className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-white/[0.04] relative"
+                aria-label="Open search"
+              >
+                <Search className="h-4 w-4" />
+                <span className="hidden lg:inline">Search</span>
+                <kbd className="hidden lg:inline-flex items-center gap-0.5 ml-1 px-1.5 py-0.5 text-[11px] font-mono text-muted-foreground/60 bg-white/[0.04] rounded border border-white/[0.06]">
+                  ⌘K
+                </kbd>
+              </button>
 
-              {/* ── Desktop Search Dropdown ── */}
-              {searchOpen && (
-                <div
-                  ref={searchDropdownRef}
-                  className="fixed md:absolute md:top-full md:right-0 md:mt-2 md:w-[420px] md:rounded-2xl bg-[#0a0a0f]/90 backdrop-blur-2xl border border-white/[0.06] shadow-2xl overflow-hidden z-[60] animate-fade-in"
-                  style={
-                    {
-                      // On mobile it's full screen, on desktop it's positioned below the button
-                    }
-                  }
-                >
-                  <form onSubmit={handleSearchSubmit} className="p-3">
-                    <div className="relative flex items-center">
-                      <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60 pointer-events-none" />
-                      <input
-                        ref={searchInputRef}
-                        type="text"
-                        placeholder="Search movies & TV shows..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full h-11 pl-10 pr-4 rounded-xl bg-secondary/40 border border-white/[0.06] text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
-                      />
-                    </div>
-                  </form>
+              {/* Centered command palette — matches the desktop SearchPalette
+                  exactly (portal to body, backdrop-closes, ESC-closes, inline
+                  Anime pill). Reused directly so web == desktop. */}
+              <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
 
-                  {searchQuery.length > 1 && (
-                    <div className="pb-2">
-                      {suggestions.length > 0 ? (
-                        <>
-                          <div className="px-3 pb-1">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/50">
-                              Suggestions
-                            </p>
-                          </div>
-                          {suggestions.map((item: any) => (
-                            <button
-                              key={`${item.media_type}-${item.id}`}
-                              onClick={() => handleSuggestionClick(item)}
-                              className="w-full flex items-center gap-3 px-3 py-2 text-sm text-left hover:bg-white/[0.04] transition-colors"
-                            >
-                              <div className="w-8 h-12 rounded-lg overflow-hidden bg-secondary/40 flex-shrink-0">
-                                {(item.poster_path || item.poster) && (
-                                  <img
-                                    src={
-                                      getImageUrl(
-                                        item.poster_path || item.poster,
-                                        "w92",
-                                      ) || ""
-                                    }
-                                    alt=""
-                                    className="w-full h-full object-cover"
-                                  />
-                                )}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="font-medium text-foreground truncate">
-                                  {item.title || item.name}
-                                </p>
-                                <p className="text-xs text-muted-foreground capitalize">
-                                  {item.media_type === "movie"
-                                    ? "Movie"
-                                    : "TV Show"}
-                                  {item.release_date || item.first_air_date
-                                    ? ` · ${(item.release_date || item.first_air_date).slice(0, 4)}`
-                                    : ""}
-                                </p>
-                              </div>
-                            </button>
-                          ))}
-                          <button
-                            onClick={handleSearchSubmit}
-                            className="w-full flex items-center justify-center gap-2 mt-1 px-3 py-2.5 text-xs font-medium text-primary hover:bg-primary/5 rounded-xl transition-colors"
-                          >
-                            <Search className="h-3.5 w-3.5" />
-                            See all results for &ldquo;{searchQuery}&rdquo;
-                          </button>
-                        </>
-                      ) : (
-                        <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-                          No results found
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {searchQuery.length <= 1 && (
-                    <div className="px-4 py-6 text-center text-xs text-muted-foreground">
-                      Start typing to search movies &amp; TV shows
-                    </div>
-                  )}
-                </div>
-              )}
-            </button>
+              {/* Hard Mode Split toggle (web header) */}
+              <span className="hidden lg:inline-flex items-center">
+                <ModeSplitToggle />
+              </span>
+            </div>
           </nav>
 
           {/* ── Mobile: Search + Menu buttons ── */}
@@ -463,6 +355,12 @@ export function Header() {
         </div>
 
         <nav className="flex flex-col gap-1 mt-6 px-3">
+          {/* Hard Mode Split — Movies / Anime (mobile-web had no visible
+              toggle since the header one is lg:hidden; surface it here). */}
+          <div className="px-3 pb-3">
+            <ModeSplitToggle className="w-full [&>button]:flex-1" />
+          </div>
+
           {navLinks.map((link) => (
             <Link
               key={link.href}

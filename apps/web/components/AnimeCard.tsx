@@ -97,7 +97,7 @@ export function AnimeCard({ item, className = "" }: AnimeCardProps) {
 
       {/* Info below card */}
       <Link href={detailHref} className="block mt-2.5 space-y-0.5 px-0.5">
-        <h3 className="text-sm font-semibold text-foreground/90 line-clamp-1 group-hover:text-primary transition-colors duration-200">
+        <h3 className="font-sans text-sm font-semibold text-foreground/90 line-clamp-1 group-hover:text-primary transition-colors duration-200">
           {title}
         </h3>
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground/70">

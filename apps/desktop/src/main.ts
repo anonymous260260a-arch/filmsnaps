@@ -24,6 +24,7 @@ import {
   shell,
   WebContentsView,
   webContents,
+  screen,
 } from "electron";
 import { join } from "path";
 import { ChildProcess, spawn } from "child_process";
@@ -97,6 +98,15 @@ let currentProviderId: string | null = null;
  */
 let lastContentFrame: { processId: number; frameId: number } | null = null;
 
+// ── Fullscreen debug tracing (set FILMSNAPS_FS_DEBUG=1 to enable) ──
+// Lets us OBSERVE (not guess) how the provider triggers fullscreen and how main
+// reacts. Logs every fullscreen-state change and every renderer bounds push so we
+// can see the race (a small bounds push arriving after the expand).
+const FS_DEBUG = process.env.FILMSNAPS_FS_DEBUG === "1";
+const fsLog = (...args: unknown[]): void => {
+  if (FS_DEBUG) console.log("[FS-DEBUG]", ...args);
+};
+
 // ── Provider WebContentsView (Phase 3 hybrid migration) ─────────────
 // A single native WebContentsView owns the provider embed. Created lazily on
 // the first player:open, reused for the app lifetime (mirrors the old
@@ -124,6 +134,24 @@ let providerViewBounds: Electron.Rectangle = {
   width: 0,
   height: 0,
 };
+/** Fullscreen state owned by the PROVIDER's own button (preload bridge). When
+ *  true, main owns the view bounds and renderer bounds pushes are ignored. */
+let isProviderFullscreen = false;
+/** Last bounds the renderer pushed — restored when leaving provider fullscreen. */
+let lastKnownRendererBounds: Electron.Rectangle = {
+  x: 0,
+  y: 0,
+  width: 0,
+  height: 0,
+};
+/**
+ * Authoritative window-fullscreen flag. Windows fullscreen is ASYNC: inside the
+ * enter-/leave-full-screen handlers win.isFullScreen() reports the PREVIOUS
+ * state (false on enter, true on leave). Reading it there desyncs the renderer
+ * (Bug B). We track the intended state explicitly and use it for every signal
+ * we send to the renderer.
+ */
+let winFullscreenState = false;
 
 // Pre-seed CDN domain set from blocklist.json, built at startup.
 // Used to pre-fill session trust so CDNs are R0-allowed from first request.
@@ -352,14 +380,25 @@ function createMainWindow(): void {
   });
   mainWindow.on("move", () => saveWindowState(mainWindow!));
   mainWindow.on("enter-full-screen", () => {
-    providerViewFitToContent();
+    // Main now owns the view bounds; the renderer's ResizeObserver must not
+    // shrink it back. Set the guards FIRST so a resize tick can't race.
+    fsLog("win enter-full-screen fired");
+    isProviderFullscreen = true;
+    winFullscreenState = true;
+    // Fill authoritatively. Windows isFullScreen() is STILL false at this
+    // instant inside the handler (async), so providerViewFitToContent's
+    // `if (!win.isFullScreen()) return;` would early-exit and leave the video
+    // small (Bug A). fillProviderView has no such guard — it fills to the
+    // content rect directly from getContentBounds().
+    fillProviderView();
     sendPlayerFullscreenState();
   });
   mainWindow.on("leave-full-screen", () => {
-    // Restore the last renderer-driven rect bounds on exiting fullscreen.
-    if (providerView && providerViewAttached) {
-      providerView.setBounds(providerViewBounds);
-    }
+    // Hand bounds back to the renderer and clear the guard so its pushes resume.
+    fsLog("win leave-full-screen fired");
+    isProviderFullscreen = false;
+    winFullscreenState = false;
+    restoreProviderView();
     sendPlayerFullscreenState();
   });
   mainWindow.on("maximize", () => {
@@ -558,7 +597,12 @@ function resetPlayerState(): void {
 function sendPlayerFullscreenState(): void {
   const win = mainWindow;
   if (!win || win.isDestroyed()) return;
-  sendPlayerState({ isFullscreen: win.isFullScreen() });
+  // Use the authoritative flag, NOT win.isFullScreen(): inside the
+  // enter-/leave-full-screen handlers the native getter returns the PREVIOUS
+  // state (false on enter, true on leave), which desyncs the renderer's chrome
+  // (top bar wouldn't hide on enter, wouldn't return on leave — Bug B).
+  fsLog("sendPlayerFullscreenState ->", winFullscreenState);
+  sendPlayerState({ isFullscreen: winFullscreenState });
 }
 
 /**
@@ -613,6 +657,20 @@ function ensureProviderView(): WebContentsView | null {
 
   const wc = view.webContents;
   const providerId = getCurrentBlockingProviderId();
+
+  // ── Forward the provider page's console to the terminal (FS_DEBUG only) ──
+  // The session preload logs here when it sees a fullscreen call, so we can watch
+  // EXACTLY what the provider does (real Fullscreen API vs CSS fake-fullscreen)
+  // without opening DevTools. Gated on FILMSNAPS_FS_DEBUG=1.
+  if (FS_DEBUG) {
+    wc.on(
+      "console-message",
+      (_e, level: number, message: string, _line: number, sourceId: string) => {
+        const tag = level >= 2 ? "ERR" : level === 1 ? "WARN" : "LOG";
+        console.log(`[FS-PROVIDER][${tag}][${sourceId}] ${message}`);
+      },
+    );
+  }
 
   // ── Forward load/error/audit state to the renderer (player:state) ──
   wc.on("did-start-loading", () => {
@@ -706,6 +764,29 @@ function ensureProviderView(): WebContentsView | null {
     },
   });
 
+  // ── Provider's own fullscreen button → window fullscreen + fill ──
+  // The provider embed renders in this NATIVE WebContentsView, so when its own
+  // player calls <video>.requestFullscreen() inside the view, Electron fires
+  // enter-html-full-screen on THIS webContents (not the main window's). Nothing
+  // listens for it by default, so the view never expands — only the OS fullscreen
+  // toggle (mainWindow 'enter-full-screen') would have, leaving the video small
+  // inside an app-level fullscreen. Bridge it: mirror the renderer-driven
+  // fullscreen path (window-level fullscreen → providerViewFitToContent fills
+  // the whole content area → both the app chrome and the video go fullscreen),
+  // and keep player:state in sync so the renderer hides its native chrome.
+  wc.on("enter-html-full-screen", () => {
+    const win = mainWindow;
+    if (!win || win.isDestroyed()) return;
+    fsLog("wc enter-html-full-screen fired");
+    handleProviderFullscreen(true);
+  });
+  wc.on("leave-html-full-screen", () => {
+    const win = mainWindow;
+    fsLog("wc leave-html-full-screen fired");
+    if (!win || win.isDestroyed()) return;
+    handleProviderFullscreen(false);
+  });
+
   wc.once("destroyed", () => {
     providerViewAttached = false;
     providerViewGuard = null;
@@ -792,10 +873,33 @@ function closeProviderView(): void {
   resetPlayerState();
 }
 
-/** Position the view over the renderer's black rect (integers required). */
+/**
+ * Position the view over the renderer's black rect (integers required).
+ * Skips while the window is fullscreen — during fullscreen main owns the bounds
+ * (providerViewFitToContent fills the whole content area), so a stray renderer
+ * push would shrink the view back to the letterboxed rect. Use
+ * setProviderViewBounds to force-apply during fullscreen.
+ */
 function setProviderBounds(rect: Electron.Rectangle): void {
   const win = mainWindow;
-  if (win && win.isFullScreen()) return; // main owns bounds during fullscreen
+  fsLog(
+    "setProviderBounds",
+    JSON.stringify(rect),
+    "IGNORED=" + !!(isProviderFullscreen || (win && win.isFullScreen())),
+  );
+  // Ignore renderer bounds pushes while fullscreen — during fullscreen MAIN owns
+  // the view bounds (it fills the content area), so a stray renderer push (its
+  // ResizeObserver still fires on window resize, but its isFullscreen flag lags
+  // the state push by a tick) would shrink the view back to the letterboxed rect
+  // ~16ms after we expand it. This is the race the provider-fullscreen bridge
+  // exists to prevent. See handleProviderFullscreen().
+  if (isProviderFullscreen || (win && win.isFullScreen())) return;
+  lastKnownRendererBounds = rect;
+  setProviderViewBounds(rect);
+}
+
+/** Raw bounds writer — no fullscreen guard. Used by the fullscreen fill path. */
+function setProviderViewBounds(rect: Electron.Rectangle): void {
   providerViewBounds = {
     x: Math.round(rect.x),
     y: Math.round(rect.y),
@@ -879,6 +983,63 @@ function setProviderFullscreen(fullscreen: boolean): void {
 }
 
 /**
+ * Authoritative fullscreen trigger for the PROVIDER's own in-page player button.
+ * The provider embed lives in a native WebContentsView; its own player calls
+ * <video>.requestFullscreen() (or a CSS "fake fullscreen" that ends up calling
+ * it). Our session preload overrides Element.prototype.requestFullscreen and
+ * sends `provider:requestFullscreen` (true/false) here instead of calling the
+ * native API — so we own the transition. Main fullscreens the frameless window
+ * and fills the view; the renderer (which sizes its black rect to the view) then
+ * shows its own chrome via player:state. Crucially, we set isProviderFullscreen
+ * BEFORE expanding, so the renderer's ResizeObserver (which still fires on the
+ * window resize but whose isFullscreen flag lags a tick) cannot shrink the view
+ * back to its small rect. This is the race the bridge exists to prevent.
+ */
+function handleProviderFullscreen(fullscreen: boolean): void {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  fsLog(
+    "handleProviderFullscreen",
+    fullscreen,
+    "winIsFull=" + win.isFullScreen(),
+  );
+  isProviderFullscreen = fullscreen;
+  winFullscreenState = fullscreen;
+  if (win.isFullScreen() !== fullscreen) {
+    // Native state disagrees with target — let setFullScreen drive the
+    // enter-/leave-full-screen events, which fill/restore the view + push state.
+    win.setFullScreen(fullscreen);
+  } else if (fullscreen) {
+    // Already fullscreen (e.g. re-trigger) — fill immediately.
+    fillProviderView();
+    sendPlayerFullscreenState();
+  } else {
+    restoreProviderView();
+    sendPlayerFullscreenState();
+  }
+}
+
+/** Fill the view to the whole content area (content-relative bounds). */
+function fillProviderView(): void {
+  const win = mainWindow;
+  if (!providerView || !win || win.isDestroyed()) return;
+  // In fullscreen the window covers the ENTIRE display (including the region
+  // the Windows taskbar normally occupies). Fill to the full display SIZE, NOT
+  // workAreaSize — workAreaSize permanently excludes the taskbar (≈5% gap at
+  // the bottom), and does not grow when a window fullscreens.
+  const disp = screen.getDisplayMatching(win.getBounds());
+  const { width, height } = disp.size;
+  setProviderViewBounds({ x: 0, y: 0, width, height });
+}
+
+/** Restore the last renderer-driven rect after leaving fullscreen. */
+function restoreProviderView(): void {
+  if (providerView && providerViewAttached) {
+    providerView.setBounds(lastKnownRendererBounds);
+  }
+}
+
+/**
  * Fill the view to the whole window — used ONLY on fullscreen transitions. In
  * normal (windowed) mode the RENDERER owns the bounds: it measures its player
  * rect via ResizeObserver and pushes player:set-bounds continuously, including
@@ -886,15 +1047,24 @@ function setProviderFullscreen(fullscreen: boolean): void {
  * overwrite the rect bounds and expand the native view over the entire page
  * (covering the server pill/dropdown and every other control) — the bug that
  * hid the server selector beneath the webview.
+ *
+ * A WebContentsView lives inside contentView, so its bounds are RELATIVE TO THE
+ * CONTENT ORIGIN (0,0 = top-left of the window's content area), NOT screen
+ * coordinates. Passing getContentBounds() (screen coords) would fling the view
+ * off-screen. We therefore fill {0,0,width,height} of the content area. This is
+ * the ONLY writer that must bypass setProviderBounds' fullscreen early-return —
+ * that guard exists so renderer pushes during fullscreen don't shrink the view
+ * back to the letterboxed rect; here we are the fullscreen owner and must expand
+ * it. Use setProviderViewBounds directly.
  */
 function providerViewFitToContent(): void {
   const win = mainWindow;
   if (!providerView || !win || win.isDestroyed()) return;
   if (!win.isFullScreen()) return; // renderer owns bounds outside fullscreen
   const cb = win.getContentBounds();
-  setProviderBounds({
-    x: cb.x,
-    y: cb.y,
+  setProviderViewBounds({
+    x: 0,
+    y: 0,
     width: cb.width,
     height: cb.height,
   });
@@ -913,6 +1083,7 @@ function registerPlayerViewIPC(): void {
   let boundsDebounceTimeout: NodeJS.Timeout | null = null;
 
   ipcMain.handle("player:set-bounds", (_e, rect: Electron.Rectangle) => {
+    fsLog("player:set-bounds IPC received", JSON.stringify(rect));
     if (boundsDebounceTimeout) clearTimeout(boundsDebounceTimeout);
     boundsDebounceTimeout = setTimeout(() => {
       setProviderBounds(rect ?? { x: 0, y: 0, width: 0, height: 0 });
@@ -927,6 +1098,19 @@ function registerPlayerViewIPC(): void {
   ipcMain.handle("player:fullscreen", (_e, fullscreen: boolean) => {
     setProviderFullscreen(!!fullscreen);
     return { success: true };
+  });
+  // ── Provider's OWN fullscreen button bridge ──
+  // The session preload overrides Element.prototype.requestFullscreen in the
+  // provider page and sends these instead of calling the native API. This is the
+  // AUTHORITATIVE trigger (works for both real Fullscreen API and "fake
+  // fullscreen" players that never fire enter-html-full-screen). The renderer
+  // has NO window.electronAPI in the provider page, so the preload uses raw
+  // ipcRenderer.send — these must be ipcMain.on (fire-and-forget), not handle.
+  ipcMain.on("provider:requestFullscreen", () => {
+    handleProviderFullscreen(true);
+  });
+  ipcMain.on("provider:exitFullscreen", () => {
+    handleProviderFullscreen(false);
   });
   ipcMain.handle("player:reload", () => {
     if (providerView && !providerView.webContents.isDestroyed()) {

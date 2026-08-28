@@ -34,6 +34,7 @@ import React, {
   useImperativeHandle,
 } from "react";
 import { usePlayer } from "@/components/player/PlayerProvider";
+import { useChromeStore } from "@/components/desktop/chrome-store";
 
 export interface DesktopSecureWebviewHandle {
   reload: () => void;
@@ -73,6 +74,10 @@ export const DesktopSecureWebview = forwardRef<
   const [isFullscreen, setIsFullscreen] = useState(false);
   /** Any React overlay (server dropdown, CPU warning, error state, loading) that must sit above the native view. */
   const { overlayActive, setOverlayActive } = usePlayer();
+  /** Watch-nav drawer open state (Menu button) — sourced from chrome-store so it
+   *  stays in sync regardless of how the drawer was opened/closed. The native
+   *  view draws above all DOM, so it must hide while the drawer overlays it. */
+  const { watchNavDrawerOpen } = useChromeStore();
 
   // Latest props via refs so the one-shot mount effect can read fresh values
   // without re-running (and without re-driving IPC).
@@ -199,16 +204,17 @@ export const DesktopSecureWebview = forwardRef<
 
   // ── Visibility reconciliation. The native view draws over ALL DOM, so it
   // must be shown only when NO React overlay needs to win the z-order over the
-  // rect: loading, error, CPU warning, server dropdown, or any other overlay.
+  // rect: loading, error, CPU warning, server dropdown, watch-nav drawer, or
+  // any other overlay.
   // Fullscreen does NOT hide the view — main handles fullscreen bounds on the
   // window. Mirrors overlay state into main so the view never covers React,
   // and keeps the view mounted + hidden (player:set-visible detaches it
   // from the contentView) rather than unmounting the singleton.
   useEffect(() => {
     window.electronAPI?.player.setVisible(
-      !isLoading && !hasError && !overlayActive,
+      !isLoading && !hasError && !overlayActive && !watchNavDrawerOpen,
     );
-  }, [overlayActive, isLoading, hasError]);
+  }, [overlayActive, isLoading, hasError, watchNavDrawerOpen]);
 
   // ── Unmount cleanup: close the native view so it doesn't persist when
   // navigating away (e.g., back to home page).

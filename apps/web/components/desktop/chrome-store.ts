@@ -34,6 +34,10 @@ interface ChromeState {
   watchContext: WatchContext | null;
   immersive: boolean;
   sidebarCollapsed: boolean;
+  /** Watch-page nav drawer (Menu button) — single source of truth so the
+   *  native player view and the drawer stay in sync regardless of which path
+   *  opened/closed it (button, Escape, route change). */
+  watchNavDrawerOpen: boolean;
 }
 
 // ── Store plumbing ─────────────────────────────────────────────────
@@ -53,6 +57,7 @@ let state: ChromeState = {
   watchContext: null,
   immersive: false,
   sidebarCollapsed: loadSidebarCollapsed(),
+  watchNavDrawerOpen: false,
 };
 
 const listeners: Array<() => void> = [];
@@ -99,6 +104,21 @@ export function toggleSidebarCollapsed(): void {
     // ignore storage failures
   }
   setState({ sidebarCollapsed: next });
+}
+
+/** Open the watch-nav drawer (Menu button). */
+export function openWatchNavDrawer(): void {
+  setState({ watchNavDrawerOpen: true });
+}
+
+/** Close the watch-nav drawer (X, backdrop, Escape, route change). */
+export function closeWatchNavDrawer(): void {
+  setState({ watchNavDrawerOpen: false });
+}
+
+/** Toggle the watch-nav drawer. */
+export function toggleWatchNavDrawer(): void {
+  setState({ watchNavDrawerOpen: !state.watchNavDrawerOpen });
 }
 
 /** React hook — subscribes to the whole chrome store. */

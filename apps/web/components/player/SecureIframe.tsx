@@ -8,17 +8,17 @@
  * loading states and error UI.
  */
 
-'use client';
+"use client";
 
-import React, { useRef, useEffect, useCallback } from 'react';
-import { usePlayer } from './PlayerProvider';
+import React, { useRef, useEffect, useCallback } from "react";
+import { usePlayer } from "./PlayerProvider";
 
 /**
  * Default sandbox attributes when a provider doesn't specify custom ones.
  * allow-popups is included by default since the JS navGuard blocks popups
  * at the script level — we can relax it per-provider as needed.
  */
-const DEFAULT_SANDBOX = 'allow-scripts allow-same-origin allow-presentation';
+const DEFAULT_SANDBOX = "allow-scripts allow-same-origin allow-presentation";
 
 /** How long to wait before considering the iframe load a failure (ms) */
 const LOAD_TIMEOUT_MS = 15000;
@@ -90,7 +90,7 @@ export function SecureIframe({
   // don't include it yet (Chrome 106+, Firefox 131+).
   useEffect(() => {
     if (iframeRef.current && csp) {
-      iframeRef.current.setAttribute('csp', csp);
+      iframeRef.current.setAttribute("csp", csp);
     }
   }, [csp]);
 
@@ -133,27 +133,31 @@ export function SecureIframe({
 
     const guardInterval = window.setInterval(() => {
       if (window.location.href !== ORIGINAL_URL) {
-        window.history.pushState(null, '', ORIGINAL_URL);
+        window.history.pushState(null, "", ORIGINAL_URL);
       }
     }, 500);
 
     const onPopState = () => {
       if (window.location.href !== ORIGINAL_URL) {
-        window.history.pushState(null, '', ORIGINAL_URL);
+        window.history.pushState(null, "", ORIGINAL_URL);
       }
     };
-    window.addEventListener('popstate', onPopState);
+    window.addEventListener("popstate", onPopState);
 
     const originalOpen = window.open.bind(window);
-    window.open = function blockPopup(url?: string | URL, _target?: string, _features?: string): Window | null {
-      if (url && typeof url === 'string') {
-        console.warn('[NavGuard] Blocked popup:', url.slice(0, 120));
+    window.open = function blockPopup(
+      url?: string | URL,
+      _target?: string,
+      _features?: string,
+    ): Window | null {
+      if (url && typeof url === "string") {
+        console.warn("[NavGuard] Blocked popup:", url.slice(0, 120));
       }
       return null;
     };
 
     return () => {
-      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener("popstate", onPopState);
       window.clearInterval(guardInterval);
       window.open = originalOpen;
     };
@@ -177,7 +181,7 @@ export function SecureIframe({
         }
         window.focus();
         try {
-          const w = window.open('', '_self');
+          const w = window.open("", "_self");
           if (w) w.focus();
         } catch (_) {}
         if (attempts >= 300) {
@@ -187,16 +191,16 @@ export function SecureIframe({
       }, 50);
     };
 
-    window.addEventListener('blur', startReclaim);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') {
+    window.addEventListener("blur", startReclaim);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") {
         startReclaim();
       }
     });
 
     return () => {
-      window.removeEventListener('blur', startReclaim);
-      document.removeEventListener('visibilitychange', startReclaim);
+      window.removeEventListener("blur", startReclaim);
+      document.removeEventListener("visibilitychange", startReclaim);
       if (reclaimTimer) {
         window.clearInterval(reclaimTimer);
       }
@@ -283,7 +287,9 @@ export function SecureIframe({
         if (!cw) {
           // Window is gone — likely navigated to a blocked page
           if (iframe.src !== originalUrl) {
-            console.warn('[RedirectBreaker] contentWindow null, resetting iframe src');
+            console.warn(
+              "[RedirectBreaker] contentWindow null, resetting iframe src",
+            );
             iframe.src = originalUrl;
           }
           return;
@@ -299,7 +305,9 @@ export function SecureIframe({
             const originalOrigin = new URL(originalUrl).origin;
 
             if (currentOrigin !== originalOrigin) {
-              console.warn('[RedirectBreaker] Cross-origin navigation detected, resetting');
+              console.warn(
+                "[RedirectBreaker] Cross-origin navigation detected, resetting",
+              );
               iframe.src = originalUrl;
             }
           } catch {
@@ -309,7 +317,9 @@ export function SecureIframe({
         }
       } catch {
         // Cross-origin SecurityError — iframe navigated to a different domain
-        console.warn('[RedirectBreaker] Cross-origin error, resetting iframe src');
+        console.warn(
+          "[RedirectBreaker] Cross-origin error, resetting iframe src",
+        );
         iframe.src = originalUrl;
       }
     }, CHECK_INTERVAL_MS);
@@ -322,7 +332,11 @@ export function SecureIframe({
       ref={iframeRef}
       className="absolute inset-0 w-full h-full z-10"
       src={src}
-      referrerPolicy="no-referrer"
+      // Origin referrer (not "no-referrer") — MegaPlay's token-gated manifest
+      // CDN gates on the Referer header of its own origin; stripping it (the
+      // old default) makes the provider page load but never fetch a manifest.
+      // Mirrors desktop's request-filter Referrer-Policy: origin fix.
+      referrerPolicy="origin"
       allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
       allowFullScreen
       title="Video player"

@@ -26,14 +26,11 @@ import {
   Globe,
   ChevronRight,
   Info,
-  Layers,
   Cloud,
   Clock,
   Bug,
   Shield,
   FileText,
-  ToggleRight,
-  ToggleLeft,
   Package,
 } from "lucide-react";
 import { Header } from "@/components/Header";
@@ -43,10 +40,9 @@ import {
   useWatchHistory,
   getEnabledProviders,
 } from "@filmsnaps/shared";
-import type { ProviderDefinition, HealthCache } from "@filmsnaps/shared";
+import type { ProviderDefinition } from "@filmsnaps/shared";
 import { useSettings } from "@/hooks/useSettings";
 import { ServerDropdown } from "@/components/watch/ServerDropdown";
-import { usePlayerHealth } from "@/hooks/usePlayerHealth";
 
 const storage = createLocalStorageAdapter();
 
@@ -78,13 +74,6 @@ export default function SettingsPage() {
     // Mobile shows all enabled providers. Desktop hides download-only sources.
     return getEnabledProviders();
   }, []);
-
-  const { healthCache, lastCheckedAt, isRefreshing, refresh } = usePlayerHealth(
-    {
-      providers: allProviders,
-      intervalMs: 60_000,
-    },
-  );
 
   // Default server selector state
   const [serverDropdownOpen, setServerDropdownOpen] = useState(false);
@@ -126,13 +115,17 @@ export default function SettingsPage() {
       const dir = await api!.app.pickDownloadFolder();
       if (dir) {
         await api!.app.setDownloadFolder(dir);
+        // Apply immediately so new downloads land in the chosen folder.
+        await api!.download?.setSaveDir?.(dir);
         setDownloadFolder(dir);
       }
     });
 
+  const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const handleClearHistory = () =>
     run("clear-history", async () => {
       await clearAll();
+      setConfirmClearHistory(false);
     });
 
   const handleResetLibrary = () =>
@@ -203,54 +196,7 @@ export default function SettingsPage() {
         </div>
 
         <div className="space-y-6">
-          {/* ── 1. Playback ── */}
-          <Section
-            icon={<Layers size={16} className="text-[#D4A237]" />}
-            title="Playback"
-            sub="Player behaviour and home layout."
-          >
-            <SettingsRow
-              icon={<Info size={14} />}
-              label="Show Source Tips"
-              subtitle={
-                settings.showServerNotes
-                  ? "On — usage tips shown below player"
-                  : "Off"
-              }
-              color={settings.showServerNotes ? "#4CAF82" : undefined}
-              right={
-                <button
-                  onClick={() =>
-                    updateSetting("showServerNotes", !settings.showServerNotes)
-                  }
-                  className="ml-auto p-1 rounded-lg hover:bg-white/[0.06] transition-colors"
-                  aria-label={settings.showServerNotes ? "Turn off" : "Turn on"}
-                >
-                  {settings.showServerNotes ? (
-                    <ToggleRight size={20} className="text-[#D4A237]" />
-                  ) : (
-                    <ToggleLeft size={20} className="text-faint" />
-                  )}
-                </button>
-              }
-            />
-            <Divider />
-            <SettingsRow
-              icon={<Layers size={14} />}
-              label="Home Layout"
-              subtitle={
-                desktop ? "Arrange home page sections" : "Configure on mobile"
-              }
-              color={undefined}
-              right={
-                <span className="text-xs text-faint font-mono">
-                  coming soon
-                </span>
-              }
-            />
-          </Section>
-
-          {/* ── 2. Data & Storage ── */}
+          {/* ── Data & Storage ── */}
           <Section
             icon={<Cloud size={16} className="text-[#D4A237]" />}
             title="Data & Storage"
@@ -328,13 +274,31 @@ export default function SettingsPage() {
               subtitle="Removes all saved progress and history entries."
               color="#E05252"
               right={
-                <button
-                  onClick={handleClearHistory}
-                  disabled={disabled("clear-history")}
-                  className="ml-auto text-xs font-medium text-[#E05252] hover:text-[#ff6b6b] disabled:opacity-60"
-                >
-                  {disabled("clear-history") ? "Clearing…" : "Clear"}
-                </button>
+                confirmClearHistory ? (
+                  <div className="ml-auto flex items-center gap-1.5">
+                    <span className="text-[11px] text-faint">Sure?</span>
+                    <button
+                      onClick={() => setConfirmClearHistory(false)}
+                      className="px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-white/[0.06]"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleClearHistory}
+                      disabled={disabled("clear-history")}
+                      className="px-2 py-1 rounded-md text-xs font-medium bg-[#E05252] text-white hover:bg-[#ff6b6b] disabled:opacity-60"
+                    >
+                      {disabled("clear-history") ? "Clearing…" : "Confirm"}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmClearHistory(true)}
+                    className="ml-auto text-xs font-medium text-[#E05252] hover:text-[#ff6b6b]"
+                  >
+                    Clear
+                  </button>
+                )
               }
             />
           </Section>
@@ -365,10 +329,6 @@ export default function SettingsPage() {
                 providers={allProviders}
                 selectedId={settings.defaultServer}
                 onSelect={handleServerSelect}
-                healthCache={healthCache}
-                lastCheckedAt={lastCheckedAt}
-                isRefreshing={isRefreshing}
-                onRefresh={refresh}
               />
             </div>
           </Section>
@@ -397,9 +357,9 @@ export default function SettingsPage() {
           >
             <SupportRow
               icon={<Info size={14} />}
-              label="How Content Works"
-              subtitle="Ad blocking, streaming security & transparency"
-              href="/how-it-works"
+              label="Transparency & Security"
+              subtitle="Ad blocking, streaming security & how it works"
+              href="/transparency"
             />
             <Divider />
             <SupportRow
@@ -497,7 +457,9 @@ function Section({
       <div className="flex items-start gap-3 mb-4">
         <div className="mt-0.5 shrink-0">{icon}</div>
         <div className="flex-1">
-          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+          <h2 className="font-sans text-sm font-semibold text-foreground">
+            {title}
+          </h2>
           <p className="text-xs text-faint mt-0.5">{sub}</p>
         </div>
       </div>

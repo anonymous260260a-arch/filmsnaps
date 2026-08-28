@@ -51,7 +51,7 @@ import { tmdbApi } from "@/lib/tmdb";
 
 // ── API ──
 
-const FALIX_API_BASE = "https://download-falix-falixmovies-backend-hf.hf.space";
+const FALIX_API_BASE = "https://download-falixm.koyeb.app";
 
 interface FalixTelegramFile {
   quality: string;
@@ -340,21 +340,14 @@ export default function FalixDownloadPage() {
     setDescOverflows(el.scrollHeight > el.clientHeight + 1);
   }, [data?.description]);
 
-  // ── Fetch detail through the main-process proxy ──
+  // ── Fetch detail (desktop via main proxy, web via server route) ──
   // Lookup chain: try the URL's TMDB id first; on a clean 404 resolve the
   // title's IMDB id via TMDB and retry (falix keys some catalog entries by
   // their IMDB number — e.g. Shawshank lives at /api/id/111161, not 278).
   // Only when both miss does the not-found state render.
   useEffect(() => {
+    if (!id || !type) return;
     const api = window.electronAPI?.falix;
-    if (!available || !id || !type || !api) {
-      if (!id) return;
-      // Desktop runtime without the falix bridge (preloaded page context).
-      if (available) {
-        setError("Downloads backend not ready — reload the window.");
-      }
-      return;
-    }
     let alive = true;
 
     const apply = (d: FalixData) => {
@@ -367,12 +360,23 @@ export default function FalixDownloadPage() {
       e instanceof Error ? e.message : String(e ?? "Fetch failed");
     const isNotFound = (e: unknown) => /\b404\b|not found/i.test(errMsg(e));
 
+    // Desktop uses the native IPC bridge; web hits our CORS proxy.
+    const getDetail: (q: string) => Promise<FalixData> = api
+      ? (q) => api.getDetail<FalixData>(q)
+      : async (q) => {
+          const res = await fetch(
+            `/api/player/falix?id=${encodeURIComponent(q)}`,
+          );
+          if (res.status === 404) throw new Error("404 not found");
+          if (!res.ok) throw new Error(`Falix lookup failed (${res.status})`);
+          return (await res.json()) as FalixData;
+        };
+
     void (async () => {
       setLoading(true);
       setError("");
       try {
-        // Attempt 1: TMDB id.
-        apply(await api.getDetail<FalixData>(id));
+        apply(await getDetail(id));
         return;
       } catch (e) {
         if (!alive) return;
@@ -389,7 +393,7 @@ export default function FalixDownloadPage() {
           .replace(/^0+(?=\d)/, "");
         if (imdbNum && /^\d+$/.test(imdbNum)) {
           try {
-            apply(await api.getDetail<FalixData>(imdbNum));
+            apply(await getDetail(imdbNum));
             return;
           } catch (e2) {
             if (!alive) return;
@@ -440,7 +444,9 @@ export default function FalixDownloadPage() {
     }
   };
 
-  /** Enqueue one file; filename mirrors mobile's convention. */
+  /** Enqueue one file; filename mirrors mobile's convention.
+   *  Desktop → native download manager; web → opens the file link directly
+   *  (the browser handles the save, since there's no native manager). */
   const downloadFile = useCallback(
     (file: FalixTelegramFile, opts?: { season?: number; episode?: number }) => {
       if (!data) return;
@@ -453,22 +459,27 @@ export default function FalixDownloadPage() {
           ? `${data.title}-S${ss}E${ee}-${file.quality}.${ext}`
           : `${data.title}-${file.quality}.${ext}`;
 
-      startDownload({
-        url,
-        title: filename,
-        tmdbId: id,
-        mediaType: data.type,
-        season: opts?.season,
-        episode: opts?.episode,
-      });
+      if (available) {
+        startDownload({
+          url,
+          title: filename,
+          tmdbId: id,
+          mediaType: data.type,
+          season: opts?.season,
+          episode: opts?.episode,
+        });
+      } else {
+        window.open(url, "_blank");
+      }
     },
-    [data, id],
+    [data, id, available],
   );
 
   const openInBrowser = (fileId: string, fileName: string) => {
-    void window.electronAPI?.app?.openExternal?.(
-      buildDownloadUrl(fileId, fileName),
-    );
+    const url = buildDownloadUrl(fileId, fileName);
+    const ext = window.electronAPI?.app?.openExternal;
+    if (ext) ext(url);
+    else window.open(url, "_blank");
   };
 
   // ── Bulk calculation ──
@@ -512,10 +523,6 @@ export default function FalixDownloadPage() {
   };
 
   // ── Gates ──
-  if (!available) {
-    return <DesktopGate />;
-  }
-
   if (!type || !id) {
     return (
       <Shell>
@@ -844,7 +851,9 @@ export default function FalixDownloadPage() {
 
         <div className="flex items-center justify-between rounded-xl bg-[#0E0E11] border border-white/[0.06] px-4 py-3">
           <p className="text-xs text-muted-foreground">
-            Queued downloads appear in the manager with live progress.
+            {available
+              ? "Queued downloads appear in the manager with live progress."
+              : "Files download through your browser. Use a download manager to track progress."}
           </p>
           <Link
             href="/downloads"
@@ -867,31 +876,6 @@ function Shell({ children }: { children: React.ReactNode }) {
       <Header />
       <PageShell maxWidth="3xl">{children}</PageShell>
     </div>
-  );
-}
-
-function DesktopGate() {
-  return (
-    <Shell>
-      <div className="rounded-xl border border-white/[0.06] bg-[#0E0E11] px-6 py-14 text-center">
-        <div className="w-16 h-16 rounded-full bg-[#16161A] flex items-center justify-center mx-auto mb-5">
-          <Download className="h-8 w-8 text-[#D4A237]" />
-        </div>
-        <h1 className="text-2xl font-bold tracking-tight mb-2">
-          Downloads need the desktop app
-        </h1>
-        <p className="text-sm text-muted-foreground mb-6 max-w-sm mx-auto">
-          Falix HEVC downloads run inside FilmSnaps Desktop. Install it to grab
-          movies and full seasons offline.
-        </p>
-        <Link
-          href="/download"
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
-        >
-          Get FilmSnaps Desktop
-        </Link>
-      </div>
-    </Shell>
   );
 }
 
