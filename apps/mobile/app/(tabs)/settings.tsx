@@ -422,70 +422,6 @@ export default function SettingsScreen() {
             }
           />
           <Divider />
-          <SettingsRow
-            icon="cellular-outline"
-            label="Download over Cellular"
-            subtitle={
-              settings.downloadOverCellular
-                ? "Allowed on mobile data"
-                : "Wi-Fi only"
-            }
-            color={colors.gold}
-            right={
-              <Switch
-                value={settings.downloadOverCellular}
-                onValueChange={(v) => updateSetting("downloadOverCellular", v)}
-                trackColor={{
-                  false: colors.zinc800,
-                  true: "rgba(212,162,55,0.4)",
-                }}
-                thumbColor={
-                  settings.downloadOverCellular
-                    ? colors.gold
-                    : colors.textTertiary
-                }
-              />
-            }
-          />
-          <Divider />
-          <SettingsRow
-            icon="speedometer-outline"
-            label="Download Speed Limit"
-            subtitle={
-              settings.downloadSpeedLimit === "full"
-                ? "Full speed (unlimited)"
-                : settings.downloadSpeedLimit === "balanced"
-                  ? "Balanced (~500 KB/s)"
-                  : "Slower (~100 KB/s)"
-            }
-            color={colors.gold}
-            onPress={() => {
-              Alert.alert(
-                "Download Speed",
-                "Limit download speed to save bandwidth",
-                [
-                  {
-                    text: "Full (unlimited)",
-                    onPress: () => updateSetting("downloadSpeedLimit", "full"),
-                  },
-                  {
-                    text: "Balanced (~500 KB/s)",
-                    onPress: () =>
-                      updateSetting("downloadSpeedLimit", "balanced"),
-                  },
-                  {
-                    text: "Slower (~100 KB/s)",
-                    onPress: () =>
-                      updateSetting("downloadSpeedLimit", "slower"),
-                  },
-                  { text: "Cancel", style: "cancel" },
-                ],
-              );
-            }}
-            right={
-              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
-            }
-          />
         </SectionCard>
 
         {/* ── 3. Default Source ── */}
@@ -590,17 +526,6 @@ export default function SettingsScreen() {
         {/* ── 4. Support ── */}
         <SectionCard title="Support">
           <SettingsRow
-            icon="megaphone-outline"
-            label="Announcements"
-            subtitle="News, features, and service updates"
-            color={colors.gold}
-            onPress={() => nav.push("/announcements")}
-            right={
-              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
-            }
-          />
-          <Divider />
-          <SettingsRow
             icon="help-circle-outline"
             label="How to Use"
             subtitle="Guide to watching, downloading, and more"
@@ -613,10 +538,43 @@ export default function SettingsScreen() {
           <Divider />
           <SettingsRow
             icon="information-circle-outline"
-            label="How Content Works"
-            subtitle="Content sourcing, ad blocking technology & transparency"
+            label="Transparency & Security"
+            subtitle="Ad blocking, streaming security & how it works"
             color={colors.info}
-            onPress={() => nav.push("/how-it-works")}
+            onPress={() => nav.push("/transparency")}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
+          />
+          <Divider />
+          <SettingsRow
+            icon="shield-outline"
+            label="Privacy Policy"
+            subtitle="How we handle your data"
+            color={colors.successGreen}
+            onPress={() => nav.push("/privacy")}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
+          />
+          <Divider />
+          <SettingsRow
+            icon="document-text-outline"
+            label="Legal & DMCA"
+            subtitle="Disclaimer, copyright, and terms"
+            color={colors.textSecondary}
+            onPress={() => nav.push("/legal")}
+            right={
+              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
+            }
+          />
+          <Divider />
+          <SettingsRow
+            icon="megaphone-outline"
+            label="Announcements"
+            subtitle="News, features, and service updates"
+            color={colors.gold}
+            onPress={() => nav.push("/announcements")}
             right={
               <ForwardIcon width={16} height={16} color={colors.iconMuted} />
             }
@@ -639,27 +597,6 @@ export default function SettingsScreen() {
             subtitle="Tell your friends about FilmSnaps"
             color={colors.info}
             onPress={handleShareApp}
-            right={
-              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
-            }
-          />
-          <SettingsRow
-            icon="shield-outline"
-            label="Privacy Policy"
-            subtitle="How we handle your data"
-            color={colors.successGreen}
-            onPress={() => nav.push("/privacy")}
-            right={
-              <ForwardIcon width={16} height={16} color={colors.iconMuted} />
-            }
-          />
-          <Divider />
-          <SettingsRow
-            icon="document-text-outline"
-            label="Legal & DMCA"
-            subtitle="Disclaimer, copyright, and terms"
-            color={colors.textSecondary}
-            onPress={() => nav.push("/legal")}
             right={
               <ForwardIcon width={16} height={16} color={colors.iconMuted} />
             }

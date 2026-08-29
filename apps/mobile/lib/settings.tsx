@@ -6,7 +6,7 @@
  *
  * Usage:
  *   const { settings, updateSetting } = useSettings()
- *   updateSetting('downloadOverCellular', true)
+ *   updateSetting('defaultServer', 'vidsrc')
  */
 
 import React, {
@@ -32,10 +32,6 @@ export interface AppSettings {
 
   // Playback
   serverOrder: string[];
-
-  // Download
-  downloadOverCellular: boolean;
-  downloadSpeedLimit: "full" | "balanced" | "slower";
 
   // Advanced
   customProviderUrls: Record<string, string>;
@@ -77,10 +73,6 @@ const DEFAULT_SETTINGS: AppSettings = {
 
   // Playback
   serverOrder: [],
-
-  // Download
-  downloadOverCellular: false,
-  downloadSpeedLimit: "full",
 
   // Advanced
   customProviderUrls: {},
