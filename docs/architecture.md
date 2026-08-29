@@ -45,9 +45,10 @@ filmsnaps/
 - **Auth:** none. The web app is fully anonymous (watchlist/history stored
   locally). The old `AuthProvider` + `/auth` + `/reset-password` scaffolding was
   removed (see [ADR 0002](adr/0002-auth-removal.md)).
-- **Dormant proxy stack:** `lib/movieProviders/{protection,tlsFetch,flareSolverr,cloudflareDetect,cspBuilder}.ts`
-  - `/api/player/*` routes are kept but unreachable (`PROXIED_PROVIDERS` is an
-    empty set) — see [ADR 0001](adr/0001-dormant-proxy-stack.md).
+- **Provider embeds:** no server-side proxy. Provider players load in sandboxed
+  cross-origin iframes with a parent-enforced CSP from
+  `lib/movieProviders/cspBuilder.ts` (`buildIframeCSP`). The desktop/mobile apps
+  enforce the equivalent protection natively.
 
 ### `apps/desktop` — Electron desktop app
 

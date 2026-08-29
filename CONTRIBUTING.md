@@ -302,5 +302,6 @@ these files.
 - **`.env` / `.dev.vars`** — never commit secrets. `TMDB_API_KEY` was
   historically committed in `.dev.vars`; if you see it anywhere, untrack it and
   rotate the key.
-- **Dormant code.** Some infra is intentionally dormant (the web proxy stack,
-  `PROXIED_PROVIDERS = new Set([])`). Don't delete it without an ADR-style note.
+- **No server-side provider proxy.** Provider players load via sandboxed
+  cross-origin iframes with a parent-enforced CSP (`buildIframeCSP`); there is
+  no server-side proxy route. Don't reintroduce one without an ADR-style note.
