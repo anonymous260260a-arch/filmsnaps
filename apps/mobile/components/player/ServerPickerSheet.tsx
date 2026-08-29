@@ -1,6 +1,6 @@
 /**
- * ServerPicker — bottom sheet modal for selecting streaming providers on mobile.
- * Supports swipe-down-to-dismiss via PanResponder with rubber-band resistance.
+ * ServerPicker — Ultra-clean bottom sheet modal for selecting streaming sources on mobile.
+ * Features minimalist list items with clean radio checks, subtle tags, and smooth gesture dismiss.
  */
 
 import React, { useEffect, useRef } from "react";
@@ -32,8 +32,8 @@ interface ServerPickerSheetProps {
   getDisplayName: (p: ProviderDefinition) => string;
 }
 
-const SWIPE_DISMISS_THRESHOLD = 0.3; // 30% of sheet height
-const RUBBER_BAND_RESISTANCE = 0.3; // resistance factor beyond 100px
+const SWIPE_DISMISS_THRESHOLD = 0.3;
+const RUBBER_BAND_RESISTANCE = 0.3;
 
 export function ServerPickerSheet({
   visible,
@@ -50,8 +50,6 @@ export function ServerPickerSheet({
   // Animated values
   const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
-
-  // Track current visible state for animation gating
   const isVisibleRef = useRef(visible);
 
   // ── PanResponder for swipe-down-to-dismiss ──
@@ -63,8 +61,7 @@ export function ServerPickerSheet({
         _: GestureResponderEvent,
         g: PanResponderGestureState,
       ) => {
-        if (g.dy <= 0) return; // ignore upward swipes
-        // Rubber-band resistance: first 100px are 1:1, then reduced
+        if (g.dy <= 0) return;
         const resisted =
           g.dy <= 100 ? g.dy : 100 + (g.dy - 100) * RUBBER_BAND_RESISTANCE;
         translateY.setValue(resisted);
@@ -74,7 +71,6 @@ export function ServerPickerSheet({
         g: PanResponderGestureState,
       ) => {
         if (g.dy <= 0) {
-          // Not a downward swipe — snap back
           Animated.spring(translateY, {
             toValue: 0,
             useNativeDriver: true,
@@ -83,16 +79,14 @@ export function ServerPickerSheet({
           }).start();
           return;
         }
-        const sheetHeight = SCREEN_HEIGHT * 0.6;
+        const sheetHeight = SCREEN_HEIGHT * 0.55;
         if (g.dy > sheetHeight * SWIPE_DISMISS_THRESHOLD || g.vy > 0.5) {
-          // Dismiss
           Animated.timing(translateY, {
             toValue: SCREEN_HEIGHT,
             duration: 200,
             useNativeDriver: true,
           }).start(() => onClose());
         } else {
-          // Snap back
           Animated.spring(translateY, {
             toValue: 0,
             useNativeDriver: true,
@@ -108,7 +102,6 @@ export function ServerPickerSheet({
   useEffect(() => {
     if (visible && !isVisibleRef.current) {
       isVisibleRef.current = true;
-      // Reset position and animate in
       translateY.setValue(SCREEN_HEIGHT);
       backdropOpacity.setValue(0);
       Animated.parallel([
@@ -158,38 +151,66 @@ export function ServerPickerSheet({
 
         {/* Animated sheet */}
         <Animated.View
-          className="bg-zinc-900 rounded-t-3xl"
+          className="rounded-t-3xl border-t"
           style={{
-            maxHeight: SCREEN_HEIGHT * 0.6,
+            backgroundColor: colors.bgCard,
+            borderColor: colors.borderSubtle,
+            maxHeight: SCREEN_HEIGHT * 0.58,
             paddingBottom: insets.bottom + 16,
             transform: [{ translateY }],
           }}
         >
-          {/* Drag handle — interactive with PanResponder */}
+          {/* Drag handle */}
           <View
             {...panResponder.panHandlers}
             className="items-center pt-3 pb-2"
-            style={{ height: 44, justifyContent: "center" }}
+            style={{ height: 40, justifyContent: "center" }}
           >
-            <View className="w-10 h-1 rounded-full bg-zinc-600" />
+            <View
+              className="w-10 h-1 rounded-full"
+              style={{ backgroundColor: colors.borderMuted }}
+            />
           </View>
 
           {/* Header */}
-          <View className="flex-row items-center justify-between px-6 py-3 border-b border-zinc-800">
-            <Text className="text-white text-lg font-bold">
-              Playback Sources
-            </Text>
-            <View className="flex-row items-center" style={{ gap: 12 }}>
+          <View
+            className="flex-row items-center justify-between px-5 pb-3 border-b"
+            style={{ borderColor: colors.borderSubtle }}
+          >
+            <View>
+              <Text
+                className="text-base font-bold"
+                style={{
+                  color: colors.textPrimary,
+                  fontFamily: "Inter_600SemiBold",
+                }}
+              >
+                Streaming Sources
+              </Text>
+              <Text
+                className="text-[11px] mt-0.5"
+                style={{ color: colors.textTertiary }}
+              >
+                Switch if your stream is slow or buffering
+              </Text>
+            </View>
+
+            <View className="flex-row items-center" style={{ gap: 8 }}>
               <TouchableOpacity
                 onPress={() => nav.push("/guide?section=sources")}
                 activeOpacity={0.7}
                 accessibilityLabel="Help choosing a source"
                 accessibilityRole="button"
+                className="w-7 h-7 rounded-full items-center justify-center border"
+                style={{
+                  backgroundColor: colors.bgSurface,
+                  borderColor: colors.borderSubtle,
+                }}
               >
                 <Ionicons
                   name="help-circle-outline"
-                  size={20}
-                  color={colors.zinc500}
+                  size={15}
+                  color={colors.textSecondary}
                 />
               </TouchableOpacity>
               <TouchableOpacity
@@ -197,16 +218,22 @@ export function ServerPickerSheet({
                 activeOpacity={0.7}
                 accessibilityLabel="Close source selection"
                 accessibilityRole="button"
+                className="w-7 h-7 rounded-full items-center justify-center border"
+                style={{
+                  backgroundColor: colors.bgSurface,
+                  borderColor: colors.borderSubtle,
+                }}
               >
-                <Ionicons name="close" size={22} color={colors.zinc500} />
+                <Ionicons name="close" size={15} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
           </View>
 
-          {/* Server list */}
+          {/* Clean minimal server list */}
           <ScrollView
-            className="px-4 pt-2"
+            className="px-4 pt-3"
             showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 12 }}
           >
             {providers.map((p) => {
               const isActive = p.id === currentId;
@@ -218,66 +245,64 @@ export function ServerPickerSheet({
                     onSelect(p.id);
                   }}
                   activeOpacity={0.7}
-                  className={`flex-row items-center px-4 py-4 rounded-xl mb-1 ${
-                    isActive
-                      ? "bg-primary/10 border border-amber-500/20"
-                      : "bg-zinc-800/40"
-                  }`}
+                  className="flex-row items-center justify-between px-4 py-3 rounded-xl mb-1.5 border"
+                  style={{
+                    backgroundColor: isActive
+                      ? "rgba(212, 162, 55, 0.10)"
+                      : colors.bgSurface,
+                    borderColor: isActive
+                      ? "rgba(212, 162, 55, 0.35)"
+                      : colors.borderSubtle,
+                  }}
                 >
-                  <View
-                    className={`w-10 h-10 rounded-full items-center justify-center mr-4 ${
-                      isActive ? "bg-primary" : "bg-zinc-700"
-                    }`}
-                  >
-                    {isActive ? (
-                      <Ionicons
-                        name="checkmark"
-                        size={18}
-                        color={colors.voidBlack}
-                      />
-                    ) : (
-                      <Ionicons
-                        name="server-outline"
-                        size={16}
-                        color={colors.zinc500}
-                      />
+                  <View className="flex-row items-center flex-1 mr-3">
+                    <Ionicons
+                      name="server-outline"
+                      size={15}
+                      color={isActive ? colors.gold : colors.textTertiary}
+                      style={{ marginRight: 10 }}
+                    />
+                    <Text
+                      className="text-sm font-semibold"
+                      style={{
+                        color: isActive ? colors.gold : colors.textPrimary,
+                        fontFamily: "Inter_500Medium",
+                      }}
+                    >
+                      {getDisplayName(p)}
+                    </Text>
+
+                    {p.note && (
+                      <View
+                        className="ml-2.5 px-2 py-0.5 rounded border"
+                        style={{
+                          backgroundColor: colors.goldBadge,
+                          borderColor: "rgba(212,162,55,0.25)",
+                        }}
+                      >
+                        <Text
+                          className="text-[9px] font-bold"
+                          style={{ color: colors.gold }}
+                        >
+                          {p.note}
+                        </Text>
+                      </View>
                     )}
                   </View>
 
-                  <View className="flex-1">
-                    <View className="flex-row items-center flex-wrap gap-x-2 gap-y-1">
-                      <Text
-                        className={`text-base font-semibold ${
-                          isActive ? "text-amber-400" : "text-zinc-200"
-                        }`}
-                      >
-                        {getDisplayName(p)}
-                      </Text>
-                      {p.note && (
-                        <View
-                          className="px-2 py-0.5 rounded-full"
-                          style={{
-                            backgroundColor: "rgba(212,162,55,0.15)",
-                            borderWidth: 1,
-                            borderColor: "rgba(212,162,55,0.30)",
-                          }}
-                        >
-                          <Text
-                            className="text-[10px] font-bold"
-                            style={{ color: "#D4A237" }}
-                          >
-                            {p.note}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text className="text-zinc-600 text-xs mt-0.5">
-                      {isActive ? "Currently active" : "Tap to switch"}
-                    </Text>
-                  </View>
-
-                  {isActive && (
-                    <View className="w-2 h-2 rounded-full bg-primary" />
+                  {/* Clean radio checkmark */}
+                  {isActive ? (
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={19}
+                      color={colors.gold}
+                    />
+                  ) : (
+                    <Ionicons
+                      name="ellipse-outline"
+                      size={18}
+                      color={colors.borderMuted}
+                    />
                   )}
                 </TouchableOpacity>
               );

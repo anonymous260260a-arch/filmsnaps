@@ -20,11 +20,13 @@ export function ProgressiveImage({
   style,
   resizeMode = "cover",
   placeholderColor = colors.bg,
+  blurRadius,
 }: {
   uri: string;
   style?: any;
   resizeMode?: "cover" | "contain" | "stretch" | "repeat" | "center";
   placeholderColor?: string;
+  blurRadius?: number;
 }) {
   const contentFit = resizeModeToContentFit(resizeMode);
 
@@ -38,6 +40,7 @@ export function ProgressiveImage({
         contentFit={contentFit}
         transition={200}
         cachePolicy="memory-disk"
+        blurRadius={blurRadius}
       />
     </View>
   );

@@ -14,6 +14,7 @@ import {
   TouchableOpacity,
   ScrollView,
   useWindowDimensions,
+  Keyboard,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -30,11 +31,9 @@ import {
 import { tmdbApi } from "../../lib/api";
 import { filterTmdbAnime } from "../../lib/tmdb";
 import { MediaCard } from "../../components/MediaCard";
-import { EmptyState } from "../../components/EmptyState";
 import { ProgressiveImage } from "../../components/ProgressiveImage";
 import type { Movie } from "@filmsnaps/shared";
 import { useSettings } from "@/lib/settings";
-import { SwipeExemptScrollView } from "../../components/SwipeExemptScroll";
 import { colors } from "../../theme/colors";
 import {
   animeSearch,
@@ -43,11 +42,15 @@ import {
   type ScoredAnimeResult,
 } from "../../lib/anime/search";
 import { lookupMal } from "../../lib/anime/resolve";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { LinearGradient } from "expo-linear-gradient";
+import * as Haptics from "expo-haptics";
 
 const NUM_COLUMNS = 3;
-const GAP = 8;
+const GAP = 10;
 const PADDING = 16;
 const ITEMS_PER_PAGE = 20;
+const RECENT_SEARCHES_KEY = "@filmsnaps:recent_searches";
 
 type MediaTypeFilter = "movie_tv" | "anime";
 type SortOption =
@@ -61,6 +64,78 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "primary_release_date.desc", label: "Latest" },
 ];
 
+const POPULAR_SEARCH_TOPICS = [
+  "Oppenheimer",
+  "Dune",
+  "Stranger Things",
+  "Attack on Titan",
+  "Spider-Man",
+  "Interstellar",
+  "Jujutsu Kaisen",
+  "Breaking Bad",
+];
+
+const ANIME_POPULAR_TOPICS = [
+  "Solo Leveling",
+  "Demon Slayer",
+  "Jujutsu Kaisen",
+  "One Piece",
+  "Bleach",
+  "Chainsaw Man",
+  "Death Note",
+];
+
+const GENRE_CARDS = [
+  {
+    id: 28,
+    name: "Action",
+    icon: "flash-outline",
+    colors: ["#E11D48", "#881337"],
+  },
+  {
+    id: 878,
+    name: "Sci-Fi",
+    icon: "planet-outline",
+    colors: ["#2563EB", "#1E3A8A"],
+  },
+  {
+    id: 35,
+    name: "Comedy",
+    icon: "happy-outline",
+    colors: ["#D97706", "#78350F"],
+  },
+  {
+    id: 18,
+    name: "Drama",
+    icon: "film-outline",
+    colors: ["#7C3AED", "#4C1D95"],
+  },
+  {
+    id: 27,
+    name: "Horror",
+    icon: "skull-outline",
+    colors: ["#475569", "#0F172A"],
+  },
+  {
+    id: 10749,
+    name: "Romance",
+    icon: "heart-outline",
+    colors: ["#DB2777", "#831843"],
+  },
+  {
+    id: 53,
+    name: "Thriller",
+    icon: "eye-outline",
+    colors: ["#059669", "#064E3B"],
+  },
+  {
+    id: 16,
+    name: "Animation",
+    icon: "sparkles-outline",
+    colors: ["#CA8A04", "#713F12"],
+  },
+];
+
 export default function SearchScreen() {
   const nav = useSafeNavigation();
   const router = useRouter();
@@ -71,12 +146,58 @@ export default function SearchScreen() {
 
   // ── Search state ──
   const [query, setQuery] = useState("");
+  const [isFocused, setIsFocused] = useState(false);
   const debouncedQuery = useDebounce(query, 300);
   const isSearching = debouncedQuery.length >= 2;
 
+  // ── Recent Searches ──
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+
+  useEffect(() => {
+    AsyncStorage.getItem(RECENT_SEARCHES_KEY)
+      .then((val) => {
+        if (val) {
+          try {
+            setRecentSearches(JSON.parse(val));
+          } catch {}
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const saveRecentSearch = useCallback((term: string) => {
+    const trimmed = term.trim();
+    if (trimmed.length < 2) return;
+    setRecentSearches((prev) => {
+      const next = [
+        trimmed,
+        ...prev.filter((t) => t.toLowerCase() !== trimmed.toLowerCase()),
+      ].slice(0, 8);
+      AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(next)).catch(
+        () => {},
+      );
+      return next;
+    });
+  }, []);
+
+  const removeRecentSearch = useCallback((term: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setRecentSearches((prev) => {
+      const next = prev.filter((t) => t !== term);
+      AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(next)).catch(
+        () => {},
+      );
+      return next;
+    });
+  }, []);
+
+  const clearAllRecentSearches = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setRecentSearches([]);
+    AsyncStorage.removeItem(RECENT_SEARCHES_KEY).catch(() => {});
+  }, []);
+
   // ── Filters ──
-  // Auto-select by the global Hard Mode Split: anime mode shows the anime
-  // filter, movie_tv mode shows the combined movie/TV filter.
   const [mediaTypeFilter, setMediaTypeFilter] = useState<MediaTypeFilter>(
     settings.mode === "anime" ? "anime" : "movie_tv",
   );
@@ -91,7 +212,7 @@ export default function SearchScreen() {
   const consumedMoviePage = useRef<number>(0);
   const consumedTvPage = useRef<number>(0);
 
-  // ── Anime mode (filtered via the media-type toggle) ──
+  // ── Anime mode ──
   const isAnimeMode = mediaTypeFilter === "anime";
   const [animeResults, setAnimeResults] = useState<ScoredAnimeResult[]>([]);
   const [animeLoading, setAnimeLoading] = useState(false);
@@ -102,14 +223,11 @@ export default function SearchScreen() {
     selectedGenreIds.length > 0 || mediaTypeFilter !== "movie_tv";
 
   // ── Hooks ──
-
-  // Search mode hooks
   const searchResult = useSearch(
     isSearching ? debouncedQuery : "",
     isSearching ? page : 1,
   );
 
-  // Discover/filter mode hooks — memoize params to keep query key stable
   const movieParams = useMemo(
     () => ({
       genreIds: selectedGenreIds.length ? selectedGenreIds : undefined,
@@ -127,11 +245,6 @@ export default function SearchScreen() {
     [selectedGenreIds, sortBy, page],
   );
 
-  // Only fetch the discover queries when there is actually something to load:
-  // a genre is selected, a media-type filter is active, or a search is running.
-  // Without this, the hooks fire a "discover with no filters" request on every
-  // mount (even when nothing is selected), flipping isLoading true and briefly
-  // painting the skeleton loader over the empty state.
   const movieEnabled =
     !isSearching && hasFilters && mediaTypeFilter === "movie_tv";
   const tvEnabled =
@@ -140,10 +253,8 @@ export default function SearchScreen() {
   const movieFilterResult = useFilteredMovies(movieParams, movieEnabled);
   const tvFilterResult = useFilteredTVShows(tvParams, tvEnabled);
 
-  // ── Determine active data source ──
   const isFilterMode = isSearching || hasFilters;
 
-  // Whether we're currently fetching the current page
   const isFetchingCurrent = isSearching
     ? searchResult.isFetching
     : movieFilterResult.isFetching || tvFilterResult.isFetching;
@@ -160,7 +271,6 @@ export default function SearchScreen() {
     });
   }, []);
 
-  // Search mode — single source, simple
   useEffect(() => {
     if (!isSearching) return;
     if (!searchResult.data?.results) return;
@@ -168,10 +278,18 @@ export default function SearchScreen() {
       (item: any) => item.media_type === "movie" || item.media_type === "tv",
     );
     const clean = filterTmdbAnime(next);
-    if (clean.length) appendUnique(clean);
-  }, [searchResult.data, isSearching, appendUnique]);
+    if (clean.length) {
+      appendUnique(clean);
+      saveRecentSearch(debouncedQuery);
+    }
+  }, [
+    searchResult.data,
+    isSearching,
+    appendUnique,
+    debouncedQuery,
+    saveRecentSearch,
+  ]);
 
-  // Movie source — gated by consumed page counter
   useEffect(() => {
     if (isSearching) return;
     if (mediaTypeFilter !== "movie_tv") return;
@@ -193,7 +311,6 @@ export default function SearchScreen() {
     page,
   ]);
 
-  // TV source — gated by consumed page counter
   useEffect(() => {
     if (isSearching) return;
     if (mediaTypeFilter !== "movie_tv") return;
@@ -209,8 +326,6 @@ export default function SearchScreen() {
     appendUnique(filterTmdbAnime(tagged));
   }, [tvFilterResult.data, isSearching, mediaTypeFilter, appendUnique, page]);
 
-  // Anime mode — independent of TMDB movie/TV hooks (AniList-backed).
-  // Only meaningful with a typed query, like the other search sources.
   useEffect(() => {
     if (!isAnimeMode) {
       if (animeResults.length || animeError) {
@@ -232,7 +347,9 @@ export default function SearchScreen() {
     animeSearch(q, 30)
       .then((res) => {
         if (id !== animeReqId.current) return;
-        setAnimeResults(rankAnimeSearchResults(res.results, q, 24));
+        const ranked = rankAnimeSearchResults(res.results, q, 24);
+        setAnimeResults(ranked);
+        if (ranked.length > 0) saveRecentSearch(q);
       })
       .catch(() => {
         if (id !== animeReqId.current) return;
@@ -242,9 +359,8 @@ export default function SearchScreen() {
         if (id !== animeReqId.current) return;
         setAnimeLoading(false);
       });
-  }, [isAnimeMode, debouncedQuery]);
+  }, [isAnimeMode, debouncedQuery, saveRecentSearch]);
 
-  // ── Check if there are more pages ──
   const hasMorePages = useMemo(() => {
     if (isSearching) {
       const totalPages = searchResult.data?.total_pages ?? 0;
@@ -264,7 +380,6 @@ export default function SearchScreen() {
     mediaTypeFilter,
   ]);
 
-  // ── Reset when filters change ──
   const resetPagination = useCallback(() => {
     setPage(1);
     setAllResults([]);
@@ -273,10 +388,9 @@ export default function SearchScreen() {
     consumedTvPage.current = 0;
   }, []);
 
-  // ── Handlers ──
-
   const toggleGenre = useCallback(
     (genreId: number) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       setSelectedGenreIds((prev) =>
         prev.includes(genreId)
           ? prev.filter((g) => g !== genreId)
@@ -289,6 +403,7 @@ export default function SearchScreen() {
 
   const handleMediaTypeChange = useCallback(
     (type: MediaTypeFilter) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       setMediaTypeFilter(type);
       resetPagination();
     },
@@ -297,6 +412,7 @@ export default function SearchScreen() {
 
   const handleSortChange = useCallback(
     (opt: SortOption) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       setSortBy(opt);
       setShowSortPicker(false);
       resetPagination();
@@ -305,6 +421,7 @@ export default function SearchScreen() {
   );
 
   const handleClearFilters = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedGenreIds([]);
     setMediaTypeFilter(settings.mode === "anime" ? "anime" : "movie_tv");
     setSortBy("popularity.desc");
@@ -320,6 +437,8 @@ export default function SearchScreen() {
 
   const handleItemPress = useCallback(
     (item: Movie) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      if (query.trim()) saveRecentSearch(query.trim());
       const mediaType = (item as any)._mediaType || item.media_type || "movie";
       const id = item.id;
 
@@ -341,22 +460,13 @@ export default function SearchScreen() {
         nav.push(`/movie/${id}`);
       }
     },
-    [nav, router, queryClient],
+    [nav, router, queryClient, query, saveRecentSearch],
   );
 
-  const handleQueryChange = useCallback(
-    (text: string) => {
-      setQuery(text);
-      resetPagination();
-    },
-    [resetPagination],
-  );
-
-  // Anime result → resolve its TMDB twin, then open the native detail page
-  // (which carries the anime threading into the player). If no twin exists,
-  // surface that the title isn't on FilmSnaps.
   const handleAnimePress = useCallback(
     (item: AnimeResult) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      if (query.trim()) saveRecentSearch(query.trim());
       const twin = lookupMal(item.malId);
       const tmdbShowId = twin?.tmdbShowId;
       const tmdbMovieId = twin?.tmdbMovieId;
@@ -382,19 +492,37 @@ export default function SearchScreen() {
         );
       }
     },
-    [nav, router, queryClient],
+    [nav, router, queryClient, query, saveRecentSearch],
   );
 
-  // ── Dimensions ──
+  const handleQueryChange = useCallback(
+    (text: string) => {
+      setQuery(text);
+      resetPagination();
+    },
+    [resetPagination],
+  );
+
+  const selectTopic = useCallback(
+    (topic: string) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setQuery(topic);
+      saveRecentSearch(topic);
+      resetPagination();
+    },
+    [resetPagination, saveRecentSearch],
+  );
+
+  // Exact mathematical width for 3-column cards
   const itemWidth = useMemo(
-    () => (SCREEN_WIDTH - PADDING * 2 - GAP * (NUM_COLUMNS - 1)) / NUM_COLUMNS,
+    () =>
+      Math.floor(
+        (SCREEN_WIDTH - PADDING * 2 - GAP * (NUM_COLUMNS - 1)) / NUM_COLUMNS,
+      ),
     [SCREEN_WIDTH],
   );
-  const itemHeight = useMemo(() => itemWidth * 1.5 + 40, [itemWidth]);
+  const itemHeight = useMemo(() => Math.round(itemWidth * 1.5), [itemWidth]);
 
-  // ── Loading state (first page only) ──
-  // Gated on isFilterMode so that an unselected, empty search page (nothing
-  // typed, no filters) never shows the skeleton — there is nothing to load.
   const isFirstLoad =
     isFilterMode &&
     page === 1 &&
@@ -402,43 +530,81 @@ export default function SearchScreen() {
       ? searchResult.isLoading
       : movieFilterResult.isLoading || tvFilterResult.isLoading);
 
+  const activeSortLabel =
+    SORT_OPTIONS.find((s) => s.value === sortBy)?.label || "Popular";
+
   return (
     <View
-      className="flex-1 bg-void"
-      style={{ paddingTop: insets.top, backgroundColor: colors.bg }}
+      style={{
+        flex: 1,
+        backgroundColor: colors.bg,
+        paddingTop: insets.top,
+      }}
     >
-      {/* ─── Search header ─── */}
-      <View className="px-4 pt-4 pb-2">
+      {/* ─── Search Header ─── */}
+      <View
+        style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 10 }}
+      >
         <Text
           style={{
             fontFamily: "PlayfairDisplay_700Bold",
-            fontSize: 22,
+            fontSize: 24,
             color: colors.textPrimary,
+            marginBottom: 12,
           }}
         >
           Search
         </Text>
 
-        {/* Search bar */}
-        <View className="flex-row items-center bg-elevated rounded-[50] px-4 h-11 border-[0.5px] border-subtle">
-          <Ionicons name="search" size={18} color={colors.textSecondary} />
+        {/* Search Bar Input */}
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            height: 46,
+            borderRadius: 14,
+            paddingHorizontal: 14,
+            backgroundColor: colors.bgCard,
+            borderWidth: 0.5,
+            borderColor: isFocused ? colors.gold : colors.borderSubtle,
+          }}
+        >
+          <Ionicons
+            name="search"
+            size={18}
+            color={isFocused ? colors.gold : colors.textSecondary}
+          />
           <TextInput
-            className="flex-1 text-text-primary text-base ml-2.5"
-            placeholder="Movies, TV shows..."
+            style={{
+              flex: 1,
+              marginLeft: 10,
+              fontSize: 14,
+              fontFamily: "Inter_500Medium",
+              color: colors.textPrimary,
+              paddingVertical: 0,
+            }}
+            placeholder="Search movies, TV shows, anime..."
             placeholderTextColor={colors.textTertiary}
             value={query}
             onChangeText={handleQueryChange}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
             autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="search"
+            onSubmitEditing={() => {
+              if (query.trim()) saveRecentSearch(query.trim());
+            }}
           />
           {query.length > 0 && (
             <TouchableOpacity
               onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 setQuery("");
                 resetPagination();
               }}
               activeOpacity={0.7}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
               <Ionicons
                 name="close-circle"
@@ -449,138 +615,290 @@ export default function SearchScreen() {
           )}
         </View>
 
-        {/* Media type toggle — two-way: Movies/TV vs Anime (auto-selected by mode) */}
-        <View className="flex-row mt-3 bg-zinc-900 rounded-lg p-0.5">
-          {(["movie_tv", "anime"] as const).map((type) => (
-            <TouchableOpacity
-              key={type}
-              onPress={() => handleMediaTypeChange(type)}
-              className={`flex-1 py-2 rounded-md items-center ${mediaTypeFilter === type ? "bg-primary" : ""}`}
-              activeOpacity={0.7}
-            >
-              <Text
-                className={`text-xs font-bold ${mediaTypeFilter === type ? "text-void" : "text-zinc-400"}`}
-              >
-                {type === "movie_tv" ? "Movies / TV" : "Anime"}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Genre pills + sort */}
-        <View className="flex-row items-center mt-3">
-          <SwipeExemptScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            className="flex-1"
-            contentContainerStyle={{ gap: 6 }}
+        {/* Segmented Mode Switcher */}
+        <View style={{ marginTop: 10 }}>
+          <View
+            style={{
+              flexDirection: "row",
+              backgroundColor: colors.bgCard,
+              borderRadius: 12,
+              padding: 3,
+              borderWidth: 0.5,
+              borderColor: colors.borderSubtle,
+            }}
           >
-            {Object.entries(MOVIE_GENRES)
-              .slice(0, 10)
-              .map(([id, name]) => (
+            {(["movie_tv", "anime"] as const).map((type) => {
+              const active = mediaTypeFilter === type;
+              return (
                 <TouchableOpacity
-                  key={id}
-                  onPress={() => toggleGenre(Number(id))}
-                  activeOpacity={0.7}
-                  className={`px-3 py-1.5 rounded-full border ${
-                    selectedGenreIds.includes(Number(id))
-                      ? "border-primary bg-primary/10"
-                      : "border-zinc-700 bg-zinc-800/50"
-                  }`}
+                  key={type}
+                  onPress={() => handleMediaTypeChange(type)}
+                  activeOpacity={0.75}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 7,
+                    borderRadius: 9,
+                    alignItems: "center",
+                    backgroundColor: active ? colors.gold : "transparent",
+                  }}
                 >
                   <Text
-                    className={`text-[10px] font-semibold ${
-                      selectedGenreIds.includes(Number(id))
-                        ? "text-primary"
-                        : "text-zinc-300"
-                    }`}
+                    style={{
+                      fontSize: 12,
+                      fontFamily: "Inter_600SemiBold",
+                      color: active ? colors.bg : colors.textSecondary,
+                    }}
                   >
-                    {name}
+                    {type === "movie_tv" ? "Movies & TV" : "Anime"}
                   </Text>
                 </TouchableOpacity>
-              ))}
-          </SwipeExemptScrollView>
-          {/* Sort button */}
-          <TouchableOpacity
-            onPress={() => setShowSortPicker((p) => !p)}
-            className="ml-2 w-9 h-9 rounded-full bg-zinc-800 items-center justify-center"
-            activeOpacity={0.7}
-          >
-            <Ionicons
-              name="funnel-outline"
-              size={16}
-              color={colors.textSecondary}
-            />
-          </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
 
-        {/* Sort picker */}
-        {showSortPicker && (
-          <View className="mt-2 bg-zinc-900 rounded-xl p-1 border border-zinc-700">
-            {SORT_OPTIONS.map((opt) => (
-              <TouchableOpacity
-                key={opt.value}
-                onPress={() => handleSortChange(opt.value)}
-                className={`px-4 py-2.5 rounded-lg ${sortBy === opt.value ? "bg-primary/20" : ""}`}
-                activeOpacity={0.7}
+        {/* Genre Pills & Sort Button */}
+        {!isAnimeMode && (
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              marginTop: 10,
+            }}
+          >
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 6, paddingRight: 8 }}
+            >
+              {Object.entries(MOVIE_GENRES)
+                .slice(0, 10)
+                .map(([id, name]) => {
+                  const numId = Number(id);
+                  const isSelected = selectedGenreIds.includes(numId);
+                  return (
+                    <TouchableOpacity
+                      key={id}
+                      onPress={() => toggleGenre(numId)}
+                      activeOpacity={0.75}
+                      style={{
+                        paddingHorizontal: 12,
+                        paddingVertical: 5,
+                        borderRadius: 9999,
+                        backgroundColor: isSelected
+                          ? "rgba(212, 162, 55, 0.18)"
+                          : colors.bgCard,
+                        borderWidth: 0.5,
+                        borderColor: isSelected
+                          ? colors.gold
+                          : colors.borderSubtle,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          fontFamily: "Inter_600SemiBold",
+                          color: isSelected
+                            ? colors.gold
+                            : colors.textSecondary,
+                        }}
+                      >
+                        {name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+            </ScrollView>
+
+            {/* Sort Button */}
+            <TouchableOpacity
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setShowSortPicker((p) => !p);
+              }}
+              activeOpacity={0.75}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                height: 28,
+                paddingHorizontal: 10,
+                borderRadius: 9999,
+                backgroundColor: showSortPicker ? colors.gold : colors.bgCard,
+                borderWidth: 0.5,
+                borderColor: showSortPicker ? colors.gold : colors.borderSubtle,
+                gap: 4,
+              }}
+            >
+              <Ionicons
+                name="swap-vertical-outline"
+                size={13}
+                color={showSortPicker ? colors.bg : colors.gold}
+              />
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontFamily: "Inter_600SemiBold",
+                  color: showSortPicker ? colors.bg : colors.textSecondary,
+                }}
               >
-                <Text
-                  className={`text-sm ${sortBy === opt.value ? "text-primary font-bold" : "text-zinc-300"}`}
-                >
-                  {opt.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
+                {activeSortLabel}
+              </Text>
+            </TouchableOpacity>
           </View>
         )}
 
-        {/* Clear filters */}
-        {hasFilters && (
-          <TouchableOpacity
-            onPress={handleClearFilters}
-            className="self-start mt-2"
-            activeOpacity={0.7}
+        {/* Sort Picker Dropdown */}
+        {showSortPicker && (
+          <View
+            style={{
+              marginTop: 8,
+              backgroundColor: colors.bgCard,
+              borderRadius: 14,
+              borderWidth: 0.5,
+              borderColor: colors.borderSubtle,
+              overflow: "hidden",
+            }}
           >
-            <Text className="text-primary text-xs font-semibold">
-              Clear filters
-            </Text>
-          </TouchableOpacity>
+            {SORT_OPTIONS.map((opt, idx) => {
+              const isSelected = sortBy === opt.value;
+              return (
+                <TouchableOpacity
+                  key={opt.value}
+                  onPress={() => handleSortChange(opt.value)}
+                  activeOpacity={0.75}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    borderBottomWidth:
+                      idx === SORT_OPTIONS.length - 1 ? 0 : 0.5,
+                    borderBottomColor: colors.borderSubtle,
+                    backgroundColor: isSelected
+                      ? "rgba(212, 162, 55, 0.1)"
+                      : colors.bgCard,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontFamily: "Inter_600SemiBold",
+                      color: isSelected ? colors.gold : colors.textPrimary,
+                    }}
+                  >
+                    {opt.label}
+                  </Text>
+                  {isSelected && (
+                    <Ionicons name="checkmark" size={16} color={colors.gold} />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+
+        {/* Active Filters Clear Row */}
+        {hasFilters && (
+          <View
+            style={{ flexDirection: "row", alignItems: "center", marginTop: 8 }}
+          >
+            <TouchableOpacity
+              onPress={handleClearFilters}
+              activeOpacity={0.7}
+              style={{ flexDirection: "row", alignItems: "center" }}
+            >
+              <Ionicons name="close-circle" size={13} color={colors.gold} />
+              <Text
+                style={{
+                  color: colors.gold,
+                  fontSize: 11,
+                  fontFamily: "Inter_600SemiBold",
+                  marginLeft: 4,
+                }}
+              >
+                Clear all filters
+              </Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 
       {/* ─── Content ─── */}
-      {isAnimeMode ? (
-        // Anime mode — AniList-backed grid; tapping opens the TMDB twin.
+      {isAnimeMode && isSearching ? (
+        // Anime Search Results
         <View style={{ flex: 1 }}>
           {animeLoading ? (
-            <View className="flex-1 items-center justify-center">
+            <View
+              style={{
+                flex: 1,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
               <ActivityIndicator size="large" color={colors.gold} />
             </View>
           ) : animeError ? (
-            <View className="flex-1 items-center justify-center px-8">
+            <View
+              style={{
+                flex: 1,
+                alignItems: "center",
+                justifyContent: "center",
+                paddingHorizontal: 32,
+              }}
+            >
               <Ionicons
                 name="alert-circle-outline"
-                size={44}
-                color={colors.progressTrack}
+                size={42}
+                color={colors.error}
               />
-              <Text className="text-zinc-400 text-sm mt-4 text-center">
+              <Text
+                style={{
+                  color: colors.textSecondary,
+                  fontSize: 13,
+                  fontFamily: "Inter_500Medium",
+                  marginTop: 12,
+                  textAlign: "center",
+                }}
+              >
                 {animeError}
               </Text>
             </View>
           ) : animeResults.length === 0 ? (
-            <View className="flex-1 items-center justify-center px-8">
+            <View
+              style={{
+                flex: 1,
+                alignItems: "center",
+                justifyContent: "center",
+                paddingHorizontal: 32,
+              }}
+            >
               <Ionicons
-                name="tv-outline"
-                size={48}
-                color={colors.progressTrack}
+                name="search-outline"
+                size={44}
+                color={colors.textTertiary}
               />
-              <Text className="text-zinc-400 text-base mt-4 text-center">
-                {debouncedQuery.trim().length >= 2
-                  ? "No anime found"
-                  : "Search anime titles"}
+              <Text
+                style={{
+                  color: colors.textPrimary,
+                  fontSize: 16,
+                  fontFamily: "Inter_600SemiBold",
+                  marginTop: 12,
+                  textAlign: "center",
+                }}
+              >
+                No anime found
               </Text>
-              <Text className="text-zinc-600 text-sm mt-2 text-center">
-                Type at least 2 characters
+              <Text
+                style={{
+                  color: colors.textTertiary,
+                  fontSize: 12,
+                  fontFamily: "Inter_400Regular",
+                  marginTop: 4,
+                  textAlign: "center",
+                }}
+              >
+                Try searching with a Japanese or English title
               </Text>
             </View>
           ) : (
@@ -590,33 +908,47 @@ export default function SearchScreen() {
               numColumns={NUM_COLUMNS}
               keyboardShouldPersistTaps="always"
               contentContainerStyle={{
-                padding: PADDING,
-                paddingBottom: 100,
-                flexGrow: 1,
+                paddingHorizontal: PADDING,
+                paddingBottom: 100 + insets.bottom,
+                gap: GAP,
               }}
               columnWrapperStyle={{ gap: GAP }}
               showsVerticalScrollIndicator={false}
               renderItem={({ item }) => (
                 <TouchableOpacity
-                  activeOpacity={0.8}
+                  activeOpacity={0.75}
                   onPress={() => handleAnimePress(item)}
-                  style={{ width: itemWidth, marginBottom: 14 }}
+                  style={{ width: itemWidth, marginBottom: 8 }}
                 >
                   <View
-                    className="bg-elevated rounded-xl overflow-hidden"
-                    style={{ width: itemWidth, height: itemHeight - 40 }}
+                    style={{
+                      width: itemWidth,
+                      height: itemHeight,
+                      borderRadius: 12,
+                      overflow: "hidden",
+                      backgroundColor: colors.bgElevated,
+                      borderWidth: 0.5,
+                      borderColor: colors.borderSubtle,
+                    }}
                   >
                     {item.image ? (
                       <ProgressiveImage
                         uri={item.image}
-                        style={{ width: itemWidth, height: itemHeight - 40 }}
+                        style={{ width: itemWidth, height: itemHeight }}
                         resizeMode="cover"
                       />
                     ) : (
-                      <View className="flex-1 items-center justify-center bg-elevated">
+                      <View
+                        style={{
+                          flex: 1,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          backgroundColor: colors.bgSurface,
+                        }}
+                      >
                         <Ionicons
                           name="tv-outline"
-                          size={28}
+                          size={24}
                           color={colors.textTertiary}
                         />
                       </View>
@@ -639,29 +971,32 @@ export default function SearchScreen() {
           )}
         </View>
       ) : isFirstLoad ? (
-        // Loading skeleton
+        // Loading Skeleton Grid
         <View
           style={{
             flexDirection: "row",
             flexWrap: "wrap",
-            padding: PADDING,
+            paddingHorizontal: PADDING,
             gap: GAP,
+            paddingTop: 8,
           }}
         >
           {Array.from({ length: 9 }).map((_, i) => (
-            <View key={i} style={{ width: itemWidth }}>
+            <View key={i} style={{ width: itemWidth, marginBottom: 12 }}>
               <View
                 style={{
                   width: itemWidth,
                   height: itemHeight,
                   borderRadius: 12,
                   backgroundColor: colors.skeletonBg,
+                  borderWidth: 0.5,
+                  borderColor: colors.borderSubtle,
                 }}
               />
               <View
                 style={{
                   width: "80%",
-                  height: 10,
+                  height: 12,
                   borderRadius: 4,
                   backgroundColor: colors.skeletonBg,
                   marginTop: 6,
@@ -671,16 +1006,17 @@ export default function SearchScreen() {
           ))}
         </View>
       ) : isFilterMode ? (
-        // Search or filter results — grid with infinite scroll
+        // Movies & TV Search / Filter Grid
         <FlatList
           data={allResults}
           keyExtractor={(item: any) => String(item.id)}
           numColumns={NUM_COLUMNS}
           keyboardShouldPersistTaps="always"
           contentContainerStyle={{
-            padding: PADDING,
-            paddingBottom: 100,
-            flexGrow: 1,
+            paddingHorizontal: PADDING,
+            paddingBottom: 100 + insets.bottom,
+            paddingTop: 8,
+            gap: GAP,
           }}
           columnWrapperStyle={{ gap: GAP }}
           showsVerticalScrollIndicator={false}
@@ -689,21 +1025,42 @@ export default function SearchScreen() {
           ListEmptyComponent={
             !isFirstLoad && page === 1 && !isFetchingCurrent ? (
               <View
-                className="flex-1 items-center justify-center px-8"
-                style={{ paddingTop: 80 }}
+                style={{
+                  flex: 1,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  paddingHorizontal: 32,
+                  paddingTop: 60,
+                }}
               >
                 <Ionicons
                   name="search-outline"
-                  size={48}
-                  color={colors.progressTrack}
+                  size={44}
+                  color={colors.textTertiary}
                 />
-                <Text className="text-zinc-400 text-base mt-4 text-center">
-                  {hasFilters ? "No results found" : "Search movies & TV shows"}
+                <Text
+                  style={{
+                    color: colors.textPrimary,
+                    fontSize: 16,
+                    fontFamily: "Inter_600SemiBold",
+                    marginTop: 12,
+                    textAlign: "center",
+                  }}
+                >
+                  {hasFilters ? "No matching titles" : "No results found"}
                 </Text>
-                <Text className="text-zinc-600 text-sm mt-2 text-center">
+                <Text
+                  style={{
+                    color: colors.textTertiary,
+                    fontSize: 12,
+                    fontFamily: "Inter_400Regular",
+                    marginTop: 4,
+                    textAlign: "center",
+                  }}
+                >
                   {hasFilters
-                    ? "Try different filters or search term"
-                    : "Type at least 2 characters, or use filters to discover"}
+                    ? "Try adjusting your filters or search keywords"
+                    : "Try searching with a different name or spelling"}
                 </Text>
               </View>
             ) : null
@@ -711,17 +1068,28 @@ export default function SearchScreen() {
           ListFooterComponent={
             allResults.length > 0 ? (
               <View
-                className="self-center mt-4 mb-8 py-1"
-                style={{ minHeight: 40 }}
+                style={{
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginTop: 12,
+                  marginBottom: 16,
+                  minHeight: 36,
+                }}
               >
                 {isFetchingCurrent ? (
-                  <View className="flex-row items-center" style={{ gap: 8 }}>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
                     <ActivityIndicator size="small" color={colors.gold} />
                     <Text
                       style={{
                         color: colors.textSecondary,
                         fontSize: 12,
-                        fontFamily: "Inter_400Regular",
+                        fontFamily: "Inter_500Medium",
                       }}
                     >
                       Loading more...
@@ -742,47 +1110,242 @@ export default function SearchScreen() {
             ) : null
           }
           renderItem={({ item }) => (
-            <View style={{ width: itemWidth }}>
+            <View style={{ width: itemWidth, marginBottom: 8 }}>
               <MediaCard item={item} onPress={handleItemPress} />
             </View>
           )}
         />
       ) : (
-        // Empty state — no query, no filters
-        // Show a helpful prompt instead of carousel previews
-        <View className="flex-1 items-center justify-center px-8">
-          <Ionicons name="search" size={48} color={colors.progressTrack} />
-          <Text className="text-zinc-400 text-base mt-4 text-center">
-            Search movies & TV shows
-          </Text>
-          <Text className="text-zinc-600 text-sm mt-2 text-center">
-            Type at least 2 characters, or use filters to discover
-          </Text>
-          {/* Quick filter chips to get started */}
-          <View
-            className="flex-row flex-wrap justify-center mt-6"
-            style={{ gap: 8 }}
-          >
-            {[
-              { id: 28, name: "Action" },
-              { id: 35, name: "Comedy" },
-              { id: 18, name: "Drama" },
-              { id: 878, name: "Sci-Fi" },
-              { id: 53, name: "Thriller" },
-            ].map((g) => (
-              <TouchableOpacity
-                key={g.id}
-                onPress={() => toggleGenre(g.id)}
-                activeOpacity={0.7}
-                className="px-4 py-2 rounded-full border border-zinc-700 bg-zinc-800/50"
+        // ── Pre-Search Discovery Hub (When query is empty & no genre is selected) ──
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{
+            paddingHorizontal: 16,
+            paddingBottom: 100 + insets.bottom,
+            paddingTop: 8,
+          }}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* 1. Recent Searches */}
+          {recentSearches.length > 0 && (
+            <View style={{ marginBottom: 22 }}>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 10,
+                }}
               >
-                <Text className="text-zinc-300 text-xs font-semibold">
-                  {g.name}
+                <Text
+                  style={{
+                    fontSize: 13,
+                    fontFamily: "Inter_600SemiBold",
+                    color: colors.textPrimary,
+                  }}
+                >
+                  Recent Searches
                 </Text>
-              </TouchableOpacity>
-            ))}
+                <TouchableOpacity
+                  onPress={clearAllRecentSearches}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontFamily: "Inter_500Medium",
+                      color: colors.textTertiary,
+                    }}
+                  >
+                    Clear all
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  gap: 8,
+                }}
+              >
+                {recentSearches.map((term) => (
+                  <View
+                    key={term}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      backgroundColor: colors.bgCard,
+                      borderRadius: 9999,
+                      paddingLeft: 12,
+                      paddingRight: 6,
+                      paddingVertical: 6,
+                      borderWidth: 0.5,
+                      borderColor: colors.borderSubtle,
+                    }}
+                  >
+                    <TouchableOpacity
+                      onPress={() => selectTopic(term)}
+                      activeOpacity={0.75}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontFamily: "Inter_500Medium",
+                          color: colors.textSecondary,
+                          marginRight: 6,
+                        }}
+                      >
+                        {term}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => removeRecentSearch(term)}
+                      activeOpacity={0.7}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <Ionicons
+                        name="close"
+                        size={14}
+                        color={colors.textTertiary}
+                      />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* 2. Trending / Quick Suggestions */}
+          <View style={{ marginBottom: 24 }}>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                marginBottom: 10,
+                gap: 6,
+              }}
+            >
+              <Ionicons name="flame" size={15} color={colors.gold} />
+              <Text
+                style={{
+                  fontSize: 13,
+                  fontFamily: "Inter_600SemiBold",
+                  color: colors.textPrimary,
+                }}
+              >
+                {isAnimeMode ? "Popular Anime" : "Trending Searches"}
+              </Text>
+            </View>
+
+            <View
+              style={{
+                flexDirection: "row",
+                flexWrap: "wrap",
+                gap: 8,
+              }}
+            >
+              {(isAnimeMode ? ANIME_POPULAR_TOPICS : POPULAR_SEARCH_TOPICS).map(
+                (topic) => (
+                  <TouchableOpacity
+                    key={topic}
+                    onPress={() => selectTopic(topic)}
+                    activeOpacity={0.75}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 7,
+                      borderRadius: 9999,
+                      backgroundColor: colors.bgCard,
+                      borderWidth: 0.5,
+                      borderColor: colors.borderSubtle,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        fontFamily: "Inter_500Medium",
+                        color: colors.textSecondary,
+                      }}
+                    >
+                      {topic}
+                    </Text>
+                  </TouchableOpacity>
+                ),
+              )}
+            </View>
           </View>
-        </View>
+
+          {/* 3. Explore by Genre Bento */}
+          {!isAnimeMode && (
+            <View>
+              <Text
+                style={{
+                  fontSize: 13,
+                  fontFamily: "Inter_600SemiBold",
+                  color: colors.textPrimary,
+                  marginBottom: 12,
+                }}
+              >
+                Browse by Genre
+              </Text>
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  gap: 10,
+                }}
+              >
+                {GENRE_CARDS.map((g) => {
+                  const cardW = Math.floor((SCREEN_WIDTH - 32 - 10) / 2);
+                  return (
+                    <TouchableOpacity
+                      key={g.id}
+                      onPress={() => toggleGenre(g.id)}
+                      activeOpacity={0.8}
+                      style={{
+                        width: cardW,
+                        height: 64,
+                        borderRadius: 14,
+                        overflow: "hidden",
+                        borderWidth: 0.5,
+                        borderColor: colors.borderSubtle,
+                      }}
+                    >
+                      <LinearGradient
+                        colors={[g.colors[0], g.colors[1]]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={{
+                          flex: 1,
+                          padding: 12,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            fontFamily: "Inter_600SemiBold",
+                            color: "#fff",
+                          }}
+                        >
+                          {g.name}
+                        </Text>
+                        <Ionicons
+                          name={g.icon as any}
+                          size={22}
+                          color="rgba(255, 255, 255, 0.7)"
+                        />
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+        </ScrollView>
       )}
     </View>
   );

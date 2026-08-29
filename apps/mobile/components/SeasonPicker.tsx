@@ -2,10 +2,10 @@
  * SeasonPicker — horizontal season chips + vertical episode list for TV detail screens.
  *
  * Features:
- * - Download summary bar per season (showing completion progress)
- * - State-aware episode download icons (downloaded / downloading / paused / failed / not-downloaded)
- * - Batch download for remaining episodes
- * - Per-episode play + smart download
+ * - 16:9 thumbnail preview with progress overlay
+ * - Clean typography hierarchy (EPISODE number + title + runtime)
+ * - Download summary bar per season
+ * - State-aware episode download icons
  */
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -26,7 +26,6 @@ import { getImageUrl } from "@filmsnaps/shared";
 import { ProgressiveImage } from "./ProgressiveImage";
 import * as Haptics from "expo-haptics";
 import { useDownloadInfra, useSmartDownload } from "../lib/download/context";
-import { downloadToast } from "./DownloadToast";
 import type { MediaDownloadSummary } from "../lib/download/types";
 
 interface SeasonInfo {
@@ -43,20 +42,17 @@ interface EpisodeProgress {
 interface SeasonPickerProps {
   tmdbId: string;
   seasons: SeasonInfo[];
-  /** The season to default to (from resume state) */
   initialSeason?: number;
   backdropPath?: string | null;
-  /** NEW: For download-aware features */
   title?: string;
   posterPath?: string | null;
   downloadSummary?: MediaDownloadSummary;
 }
 
 const COLLAPSE_THRESHOLD = 8;
+const THUMB_W = 88;
+const THUMB_H = 50; // 16:9
 
-/**
- * Format runtime in minutes -> "52m" / "1h 02m"
- */
 function formatRuntime(minutes: number): string {
   if (!minutes || minutes < 1) return "";
   const h = Math.floor(minutes / 60);
@@ -76,7 +72,6 @@ export function SeasonPicker({
   downloadSummary,
 }: SeasonPickerProps) {
   const nav = useSafeNavigation();
-  const { width: SCREEN_WIDTH } = useWindowDimensions();
   const [selectedSeason, setSelectedSeason] = useState<number>(
     initialSeason ?? seasons[0]?.seasonNumber ?? 1,
   );
@@ -85,17 +80,15 @@ export function SeasonPicker({
     Record<string, EpisodeProgress>
   >({});
   const chipScrollRef = useRef<ScrollView>(null);
-  const { store, enqueue } = useDownloadInfra();
+  const { store } = useDownloadInfra();
   const { smartDownload } = useSmartDownload();
 
-  // Fetch episodes for the selected season
   const { data: seasonData, isLoading } = useSeasonEpisodes(
     tmdbId,
     selectedSeason,
   );
   const episodes = seasonData?.episodes ?? [];
 
-  // Load per-episode progress when episodes arrive
   useEffect(() => {
     if (episodes.length === 0) return;
 
@@ -117,9 +110,7 @@ export function SeasonPicker({
               percent: p.percent,
             };
           }
-        } catch {
-          // silently ignore
-        }
+        } catch {}
       }),
     ).then(() => {
       if (!cancelled) setEpisodeProgress(progressMap);
@@ -130,7 +121,6 @@ export function SeasonPicker({
     };
   }, [tmdbId, selectedSeason, episodes]);
 
-  // Auto-scroll chip to selected season
   const handleSeasonChange = useCallback(
     (seasonNum: number) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -148,12 +138,10 @@ export function SeasonPicker({
     [seasons],
   );
 
-  // Find the season summary for the currently selected season
   const seasonSummary = downloadSummary?.seasons?.find(
     (s) => s.seasonNumber === selectedSeason,
   );
 
-  // Get download status for a specific episode
   const getEpisodeDownloadStatus = useCallback(
     (episodeNumber: number) => {
       const all = store.getAll();
@@ -169,7 +157,6 @@ export function SeasonPicker({
     [store, tmdbId, selectedSeason],
   );
 
-  // Download single episode
   const handleEpisodeDownload = useCallback(
     async (episodeNumber: number) => {
       await smartDownload({
@@ -198,11 +185,10 @@ export function SeasonPicker({
       {/* Section header */}
       <Text
         style={{
-          fontSize: 16,
+          fontSize: 15,
           fontFamily: "Inter_600SemiBold",
           color: colors.textPrimary,
-          marginBottom: 10,
-          paddingHorizontal: 0,
+          marginBottom: 12,
         }}
       >
         Episodes
@@ -225,24 +211,26 @@ export function SeasonPicker({
             <TouchableOpacity
               key={season.seasonNumber}
               onPress={() => handleSeasonChange(season.seasonNumber)}
-              activeOpacity={0.7}
+              activeOpacity={0.75}
               style={{
                 paddingHorizontal: 14,
                 paddingVertical: 7,
-                borderRadius: 20,
-                backgroundColor: isActive ? colors.goldBadge : colors.zincBg,
+                borderRadius: 9999,
+                backgroundColor: isActive
+                  ? colors.gold
+                  : "rgba(14, 14, 17, 0.75)",
                 borderWidth: 0.5,
-                borderColor: isActive ? colors.gold : colors.bgSubtle,
+                borderColor: isActive ? colors.gold : colors.borderSubtle,
                 flexDirection: "row",
                 alignItems: "center",
-                gap: 4,
+                gap: 5,
               }}
             >
               <Text
                 style={{
                   fontSize: 12,
-                  fontFamily: "Inter_500Medium",
-                  color: isActive ? colors.gold : colors.textSecondary,
+                  fontFamily: "Inter_600SemiBold",
+                  color: isActive ? colors.bg : colors.textSecondary,
                 }}
               >
                 {season.name || `Season ${season.seasonNumber}`}
@@ -250,9 +238,9 @@ export function SeasonPicker({
               {sSummary && sSummary.downloadedEpisodes > 0 && (
                 <Text
                   style={{
-                    fontSize: 9,
+                    fontSize: 10,
                     fontFamily: "Inter_700Bold",
-                    color: isActive ? colors.successGreen : colors.textTertiary,
+                    color: isActive ? colors.bg : colors.successGreen,
                   }}
                 >
                   {sSummary.downloadedEpisodes}/{sSummary.totalEpisodes}
@@ -267,10 +255,12 @@ export function SeasonPicker({
       {seasonSummary && seasonSummary.downloadedEpisodes > 0 && (
         <View
           style={{
-            backgroundColor: colors.zincBg,
+            backgroundColor: "rgba(14, 14, 17, 0.75)",
             borderRadius: 10,
             padding: 12,
-            marginBottom: 10,
+            marginBottom: 12,
+            borderWidth: 0.5,
+            borderColor: colors.borderSubtle,
           }}
         >
           <View
@@ -284,7 +274,7 @@ export function SeasonPicker({
               style={{
                 fontSize: 12,
                 color: colors.textSecondary,
-                fontWeight: "500",
+                fontFamily: "Inter_500Medium",
               }}
             >
               {seasonSummary.downloadedEpisodes}/{seasonSummary.totalEpisodes}{" "}
@@ -295,7 +285,7 @@ export function SeasonPicker({
                 style={{
                   fontSize: 12,
                   color: colors.gold,
-                  fontWeight: "500",
+                  fontFamily: "Inter_500Medium",
                   marginLeft: 4,
                 }}
               >
@@ -333,15 +323,15 @@ export function SeasonPicker({
           <ActivityIndicator size="small" color={colors.gold} />
         </View>
       ) : displayEpisodes.length > 0 ? (
-        <View style={{ gap: 6 }}>
-          {displayEpisodes.map((episode: any, index: number) => {
+        <View style={{ gap: 8 }}>
+          {displayEpisodes.map((episode: any) => {
             const epNum = episode.episode_number;
             const epKey = `${selectedSeason}-${epNum}`;
             const progress = episodeProgress[epKey];
             const stillUri = episode.still_path
-              ? getImageUrl(episode.still_path, "w185")
+              ? getImageUrl(episode.still_path, "w300")
               : backdropPath
-                ? getImageUrl(backdropPath, "w185")
+                ? getImageUrl(backdropPath, "w300")
                 : null;
 
             const dlStatus = getEpisodeDownloadStatus(epNum);
@@ -357,85 +347,65 @@ export function SeasonPicker({
                       : `?backdrop=${backdropPath || ""}`;
                   nav.push(`${base}${qs}`);
                 }}
-                activeOpacity={0.7}
+                activeOpacity={0.75}
                 style={{
                   flexDirection: "row",
                   alignItems: "center",
-                  paddingVertical: 8,
-                  paddingHorizontal: 4,
-                  borderBottomWidth:
-                    index < displayEpisodes.length - 1 ? 0.5 : 0,
-                  borderBottomColor: colors.bgElevated,
+                  padding: 8,
+                  backgroundColor: "rgba(14, 14, 17, 0.45)",
+                  borderRadius: 12,
+                  borderWidth: 0.5,
+                  borderColor: colors.borderSubtle,
                 }}
               >
-                {/* Episode thumbnail */}
-                {stillUri ? (
-                  <ProgressiveImage
-                    uri={stillUri}
-                    style={{
-                      width: 60,
-                      height: 34,
-                      borderRadius: 4,
-                      backgroundColor: colors.bgElevated,
-                    }}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View
-                    style={{
-                      width: 60,
-                      height: 34,
-                      borderRadius: 4,
-                      backgroundColor: colors.bgElevated,
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Ionicons
-                      name="tv-outline"
-                      size={14}
-                      color={colors.textTertiary}
-                    />
-                  </View>
-                )}
-
-                {/* Episode info */}
-                <View className="flex-1 ml-3">
-                  <View className="flex-row items-center">
-                    <Text
-                      className="flex-1"
+                {/* 16:9 Thumbnail container */}
+                <View
+                  style={{
+                    width: THUMB_W,
+                    height: THUMB_H,
+                    borderRadius: 8,
+                    overflow: "hidden",
+                    backgroundColor: colors.bgElevated,
+                    position: "relative",
+                  }}
+                >
+                  {stillUri ? (
+                    <ProgressiveImage
+                      uri={stillUri}
                       style={{
-                        fontSize: 13,
-                        fontFamily: "Inter_500Medium",
-                        color: colors.textPrimary,
+                        width: THUMB_W,
+                        height: THUMB_H,
+                        borderRadius: 8,
                       }}
-                      numberOfLines={1}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View
+                      style={{
+                        width: THUMB_W,
+                        height: THUMB_H,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
                     >
-                      E{epNum} · {episode.name || "Untitled"}
-                    </Text>
-                    {episode.runtime ? (
-                      <Text
-                        style={{
-                          fontSize: 10,
-                          color: colors.textTertiary,
-                          fontFamily: "Inter_400Regular",
-                          marginLeft: 6,
-                        }}
-                      >
-                        {formatRuntime(episode.runtime)}
-                      </Text>
-                    ) : null}
-                  </View>
+                      <Ionicons
+                        name="tv-outline"
+                        size={16}
+                        color={colors.textTertiary}
+                      />
+                    </View>
+                  )}
 
-                  {/* Progress bar */}
+                  {/* Progress bar at bottom of thumbnail */}
                   {progress && progress.percent > 0 && (
                     <View
                       style={{
-                        height: 2,
-                        borderRadius: 1,
-                        backgroundColor: colors.progressTrackAlt,
-                        marginTop: 4,
-                        overflow: "hidden",
+                        position: "absolute",
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        height: 2.5,
+                        backgroundColor: "rgba(0,0,0,0.6)",
                       }}
                     >
                       <View
@@ -444,98 +414,87 @@ export function SeasonPicker({
                           height: "100%",
                           backgroundColor:
                             progress.percent >= 0.95
-                              ? colors.success
+                              ? colors.successGreen
                               : colors.gold,
-                          borderRadius: 1,
                         }}
                       />
                     </View>
                   )}
                 </View>
 
-                {/* Actions */}
+                {/* Episode info */}
+                <View className="flex-1 ml-3 justify-center">
+                  <Text
+                    style={{
+                      fontSize: 10,
+                      fontFamily: "Inter_600SemiBold",
+                      color: colors.gold,
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    EPISODE {epNum}
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontFamily: "Inter_600SemiBold",
+                      color: colors.textPrimary,
+                      marginTop: 2,
+                    }}
+                    numberOfLines={1}
+                  >
+                    {episode.name || `Episode ${epNum}`}
+                  </Text>
+
+                  {episode.runtime ? (
+                    <Text
+                      style={{
+                        fontSize: 10,
+                        color: colors.textTertiary,
+                        fontFamily: "Inter_400Regular",
+                        marginTop: 2,
+                      }}
+                    >
+                      {formatRuntime(episode.runtime)}
+                    </Text>
+                  ) : null}
+                </View>
+
+                {/* Actions: Download */}
                 <View
                   className="flex-row items-center"
-                  style={{ gap: 4, marginLeft: 8 }}
+                  style={{ marginLeft: 6 }}
                 >
-                  {/* Play icon */}
-                  <Ionicons
-                    name="play"
-                    size={14}
-                    color={colors.textSecondary}
-                  />
-
-                  {/* Download icon - state-aware */}
                   {dlStatus === "completed" ? (
                     <View
                       style={{
-                        width: 36,
-                        height: 36,
+                        width: 32,
+                        height: 32,
                         alignItems: "center",
                         justifyContent: "center",
                       }}
                     >
                       <Ionicons
                         name="checkmark-circle"
-                        size={16}
+                        size={18}
                         color={colors.successGreen}
                       />
                     </View>
                   ) : dlStatus === "downloading" || dlStatus === "pending" ? (
                     <View
                       style={{
-                        width: 36,
-                        height: 36,
+                        width: 32,
+                        height: 32,
                         alignItems: "center",
                         justifyContent: "center",
                       }}
                     >
                       <Ionicons
                         name="cloud-download"
-                        size={14}
+                        size={16}
                         color={colors.gold}
                       />
                     </View>
-                  ) : dlStatus === "paused" ? (
-                    <TouchableOpacity
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        handleEpisodeDownload(epNum);
-                      }}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      style={{
-                        width: 36,
-                        height: 36,
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <Ionicons
-                        name="play-circle-outline"
-                        size={16}
-                        color={colors.gold}
-                      />
-                    </TouchableOpacity>
-                  ) : dlStatus === "failed" ? (
-                    <TouchableOpacity
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        handleEpisodeDownload(epNum);
-                      }}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      style={{
-                        width: 36,
-                        height: 36,
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <Ionicons
-                        name="alert-circle-outline"
-                        size={16}
-                        color={colors.error}
-                      />
-                    </TouchableOpacity>
                   ) : (
                     <TouchableOpacity
                       onPress={(e) => {
@@ -545,16 +504,18 @@ export function SeasonPicker({
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       accessibilityLabel={`Download episode ${epNum}`}
                       style={{
-                        width: 36,
-                        height: 36,
+                        width: 32,
+                        height: 32,
                         alignItems: "center",
                         justifyContent: "center",
+                        borderRadius: 16,
+                        backgroundColor: "rgba(255,255,255,0.06)",
                       }}
                     >
                       <Ionicons
                         name="download-outline"
-                        size={14}
-                        color={colors.textTertiary}
+                        size={15}
+                        color={colors.textSecondary}
                       />
                     </TouchableOpacity>
                   )}
@@ -570,20 +531,22 @@ export function SeasonPicker({
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 setExpanded(!expanded);
               }}
-              activeOpacity={0.7}
+              activeOpacity={0.75}
               style={{
                 paddingVertical: 10,
                 alignItems: "center",
-                borderRadius: 8,
-                backgroundColor: colors.zincBg,
-                marginTop: 2,
+                borderRadius: 10,
+                backgroundColor: "rgba(14, 14, 17, 0.6)",
+                borderWidth: 0.5,
+                borderColor: colors.borderSubtle,
+                marginTop: 4,
               }}
             >
               <Text
                 style={{
                   color: colors.gold,
                   fontSize: 12,
-                  fontFamily: "Inter_500Medium",
+                  fontFamily: "Inter_600SemiBold",
                 }}
               >
                 {expanded

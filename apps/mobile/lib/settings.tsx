@@ -86,11 +86,12 @@ const DEFAULT_SETTINGS: AppSettings = {
   // Onboarding
   hasSeenWelcome: false,
 
-  // Home page section order (hero is always first and excluded from this list)
+  // Home page section order (hero is always first and excluded from this list).
+  // Continue Watching sits right below the hero by default.
   homeRowOrder: [
+    "continue-watching",
     "trending-movies",
     "trending-tv",
-    "continue-watching",
     "popular-movies",
   ],
 

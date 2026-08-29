@@ -1,22 +1,13 @@
 /**
- * DownloadToast — Global toast overlay for download events.
- *
- * Uses a singleton event emitter so any module (manager, context, hooks)
- * can trigger a toast without being inside the React tree.
+ * DownloadToast — Modern luxury floating toast notification.
  *
  * Architecture:
- *   downloadToast.emit({ message, type })   ← from anywhere
+ *   downloadToast.emit({ message, type })   ← from anywhere in the app
  *          ↓
- *   DownloadToastView (mounted in _layout.tsx)  ← renders the UI
+ *   DownloadToastView (mounted in _layout.tsx)
  *          ↓
- *   Animated slide-up from bottom edge (above tab bar), auto-dismiss after duration.
- *
- * Types:
- *   success   → green checkmark  (completed)
- *   error     → red alert        (failed, errors)
- *   info      → gold icon        (started, paused, resumed)
- *   warning   → amber warning    (storage, network warnings)
- *   persistent → gold download   (actively downloading — pinning variant)
+ *   Smooth spring slide-down floating glass capsule from top of screen,
+ *   crisp typography, vibrant icon accents, and auto-dismiss.
  */
 
 import React, { useEffect, useState, useRef, useCallback } from "react";
@@ -31,6 +22,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
+import * as Haptics from "expo-haptics";
 
 // ─── Types ───
 
@@ -39,11 +31,11 @@ export type ToastType = "success" | "error" | "info" | "warning";
 export interface ToastEvent {
   message: string;
   type: ToastType;
-  /** Auto-dismiss in ms. Default 4000 for transient, longer for errors. */
+  /** Auto-dismiss in ms. Default 3000ms. */
   duration?: number;
-  /** Label for an action button (e.g. "Undo") */
+  /** Optional action button label */
   actionLabel?: string;
-  /** Callback when the action button is tapped */
+  /** Optional action button callback */
   onAction?: () => void;
 }
 
@@ -88,7 +80,7 @@ class ToastEmitter {
   }
 }
 
-/** Singleton — import and use directly */
+/** Singleton — import and use directly anywhere */
 export const downloadToast = new ToastEmitter();
 
 // ─── Player-aware toast queue ───
@@ -96,20 +88,17 @@ export const downloadToast = new ToastEmitter();
 let _playerActive = false;
 let _pendingToasts: ToastEvent[] = [];
 
-/** Set to true when full-screen player is active — holds non-error toasts for later delivery */
 export function setPlayerActive(active: boolean) {
   _playerActive = active;
   if (!active && _pendingToasts.length > 0) {
-    // Flush queued toasts with a small stagger
     const queue = [..._pendingToasts];
     _pendingToasts = [];
     queue.forEach((e, i) => {
-      setTimeout(() => downloadToast.emit(e), i * 500);
+      setTimeout(() => downloadToast.emit(e), i * 400);
     });
   }
 }
 
-// Patch the emit method to respect player-active state
 const _origEmit = downloadToast.emit.bind(downloadToast);
 downloadToast.emit = (event: ToastEvent) => {
   if (_playerActive && event.type !== "error") {
@@ -119,31 +108,31 @@ downloadToast.emit = (event: ToastEvent) => {
   _origEmit(event);
 };
 
-// ─── Icon + colour map ───
+// ─── Icon + Color Config ───
 
 const TOAST_CONFIG: Record<
   ToastType,
-  { icon: keyof typeof Ionicons.glyphMap; color: string; bg: string }
+  { icon: keyof typeof Ionicons.glyphMap; color: string; badgeBg: string }
 > = {
   success: {
     icon: "checkmark-circle",
-    color: colors.successGreen,
-    bg: "rgba(34,197,94,0.12)",
+    color: "#22C55E",
+    badgeBg: "rgba(34, 197, 94, 0.18)",
   },
   error: {
     icon: "alert-circle",
-    color: colors.error,
-    bg: "rgba(239,68,68,0.12)",
+    color: "#EF4444",
+    badgeBg: "rgba(239, 68, 68, 0.18)",
   },
   info: {
-    icon: "information-circle",
+    icon: "sparkles",
     color: colors.gold,
-    bg: "rgba(212,162,55,0.12)",
+    badgeBg: "rgba(212, 162, 55, 0.2)",
   },
   warning: {
     icon: "warning",
-    color: colors.amber,
-    bg: "rgba(245,158,11,0.12)",
+    color: "#F59E0B",
+    badgeBg: "rgba(245, 158, 11, 0.18)",
   },
 };
 
@@ -152,33 +141,42 @@ const TOAST_CONFIG: Record<
 export function DownloadToastView() {
   const [event, setEvent] = useState<ToastEvent | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const translateY = useRef(new Animated.Value(100)).current;
+  const translateY = useRef(new Animated.Value(-80)).current;
   const opacity = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.9)).current;
   const insets = useSafeAreaInsets();
 
-  // Bottom position: above tab bar (~72px) + bottom safe area + 8px gap
-  const bottomOffset =
-    Platform.OS === "ios"
-      ? 72 + insets.bottom + 8
-      : 72 + Math.max(insets.bottom, 8) + 4;
+  const topOffset = insets.top + (Platform.OS === "ios" ? 8 : 12);
 
-  // Subscribe to the emitter
   useEffect(() => {
     return downloadToast.subscribe((e) => {
-      // Clear existing timer
       if (timerRef.current) clearTimeout(timerRef.current);
 
-      // Set new event — triggers re-render
       setEvent(e);
 
-      // Animate in from below
-      translateY.setValue(100);
+      // Light haptic on appearance
+      if (e.type === "error") {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      } else {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+
+      // Smooth slide-down spring from top
+      translateY.setValue(-80);
       opacity.setValue(0);
+      scale.setValue(0.92);
+
       Animated.parallel([
         Animated.spring(translateY, {
           toValue: 0,
-          friction: 8,
-          tension: 80,
+          damping: 18,
+          stiffness: 220,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scale, {
+          toValue: 1,
+          damping: 18,
+          stiffness: 220,
           useNativeDriver: true,
         }),
         Animated.timing(opacity, {
@@ -188,8 +186,7 @@ export function DownloadToastView() {
         }),
       ]).start();
 
-      // Auto-dismiss
-      const duration = e.duration ?? (e.type === "error" ? 5000 : 3500);
+      const duration = e.duration ?? (e.type === "error" ? 4500 : 2800);
       timerRef.current = setTimeout(() => {
         dismissToast();
       }, duration);
@@ -199,8 +196,13 @@ export function DownloadToastView() {
   const dismissToast = useCallback(() => {
     Animated.parallel([
       Animated.timing(translateY, {
-        toValue: 100,
-        duration: 200,
+        toValue: -60,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      Animated.timing(scale, {
+        toValue: 0.92,
+        duration: 180,
         useNativeDriver: true,
       }),
       Animated.timing(opacity, {
@@ -211,7 +213,7 @@ export function DownloadToastView() {
     ]).start(() => {
       setEvent(null);
     });
-  }, []);
+  }, [opacity, scale, translateY]);
 
   const handlePress = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -228,105 +230,117 @@ export function DownloadToastView() {
 
   if (!event) return null;
 
-  const cfg = TOAST_CONFIG[event.type];
+  const cfg = TOAST_CONFIG[event.type] || TOAST_CONFIG.info;
 
   return (
     <Animated.View
       style={[
         styles.container,
         {
-          bottom: bottomOffset,
+          top: topOffset,
           opacity,
-          transform: [{ translateY }],
+          transform: [{ translateY }, { scale }],
         },
       ]}
       pointerEvents="box-none"
     >
       <TouchableOpacity
         onPress={handlePress}
-        activeOpacity={0.9}
-        style={[
-          styles.toast,
-          { borderLeftColor: cfg.color, backgroundColor: cfg.bg },
-        ]}
+        activeOpacity={0.88}
+        style={styles.toastCapsule}
       >
-        <View style={[styles.iconWrap, { backgroundColor: cfg.color + "1A" }]}>
-          <Ionicons name={cfg.icon} size={18} color={cfg.color} />
+        {/* Glowing Icon Badge */}
+        <View style={[styles.iconWrap, { backgroundColor: cfg.badgeBg }]}>
+          <Ionicons name={cfg.icon} size={16} color={cfg.color} />
         </View>
+
+        {/* Message */}
         <Text style={styles.message} numberOfLines={2}>
           {event.message}
         </Text>
+
+        {/* Action button or subtle close */}
         {event.actionLabel && event.onAction ? (
           <TouchableOpacity
             onPress={handleAction}
-            style={[styles.actionBtn, { backgroundColor: cfg.color + "25" }]}
-            activeOpacity={0.7}
+            style={[styles.actionBtn, { backgroundColor: cfg.color }]}
+            activeOpacity={0.75}
           >
-            <Text style={[styles.actionLabel, { color: cfg.color }]}>
-              {event.actionLabel}
-            </Text>
+            <Text style={styles.actionLabel}>{event.actionLabel}</Text>
           </TouchableOpacity>
         ) : (
-          <Ionicons
-            name="close"
-            size={14}
-            color={colors.textTertiary}
-            style={{ marginLeft: 6 }}
-          />
+          <View style={styles.closeWrap}>
+            <Ionicons name="close" size={14} color={colors.textTertiary} />
+          </View>
         )}
       </TouchableOpacity>
     </Animated.View>
   );
 }
 
-// ─── Styles ───
+// ─── Luxury Pill Capsule Styles ───
 
 const styles = StyleSheet.create({
   container: {
     position: "absolute",
-    left: 12,
-    right: 12,
-    zIndex: 9999,
+    left: 16,
+    right: 16,
+    zIndex: 99999,
     alignItems: "center",
   },
-  toast: {
+  toastCapsule: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    borderLeftWidth: 3,
-    maxWidth: "92%",
-    // Subtle shadow for depth
-    shadowColor: colors.voidBlack,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    paddingVertical: 9,
+    paddingLeft: 10,
+    paddingRight: 14,
+    borderRadius: 9999,
+    backgroundColor: "rgba(18, 18, 22, 0.94)",
+    borderWidth: 0.5,
+    borderColor: "rgba(255, 255, 255, 0.15)",
+    maxWidth: "96%",
+    // Ambient shadow
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.6,
+        shadowRadius: 18,
+      },
+      android: {
+        elevation: 16,
+      },
+    }),
   },
   iconWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     marginRight: 10,
   },
   message: {
-    flex: 1,
+    flexShrink: 1,
     fontSize: 13,
-    fontFamily: "Inter_500Medium",
+    fontFamily: "Inter_600SemiBold",
     color: colors.textPrimary,
     lineHeight: 18,
+    marginRight: 6,
+  },
+  closeWrap: {
+    marginLeft: 4,
+    opacity: 0.7,
   },
   actionBtn: {
     paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
+    paddingVertical: 4,
+    borderRadius: 9999,
     marginLeft: 8,
   },
   actionLabel: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
+    fontSize: 12,
+    fontFamily: "Inter_700Bold",
+    color: colors.bg,
   },
 });
