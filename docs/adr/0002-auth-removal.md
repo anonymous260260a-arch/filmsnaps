@@ -23,17 +23,17 @@ over a dead provider.
 
 ## What was removed
 
-| Path | What |
-| --- | --- |
-| `components/AuthProvider.tsx` | The no-op context + `useAuth` hook. |
-| `app/auth/layout.tsx` + `app/auth/page.tsx` | "Sign in" page. |
-| `app/reset-password/page.tsx` | "Password reset" page. |
-| `app/layout.tsx` | `<AuthProvider>` wrapper removed. |
-| `components/Header.tsx` | Desktop + mobile auth menus (Sign In / account dropdown) removed. |
-| `components/desktop/Sidebar.tsx` | Footer account row removed. |
-| `components/desktop/GlobalTopBar.tsx` | `/auth` breadcrumb entry removed. |
-| `app/saved/page.tsx` | "Sign in to save permanently" guest-notice link removed (saves are local-only). |
-| `app/robots.ts` | `/auth`, `/auth/callback`, `/reset-password` dropped from disallow. |
+| Path                                        | What                                                                            |
+| ------------------------------------------- | ------------------------------------------------------------------------------- |
+| `components/AuthProvider.tsx`               | The no-op context + `useAuth` hook.                                             |
+| `app/auth/layout.tsx` + `app/auth/page.tsx` | "Sign in" page.                                                                 |
+| `app/reset-password/page.tsx`               | "Password reset" page.                                                          |
+| `app/layout.tsx`                            | `<AuthProvider>` wrapper removed.                                               |
+| `components/Header.tsx`                     | Desktop + mobile auth menus (Sign In / account dropdown) removed.               |
+| `components/desktop/Sidebar.tsx`            | Footer account row removed.                                                     |
+| `components/desktop/GlobalTopBar.tsx`       | `/auth` breadcrumb entry removed.                                               |
+| `app/saved/page.tsx`                        | "Sign in to save permanently" guest-notice link removed (saves are local-only). |
+| `app/robots.ts`                             | `/auth`, `/auth/callback`, `/reset-password` dropped from disallow.             |
 
 ## Why remove rather than finish
 
@@ -55,5 +55,4 @@ over a dead provider.
 
 ## Related docs
 
-- [ADR 0001](0001-dormant-proxy-stack.md)
 - `docs/architecture.md` — web app overview.

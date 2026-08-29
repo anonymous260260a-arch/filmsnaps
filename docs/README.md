@@ -12,10 +12,9 @@ commit.
 
 ## Architecture decision records (ADR)
 
-| Doc                                         | Decision                                                                           |
-| ------------------------------------------- | ---------------------------------------------------------------------------------- |
-| [ADR 0001](adr/0001-dormant-proxy-stack.md) | Keep the dormant web proxy stack (`PROXIED_PROVIDERS` empty) as future capability. |
-| [ADR 0002](adr/0002-auth-removal.md)        | Remove the no-op web auth scaffolding — the app is fully anonymous.                |
+| Doc                                  | Decision                                                            |
+| ------------------------------------ | ------------------------------------------------------------------- |
+| [ADR 0002](adr/0002-auth-removal.md) | Remove the no-op web auth scaffolding — the app is fully anonymous. |
 
 ## App documentation
 

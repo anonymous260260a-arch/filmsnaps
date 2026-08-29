@@ -17,9 +17,8 @@ pages with sandboxed provider embeds.
 
 ```
 app/
-  api/                    API routes (tmdb, player proxy, video-extract, stream)
+  api/                    API routes (tmdb, player, stream, anime, blocklist)
   download/               Download landing page
-  exp/                    Experimental pages (showbox/watch)
   history/  saved/  search/  movie/[id]/  tv/[id]/  person/[id]/
   watch/[...id]/          Watch page (DesktopSecureWebview + React overlays)
   legal/  privacy/  how-it-works/  versions/
@@ -32,8 +31,8 @@ lib/
   tmdb.server.ts          TMDB client (server-only, reads TMDB_API_KEY)
   anime/                  Anime support: AniList search, MAL/AniList ID resolution
                           (OTA-bundled `anime-map.json`), threaded into watch pages
-  movieProviders/         Provider proxy stack (dormant) + protection engine
-  providers.js  moviebox.ts  showbox.ts  streamingMkvParser.ts
+  movieProviders/         CSP builder for cross-origin provider iframes
+  providers.js  streamingMkvParser.ts
 app/api/anime/           Anime resolution/search API routes (MAL/AniList IDs)
 ```
 
@@ -86,13 +85,11 @@ In Electron desktop, the provider embed loads in a native `WebContentsView` (not
 
 See [Desktop README](../desktop/README.md#webcontentsview-hybrid-phase-3) for architecture.
 
-## Note on the provider proxy
+## Provider embed security
 
-`lib/movieProviders/` contains a proxy stack (TLS fetch, flare-solverr,
-Cloudflare detection, protection engine) and `/api/player/[provider]`,
-`/api/[provider]/[...asset]` routes. These are **dormant**: the
-`PROXIED_PROVIDERS` set is empty, so none of the proxy routes are reachable in
-normal operation. The protection engine (`protection.ts`) is active and used by
-the desktop/mobile players via the shared guard; the proxy paths are preserved
-for future use. See [ADR 0001](../../docs/adr/0001-dormant-proxy-stack.md) and
-[docs/security.md](../../docs/security.md).
+Provider video players load in sandboxed cross-origin iframes. `lib/movieProviders/cspBuilder.ts`
+exposes `buildIframeCSP`, which emits the `csp=` attribute enforced by the
+parent page on the iframe — blocking crypto miners (`worker-src 'none'`),
+tracking beacons (restricted `connect-src`), and plugin-based ads
+(`object-src 'none'`) without any server-side proxy. The desktop/mobile
+players enforce the equivalent protection via the shared native guard.

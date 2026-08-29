@@ -85,21 +85,7 @@ interface WatchClientContentProps {
   initialAnilistId?: number;
 }
 
-// ── Embed URL builder — direct or proxied ────────────────────────
-
-/**
- * Providers that should be routed through our server-side proxy
- * for ad-blocking, tracker-filtering, and protection script injection.
- * Their HTML is fetched server-side, rewritten to block ads/trackers,
- * and injected with a runtime protection script.
- *
- * Proxied providers use TLS-fingerprinting HTTP (tlsFetch) to bypass
- * Cloudflare JS challenges at the network layer. Set FLARESOLVERR_URL
- * env var (Docker) for an additional headless-browser fallback.
- */
-// No providers currently use the server-side proxy.
-// Proxy code (protection.ts, tlsFetch, FlareSolverr) is preserved for future use.
-const PROXIED_PROVIDERS = new Set<string>([]);
+// ── Embed URL builder — direct ──────────────────────────────────
 
 /**
  * Providers that serve direct video file URLs (not iframe embeds).
@@ -161,14 +147,6 @@ function buildEmbedUrl(
     plat === "tv"
       ? provider.embed.tv(contentid, selectedSeason, activeEpisode, startAt)
       : provider.embed.movie(contentid, startAt);
-
-  // Route through server-side proxy to strip ads/trackers and
-  // inject the runtime protection script.
-  if (PROXIED_PROVIDERS.has(provider.id)) {
-    const [pathPart, queryPart] = embedPath.split("?");
-    const proxyPath = `/api/player/${provider.id}${pathPart}`;
-    return queryPart ? `${proxyPath}?${queryPart}` : proxyPath;
-  }
 
   return `${provider.baseUrl}${embedPath}`;
 }
@@ -902,8 +880,7 @@ function WatchClientContent({
                     src={embedUrl}
                     sandbox={currentProvider?.sandbox}
                     csp={
-                      currentProvider &&
-                      !PROXIED_PROVIDERS.has(currentProvider.id)
+                      currentProvider
                         ? buildIframeCSP(currentProvider)
                         : undefined
                     }

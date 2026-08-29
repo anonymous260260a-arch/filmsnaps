@@ -272,10 +272,11 @@ native:
 - **`next.config` / Netlify headers** — `X-Frame-Options`, `X-Content-Type-Options`,
   `Referrer-Policy`, `X-DNS-Prefetch-Control`, `Permissions-Policy` (see
   `netlify.toml`).
-- **Proxy routes** — `/api/player/[provider]` and `/api/[provider]/[...asset]`
-  exist for proxying provider requests server-side, but the `PROXIED_PROVIDERS`
-  set is **currently empty** (dormant — the proxy stack is preserved for future
-  use, not active).
+- **Provider iframe CSP** — the watch page (`apps/web/app/watch/[...id]/WatchClient.tsx`)
+  mounts provider embeds in a sandboxed cross-origin iframe whose `csp=` attribute
+  is set from `lib/movieProviders/cspBuilder.ts` (`buildIframeCSP`), enforcing
+  `worker-src 'none'`, restricted `connect-src`, and `object-src 'none'` in the
+  browser — no server-side proxy required.
 - **Watch page** — `apps/web/app/watch/[...id]/WatchClient.tsx` mounts provider
   embeds in a `<DesktopSecureWebview>` / sandboxed iframe with the shared
   protection script.
