@@ -7,15 +7,14 @@ import { initLongTaskMonitor } from "../lib/performance/long-task-monitor";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useFonts } from "@expo-google-fonts/inter";
 import {
-  useFonts,
-  PlayfairDisplay_700Bold,
-} from "@expo-google-fonts/playfair-display";
-import {
-  Inter_400Regular,
-  Inter_500Medium,
-  Inter_600SemiBold,
-} from "@expo-google-fonts/inter";
+  Geist_400Regular,
+  Geist_500Medium,
+  Geist_600SemiBold,
+  Geist_700Bold,
+} from "@expo-google-fonts/geist";
+import { Fraunces_700Bold } from "@expo-google-fonts/fraunces";
 import { UpdateOverlay } from "../components/UpdateOverlay";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { DownloadInfraProvider, useDownloadQueue } from "../lib/download";
@@ -44,11 +43,15 @@ const queryClient = new QueryClient({
 });
 
 export default function RootLayout() {
+  // Alias web fonts onto the app's existing string keys so every
+  // `fontFamily: "Inter_*"` / `"PlayfairDisplay_700Bold"` now renders Geist /
+  // Fraunces with no per-screen edits. Test swap — remove to revert.
   const [fontsLoaded] = useFonts({
-    PlayfairDisplay_700Bold,
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
+    Inter_400Regular: Geist_400Regular,
+    Inter_500Medium: Geist_500Medium,
+    Inter_600SemiBold: Geist_600SemiBold,
+    Inter_700Bold: Geist_700Bold,
+    PlayfairDisplay_700Bold: Fraunces_700Bold,
   });
 
   // FIX: Font loading timeout — prevents infinite spinner if fonts fail to load
