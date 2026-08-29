@@ -21,7 +21,6 @@ import {
   ActivityIndicator,
   StatusBar,
   ScrollView,
-  Image,
   Platform,
   LayoutAnimation,
   Dimensions,

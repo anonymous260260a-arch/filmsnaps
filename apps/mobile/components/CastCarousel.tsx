@@ -4,9 +4,10 @@
  */
 
 import React from "react";
-import { View, Text, ScrollView, Image, TouchableOpacity } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity } from "react-native";
 import { useSafeNavigation } from "@/lib/navigation";
 import { getImageUrl } from "@filmsnaps/shared";
+import { ProgressiveImage } from "./ProgressiveImage";
 
 interface CastMember {
   id: number;
@@ -47,8 +48,8 @@ export function CastCarousel({ cast }: CastCarouselProps) {
           >
             <View className="w-16 h-16 rounded-full bg-elevated overflow-hidden mb-2 ring-1 ring-white/[0.06]">
               {member.profile_path ? (
-                <Image
-                  source={{ uri: getImageUrl(member.profile_path, "w185") }}
+                <ProgressiveImage
+                  uri={getImageUrl(member.profile_path, "w185")}
                   style={{ width: "100%", height: "100%" }}
                   resizeMode="cover"
                 />

@@ -28,7 +28,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useDownloadInfra, useDownloadList } from "../../../lib/download";
 import { tmdbApi } from "../../../lib/api";
+import { getImageUrl } from "@filmsnaps/shared";
 import { colors } from "../../../theme/colors";
+import { ProgressiveImage } from "../../../components/ProgressiveImage";
 
 // ── API Base ──
 const FALIX_API_BASE = "https://download-falixm.koyeb.app";
@@ -352,7 +354,19 @@ function AboutDescription({ text }: { text: string }) {
 export default function FalixDownloadScreen() {
   const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
-  const rawParams = useLocalSearchParams<{ id: string[] }>();
+  const rawParams = useLocalSearchParams<{
+    id: string[];
+    poster?: string;
+    backdrop?: string;
+  }>();
+
+  // Prefer TMDB image paths threaded from the detail page (already cached
+  // from the home/detail render) so the falix page reuses the disk cache
+  // instead of re-downloading the falix CDN copy.
+  const tmdbPoster = (rawParams.poster as string) || "";
+  const tmdbBackdrop = (rawParams.backdrop as string) || "";
+  const posterUrl = tmdbPoster ? getImageUrl(tmdbPoster, "w342") : null;
+  const backdropUrl = tmdbBackdrop ? getImageUrl(tmdbBackdrop, "w780") : null;
 
   const params = useMemo(() => {
     const segs = rawParams.id ?? [];
@@ -651,8 +665,8 @@ export default function FalixDownloadScreen() {
               }}
             >
               {item.episode_backdrop && (
-                <Image
-                  source={{ uri: item.episode_backdrop }}
+                <ProgressiveImage
+                  uri={item.episode_backdrop}
                   style={{ width: 72, height: 42, borderRadius: 8 }}
                   resizeMode="cover"
                 />
@@ -1455,10 +1469,10 @@ export default function FalixDownloadScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.voidBlack }}>
       <StatusBar barStyle="light-content" />
 
-      {/* Backdrop */}
-      {data.backdrop && (
-        <Image
-          source={{ uri: data.backdrop }}
+      {/* Backdrop — reuse TMDB cached url (threaded from detail) if present */}
+      {(backdropUrl ?? data.backdrop) && (
+        <ProgressiveImage
+          uri={backdropUrl ?? data.backdrop}
           style={StyleSheet.absoluteFill}
           resizeMode="cover"
           blurRadius={Platform.OS === "android" ? 10 : 20}
@@ -1540,8 +1554,8 @@ export default function FalixDownloadScreen() {
           <View
             style={{ flexDirection: "row", alignItems: "flex-start", gap: 16 }}
           >
-            <Image
-              source={{ uri: data.poster }}
+            <ProgressiveImage
+              uri={posterUrl ?? data.poster}
               style={{
                 width: 115,
                 height: 172,

@@ -12,13 +12,13 @@ import {
   ActivityIndicator,
   Dimensions,
   Animated,
-  Image,
   Platform,
   Modal,
   ScrollView,
   AppState,
 } from "react-native";
 import { colors } from "../theme/colors";
+import { ProgressiveImage } from "./ProgressiveImage";
 import PlayerWebView, { PlayerWebViewRef } from "../modules/player-webview";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -407,12 +407,12 @@ function injectNextEpisodeBtn(
   if (!document.getElementById('__rn_next_ep_btn_css')) {
     var css = document.createElement('style');
     css.id = '__rn_next_ep_btn_css';
-    css.textContent = '#__rn_next_ep_btn{position:fixed!important;right:16px!important;bottom:30%!important;z-index:2147483647!important;display:flex!important;align-items:center!important;background:rgba(245,158,11,0.9)!important;color:#000!important;font-weight:700!important;font-size:14px!important;padding:12px 20px!important;border-radius:9999px!important;border:none!important;cursor:pointer!important;box-shadow:0 4px 12px rgba(0,0,0,0.3)!important;font-family:system-ui,-apple-system,sans-serif!important;gap:8px!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important;line-height:1!important;}';
+    css.textContent = '#__rn_next_ep_btn{position:fixed!important;right:24px!important;bottom:26%!important;z-index:2147483647!important;display:flex!important;align-items:center!important;background:rgba(14,14,17,0.92)!important;color:#D4A237!important;font-weight:600!important;font-size:13px!important;padding:10px 18px!important;border-radius:9999px!important;border:1px solid rgba(212,162,55,0.4)!important;cursor:pointer!important;box-shadow:0 6px 16px rgba(0,0,0,0.5)!important;backdrop-filter:blur(8px)!important;font-family:system-ui,-apple-system,sans-serif!important;gap:8px!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important;line-height:1!important;}@media (orientation: landscape){#__rn_next_ep_btn{bottom:28%!important;right:32px!important;}}@media (max-height: 480px){#__rn_next_ep_btn{bottom:32%!important;}}';
     document.head.appendChild(css);
   }
   var b = document.createElement('div');
   b.id = '__rn_next_ep_btn';
-  b.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg><span>Next Episode</span>';
+  b.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg><span>Next Episode</span>';
   b.onclick = function() {
     if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
       window.ReactNativeWebView.postMessage(JSON.stringify({type: "next-episode"}));
@@ -478,13 +478,13 @@ function injectPageSkipBtn(
   if (!document.getElementById('__rn_skip_btn_css')) {
     var css = document.createElement('style');
     css.id = '__rn_skip_btn_css';
-    css.textContent = '#__rn_skip_btn{position:fixed!important;right:16px!important;bottom:30%!important;z-index:2147483647!important;display:flex!important;align-items:center!important;background:rgba(245,158,11,0.9)!important;color:#000!important;font-weight:700!important;font-size:14px!important;padding:12px 20px!important;border-radius:9999px!important;border:none!important;cursor:pointer!important;box-shadow:0 4px 12px rgba(0,0,0,0.3)!important;font-family:system-ui,-apple-system,sans-serif!important;gap:8px!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important;line-height:1!important;}';
+    css.textContent = '#__rn_skip_btn{position:fixed!important;right:24px!important;bottom:26%!important;z-index:2147483647!important;display:flex!important;align-items:center!important;background:rgba(14,14,17,0.92)!important;color:#D4A237!important;font-weight:600!important;font-size:13px!important;padding:10px 18px!important;border-radius:9999px!important;border:1px solid rgba(212,162,55,0.4)!important;cursor:pointer!important;box-shadow:0 6px 16px rgba(0,0,0,0.5)!important;backdrop-filter:blur(8px)!important;font-family:system-ui,-apple-system,sans-serif!important;gap:8px!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important;line-height:1!important;}@media (orientation: landscape){#__rn_skip_btn{bottom:28%!important;right:32px!important;}}@media (max-height: 480px){#__rn_skip_btn{bottom:32%!important;}}';
     document.head.appendChild(css);
   }
 
   var b = document.createElement('div');
   b.id = '__rn_skip_btn';
-  b.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg><span>' + '${label}' + '</span>';
+  b.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg><span>' + '${label}' + '</span>';
   b.onclick = function() {
     var _t = ${endSec};
     var vids = document.querySelectorAll('video');
@@ -625,6 +625,11 @@ export function VideoWebView({
   useEffect(() => {
     if (!engineRef.current) return;
     const unsub = engineRef.current.subscribe((s) => {
+      if (s.currentTime > 0 || s.duration > 0) {
+        setLoadState((prev) =>
+          prev.type !== "PLAYING" ? { type: "PLAYING" } : prev,
+        );
+      }
       updateOverlaysRef.current?.(s);
     });
     return unsub;
@@ -658,7 +663,7 @@ export function VideoWebView({
   // starting the load immediately; the visual during load is unchanged.
   const watchMountMs = useRef<number>(Date.now()).current;
 
-  // Ã¢â€â‚¬Ã¢â€â‚¬ LOADING → SLOW transition (6s) Ã¢â€â‚¬Ã¢â€â‚¬
+  // ── LOADING → SLOW transition (10s) ──
   const slowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingGenRef = useRef(0);
   useEffect(() => {
@@ -672,29 +677,20 @@ export function VideoWebView({
             return prev;
           });
         }
-      }, 6000);
+      }, 10000);
     }
     return () => {
       if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
     };
   }, [loadState.type]);
 
-  // Ã¢â€â‚¬Ã¢â€â‚¬ Stall watchdog: check every 2s for progress stalling (8s threshold) Ã¢â€â‚¬Ã¢â€â‚¬
-  // ── Stall watchdog: REMOVED (2026-08-18) ──
-  // The progress protocol (fs:progress) carries only currentTime/duration, with
-  // no paused/buffering flag. A frozen currentTime is indistinguishable between
-  // (a) a dead source, (b) an intentional pause, and (c) a transient rebuffer —
-  // so any threshold false-positives on normal pause/buffer. The STALLED state
-  // and its "Source not responding" toast were removed. Real failures are still
-  // surfaced via the SLOW→FAILED path below.
-
-  // Ã¢â€â‚¬Ã¢â€â‚¬ SLOW → FAILED transition (15s total without recovery) Ã¢â€â‚¬Ã¢â€â‚¬
+  // ── SLOW → FAILED transition (30s total without recovery) ──
   const slowFailGenRef = useRef(0);
   const slowFailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (loadState.type === "SLOW") {
       const gen = ++slowFailGenRef.current;
-      // 9s more after SLOW entered (6s LOADING + 9s SLOW = 15s total)
+      // 20s more after SLOW entered (10s LOADING + 20s SLOW = 30s total)
       slowFailTimerRef.current = setTimeout(() => {
         if (gen === slowFailGenRef.current) {
           setLoadState((prev) => {
@@ -703,7 +699,7 @@ export function VideoWebView({
             return prev;
           });
         }
-      }, 9000);
+      }, 20000);
     }
     return () => {
       if (slowFailTimerRef.current) clearTimeout(slowFailTimerRef.current);
@@ -1633,6 +1629,16 @@ export function VideoWebView({
     setMountGen((g) => g + 1);
   };
 
+  const tryNextProvider = useCallback(() => {
+    if (providers.length <= 1) return;
+    const currentIndex = providers.findIndex((p) => p.id === providerId);
+    const nextIndex = (currentIndex + 1) % providers.length;
+    const nextP = providers[nextIndex];
+    if (nextP && nextP.id !== providerId) {
+      switchProvider(nextP.id);
+    }
+  }, [providers, providerId]);
+
   // Ã¢â€â‚¬Ã¢â€â‚¬ Empty URL guard Ã¢â€â‚¬Ã¢â€â‚¬
   if (!watchUrl) {
     return (
@@ -1808,7 +1814,7 @@ export function VideoWebView({
 
   return (
     <View className="flex-1 bg-black">
-      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Controls overlay Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      {/* ── Controls overlay ── */}
       <PlayerControlOverlay
         isFullscreen={isFullscreen}
         isTV={isTV}
@@ -1823,6 +1829,7 @@ export function VideoWebView({
         onEpisodePickerOpen={() => {
           setShowEpPicker(true);
         }}
+        onTryNextSource={tryNextProvider}
         currentSeason={currentSeason}
         currentEpisode={currentEpisode}
         providerDisplayName={
@@ -1845,7 +1852,7 @@ export function VideoWebView({
         getDisplayName={getProviderDisplayName}
       />
 
-      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Episode picker modal (TV only) Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      {/* ── Episode picker modal (TV only) ── */}
       {isTV && (
         <EpisodeRail
           visible={showEpPicker}
@@ -1865,7 +1872,7 @@ export function VideoWebView({
         />
       )}
 
-      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Audit Results Modal Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      {/* ── Audit Results Modal ── */}
       <Modal
         visible={auditHosts.length > 0 && !auditMode}
         transparent
@@ -1873,11 +1880,23 @@ export function VideoWebView({
         onRequestClose={() => setAuditHosts([])}
       >
         <View className="flex-1 bg-black/70 items-center justify-center px-6">
-          <View className="bg-zinc-900 rounded-2xl w-full max-h-[60%] p-5 border border-zinc-800">
+          <View
+            className="rounded-2xl w-full max-h-[60%] p-5 border"
+            style={{
+              backgroundColor: colors.bgCard,
+              borderColor: colors.borderSubtle,
+            }}
+          >
             <View className="flex-row items-center justify-between mb-4">
               <View className="flex-row items-center gap-2">
                 <Ionicons name="radio-outline" size={18} color={colors.gold} />
-                <Text className="text-white text-lg font-bold">
+                <Text
+                  className="text-base font-bold"
+                  style={{
+                    color: colors.textPrimary,
+                    fontFamily: "Inter_600SemiBold",
+                  }}
+                >
                   Discovered Domains
                 </Text>
               </View>
@@ -1886,20 +1905,35 @@ export function VideoWebView({
                 activeOpacity={0.7}
                 accessibilityLabel="Close audit results"
                 accessibilityRole="button"
+                className="w-7 h-7 rounded-full items-center justify-center border"
+                style={{
+                  backgroundColor: colors.bgSurface,
+                  borderColor: colors.borderSubtle,
+                }}
               >
-                <Ionicons name="close" size={20} color={colors.zinc500} />
+                <Ionicons name="close" size={16} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
-            <Text className="text-zinc-400 text-xs mb-3">
+            <Text
+              className="text-xs mb-3"
+              style={{ color: colors.textSecondary }}
+            >
               {auditHosts.length} unique hosts captured during this session.
             </Text>
             <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
-              {auditHosts.map((host, i) => (
+              {auditHosts.map((host) => (
                 <View
                   key={host}
-                  className="flex-row items-center py-2 px-3 rounded-lg mb-1 bg-zinc-800/50"
+                  className="flex-row items-center py-2 px-3 rounded-lg mb-1.5 border"
+                  style={{
+                    backgroundColor: colors.bgSurface,
+                    borderColor: colors.borderSubtle,
+                  }}
                 >
-                  <Text className="text-zinc-300 text-xs font-mono flex-1">
+                  <Text
+                    className="text-xs font-mono flex-1"
+                    style={{ color: colors.textSecondary }}
+                  >
                     {host}
                   </Text>
                 </View>
@@ -1912,10 +1946,14 @@ export function VideoWebView({
                 );
                 setAuditHosts([]);
               }}
-              className="bg-primary rounded-xl py-3 mt-4 items-center"
+              className="rounded-xl py-3 mt-4 items-center"
+              style={{ backgroundColor: colors.gold }}
               activeOpacity={0.8}
             >
-              <Text className="text-black font-bold text-sm">
+              <Text
+                className="font-bold text-sm"
+                style={{ color: colors.bg, fontFamily: "Inter_600SemiBold" }}
+              >
                 Export & Close
               </Text>
             </TouchableOpacity>
@@ -1923,7 +1961,7 @@ export function VideoWebView({
         </View>
       </Modal>
 
-      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Player area Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      {/* ── Player area ── */}
       <View
         style={
           !isFullscreen
@@ -1939,8 +1977,8 @@ export function VideoWebView({
         }
       >
         {backdropUrl && isLoadingState && (
-          <Image
-            source={{ uri: getImageUrl(backdropUrl, "w780") }}
+          <ProgressiveImage
+            uri={getImageUrl(backdropUrl, "w780")}
             style={{
               position: "absolute",
               top: 0,
@@ -1954,46 +1992,119 @@ export function VideoWebView({
         )}
         {/* FAILED state inline overlay — keeps blurred backdrop visible */}
         {isErrorState && (
-          <View className="absolute inset-0 z-30 items-center justify-center px-8">
-            <View className="w-16 h-16 rounded-full bg-red-500/10 items-center justify-center mb-5">
+          <View
+            className="absolute inset-0 z-30 items-center justify-center px-8"
+            style={{ backgroundColor: "rgba(7, 7, 8, 0.90)" }}
+          >
+            <View
+              className="w-16 h-16 rounded-2xl items-center justify-center mb-5 border"
+              style={{
+                backgroundColor: "rgba(239, 68, 68, 0.12)",
+                borderColor: "rgba(239, 68, 68, 0.3)",
+              }}
+            >
               <Ionicons name="alert-circle" size={32} color={colors.error} />
             </View>
-            <Text className="text-zinc-300 text-lg font-semibold mb-2">
+            <Text
+              className="text-lg font-semibold mb-2 text-center"
+              style={{
+                color: colors.textPrimary,
+                fontFamily: "Inter_600SemiBold",
+              }}
+            >
               {loadState.isCloudflare
-                ? "Source verifying you"
-                : "This source isn't working."}
+                ? "Source Verifying You"
+                : "Source Unavailable"}
             </Text>
-            <Text className="text-zinc-500 text-sm mb-8 text-center leading-5">
+            <Text
+              className="text-sm mb-6 text-center leading-6 max-w-xs"
+              style={{ color: colors.textSecondary }}
+            >
               {loadState.reason}
             </Text>
             <View
-              className="flex-row gap-3"
+              className="flex-row gap-2.5"
               style={{ flexWrap: "wrap", justifyContent: "center" }}
             >
+              {providers.length > 1 && (
+                <TouchableOpacity
+                  onPress={tryNextProvider}
+                  className="rounded-xl py-3 px-5 flex-row items-center shadow-md"
+                  style={{ backgroundColor: colors.gold }}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="play-forward" size={15} color={colors.bg} />
+                  <Text
+                    className="font-bold text-xs ml-2"
+                    style={{
+                      color: colors.bg,
+                      fontFamily: "Inter_600SemiBold",
+                    }}
+                  >
+                    Try Next Source
+                  </Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 onPress={retry}
-                className="bg-primary rounded-xl py-3 px-6 flex-row items-center"
+                className="rounded-xl py-3 px-5 flex-row items-center border"
+                style={{
+                  backgroundColor: colors.bgCard,
+                  borderColor: colors.borderSubtle,
+                }}
                 activeOpacity={0.8}
               >
-                <Ionicons name="refresh" size={16} color={colors.voidBlack} />
-                <Text className="text-black font-bold text-sm ml-2">Retry</Text>
+                <Ionicons name="refresh" size={15} color={colors.textPrimary} />
+                <Text
+                  className="font-bold text-xs ml-2"
+                  style={{
+                    color: colors.textPrimary,
+                    fontFamily: "Inter_600SemiBold",
+                  }}
+                >
+                  Retry
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setShowPicker(true)}
-                className="bg-zinc-800 rounded-xl py-3 px-6 flex-row items-center"
+                className="rounded-xl py-3 px-5 flex-row items-center border"
+                style={{
+                  backgroundColor: colors.bgCard,
+                  borderColor: colors.borderSubtle,
+                }}
                 activeOpacity={0.8}
               >
-                <Ionicons name="server" size={16} color={colors.zinc300} />
-                <Text className="text-zinc-300 font-bold text-sm ml-2">
-                  Switch Source
+                <Ionicons
+                  name="server-outline"
+                  size={15}
+                  color={colors.textSecondary}
+                />
+                <Text
+                  className="font-bold text-xs ml-2"
+                  style={{
+                    color: colors.textSecondary,
+                    fontFamily: "Inter_600SemiBold",
+                  }}
+                >
+                  All Sources
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleClose}
-                className="bg-zinc-900 rounded-xl py-3 px-6 flex-row items-center border border-zinc-700"
+                className="rounded-xl py-3 px-5 flex-row items-center border"
+                style={{
+                  backgroundColor: colors.bgSurface,
+                  borderColor: colors.borderSubtle,
+                }}
                 activeOpacity={0.8}
               >
-                <Text className="text-zinc-400 font-bold text-sm ml-2">
+                <Text
+                  className="font-bold text-xs"
+                  style={{
+                    color: colors.textSecondary,
+                    fontFamily: "Inter_500Medium",
+                  }}
+                >
                   Back to details
                 </Text>
               </TouchableOpacity>
@@ -2299,6 +2410,11 @@ export function VideoWebView({
                   currentTime: number,
                   duration: number,
                 ) => {
+                  if (currentTime > 0 || duration > 0) {
+                    setLoadState((prev) =>
+                      prev.type !== "PLAYING" ? { type: "PLAYING" } : prev,
+                    );
+                  }
                   engineRef.current?.ingest(currentTime, duration);
                 };
 
