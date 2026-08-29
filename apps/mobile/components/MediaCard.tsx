@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useMemo } from "react";
+import React, { useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -24,8 +24,8 @@ interface MediaCardProps {
  * Movie/show poster card with 2:3 aspect ratio.
  *
  * - Press animation: spring scale 1.0 -> 0.96
- * - Rating star inline with title (moved from poster overlay for cleaner look)
- * - Title in #A1A1AA, 12px, single line truncated
+ * - Subtle border highlight to define dark covers
+ * - Rating star inline with title
  */
 export function MediaCard({
   item,
@@ -88,8 +88,15 @@ export function MediaCard({
         }}
       >
         <View
-          className="bg-elevated rounded-xl overflow-hidden"
-          style={{ width: cardWidth, height: cardHeight }}
+          style={{
+            width: cardWidth,
+            height: cardHeight,
+            borderRadius: 12,
+            overflow: "hidden",
+            backgroundColor: colors.bgElevated,
+            borderWidth: 0.5,
+            borderColor: colors.borderSubtle,
+          }}
         >
           {item.poster_path ? (
             <ProgressiveImage
@@ -99,7 +106,12 @@ export function MediaCard({
             />
           ) : (
             <View className="flex-1 items-center justify-center bg-elevated px-2">
-              <Text className="text-text-tertiary text-3xl mb-1">{"🎬"}</Text>
+              <Ionicons
+                name="film-outline"
+                size={28}
+                color={colors.textTertiary}
+                style={{ marginBottom: 4 }}
+              />
               <Text
                 className="text-text-tertiary text-xs text-center"
                 numberOfLines={3}
@@ -126,9 +138,14 @@ export function MediaCard({
           )}
         </View>
 
-        {/* Title row with inline rating — no overlay on poster */}
+        {/* Title row with inline rating */}
         <View
-          style={{ flexDirection: "row", alignItems: "center", marginTop: 6 }}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginTop: 6,
+          }}
         >
           <Text
             style={{
@@ -136,15 +153,30 @@ export function MediaCard({
               fontSize: 12,
               fontFamily: "Inter_500Medium",
               flex: 1,
+              marginRight: 4,
             }}
             numberOfLines={1}
           >
             {item.title || item.name}
           </Text>
           {item.vote_average != null && item.vote_average > 0 && (
-            <Text style={{ color: colors.gold, fontSize: 10, marginLeft: 4 }}>
-              {"★"} {item.vote_average.toFixed(1)}
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Ionicons
+                name="star"
+                size={10}
+                color={colors.gold}
+                style={{ marginRight: 2 }}
+              />
+              <Text
+                style={{
+                  color: colors.gold,
+                  fontSize: 10,
+                  fontFamily: "Inter_600SemiBold",
+                }}
+              >
+                {item.vote_average.toFixed(1)}
+              </Text>
+            </View>
           )}
         </View>
       </Animated.View>

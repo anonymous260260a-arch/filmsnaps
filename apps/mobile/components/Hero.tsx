@@ -18,11 +18,12 @@ import type { Movie } from "@filmsnaps/shared";
 interface HeroProps {
   item: Movie;
   onWatchPress: (item: Movie) => void;
+  onDetailsPress?: (item: Movie) => void;
 }
 
-export function Hero({ item, onWatchPress }: HeroProps) {
+export function Hero({ item, onWatchPress, onDetailsPress }: HeroProps) {
   const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = useWindowDimensions();
-  const HERO_HEIGHT = Math.min(SCREEN_HEIGHT * 0.48, 400);
+  const HERO_HEIGHT = Math.min(SCREEN_HEIGHT * 0.52, 430);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
 
   const backdropUrl = getImageUrl(item.backdrop_path, "w780");
@@ -36,7 +37,13 @@ export function Hero({ item, onWatchPress }: HeroProps) {
 
   return (
     <View
-      style={{ height: HERO_HEIGHT, position: "relative", overflow: "hidden" }}
+      style={{
+        height: HERO_HEIGHT,
+        position: "relative",
+        overflow: "hidden",
+        borderBottomLeftRadius: 28,
+        borderBottomRightRadius: 28,
+      }}
     >
       {/* ── Backdrop image — full bleed ── */}
       {item.backdrop_path ? (
@@ -61,39 +68,9 @@ export function Hero({ item, onWatchPress }: HeroProps) {
       )}
 
       {/* ── Film grain texture overlay ── */}
-      <FilmGrain opacity={0.04} />
+      <FilmGrain opacity={0.03} />
 
-      {/* ── Letterbox bars — 4 px void-black ── */}
-      <View
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          bottom: 0,
-          width: 4,
-          backgroundColor: colors.bg,
-          zIndex: 1,
-        }}
-      />
-      <View
-        style={{
-          position: "absolute",
-          top: 0,
-          right: 0,
-          bottom: 0,
-          width: 4,
-          backgroundColor: colors.bg,
-          zIndex: 1,
-        }}
-      />
-
-      {/* ── Cinematic gradient — the actual fix ──
-          4 stops:
-            0%   → fully transparent  (top of hero, image fully visible)
-           40%   → still transparent  (image breathes)
-           72%   → 55% void           (gentle darkening begins)
-          100%   → 93% void           (text zone, readable but not a wall)
-      */}
+      {/* ── Cinematic gradient ── */}
       <LinearGradient
         colors={[
           colors.heroGradientTransparent,
@@ -101,7 +78,7 @@ export function Hero({ item, onWatchPress }: HeroProps) {
           colors.heroGradientMid,
           colors.heroGradientSolid,
         ]}
-        locations={[0, 0.4, 0.72, 1]}
+        locations={[0, 0.35, 0.7, 1]}
         start={{ x: 0, y: 0 }}
         end={{ x: 0, y: 1 }}
         style={{
@@ -119,109 +96,101 @@ export function Hero({ item, onWatchPress }: HeroProps) {
         style={{
           position: "absolute",
           bottom: 0,
-          left: 4,
-          right: 4,
+          left: 0,
+          right: 0,
           paddingHorizontal: 20,
-          paddingBottom: 28,
-          paddingTop: 40,
+          paddingBottom: 24,
+          paddingTop: 36,
           zIndex: 2,
         }}
       >
-        {/* Rating badge */}
-        {rating > 0 && (
-          <View
-            style={{
-              alignSelf: "flex-start",
-              flexDirection: "row",
-              alignItems: "center",
-              backgroundColor: colors.goldRatingBg,
-              borderWidth: 0.5,
-              borderColor: colors.goldRatingBorder,
-              borderRadius: 4,
-              paddingHorizontal: 8,
-              paddingVertical: 3,
-              marginBottom: 10,
-            }}
-          >
-            <Ionicons
-              name="star"
-              size={14}
-              color={colors.gold}
-              style={{ marginRight: 4 }}
-            />
-            <Text
-              style={{ color: colors.gold, fontSize: 11, fontWeight: "700" }}
+        {/* Rating & Format badge */}
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            marginBottom: 8,
+            gap: 8,
+          }}
+        >
+          {rating > 0 && (
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                backgroundColor: "rgba(14, 14, 17, 0.80)",
+                borderWidth: 0.5,
+                borderColor: "rgba(212, 162, 55, 0.35)",
+                borderRadius: 9999,
+                paddingHorizontal: 8,
+                paddingVertical: 2.5,
+              }}
             >
-              {rating.toFixed(1)}
-            </Text>
-          </View>
-        )}
+              <Ionicons
+                name="star"
+                size={12}
+                color={colors.gold}
+                style={{ marginRight: 4 }}
+              />
+              <Text
+                style={{ color: colors.gold, fontSize: 11, fontWeight: "700" }}
+              >
+                {rating.toFixed(1)}
+              </Text>
+            </View>
+          )}
+
+          {year ? (
+            <View
+              style={{
+                backgroundColor: "rgba(255, 255, 255, 0.08)",
+                borderRadius: 9999,
+                paddingHorizontal: 8,
+                paddingVertical: 2.5,
+              }}
+            >
+              <Text
+                style={{
+                  color: colors.textSecondary,
+                  fontSize: 11,
+                  fontFamily: "Inter_500Medium",
+                }}
+              >
+                {year}
+              </Text>
+            </View>
+          ) : null}
+        </View>
 
         {/* Title */}
         <Text
-          style={[typography.display, { marginBottom: 6 }]}
+          style={[
+            typography.display,
+            {
+              fontSize: 26,
+              lineHeight: 32,
+              marginBottom: 6,
+              color: colors.textPrimary,
+            },
+          ]}
           numberOfLines={2}
         >
           {title}
         </Text>
 
-        {/* Metadata row */}
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            marginBottom: 14,
-          }}
-        >
-          {year ? (
-            <Text style={[typography.caption, { color: colors.textSecondary }]}>
-              {year}
-            </Text>
-          ) : null}
-          {year && (
-            <View
-              style={{
-                width: 2,
-                height: 2,
-                borderRadius: 1,
-                backgroundColor: colors.textTertiary,
-                marginHorizontal: 8,
-              }}
-            />
-          )}
-          <Text
-            style={[typography.caption, { color: colors.textSecondary }]}
-            numberOfLines={1}
-          >
-            {rating.toFixed(1)}
-          </Text>
-          <View
-            style={{
-              width: 2,
-              height: 2,
-              borderRadius: 1,
-              backgroundColor: colors.textTertiary,
-              marginHorizontal: 8,
-            }}
-          />
-          <Text
-            style={[typography.caption, { color: colors.textSecondary }]}
-            numberOfLines={1}
-          >
-            Movie
-          </Text>
-        </View>
-
         {/* Overview */}
         {overview ? (
-          <View style={{ marginBottom: 20 }}>
+          <View style={{ marginBottom: 16 }}>
             <Text
-              style={[typography.body, { color: colors.textSecondary }]}
+              style={[
+                typography.body,
+                { color: colors.textSecondary, fontSize: 12, lineHeight: 17 },
+              ]}
               numberOfLines={overviewExpanded ? undefined : 2}
             >
               {overview}
             </Text>
-            {overview.length > 100 && (
+            {overview.length > 90 && (
               <TouchableOpacity
                 onPress={() => setOverviewExpanded(!overviewExpanded)}
                 activeOpacity={0.7}
@@ -234,54 +203,95 @@ export function Hero({ item, onWatchPress }: HeroProps) {
                     fontFamily: "Inter_500Medium",
                   }}
                 >
-                  {overviewExpanded ? "Less" : "More"}
+                  {overviewExpanded ? "Show less" : "Read more"}
                 </Text>
               </TouchableOpacity>
             )}
           </View>
         ) : null}
 
-        {/* Watch Now CTA */}
-        <TouchableOpacity
-          onPress={() => onWatchPress(item)}
-          activeOpacity={0.9}
-          accessibilityRole="button"
-          accessibilityLabel={`Watch ${title}`}
-          accessibilityHint="Opens the video player"
-          style={{
-            backgroundColor: colors.gold,
-            borderRadius: 10,
-            paddingVertical: 14,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            ...Platform.select({
-              ios: {
-                shadowColor: colors.gold,
-                shadowOffset: { width: 0, height: 6 },
-                shadowOpacity: 0.35,
-                shadowRadius: 12,
-              },
-              android: { elevation: 8 },
-            }),
-          }}
-        >
-          <Ionicons
-            name="play"
-            size={16}
-            color={colors.bg}
-            style={{ marginRight: 8 }}
-          />
-          <Text
+        {/* Dual Actions CTA: Watch Now + Details */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          {/* Primary: Watch Now */}
+          <TouchableOpacity
+            onPress={() => onWatchPress(item)}
+            activeOpacity={0.88}
+            accessibilityRole="button"
+            accessibilityLabel={`Watch ${title}`}
+            accessibilityHint="Opens the video player"
             style={{
-              fontFamily: "Inter_600SemiBold",
-              fontSize: 14,
-              color: colors.bg,
+              flex: 1,
+              backgroundColor: colors.gold,
+              borderRadius: 12,
+              paddingVertical: 13,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              ...Platform.select({
+                ios: {
+                  shadowColor: colors.gold,
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.35,
+                  shadowRadius: 10,
+                },
+                android: { elevation: 6 },
+              }),
             }}
           >
-            Watch Now
-          </Text>
-        </TouchableOpacity>
+            <Ionicons
+              name="play"
+              size={16}
+              color={colors.bg}
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={{
+                fontFamily: "Inter_600SemiBold",
+                fontSize: 14,
+                color: colors.bg,
+              }}
+            >
+              Watch Now
+            </Text>
+          </TouchableOpacity>
+
+          {/* Secondary: Details */}
+          {onDetailsPress && (
+            <TouchableOpacity
+              onPress={() => onDetailsPress(item)}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={`View details for ${title}`}
+              style={{
+                backgroundColor: "rgba(14, 14, 17, 0.75)",
+                borderWidth: 1,
+                borderColor: colors.borderSubtle,
+                borderRadius: 12,
+                paddingVertical: 13,
+                paddingHorizontal: 16,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Ionicons
+                name="information-circle-outline"
+                size={18}
+                color={colors.textPrimary}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={{
+                  fontFamily: "Inter_600SemiBold",
+                  fontSize: 14,
+                  color: colors.textPrimary,
+                }}
+              >
+                Details
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
     </View>
   );

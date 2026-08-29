@@ -3,7 +3,8 @@
  *
  * Features: close/back, season/episode badge, source switcher, fullscreen toggle,
  * source info pill at bottom, stage-based loading with blurred backdrop,
- * resume chip, tap-to-reveal in fullscreen, pause-detect keep-visible.
+ * resume chip, tap-to-reveal in fullscreen, pause-detect keep-visible,
+ * notch-aware safe margins, and 1-tap "Try Next Source" action.
  *
  * The server pill at the bottom uses RNGH Gesture API + Reanimated for
  * polished tap/swipe-up interaction with spring-based press feedback.
@@ -48,6 +49,7 @@ interface PlayerControlOverlayProps {
   onToggleFullscreen: () => void;
   onServerPickerOpen: () => void;
   onEpisodePickerOpen: () => void;
+  onTryNextSource?: () => void;
   currentSeason: number;
   currentEpisode: number;
   providerDisplayName: string;
@@ -72,6 +74,7 @@ export function PlayerControlOverlay({
   onToggleFullscreen,
   onServerPickerOpen,
   onEpisodePickerOpen,
+  onTryNextSource,
   currentSeason,
   currentEpisode,
   providerDisplayName,
@@ -87,6 +90,10 @@ export function PlayerControlOverlay({
 
   const isLoadingState =
     loadState.type === "LOADING" || loadState.type === "SLOW";
+
+  // Safe horizontal padding for notches / camera cutouts in landscape
+  const sidePaddingLeft = isFullscreen ? Math.max(insets.left, 16) : 16;
+  const sidePaddingRight = isFullscreen ? Math.max(insets.right, 16) : 16;
 
   // ── Stage-based loading copy ──
   const getStageCopy = (): string => {
@@ -124,7 +131,6 @@ export function PlayerControlOverlay({
   }, [resumeChipText, resumeOpacity]);
 
   // ── RNGH Gesture: tap OR swipe-up on server pill opens picker ──
-  // Uses Reanimated shared values for smooth UI-thread animations
   const pillScale = useSharedValue(1);
   const pillTranslateY = useSharedValue(0);
 
@@ -135,7 +141,7 @@ export function PlayerControlOverlay({
     ],
   }));
 
-  // Tap gesture — fires on any tap (no delay, no heuristics)
+  // Tap gesture
   const tapGesture = Gesture.Tap()
     .onBegin(() => {
       pillScale.value = withSpring(0.93, { damping: 15, stiffness: 300 });
@@ -147,15 +153,13 @@ export function PlayerControlOverlay({
       runOnJS(onServerPickerOpen)();
     });
 
-  // Swipe-up gesture — activates when finger moves 20px+ upward
-  // The pill tracks the finger position for a direct-manipulation feel
+  // Swipe-up gesture
   const swipeUpGesture = Gesture.Pan()
     .activeOffsetY([-999, -20])
     .onBegin(() => {
       pillScale.value = withSpring(0.93, { damping: 15, stiffness: 300 });
     })
     .onUpdate((e) => {
-      // Clamp so the pill doesn't fly off-screen
       pillTranslateY.value = Math.max(e.translationY, -60);
     })
     .onFinalize(() => {
@@ -166,8 +170,6 @@ export function PlayerControlOverlay({
       runOnJS(onServerPickerOpen)();
     });
 
-  // Race — both gestures start; first to activate wins, other is cancelled.
-  // Swipe wins on upward drag >20px; tap wins on press without drag.
   const composedGesture = Gesture.Race(swipeUpGesture, tapGesture);
 
   return (
@@ -182,8 +184,23 @@ export function PlayerControlOverlay({
             pointerEvents: "none",
           }}
         >
-          <View className="bg-black/70 rounded-full px-4 py-2 border border-amber-500/20">
-            <Text className="text-amber-400 text-xs font-semibold">
+          <View
+            className="flex-row items-center rounded-full px-4 py-2 border shadow-md"
+            style={{
+              backgroundColor: "rgba(14, 14, 17, 0.88)",
+              borderColor: "rgba(212, 162, 55, 0.35)",
+            }}
+          >
+            <Ionicons
+              name="play-forward-outline"
+              size={13}
+              color={colors.gold}
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              className="text-xs font-semibold"
+              style={{ color: colors.gold, fontFamily: "Inter_600SemiBold" }}
+            >
               {resumeChipText}
             </Text>
           </View>
@@ -193,68 +210,98 @@ export function PlayerControlOverlay({
       {/* ── Animated overlay bar (fades in/out) ── */}
       <RNAnimated.View
         className="absolute top-0 left-0 right-0 z-30"
-        style={{ opacity: overlayOpacity, paddingTop: insets.top + 4 }}
+        style={{
+          opacity: overlayOpacity,
+          paddingTop: (isFullscreen ? 12 : insets.top) + 4,
+          paddingLeft: sidePaddingLeft,
+          paddingRight: sidePaddingRight,
+        }}
         pointerEvents={overlayVisible ? "box-none" : "none"}
       >
-        <View className="flex-row items-center justify-between px-4">
+        <View className="flex-row items-center justify-between">
           {/* Close / Shrink button (top left) */}
           <TouchableOpacity
             onPress={isFullscreen ? onToggleFullscreen : onClose}
-            className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
+            className="w-10 h-10 rounded-full items-center justify-center border"
+            style={{
+              backgroundColor: "rgba(14, 14, 17, 0.75)",
+              borderColor: colors.borderSubtle,
+              pointerEvents: "auto",
+            }}
             activeOpacity={0.7}
-            style={{ pointerEvents: "auto" }}
           >
             <Ionicons
               name={isFullscreen ? "contract" : "chevron-down"}
               size={20}
-              color="#fff"
+              color={colors.textPrimary}
             />
           </TouchableOpacity>
 
-          {/* Center: Title or Season/Episode badge (for TV) */}
+          {/* Center: Season/Episode badge (for TV) */}
           {isTV && !isFullscreen && (
             <TouchableOpacity
               onPress={onEpisodePickerOpen}
               activeOpacity={0.7}
               style={{ pointerEvents: "auto" }}
             >
-              <View className="bg-black/60 rounded-full px-3 py-1.5 border border-amber-500/30 flex-row items-center">
-                <Text className="text-white text-xs font-bold">
+              <View
+                className="flex-row items-center rounded-full px-3.5 py-1.5 border"
+                style={{
+                  backgroundColor: "rgba(14, 14, 17, 0.75)",
+                  borderColor: "rgba(212, 162, 55, 0.3)",
+                }}
+              >
+                <Text
+                  className="text-xs font-bold"
+                  style={{
+                    color: colors.gold,
+                    fontFamily: "Inter_600SemiBold",
+                  }}
+                >
                   S{String(currentSeason).padStart(2, "0")}:E
                   {String(currentEpisode).padStart(2, "0")}
                 </Text>
                 <Ionicons
                   name="chevron-down"
                   size={12}
-                  color={colors.textSecondary}
-                  style={{ marginLeft: 4 }}
+                  color={colors.gold}
+                  style={{ marginLeft: 5 }}
                 />
               </View>
             </TouchableOpacity>
           )}
 
-          {/* Right group: Sub/Dub (MegaPlay) + Source switcher + Fullscreen */}
+          {/* Right group: Sub/Dub + Source switcher + Fullscreen */}
           <View
-            className="flex-row items-center gap-2"
+            className="flex-row items-center gap-2.5"
             style={{ pointerEvents: "auto" }}
           >
             {onMegaplay && onAudioChange && (
-              <View className="flex-row rounded-full bg-black/40 overflow-hidden border border-zinc-700/40">
+              <View
+                className="flex-row rounded-full overflow-hidden border"
+                style={{
+                  backgroundColor: "rgba(14, 14, 17, 0.75)",
+                  borderColor: colors.borderSubtle,
+                }}
+              >
                 {(["sub", "dub"] as const).map((a) => {
                   const active = audio === a;
                   return (
                     <TouchableOpacity
                       key={a}
                       onPress={() => onAudioChange(a)}
-                      className={`px-3 h-9 items-center justify-center ${
-                        active ? "bg-primary" : ""
-                      }`}
+                      className="px-3.5 h-9 items-center justify-center"
+                      style={{
+                        backgroundColor: active ? colors.gold : "transparent",
+                      }}
                       activeOpacity={0.7}
                     >
                       <Text
-                        className={`text-xs font-bold uppercase ${
-                          active ? "text-black" : "text-zinc-300"
-                        }`}
+                        className="text-xs font-bold uppercase"
+                        style={{
+                          color: active ? colors.bg : colors.zinc300,
+                          fontFamily: "Inter_600SemiBold",
+                        }}
                       >
                         {a}
                       </Text>
@@ -263,25 +310,38 @@ export function PlayerControlOverlay({
                 })}
               </View>
             )}
+
             {!onMegaplay && (
               <>
                 <TouchableOpacity
                   onPress={onServerPickerOpen}
-                  className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
+                  className="w-10 h-10 rounded-full items-center justify-center border"
+                  style={{
+                    backgroundColor: "rgba(14, 14, 17, 0.75)",
+                    borderColor: colors.borderSubtle,
+                  }}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="server" size={16} color={colors.gold} />
+                  <Ionicons
+                    name="server-outline"
+                    size={17}
+                    color={colors.gold}
+                  />
                 </TouchableOpacity>
                 {providerId !== "nxsha" && providerId !== "chillflix" && (
                   <TouchableOpacity
                     onPress={onToggleFullscreen}
-                    className="w-9 h-9 rounded-full bg-black/40 items-center justify-center"
+                    className="w-10 h-10 rounded-full items-center justify-center border"
+                    style={{
+                      backgroundColor: "rgba(14, 14, 17, 0.75)",
+                      borderColor: colors.borderSubtle,
+                    }}
                     activeOpacity={0.7}
                   >
                     <Ionicons
                       name={isFullscreen ? "contract" : "expand"}
-                      size={20}
-                      color="#fff"
+                      size={18}
+                      color={colors.textPrimary}
                     />
                   </TouchableOpacity>
                 )}
@@ -293,52 +353,117 @@ export function PlayerControlOverlay({
 
       {/* ── Source pill (bottom) — GestureDetector for tap + swipe-up ── */}
       <RNAnimated.View
-        className="absolute bottom-0 left-0 right-0 z-30 px-4"
-        style={{ opacity: overlayOpacity, paddingBottom: insets.bottom + 12 }}
+        className="absolute bottom-0 left-0 right-0 z-30"
+        style={{
+          opacity: overlayOpacity,
+          paddingBottom: (isFullscreen ? 16 : insets.bottom) + 12,
+          paddingLeft: sidePaddingLeft,
+          paddingRight: sidePaddingRight,
+        }}
         pointerEvents={overlayVisible ? "box-none" : "none"}
       >
         <GestureDetector gesture={composedGesture}>
           <Animated.View
-            className="self-center bg-black/60 backdrop-blur-md rounded-full px-4 py-2.5 flex-row items-center border border-zinc-700/40"
-            style={pillAnimatedStyle}
+            className="self-center flex-row items-center rounded-full px-4 py-2.5 border shadow-lg"
+            style={[
+              {
+                backgroundColor: "rgba(14, 14, 17, 0.85)",
+                borderColor: colors.borderSubtle,
+              },
+              pillAnimatedStyle,
+            ]}
           >
             <Ionicons name="server" size={13} color={colors.gold} />
             <Text
-              className="text-white text-xs font-semibold ml-2 mr-1"
+              className="text-xs font-semibold ml-2 mr-1.5"
+              style={{
+                color: colors.textPrimary,
+                fontFamily: "Inter_600SemiBold",
+              }}
               numberOfLines={1}
             >
               {providerDisplayName}
             </Text>
             {auditMode && (
-              <View className="bg-amber-500/20 rounded px-1.5 py-0.5 mr-1">
-                <Text className="text-amber-400 text-[9px] font-bold tracking-wider">
+              <View
+                className="rounded px-1.5 py-0.5 mr-1"
+                style={{ backgroundColor: colors.goldBadge }}
+              >
+                <Text
+                  className="text-[9px] font-bold tracking-wider"
+                  style={{ color: colors.gold }}
+                >
                   AUDIT
                 </Text>
               </View>
             )}
-            <Ionicons name="chevron-up" size={14} color={colors.zinc500} />
+            <Ionicons name="chevron-up" size={14} color={colors.zinc400} />
           </Animated.View>
         </GestureDetector>
       </RNAnimated.View>
 
       {/* ── Loading overlay (only in LOADING or SLOW states) ── */}
       {isLoadingState && (
-        <View className="absolute inset-0 z-20 items-center justify-center bg-black/80">
-          <View className="items-center">
+        <View
+          className="absolute inset-0 z-20 items-center justify-center"
+          style={{ backgroundColor: "rgba(7, 7, 8, 0.85)" }}
+        >
+          <View className="items-center px-6">
             <ActivityIndicator size="large" color={colors.gold} />
-            <Text className="text-zinc-500 text-sm mt-4">{getStageCopy()}</Text>
+            <Text
+              className="text-sm mt-4 text-center"
+              style={{
+                color: colors.textSecondary,
+                fontFamily: "Inter_500Medium",
+              }}
+            >
+              {getStageCopy()}
+            </Text>
 
-            {/* SLOW state: show alt-source action row */}
+            {/* SLOW state: show 1-Tap "Try Next Source" + Server Picker options */}
             {loadState.type === "SLOW" && (
-              <View className="mt-6 items-center">
+              <View className="mt-6 flex-row gap-3 flex-wrap justify-center">
+                {onTryNextSource && (
+                  <TouchableOpacity
+                    onPress={onTryNextSource}
+                    activeOpacity={0.8}
+                    className="rounded-xl py-3 px-5 flex-row items-center shadow-md"
+                    style={{ backgroundColor: colors.gold }}
+                  >
+                    <Ionicons name="play-forward" size={15} color={colors.bg} />
+                    <Text
+                      className="font-bold text-xs ml-2"
+                      style={{
+                        color: colors.bg,
+                        fontFamily: "Inter_600SemiBold",
+                      }}
+                    >
+                      Try Next Source
+                    </Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   onPress={onServerPickerOpen}
                   activeOpacity={0.8}
-                  className="bg-zinc-800 rounded-xl py-3 px-6 flex-row items-center"
+                  className="rounded-xl py-3 px-5 flex-row items-center border"
+                  style={{
+                    backgroundColor: colors.bgCard,
+                    borderColor: colors.borderSubtle,
+                  }}
                 >
-                  <Ionicons name="server" size={16} color={colors.zinc300} />
-                  <Text className="text-zinc-300 font-bold text-sm ml-2">
-                    Choose a source
+                  <Ionicons
+                    name="server-outline"
+                    size={15}
+                    color={colors.textSecondary}
+                  />
+                  <Text
+                    className="font-bold text-xs ml-2"
+                    style={{
+                      color: colors.textSecondary,
+                      fontFamily: "Inter_600SemiBold",
+                    }}
+                  >
+                    All Sources
                   </Text>
                 </TouchableOpacity>
               </View>

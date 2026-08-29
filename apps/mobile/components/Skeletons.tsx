@@ -1,9 +1,7 @@
 import React from "react";
-import { View, useWindowDimensions, Platform } from "react-native";
+import { View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "../theme/colors";
-
-const PULSE_DURATION = 1600;
 
 function ShimmerBar({
   width,
@@ -31,7 +29,7 @@ function ShimmerBar({
         style={{
           flex: 1,
           backgroundColor: colors.skeletonHighlight,
-          opacity: 0.5,
+          opacity: 0.45,
         }}
       />
     </View>
@@ -40,19 +38,46 @@ function ShimmerBar({
 
 /**
  * Skeleton loading state for movie/TV detail screens.
- * Matches the actual layout: backdrop + poster + info + overview + buttons + cast.
+ * Exactly matches the modern layout:
+ * - Floating top glass navigation bar (back on left, bookmark & share on right)
+ * - Backdrop header with fade
+ * - Elevated poster + spaced info column (Title, Rating/Year/Runtime, Genres)
+ * - Full-width Watch CTA + Secondary Action Row (Trailer & Download)
+ * - Overview lines + Cast avatars
  */
 export function DetailSkeleton() {
   const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const BACKDROP_HEIGHT = SCREEN_HEIGHT * 0.45;
-  const POSTER_WIDTH = 100;
+  const BACKDROP_HEIGHT = Math.min(SCREEN_HEIGHT * 0.42, 350);
+  const POSTER_WIDTH = 104;
+  const POSTER_OVERLAP = 52;
 
   return (
-    <View
-      style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}
-    >
-      {/* Backdrop skeleton */}
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      {/* ── Floating Top Glass Bar ── */}
+      <View
+        style={{
+          position: "absolute",
+          top: insets.top + 8,
+          left: 16,
+          right: 16,
+          zIndex: 20,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        {/* Circular Back button */}
+        <ShimmerBar width={38} height={38} borderRadius={19} />
+
+        {/* Right actions: Bookmark & Share */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <ShimmerBar width={38} height={38} borderRadius={19} />
+          <ShimmerBar width={38} height={38} borderRadius={19} />
+        </View>
+      </View>
+
+      {/* ── Backdrop skeleton ── */}
       <ShimmerBar
         width={SCREEN_WIDTH}
         height={BACKDROP_HEIGHT}
@@ -60,110 +85,116 @@ export function DetailSkeleton() {
         style={{ backgroundColor: colors.skeletonBgAlt }}
       />
 
-      {/* Back button skeleton */}
-      <View style={{ position: "absolute", top: insets.top + 12, left: 16 }}>
-        <ShimmerBar width={80} height={28} borderRadius={14} />
-      </View>
-
-      {/* Poster + Info */}
-      <View
-        style={{ paddingHorizontal: 16, marginTop: -40, flexDirection: "row" }}
-      >
-        {/* Poster */}
-        <ShimmerBar
-          width={POSTER_WIDTH}
-          height={POSTER_WIDTH * 1.5}
-          borderRadius={8}
-          style={{ backgroundColor: colors.skeletonBg }}
-        />
-
-        {/* Info */}
-        <View
-          style={{
-            flex: 1,
-            marginLeft: 12,
-            justifyContent: "flex-end",
-            paddingBottom: 4,
-          }}
-        >
-          <ShimmerBar width="80%" height={20} borderRadius={4} />
+      {/* ── Content Section ── */}
+      <View style={{ paddingHorizontal: 16, marginTop: -POSTER_OVERLAP }}>
+        {/* Poster + Info row */}
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          {/* Elevated Poster */}
           <ShimmerBar
-            width={50}
-            height={14}
+            width={POSTER_WIDTH}
+            height={POSTER_WIDTH * 1.5}
+            borderRadius={12}
+            style={{
+              backgroundColor: colors.skeletonBg,
+              borderWidth: 0.5,
+              borderColor: colors.borderSubtle,
+            }}
+          />
+
+          {/* Info column */}
+          <View style={{ flex: 1, marginLeft: 18, justifyContent: "center" }}>
+            {/* Title */}
+            <ShimmerBar width="85%" height={20} borderRadius={6} />
+
+            {/* Rating + Year + Runtime row */}
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+                marginTop: 8,
+              }}
+            >
+              <ShimmerBar width={48} height={18} borderRadius={6} />
+              <ShimmerBar width={42} height={18} borderRadius={6} />
+              <ShimmerBar width={54} height={18} borderRadius={6} />
+            </View>
+
+            {/* Genre badges */}
+            <View style={{ flexDirection: "row", gap: 4, marginTop: 8 }}>
+              <ShimmerBar width={46} height={16} borderRadius={4} />
+              <ShimmerBar width={52} height={16} borderRadius={4} />
+              <ShimmerBar width={44} height={16} borderRadius={4} />
+            </View>
+          </View>
+        </View>
+
+        {/* ── Action Buttons ── */}
+        <View style={{ marginTop: 18 }}>
+          {/* Primary Watch CTA */}
+          <ShimmerBar
+            width="100%"
+            height={48}
+            borderRadius={12}
+            style={{ backgroundColor: "rgba(212, 162, 55, 0.18)" }}
+          />
+
+          {/* Secondary Action Row: Trailer & Download */}
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+            <ShimmerBar
+              width="48.5%"
+              height={40}
+              borderRadius={12}
+              style={{ backgroundColor: colors.skeletonBg }}
+            />
+            <ShimmerBar
+              width="48.5%"
+              height={40}
+              borderRadius={12}
+              style={{ backgroundColor: colors.skeletonBg }}
+            />
+          </View>
+        </View>
+
+        {/* ── Overview ── */}
+        <View style={{ marginTop: 22 }}>
+          <ShimmerBar width={80} height={16} borderRadius={4} />
+          <ShimmerBar
+            width="100%"
+            height={12}
+            borderRadius={4}
+            style={{ marginTop: 10 }}
+          />
+          <ShimmerBar
+            width="94%"
+            height={12}
             borderRadius={4}
             style={{ marginTop: 6 }}
           />
-          <View style={{ flexDirection: "row", marginTop: 8, gap: 4 }}>
-            <ShimmerBar width={50} height={20} borderRadius={4} />
-            <ShimmerBar width={40} height={20} borderRadius={4} />
-            <ShimmerBar width={55} height={20} borderRadius={4} />
-          </View>
           <ShimmerBar
-            width={60}
-            height={22}
+            width="75%"
+            height={12}
             borderRadius={4}
-            style={{ marginTop: 8 }}
+            style={{ marginTop: 6 }}
           />
         </View>
-      </View>
 
-      {/* Overview */}
-      <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
-        <ShimmerBar width={70} height={16} borderRadius={4} />
-        <ShimmerBar
-          width="100%"
-          height={12}
-          borderRadius={4}
-          style={{ marginTop: 10 }}
-        />
-        <ShimmerBar
-          width="95%"
-          height={12}
-          borderRadius={4}
-          style={{ marginTop: 6 }}
-        />
-        <ShimmerBar
-          width="70%"
-          height={12}
-          borderRadius={4}
-          style={{ marginTop: 6 }}
-        />
-      </View>
-
-      {/* Buttons */}
-      <View
-        style={{
-          paddingHorizontal: 16,
-          marginTop: 24,
-          flexDirection: "row",
-          gap: 10,
-        }}
-      >
-        <ShimmerBar
-          width="60%"
-          height={48}
-          borderRadius={10}
-          style={{ backgroundColor: colors.skeletonButton }}
-        />
-        <ShimmerBar width={48} height={48} borderRadius={10} />
-        <ShimmerBar width={48} height={48} borderRadius={10} />
-      </View>
-
-      {/* Cast */}
-      <View style={{ paddingHorizontal: 16, marginTop: 28 }}>
-        <ShimmerBar width={100} height={16} borderRadius={4} />
-        <View style={{ flexDirection: "row", marginTop: 12, gap: 16 }}>
-          {[1, 2, 3, 4, 5].map((i) => (
-            <View key={i} style={{ alignItems: "center" }}>
-              <ShimmerBar width={56} height={56} borderRadius={28} />
-              <ShimmerBar
-                width={40}
-                height={10}
-                borderRadius={4}
-                style={{ marginTop: 6 }}
-              />
-            </View>
-          ))}
+        {/* ── Cast Carousel ── */}
+        <View style={{ marginTop: 24 }}>
+          <ShimmerBar width={60} height={16} borderRadius={4} />
+          <View style={{ flexDirection: "row", marginTop: 12, gap: 14 }}>
+            {[1, 2, 3, 4, 5].map((i) => (
+              <View key={i} style={{ alignItems: "center" }}>
+                <ShimmerBar width={54} height={54} borderRadius={27} />
+                <ShimmerBar
+                  width={42}
+                  height={10}
+                  borderRadius={4}
+                  style={{ marginTop: 6 }}
+                />
+              </View>
+            ))}
+          </View>
         </View>
       </View>
     </View>
@@ -248,79 +279,39 @@ export function PersonSkeleton() {
           style={{ marginTop: 6 }}
         />
       </View>
-
-      {/* Filmography */}
-      <View style={{ paddingHorizontal: 24 }}>
-        <ShimmerBar width={100} height={18} borderRadius={4} />
-        <View style={{ flexDirection: "row", marginTop: 12, gap: 10 }}>
-          {[1, 2, 3, 4].map((i) => (
-            <View key={i}>
-              <ShimmerBar width={90} height={135} borderRadius={8} />
-            </View>
-          ))}
-        </View>
-      </View>
     </View>
   );
 }
 
 /**
- * Skeleton loading state for search results grid.
+ * Skeleton loading state for card rails/grids.
  */
-export function SearchSkeleton() {
-  const { width: SCREEN_WIDTH } = useWindowDimensions();
-  const insets = useSafeAreaInsets();
-  const cardWidth = (SCREEN_WIDTH - 32 - 16) / 3;
-  const cardHeight = cardWidth * 1.5;
-
+export function MediaCardSkeleton({
+  width,
+  height,
+}: {
+  width: number;
+  height: number;
+}) {
   return (
     <View
-      style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}
+      style={{
+        width,
+        height,
+        borderRadius: 12,
+        backgroundColor: colors.skeletonBg,
+        borderWidth: 0.5,
+        borderColor: colors.borderSubtle,
+        overflow: "hidden",
+      }}
     >
-      {/* Header */}
-      <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 }}>
-        <ShimmerBar width={100} height={22} borderRadius={4} />
-      </View>
-
-      {/* Search bar */}
-      <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
-        <ShimmerBar width="100%" height={44} borderRadius={22} />
-      </View>
-
-      {/* Genre pills */}
       <View
         style={{
-          flexDirection: "row",
-          paddingHorizontal: 16,
-          marginTop: 12,
-          gap: 8,
+          flex: 1,
+          backgroundColor: colors.skeletonHighlight,
+          opacity: 0.45,
         }}
-      >
-        {[1, 2, 3, 4, 5].map((i) => (
-          <ShimmerBar key={i} width={60} height={28} borderRadius={14} />
-        ))}
-      </View>
-
-      {/* Grid */}
-      <View
-        style={{ flexDirection: "row", flexWrap: "wrap", padding: 16, gap: 8 }}
-      >
-        {Array.from({ length: 9 }).map((_, i) => (
-          <View key={i} style={{ width: cardWidth }}>
-            <ShimmerBar
-              width={cardWidth}
-              height={cardHeight}
-              borderRadius={12}
-            />
-            <ShimmerBar
-              width="80%"
-              height={10}
-              borderRadius={4}
-              style={{ marginTop: 6 }}
-            />
-          </View>
-        ))}
-      </View>
+      />
     </View>
   );
 }

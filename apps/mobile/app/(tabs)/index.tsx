@@ -514,10 +514,14 @@ export default function HomeScreen() {
 
           {/* Right: Actions */}
           <View className="flex-row items-center" style={{ gap: 12 }}>
-            {/* Hard Mode Split toggle */}
+            {/* Hard Mode Split luxury segmented toggle */}
             <View
-              className="flex-row rounded-full overflow-hidden border border-zinc-700/40"
-              style={{ pointerEvents: "auto" }}
+              className="flex-row rounded-full p-0.5 border"
+              style={{
+                backgroundColor: "rgba(14, 14, 17, 0.85)",
+                borderColor: colors.borderSubtle,
+                pointerEvents: "auto",
+              }}
             >
               {(["movie_tv", "anime"] as const).map((m) => {
                 const active = settings.mode === m;
@@ -525,13 +529,18 @@ export default function HomeScreen() {
                   <TouchableOpacity
                     key={m}
                     onPress={() => updateSetting("mode", m)}
-                    className={`px-2.5 h-8 items-center justify-center ${active ? "bg-primary" : ""}`}
+                    className="px-3 h-7 rounded-full items-center justify-center"
+                    style={{
+                      backgroundColor: active ? colors.gold : "transparent",
+                    }}
                     activeOpacity={0.7}
                   >
                     <Text
-                      className={`text-[11px] font-bold uppercase ${
-                        active ? "text-black" : "text-zinc-300"
-                      }`}
+                      className="text-[11px] font-bold"
+                      style={{
+                        color: active ? colors.bg : colors.textSecondary,
+                        fontFamily: "Inter_600SemiBold",
+                      }}
                     >
                       {m === "anime" ? "Anime" : "Movies"}
                     </Text>
@@ -678,7 +687,11 @@ export default function HomeScreen() {
         {/* ── Hero — always first, never reordered (movie/TV mode only) ── */}
         {settings.mode === "movie_tv" &&
           (heroItem ? (
-            <Hero item={heroItem} onWatchPress={handleWatchPress} />
+            <Hero
+              item={heroItem}
+              onWatchPress={handleWatchPress}
+              onDetailsPress={handleMoviePress}
+            />
           ) : !loadingMovies ? (
             <View
               className="w-full"
@@ -860,6 +873,9 @@ interface ContinueWatchingSectionProps {
   onRemoveItem: (tmdbId: string, mediaType: "movie" | "tv") => void;
 }
 
+const CW_CARD_WIDTH = 210;
+const CW_CARD_HEIGHT = 118; // 16:9 ratio
+
 function ContinueWatchingSection({
   historyEntries,
   historyMeta,
@@ -868,24 +884,19 @@ function ContinueWatchingSection({
   providerLabelMap,
   onRemoveItem,
 }: ContinueWatchingSectionProps) {
-  const cardWidth = (SCREEN_WIDTH - 48) / 3;
-  const cardHeight = cardWidth * 1.5;
-
   return (
-    <View className="mb-6">
+    <View className="mb-7">
       {/* Header */}
       <View className="flex-row items-center justify-between px-4 mb-3">
         <Text style={typography.heading}>Continue Watching</Text>
         <SeeAllButton onPress={() => nav.push("/history")} />
       </View>
 
-      {/* Horizontal ScrollView — replaces FlatList to avoid nesting warning.
-          Wrapped in SwipeExemptScrollView so swiping it scrolls the row
-          instead of cycling tabs. */}
+      {/* Horizontal ScrollView with 16:9 Cinematic Cards */}
       <SwipeExemptScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
+        contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
         accessibilityRole="list"
         accessibilityLabel="Continue watching items"
       >
@@ -893,7 +904,11 @@ function ContinueWatchingSection({
           const p = item.latest;
           const meta = historyMeta[p.tmdbId];
           const title = (p.mediaType === "tv" ? meta?.name : meta?.title) ?? "";
-          const poster = meta?.poster_path;
+          const imageUri = meta?.backdrop_path
+            ? getImageUrl(meta.backdrop_path, "w780")
+            : meta?.poster_path
+              ? getImageUrl(meta.poster_path, "w500")
+              : "";
 
           return (
             <TouchableOpacity
@@ -906,10 +921,6 @@ function ContinueWatchingSection({
                 const params = new URLSearchParams({});
                 if (p.isAnime === true) {
                   params.set("isAnime", "1");
-                  // Re-derive the anime-native ids (the feed carried mid/aid, but a
-                  // stored history record only keeps the TMDB twin). Without this the
-                  // player would send the TMDB id as a MAL id → MegaPlay 410 with no
-                  // fallback (see FS-410 logs).
                   const ids = tmdbToAnimeIds(
                     p.tmdbId,
                     p.mediaType,
@@ -926,39 +937,108 @@ function ContinueWatchingSection({
                   params.toString() ? `${base}?${params.toString()}` : base,
                 );
               }}
-              activeOpacity={0.7}
-              style={{ width: cardWidth }}
+              activeOpacity={0.8}
+              style={{ width: CW_CARD_WIDTH }}
               accessibilityRole="button"
               accessibilityLabel={`Continue watching ${title}`}
               accessibilityHint={`Opens ${title} at your last watched position`}
             >
-              <View style={{ width: cardWidth, height: cardHeight }}>
-                {/* Poster image */}
-                {poster ? (
+              {/* 16:9 Thumbnail Box */}
+              <View
+                style={{
+                  width: CW_CARD_WIDTH,
+                  height: CW_CARD_HEIGHT,
+                  borderRadius: 14,
+                  overflow: "hidden",
+                  backgroundColor: colors.bgElevated,
+                  borderWidth: 0.5,
+                  borderColor: colors.borderSubtle,
+                  position: "relative",
+                }}
+              >
+                {imageUri ? (
                   <ProgressiveImage
-                    uri={getImageUrl(poster, "w342")}
-                    style={{
-                      width: cardWidth,
-                      height: cardHeight,
-                      borderRadius: 12,
-                    }}
+                    uri={imageUri}
+                    style={{ width: CW_CARD_WIDTH, height: CW_CARD_HEIGHT }}
                     resizeMode="cover"
                   />
                 ) : (
                   <View
-                    className="flex-1 items-center justify-center rounded-xl"
+                    className="flex-1 items-center justify-center"
                     style={{ backgroundColor: colors.bgTop }}
                   >
                     <Ionicons
                       name={p.mediaType === "tv" ? "tv" : "film"}
-                      size={24}
+                      size={28}
                       color={colors.iconMuted}
                     />
                   </View>
                 )}
 
-                {/* Per-item remove — overlays the poster, stops propagation so
-                    tapping it doesn't also open the title. */}
+                {/* Central Play Button Overlay */}
+                <View
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: "rgba(0,0,0,0.30)",
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 18,
+                      backgroundColor: "rgba(14, 14, 17, 0.82)",
+                      borderWidth: 1,
+                      borderColor: "rgba(255, 255, 255, 0.25)",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Ionicons
+                      name="play"
+                      size={16}
+                      color={colors.gold}
+                      style={{ marginLeft: 2 }}
+                    />
+                  </View>
+                </View>
+
+                {/* TV Episode Pill Badge */}
+                {p.mediaType === "tv" &&
+                  p.season != null &&
+                  p.episode != null && (
+                    <View
+                      style={{
+                        position: "absolute",
+                        top: 6,
+                        left: 6,
+                        backgroundColor: "rgba(14, 14, 17, 0.85)",
+                        borderRadius: 6,
+                        paddingHorizontal: 6,
+                        paddingVertical: 2,
+                        borderWidth: 0.5,
+                        borderColor: colors.borderSubtle,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: colors.gold,
+                          fontSize: 10,
+                          fontFamily: "Inter_600SemiBold",
+                        }}
+                      >
+                        S{p.season}:E{p.episode}
+                      </Text>
+                    </View>
+                  )}
+
+                {/* Dismiss / Remove Button */}
                 <TouchableOpacity
                   onPress={(e) => {
                     e.stopPropagation();
@@ -970,30 +1050,32 @@ function ContinueWatchingSection({
                     position: "absolute",
                     top: 6,
                     right: 6,
-                    width: 24,
-                    height: 24,
-                    borderRadius: 12,
-                    backgroundColor: "rgba(0,0,0,0.6)",
+                    width: 22,
+                    height: 22,
+                    borderRadius: 11,
+                    backgroundColor: "rgba(0,0,0,0.65)",
                     alignItems: "center",
                     justifyContent: "center",
+                    borderWidth: 0.5,
+                    borderColor: "rgba(255,255,255,0.2)",
                   }}
                   accessibilityRole="button"
                   accessibilityLabel={`Remove ${title} from continue watching`}
                 >
-                  <Ionicons name="close" size={14} color={colors.textPrimary} />
+                  <Ionicons name="close" size={12} color="#fff" />
                 </TouchableOpacity>
 
-                {/* Progress bar — 4px, themed */}
+                {/* Bottom Gold Progress Bar */}
                 <View
                   style={{
                     position: "absolute",
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    height: 4,
-                    backgroundColor: colors.progressTrackAlt,
-                    borderBottomLeftRadius: 12,
-                    borderBottomRightRadius: 12,
+                    height: 3.5,
+                    backgroundColor: "rgba(255,255,255,0.25)",
+                    borderBottomLeftRadius: 14,
+                    borderBottomRightRadius: 14,
                     overflow: "hidden",
                   }}
                 >
@@ -1004,101 +1086,34 @@ function ContinueWatchingSection({
                       backgroundColor: item.fullyWatched
                         ? colors.successGreen
                         : colors.gold,
-                      borderRadius: 2,
                     }}
                   />
                 </View>
-
-                {/* Gradient overlay at bottom so progress bar doesn't float */}
-                <View
-                  style={{
-                    position: "absolute",
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    height: 40,
-                    backgroundColor: "transparent",
-                  }}
-                  pointerEvents="none"
-                />
-
-                {/* TV episode badge */}
-                {p.mediaType === "tv" &&
-                  p.season != null &&
-                  p.episode != null && (
-                    <View
-                      style={{
-                        position: "absolute",
-                        top: 4,
-                        left: 4,
-                        backgroundColor: colors.black75,
-                        borderRadius: 3,
-                        paddingHorizontal: 4,
-                        paddingVertical: 1,
-                      }}
-                    >
-                      <Text className="text-white text-[9px] font-bold">
-                        S{p.season}:E{p.episode}
-                      </Text>
-                    </View>
-                  )}
-
-                {/* Provider badge */}
-                {p.providerId ? (
-                  <View
-                    style={{
-                      position: "absolute",
-                      bottom: 10,
-                      left: 4,
-                      backgroundColor: colors.goldBadge,
-                      borderRadius: 3,
-                      paddingHorizontal: 4,
-                      paddingVertical: 1,
-                      maxWidth: cardWidth - 8,
-                    }}
-                  >
-                    <Text
-                      className="text-primary text-[8px] font-bold"
-                      numberOfLines={1}
-                      style={{ color: colors.gold }}
-                    >
-                      {providerLabelMap[p.providerId] ?? p.providerId}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {/* Fully watched checkmark */}
-                {item.fullyWatched && (
-                  <View
-                    style={{
-                      position: "absolute",
-                      top: 4,
-                      right: 4,
-                      backgroundColor: colors.greenBadge,
-                      borderRadius: 10,
-                      width: 18,
-                      height: 18,
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Ionicons name="checkmark" size={12} color="#fff" />
-                  </View>
-                )}
               </View>
 
-              {/* Title */}
-              <Text
-                style={{
-                  color: colors.textSecondary,
-                  fontSize: 11,
-                  fontFamily: "Inter_400Regular",
-                  marginTop: 6,
-                }}
-                numberOfLines={1}
-              >
-                {title || `ID: ${p.tmdbId}`}
-              </Text>
+              {/* Title & Progress details below thumbnail */}
+              <View style={{ marginTop: 6, paddingHorizontal: 2 }}>
+                <Text
+                  style={{
+                    color: colors.textPrimary,
+                    fontSize: 12,
+                    fontFamily: "Inter_600SemiBold",
+                  }}
+                  numberOfLines={1}
+                >
+                  {title || `ID: ${p.tmdbId}`}
+                </Text>
+                <Text
+                  style={{
+                    color: colors.textTertiary,
+                    fontSize: 10,
+                    fontFamily: "Inter_400Regular",
+                    marginTop: 2,
+                  }}
+                >
+                  {Math.round((p.completed ? 1 : p.percent) * 100)}% watched
+                </Text>
+              </View>
             </TouchableOpacity>
           );
         })}
