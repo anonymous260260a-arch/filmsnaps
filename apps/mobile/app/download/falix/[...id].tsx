@@ -31,7 +31,7 @@ import { tmdbApi } from "../../../lib/api";
 import { colors } from "../../../theme/colors";
 
 // ── API Base ──
-const FALIX_API_BASE = "https://download-falix-falixmovies-backend-hf.hf.space";
+const FALIX_API_BASE = "https://download-falixm.koyeb.app";
 
 // ── Types ──
 interface FalixTelegramFile {

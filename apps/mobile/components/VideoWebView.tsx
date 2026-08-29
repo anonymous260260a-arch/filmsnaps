@@ -728,6 +728,16 @@ export function VideoWebView({
   const nextEpBtnInjectedRef = useRef(false);
   const nextEpFetchingRef = useRef(false);
 
+  // Tracks the PROVIDER's own in-page fullscreen (driven by its native button
+  // via the `cf:fullscreen` message). This is independent of RN `isFullscreen`
+  // (which is only toggled by our overlay control). Used to restore fullscreen
+  // after "Next Episode" remounts the WebView (see goToNextEpisode + load
+  // handlers below).
+  const providerFsRef = useRef(false);
+  // Set the moment "Next Episode" is tapped while the provider is fullscreen,
+  // so the new episode's page can be re-expanded once it loads.
+  const wasFullscreenOnNextRef = useRef(false);
+
   // Per-title session type wins over the global Hard Mode Split: a regular
   // movie tapped in anime mode must NOT get anime-only servers (megaplay is
   // keyed by MAL ids and can't play a TMDB movie), and an anime title tapped
@@ -740,11 +750,23 @@ export function VideoWebView({
     return getNonAnimeProviders();
   }, [isAnime]);
 
-  const [providerId, setProviderId] = useState<string>(
-    initialProvider && providers.some((p) => p.id === initialProvider)
-      ? initialProvider
-      : (providers[0]?.id ?? ""),
-  );
+  // Initial provider: explicit route param wins; otherwise fall back to the
+  // user's "Default Source" setting if it's still an enabled provider, else the
+  // first available provider.
+  const initialProviderId = useMemo(() => {
+    if (initialProvider && providers.some((p) => p.id === initialProvider)) {
+      return initialProvider;
+    }
+    if (
+      settings.defaultServer &&
+      providers.some((p) => p.id === settings.defaultServer)
+    ) {
+      return settings.defaultServer;
+    }
+    return providers[0]?.id ?? "";
+  }, [initialProvider, providers, settings.defaultServer]);
+
+  const [providerId, setProviderId] = useState<string>(initialProviderId);
 
   // ── MegaPlay sub/dub preference (persisted, per-title) ──
   // MegaPlay's embed honors opts.audio (/stream/<space>/<id>/<ep>/<sub|dub>).
@@ -1553,6 +1575,10 @@ export function VideoWebView({
     armedEpisodeRef.current = "";
     nextEpFetchingRef.current = false;
     setNextEpInfo(null);
+    // Remember whether the provider was fullscreen so the new episode's page
+    // can be re-expanded after the WebView remount (provider fullscreen is lost
+    // on remount and can't be re-entered without a fresh user gesture).
+    wasFullscreenOnNextRef.current = providerFsRef.current;
     setCurrentSeason(nextEpInfo.season);
     setCurrentEpisode(nextEpInfo.episode);
     setMountGen((g) => g + 1);
@@ -1746,9 +1772,15 @@ export function VideoWebView({
         const s = seasonRef.current;
         const e = episodeRef.current;
         getNextEpisode(id, s ?? 1, e ?? 1)
-          .then(({ nextSeason, nextEpisode }) => {
+          .then(({ nextSeason, nextEpisode, hasNext }) => {
             // Changed again while we were fetching — abort.
             if (state.episodeKey !== armedEpisodeRef.current) return;
+            if (!hasNext) {
+              // Final episode of the final season — no Next Episode button.
+              setNextEpInfo(null);
+              nextEpFetchingRef.current = false;
+              return;
+            }
             setNextEpInfo({ season: nextSeason, episode: nextEpisode });
             if (
               (nextSeason !== s || nextEpisode !== e) &&
@@ -2053,6 +2085,24 @@ export function VideoWebView({
                 seekTo(seekTime);
                 startAtRef.current = 0;
               }
+              // Restore fullscreen after a "Next Episode" remount. The provider's
+              // own fullscreen is native (onShowCustomView) and is destroyed when
+              // the WebView remounts, but the device stays landscape because the
+              // prior cf:fullscreen lock was never released. The provider's button
+              // can't be re-pressed without a fresh gesture, so expand OUR layout
+              // to fill the screen — the freshly-loaded WebView then shows full-size.
+              if (wasFullscreenOnNextRef.current) {
+                wasFullscreenOnNextRef.current = false;
+                console.log(
+                  `[FS-RESTORE] RN: expanding RN fullscreen after next-episode remount`,
+                );
+                webViewRef.current?.injectJavaScript(
+                  "console.log('[FS-RESTORE] expanding RN layout to fullscreen; providerFsWas=" +
+                    (providerFsRef.current ? "true" : "false") +
+                    "'); true;",
+                );
+                setIsFullscreen(true);
+              }
               // MegaPlay 410 detection now lives inside MEGAPLAY_410_MASK (fast 200ms
               // innerText poll posts anime-410 from document_start) — no separate probe.
               // The mask is injected via injectedJavaScriptBeforeContentLoaded + re-armed
@@ -2106,9 +2156,24 @@ export function VideoWebView({
                     seekTo(seekTime);
                     startAtRef.current = 0;
                   }
+                  // Restore fullscreen after a "Next Episode" remount.
+                  if (wasFullscreenOnNextRef.current) {
+                    wasFullscreenOnNextRef.current = false;
+                    console.log(
+                      `[FS-RESTORE] RN: expanding RN fullscreen after next-episode remount (content-ready)`,
+                    );
+                    setIsFullscreen(true);
+                  }
                   return;
                 }
                 if (data.type === "cf:fullscreen") {
+                  providerFsRef.current = !!data.entering;
+                  // Keep OUR layout in sync with the provider's native fullscreen
+                  // (onShowCustomView / onHideCustomView). Without this, after a
+                  // next-episode remount we force RN fullscreen, but tapping the
+                  // provider's button to exit only rotates to portrait — leaving
+                  // our layout stuck full. Enter -> RN full, exit -> RN collapse.
+                  setIsFullscreen(!!data.entering);
                   if (data.entering) {
                     ScreenOrientation.lockAsync(
                       ScreenOrientation.OrientationLock.LANDSCAPE,

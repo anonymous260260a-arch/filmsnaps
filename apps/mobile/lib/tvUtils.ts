@@ -1,4 +1,4 @@
-import { tmdbApi } from './api';
+import { tmdbApi } from "./api";
 
 export interface SeasonInfo {
   seasonNumber: number;
@@ -17,7 +17,7 @@ export async function getNextEpisode(
   tvId: string | number,
   currentSeason: number,
   currentEpisode: number,
-): Promise<{ nextSeason: number; nextEpisode: number }> {
+): Promise<{ nextSeason: number; nextEpisode: number; hasNext: boolean }> {
   try {
     // Get all seasons to find episode counts
     const tvData = await tmdbApi.getTVSeasonsOnly(tvId);
@@ -33,38 +33,60 @@ export async function getNextEpisode(
       .sort((a, b) => a.seasonNumber - b.seasonNumber);
 
     // Find current season info
-    const currentSeasonInfo = validSeasons.find(s => s.seasonNumber === currentSeason);
+    const currentSeasonInfo = validSeasons.find(
+      (s) => s.seasonNumber === currentSeason,
+    );
 
     if (!currentSeasonInfo) {
       // Current season not found, assume standard episode count
-      return { nextSeason: currentSeason, nextEpisode: currentEpisode + 1 };
+      return {
+        nextSeason: currentSeason,
+        nextEpisode: currentEpisode + 1,
+        hasNext: true,
+      };
     }
 
     // If not the last episode of current season
     if (currentEpisode < currentSeasonInfo.episodeCount) {
-      return { nextSeason: currentSeason, nextEpisode: currentEpisode + 1 };
+      return {
+        nextSeason: currentSeason,
+        nextEpisode: currentEpisode + 1,
+        hasNext: true,
+      };
     }
 
     // Last episode of current season - find next season
-    const nextSeasonInfo = validSeasons.find(s => s.seasonNumber === currentSeason + 1);
+    const nextSeasonInfo = validSeasons.find(
+      (s) => s.seasonNumber === currentSeason + 1,
+    );
 
     if (nextSeasonInfo) {
-      return { nextSeason: currentSeason + 1, nextEpisode: 1 };
+      return { nextSeason: currentSeason + 1, nextEpisode: 1, hasNext: true };
     }
 
-    // No next season available - stay at current (user can handle)
-    return { nextSeason: currentSeason, nextEpisode: currentEpisode + 1 };
+    // No next season available — final episode of the final season.
+    return {
+      nextSeason: currentSeason,
+      nextEpisode: currentEpisode,
+      hasNext: false,
+    };
   } catch (error) {
-    console.warn('[getNextEpisode] Failed to fetch season data:', error);
-    // Fallback: just increment episode
-    return { nextSeason: currentSeason, nextEpisode: currentEpisode + 1 };
+    console.warn("[getNextEpisode] Failed to fetch season data:", error);
+    // Fallback: just increment episode, assume there is one.
+    return {
+      nextSeason: currentSeason,
+      nextEpisode: currentEpisode + 1,
+      hasNext: true,
+    };
   }
 }
 
 /**
  * Get all valid seasons with episode counts for a TV show
  */
-export async function getAllSeasons(tvId: string | number): Promise<SeasonInfo[]> {
+export async function getAllSeasons(
+  tvId: string | number,
+): Promise<SeasonInfo[]> {
   try {
     const tvData = await tmdbApi.getTVSeasonsOnly(tvId);
     const seasons = (tvData.seasons as any[]) ?? [];
@@ -77,7 +99,7 @@ export async function getAllSeasons(tvId: string | number): Promise<SeasonInfo[]
       }))
       .sort((a, b) => a.seasonNumber - b.seasonNumber);
   } catch (error) {
-    console.warn('[getAllSeasons] Failed to fetch season data:', error);
+    console.warn("[getAllSeasons] Failed to fetch season data:", error);
     return [];
   }
 }

@@ -144,7 +144,7 @@ export default function GuideScreen() {
             number={4}
             text="When a download finishes, it's saved to your device's Downloads folder and appears in the Downloads list with a green check."
           />
-          <GuideNote text="Download over Wi-Fi where possible. Enable 'Download over Cellular' in Settings to allow it on mobile data." />
+          <GuideNote text="Download over Wi-Fi where possible. Your 'Download Speed Limit' setting in Settings controls how fast downloads run." />
         </GuideSection>
 
         {/* ── Playing downloads ── */}

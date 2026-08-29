@@ -169,59 +169,6 @@ export function SeasonPicker({
     [store, tmdbId, selectedSeason],
   );
 
-  // Download all remaining episodes for this season
-  const handleDownloadRemaining = useCallback(async () => {
-    if (episodes.length === 0) return;
-
-    const remaining = episodes.filter((ep: any) => {
-      const status = getEpisodeDownloadStatus(ep.episode_number);
-      return (
-        status !== "completed" &&
-        status !== "downloading" &&
-        status !== "pending"
-      );
-    });
-
-    if (remaining.length === 0) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      downloadToast.info("All episodes already downloaded");
-      return;
-    }
-
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-    let count = 0;
-    for (const ep of remaining) {
-      const epNum = ep.episode_number;
-      try {
-        await smartDownload({
-          url: "",
-          fileName: `${showTitle || "TV"}_S${selectedSeason}E${String(epNum).padStart(2, "0")}.mp4`,
-          mediaType: "tv",
-          tmdbId,
-          title: `${showTitle || ""} S${selectedSeason}E${epNum}`,
-          posterPath: posterPath ?? undefined,
-          season: selectedSeason,
-          episode: epNum,
-        });
-        count++;
-      } catch {
-        // skip failures — continue with next
-      }
-    }
-
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    downloadToast.success(`Queued ${count} episodes for download`);
-  }, [
-    episodes,
-    getEpisodeDownloadStatus,
-    smartDownload,
-    showTitle,
-    selectedSeason,
-    tmdbId,
-    posterPath,
-  ]);
-
   // Download single episode
   const handleEpisodeDownload = useCallback(
     async (episodeNumber: number) => {
@@ -245,10 +192,6 @@ export function SeasonPicker({
     ? episodes
     : episodes.slice(0, COLLAPSE_THRESHOLD);
   const showExpandButton = episodes.length > COLLAPSE_THRESHOLD;
-  const remainingCount = episodes.filter((ep: any) => {
-    const status = getEpisodeDownloadStatus(ep.episode_number);
-    return status !== "completed";
-  }).length;
 
   return (
     <View className="mt-6">
@@ -382,43 +325,6 @@ export function SeasonPicker({
             />
           </View>
         </View>
-      )}
-
-      {/* Batch download button */}
-      {episodes.length > 0 && (
-        <TouchableOpacity
-          onPress={handleDownloadRemaining}
-          activeOpacity={0.7}
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            paddingVertical: 10,
-            marginBottom: 10,
-            borderRadius: 10,
-            backgroundColor: colors.goldBadge,
-            borderWidth: 0.5,
-            borderColor: colors.goldRatingBorder,
-          }}
-        >
-          <Ionicons
-            name="cloud-download-outline"
-            size={15}
-            color={colors.gold}
-            style={{ marginRight: 6 }}
-          />
-          <Text
-            style={{
-              color: colors.gold,
-              fontSize: 13,
-              fontFamily: "Inter_600SemiBold",
-            }}
-          >
-            {seasonSummary && seasonSummary.downloadedEpisodes > 0
-              ? `Download Remaining (${remainingCount})`
-              : `Download Season ${selectedSeason} (${episodes.length})`}
-          </Text>
-        </TouchableOpacity>
       )}
 
       {/* Episode list */}

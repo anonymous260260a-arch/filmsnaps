@@ -5,7 +5,7 @@
  * - Welcome layout with brand icon + value proposition
  * - Accordion-style legal sections (expand on tap, collapse by default)
  * - Ghost "Decline" button with confirmation + dead-end screen
- * - Revised legal copy (removed "educational purposes" language)
+ * - Simplified, clearer copy with strong user-responsibility language
  *
  * Extracted from _layout.tsx for maintainability.
  */
@@ -41,95 +41,70 @@ const SECTIONS = [
     key: "content",
     title: "Content Notice",
     body: () => (
-      <Text className="text-sm leading-6" style={{ color: colors.zinc300 }}>
-        FilmSnaps does{" "}
-        <Text
-          style={{ fontFamily: "Inter_600SemiBold", color: colors.textPrimary }}
-        >
-          not
-        </Text>{" "}
-        host, store, upload, or manage any video content, files, or media. All
-        content accessed through this application is hosted by third-party
-        services that are not affiliated with us.
-      </Text>
-    ),
-  },
-  {
-    key: "affiliation",
-    title: "No Affiliation",
-    body: () => (
-      <Text className="text-sm leading-6" style={{ color: colors.zinc300 }}>
-        We do not own, operate, or have any access to the servers that host the
-        content you stream or download through this app. We do not control what
-        content is available, how it is stored, or who has access to it. Any
-        legal concerns regarding specific content must be directed to the actual
-        content hosters and uploaders.
+      <Text
+        className="text-sm leading-7"
+        style={{ color: colors.textSecondary }}
+      >
+        FilmSnaps doesn't host or store any videos. Everything you watch comes
+        from third-party services that aren't connected to us. We don't own,
+        operate, or have access to their servers, and we have no control over
+        what content they make available.
       </Text>
     ),
   },
   {
     key: "about",
-    title: "About This Project",
+    title: "About FilmSnaps",
     body: () => (
-      <Text className="text-sm leading-6" style={{ color: colors.zinc300 }}>
-        FilmSnaps is an independent project and is not a commercial streaming
-        service. It demonstrates open-source software development and modern
-        mobile application architecture.
+      <Text
+        className="text-sm leading-7"
+        style={{ color: colors.textSecondary }}
+      >
+        FilmSnaps is a free, open-source project. It's not a commercial
+        streaming service — it's built by the community and available for anyone
+        to inspect.
       </Text>
     ),
   },
   {
     key: "responsibility",
-    title: "User Responsibility",
+    title: "Your Responsibility",
     body: () => (
       <View>
-        <Text className="text-sm leading-6" style={{ color: colors.zinc300 }}>
-          As a user of this application, you are responsible for:
+        <Text
+          className="text-sm leading-7"
+          style={{ color: colors.textSecondary }}
+        >
+          By using FilmSnaps,{" "}
+          <Text
+            style={{
+              fontFamily: "Inter_600SemiBold",
+              color: colors.textPrimary,
+            }}
+          >
+            you accept full responsibility
+          </Text>{" "}
+          for how you use the app. You agree to:
         </Text>
-        <View className="flex-row items-start mt-2">
+        <BulletItem text="Follow copyright laws where you live" />
+        <BulletItem text="Only watch content you have the right to access" />
+        <BulletItem text="Don't redistribute downloaded content" />
+        <Text
+          className="text-sm leading-7 mt-3"
+          style={{ color: colors.textSecondary }}
+        >
           <Text
-            className="text-[10px] mt-1.5 mr-2.5"
-            style={{ color: colors.gold }}
+            style={{
+              fontFamily: "Inter_600SemiBold",
+              color: colors.textPrimary,
+            }}
           >
-            ■
-          </Text>
-          <Text
-            className="text-sm leading-5 flex-1"
-            style={{ color: colors.zinc300 }}
-          >
-            Ensuring your use complies with local laws in your jurisdiction
-          </Text>
-        </View>
-        <View className="flex-row items-start mt-2">
-          <Text
-            className="text-[10px] mt-1.5 mr-2.5"
-            style={{ color: colors.gold }}
-          >
-            ■
-          </Text>
-          <Text
-            className="text-sm leading-5 flex-1"
-            style={{ color: colors.zinc300 }}
-          >
-            Using the app only for accessing content you have the legal right to
-            access
-          </Text>
-        </View>
-        <View className="flex-row items-start mt-2">
-          <Text
-            className="text-[10px] mt-1.5 mr-2.5"
-            style={{ color: colors.gold }}
-          >
-            ■
-          </Text>
-          <Text
-            className="text-sm leading-5 flex-1"
-            style={{ color: colors.zinc300 }}
-          >
-            Not redistributing downloaded content or using it for commercial
-            purposes
-          </Text>
-        </View>
+            The developers, contributors, and publishers of FilmSnaps are not
+            responsible for any loss, damages, or legal issues
+          </Text>{" "}
+          arising from your use of the app or third-party content. You — the
+          user — are solely and entirely responsible.
+        </Text>
       </View>
     ),
   },
@@ -137,14 +112,38 @@ const SECTIONS = [
     key: "warranty",
     title: "No Warranty",
     body: () => (
-      <Text className="text-sm leading-6" style={{ color: colors.zinc300 }}>
-        This software is provided "as is" without warranty of any kind. The
-        developers and contributors are not responsible for any damages or legal
-        issues that may arise from the use of this application.
+      <Text
+        className="text-sm leading-7"
+        style={{ color: colors.textSecondary }}
+      >
+        This software is provided "as is" with no warranties of any kind.{" "}
+        <Text
+          style={{ fontFamily: "Inter_600SemiBold", color: colors.textPrimary }}
+        >
+          The developers, contributors, and publishers are not responsible
+        </Text>{" "}
+        for any damages or legal issues that may arise from the use of this
+        application.
       </Text>
     ),
   },
 ];
+
+function BulletItem({ text }: { text: string }) {
+  return (
+    <View className="flex-row items-start mt-2.5">
+      <Text className="text-[8px] mt-1.5 mr-3" style={{ color: colors.gold }}>
+        ●
+      </Text>
+      <Text
+        className="text-sm leading-6 flex-1"
+        style={{ color: colors.textSecondary }}
+      >
+        {text}
+      </Text>
+    </View>
+  );
+}
 
 export default function LegalGate() {
   const insets = useSafeAreaInsets();
@@ -204,7 +203,7 @@ export default function LegalGate() {
           You've declined the terms of use
         </Text>
         <Text
-          className="text-sm leading-6 text-center"
+          className="text-sm leading-7 text-center"
           style={{ color: colors.textSecondary, marginBottom: 32 }}
         >
           You can delete FilmSnaps from your device, or review the terms again
@@ -290,15 +289,22 @@ export default function LegalGate() {
         {SECTIONS.map((section) => {
           const isExpanded = expandedSection === section.key;
           return (
-            <View key={section.key} className="mb-2 rounded-xl overflow-hidden">
+            <View
+              key={section.key}
+              className="mb-2 rounded-xl overflow-hidden"
+              style={{
+                borderWidth: 1,
+                borderColor: colors.borderSubtle,
+              }}
+            >
               <TouchableOpacity
                 onPress={() => toggleSection(section.key)}
                 activeOpacity={0.7}
                 className="flex-row items-center justify-between px-4 py-3.5"
-                style={{ backgroundColor: colors.bgSurface }}
+                style={{ backgroundColor: colors.bgCard }}
               >
                 <Text
-                  className="text-sm font-semibold"
+                  className="text-sm tracking-wide flex-1 mr-2"
                   style={{
                     color: colors.gold,
                     fontFamily: "Inter_600SemiBold",
@@ -314,8 +320,8 @@ export default function LegalGate() {
               </TouchableOpacity>
               {isExpanded && (
                 <View
-                  className="px-4 py-3"
-                  style={{ backgroundColor: colors.bgSurface }}
+                  className="px-4 pt-1 pb-4"
+                  style={{ backgroundColor: colors.bgCard }}
                 >
                   <section.body />
                 </View>
@@ -326,10 +332,10 @@ export default function LegalGate() {
 
         {/* Summary line */}
         <Text
-          className="text-xs text-center mt-6"
-          style={{ color: colors.textSecondary, lineHeight: 18 }}
+          className="text-sm text-center mt-6 leading-6"
+          style={{ color: colors.textSecondary }}
         >
-          By continuing, you acknowledge and accept the above terms.
+          By tapping "I Understand", you accept these terms.
         </Text>
       </ScrollView>
 
