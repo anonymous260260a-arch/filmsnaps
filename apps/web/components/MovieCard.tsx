@@ -52,7 +52,7 @@ export function MovieCard({
     });
 
     if (!isDesktop) return;
-    router.prefetch(`/watch/${type}/${item.id}`);
+    router.prefetch(`/watch?type=${type}&id=${item.id}`);
     const backdropUrl = getImageUrl(item.backdrop_path, "w1280");
     if (backdropUrl && backdropUrl !== "/placeholder.jpg") {
       const link = document.createElement("link");
@@ -68,11 +68,11 @@ export function MovieCard({
       {/* Poster */}
       <Link
         prefetch
-        href={`/${type}/${item.id}`}
+        href={`/${type}?id=${item.id}`}
         className="block"
         onMouseEnter={prefetchMovie}
       >
-        <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-secondary shadow-lg transition-all duration-500 group-hover:shadow-2xl group-hover:shadow-primary/5">
+        <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-secondary shadow-lg transition-shadow duration-300 group-hover:shadow-2xl group-hover:shadow-primary/5">
           {posterPath ? (
             <Image
               src={getImageUrl(posterPath, "w500") || ""}
@@ -81,7 +81,7 @@ export function MovieCard({
               sizes="(max-width: 640px) 50vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 16vw"
               loading="lazy"
               quality={85}
-              className="object-cover transition-all duration-500 group-hover:scale-105"
+              className="object-cover transition-transform duration-300 group-hover:scale-105"
             />
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -97,7 +97,7 @@ export function MovieCard({
             <Button
               onClick={(e) => {
                 e.preventDefault();
-                router.push(`/watch/${type}/${item.id}`);
+                router.push(`/watch?type=${type}&id=${item.id}`);
               }}
               className="gap-2 px-5 py-2 h-auto rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-sm font-medium hover:bg-white/20 transition-all"
             >
@@ -113,9 +113,11 @@ export function MovieCard({
 
           {/* Rating badge — always visible */}
           {rating && variant === "default" && (
-            <div className="absolute top-2.5 right-2.5 flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-lg border border-white/[0.06]">
+            <div className="absolute top-2.5 right-2.5 flex items-center gap-1 bg-[#16161A]/90 backdrop-blur-sm px-2 py-1 rounded-lg border border-white/[0.08]">
               <Star className="h-3 w-3 text-amber-accent fill-amber-accent" />
-              <span className="text-xs font-semibold text-white">{rating}</span>
+              <span className="text-xs font-semibold text-white tabular-nums">
+                {rating}
+              </span>
             </div>
           )}
 
@@ -153,7 +155,7 @@ export function MovieCard({
 
       {/* Info below card */}
       <Link
-        href={`/${type}/${item.id}`}
+        href={`/${type}?id=${item.id}`}
         className="block mt-2.5 space-y-0.5 px-0.5"
       >
         <h3 className="font-sans text-sm font-semibold text-foreground/90 line-clamp-1 group-hover:text-primary transition-colors duration-200">

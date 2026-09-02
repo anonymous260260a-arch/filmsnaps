@@ -21,14 +21,12 @@ export function Header() {
   const debouncedQuery = useDebounce(searchQuery, 300);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
-  const [isDesktop, setIsDesktop] = useState(false);
-
-  // Detect Electron desktop environment
-  useEffect(() => {
-    if (typeof window !== "undefined" && window.electronAPI?.isDesktop) {
-      setIsDesktop(true);
-    }
-  }, []);
+  // Lazy-init: synchronously detect Electron on first client render to avoid
+  // the one-frame flash of the full website header on desktop.
+  const [isDesktop] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !!window.electronAPI?.isDesktop;
+  });
 
   const navLinks = useMemo(
     () => [
@@ -122,7 +120,7 @@ export function Header() {
     setMobileSearchOpen(false);
     setSearchQuery("");
     const type = item.media_type || "movie";
-    router.push(`/${type}/${item.id}`);
+    router.push(`/${type}?id=${item.id}`);
   };
 
   const openDesktopSearch = () => {

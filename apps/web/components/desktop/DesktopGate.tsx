@@ -10,19 +10,16 @@
 
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 
 export function DesktopGate({ children }: { children: React.ReactNode }) {
-  const [isDesktop, setIsDesktop] = useState(false);
+  // Lazy-init: synchronously detect Electron on first client render to avoid
+  // the one-frame flash of the website header inside the desktop shell.
+  const [isDesktop] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !!window.electronAPI?.isDesktop;
+  });
 
-  useEffect(() => {
-    if (typeof window !== "undefined" && window.electronAPI?.isDesktop) {
-      setIsDesktop(true);
-    }
-  }, []);
-
-  // Avoid a hydration mismatch: server renders children, client flips to
-  // nothing only after mount. On web this stays visible.
   if (isDesktop) return null;
   return <>{children}</>;
 }

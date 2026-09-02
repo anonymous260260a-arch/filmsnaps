@@ -7,6 +7,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiUrl } from "@/lib/tmdb";
 
 export interface AniListHomeItem {
   malId: number;
@@ -42,7 +43,7 @@ export function useAniListHome(limit = 20): {
     const ctrl = new AbortController();
     setIsLoading(true);
     setError(false);
-    fetch(`/api/anime/home?limit=${limit}`, { signal: ctrl.signal })
+    fetch(apiUrl(`/api/anime/home?limit=${limit}`), { signal: ctrl.signal })
       .then((r) => {
         if (!r.ok) throw new Error(String(r.status));
         return r.json();

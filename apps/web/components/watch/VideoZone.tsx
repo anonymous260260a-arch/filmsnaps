@@ -326,27 +326,6 @@ export function VideoZone({
               }}
             />
           ))}
-
-          {/* Loading state */}
-          {isPending && !playerReady && !iframeLoadError && !cpuWarning && (
-            <div className="absolute inset-0 bg-[#070708] z-50 flex flex-col items-center justify-center gap-5 pointer-events-none">
-              <div className="relative w-14 h-14">
-                <div className="absolute inset-0 rounded-full border-2 border-[#222226]" />
-                <div
-                  className="absolute inset-0 rounded-full border-t-2 border-[#D4A237] animate-spin"
-                  style={{ animationDuration: "1.2s" }}
-                />
-                <div className="absolute inset-3 rounded-full border-2 border-[#222226]" />
-                <div className="absolute inset-[18px] rounded-full bg-[#D4A237]/30" />
-              </div>
-              <p className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse">
-                Scanning Projection Room
-              </p>
-              <p className="text-[11px] text-zinc-600 -mt-3">
-                {loadingSubtext}
-              </p>
-            </div>
-          )}
         </div>
       </div>
     </div>

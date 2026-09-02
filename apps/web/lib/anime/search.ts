@@ -10,6 +10,7 @@
  */
 
 import Fuse from "fuse.js";
+import { apiUrl } from "@/lib/tmdb";
 
 /** Slim result shape returned by /api/anime/search. */
 export interface AnimeResult {
@@ -41,7 +42,7 @@ export async function animeSearch(
   limit = 20,
 ): Promise<AnimeSearchResponse> {
   const res = await fetch(
-    `/api/anime/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+    apiUrl(`/api/anime/search?q=${encodeURIComponent(query)}&limit=${limit}`),
   );
   if (!res.ok) throw new Error(`anime search failed (${res.status})`);
   return res.json();

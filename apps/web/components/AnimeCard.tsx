@@ -40,7 +40,7 @@ export function AnimeCard({ item, className = "" }: AnimeCardProps) {
   const tmdbId = item.tmdbShowId ?? item.tmdbMovieId;
   if (!tmdbId) return null;
 
-  const detailHref = `/${mediaType}/${tmdbId}?mid=${item.malId}${
+  const detailHref = `/${mediaType}?id=${tmdbId}&mid=${item.malId}${
     item.anilistId != null ? `&aid=${item.anilistId}` : ""
   }`;
 

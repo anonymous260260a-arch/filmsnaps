@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { desktopSkip } from "../../desktop-skip";
 
-const FALIX_BASE = "https://download-falixm.koyeb.app";
+export const revalidate = 1;
+
+const FALIX_BASE = "https://dl.falixmovies.com";
 
 /**
  * Server-side proxy for the Falix metadata API.
@@ -13,6 +16,8 @@ const FALIX_BASE = "https://download-falixm.koyeb.app";
  * 3. Allow future response caching
  */
 export async function GET(request: NextRequest) {
+  const skip = desktopSkip();
+  if (skip) return skip;
   const { searchParams } = new URL(request.url);
   const tmdbId = searchParams.get("id");
 

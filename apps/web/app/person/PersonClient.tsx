@@ -6,6 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowLeft, Calendar, MapPin, Film, Star } from "lucide-react";
 import { getImageUrl } from "@/lib/tmdb";
+import { MediaLink } from "@/components/MediaLink";
 
 interface PersonClientProps {
   person: any;
@@ -28,9 +29,15 @@ export default function PersonClient({ person, credits }: PersonClientProps) {
     );
 
   function CreditCard({ credit, type }: { credit: any; type: "movie" | "tv" }) {
-    const href = type === "movie" ? `/movie/${credit.id}` : `/tv/${credit.id}`;
+    const href =
+      type === "movie" ? `/movie?id=${credit.id}` : `/tv?id=${credit.id}`;
     return (
-      <Link href={href} className="flex-shrink-0 w-24 group">
+      <MediaLink
+        id={credit.id}
+        type={type}
+        href={href}
+        className="flex-shrink-0 w-24 group"
+      >
         <div className="aspect-[2/3] rounded-lg overflow-hidden bg-[#16161A] mb-1.5 shadow-md ring-1 ring-white/[0.06]">
           {credit.poster_path ? (
             <Image
@@ -57,7 +64,7 @@ export default function PersonClient({ person, credits }: PersonClientProps) {
             </span>
           </div>
         )}
-      </Link>
+      </MediaLink>
     );
   }
 

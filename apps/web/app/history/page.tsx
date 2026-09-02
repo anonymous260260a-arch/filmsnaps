@@ -10,13 +10,11 @@ import Image from "next/image";
 import { Play, Trash2, ArrowLeft } from "lucide-react";
 import { Header } from "@/components/Header";
 import { PageShell } from "@/components/PageShell";
-import { createLocalStorageAdapter } from "@filmsnaps/shared";
-import { useWatchHistory } from "@filmsnaps/shared";
+import { MediaLink } from "@/components/MediaLink";
+import { useCachedWatchHistory } from "@/hooks/useCachedWatchHistory";
 import type { WatchProgress } from "@filmsnaps/shared";
 import { useAppMode } from "@/lib/useAppMode";
 import { getImageUrl, tmdbApi } from "@/lib/tmdb";
-
-const storage = createLocalStorageAdapter();
 
 /** Minimal TMDB fields the history rows need (mirrors ContinueWatching). */
 interface EntryMeta {
@@ -35,7 +33,7 @@ function formatTime(totalSeconds: number): string {
 
 export default function HistoryPage() {
   const { aggregated, loading, clearAll, removeEntry, refresh } =
-    useWatchHistory(storage);
+    useCachedWatchHistory();
   const { mode } = useAppMode();
   const [grouped, setGrouped] = useState<WatchProgress[]>([]);
   const [metaMap, setMetaMap] = useState<Record<string, EntryMeta>>({});
@@ -197,17 +195,19 @@ export default function HistoryPage() {
 
                   {/* Actions */}
                   <div className="flex items-center gap-2">
-                    <Link
+                    <MediaLink
+                      id={entry.tmdbId}
+                      type={entry.mediaType === "tv" ? "tv" : "movie"}
                       href={
                         entry.mediaType === "tv"
-                          ? `/watch/tv/${entry.tmdbId}?season=${entry.season ?? 1}&episode=${entry.episode ?? 1}`
-                          : `/watch/movie/${entry.tmdbId}`
+                          ? `/watch?type=tv&id=${entry.tmdbId}&season=${entry.season ?? 1}&episode=${entry.episode ?? 1}`
+                          : `/watch?type=movie&id=${entry.tmdbId}`
                       }
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A237]/10 text-[#D4A237] hover:bg-[#D4A237]/20 text-xs font-semibold transition-all"
                     >
                       <Play size={12} />
                       Resume
-                    </Link>
+                    </MediaLink>
                     <button
                       onClick={() =>
                         removeEntry(

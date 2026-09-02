@@ -15,14 +15,18 @@ export const getTrailerKey = (videos: any) => {
 };
 
 const getBaseUrl = () => {
-  // Browser
+  // Browser — use NEXT_PUBLIC_API_URL if set (desktop builds fetch from CF Worker),
+  // otherwise fall back to relative paths (web builds use same-origin API routes).
   if (typeof window !== "undefined") {
-    return "";
+    return process.env.NEXT_PUBLIC_API_URL || "";
   }
 
   // Server (Vercel / Node)
   return process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 };
+
+/** Build a full API URL — prefixes NEXT_PUBLIC_API_URL (CF Worker) when set. */
+export const apiUrl = (path: string) => `${getBaseUrl()}${path}`;
 
 const apiFetch = async (path: string) => {
   const baseUrl = getBaseUrl();
@@ -52,6 +56,14 @@ export const tmdbApi = {
 
   getTVDetails: (id: number | string) =>
     apiFetch(`/tv/${id}?append_to_response=videos,credits,similar`),
+
+  getSeason: (tvId: number | string, seasonNumber: number) =>
+    apiFetch(`/tv/${tvId}/season/${seasonNumber}`),
+
+  getPersonDetails: (id: number | string) => apiFetch(`/person/${id}`),
+
+  getPersonCredits: (id: number | string) =>
+    apiFetch(`/person/${id}/combined_credits`),
 
   /** External ids (imdb_id, …) for a movie/tv — used for falix fallback lookups. */
   getExternalIds: (

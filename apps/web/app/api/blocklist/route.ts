@@ -12,49 +12,61 @@
  * To force an immediate update on all clients, bump the `version` field.
  */
 
-import { NextResponse } from 'next/server';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { NextResponse } from "next/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
-export const dynamic = 'force-dynamic';
+import { desktopSkip } from "../desktop-skip";
+
+export const dynamic = "force-static";
 
 export async function GET() {
+  const skip = desktopSkip();
+  if (skip) return skip;
   try {
     // Read the root blocklist.json — single source of truth
-    const blocklistPath = join(process.cwd(), '..', '..', 'blocklist.json');
-    const raw = readFileSync(blocklistPath, 'utf-8');
+    const blocklistPath = join(process.cwd(), "..", "..", "blocklist.json");
+    const raw = readFileSync(blocklistPath, "utf-8");
     const data = JSON.parse(raw);
 
     return NextResponse.json(data, {
       headers: {
-        'Cache-Control': 'public, max-age=3600, s-maxage=3600',
-        'Content-Type': 'application/json',
+        "Cache-Control": "public, max-age=3600, s-maxage=3600",
+        "Content-Type": "application/json",
       },
     });
   } catch (e) {
     // Fallback: return a minimal V2 config if the file can't be read
-    return NextResponse.json({
-      version: 2,
-      allowedCdnHosts: [
-        'akamai.net', 'akamaiedge.net', 'cloudfront.net',
-        'fastly.net', 'fastlylb.net',
-        'fonts.googleapis.com', 'fonts.gstatic.com',
-        'image.tmdb.org', 'api.themoviedb.org',
-        'gstatic.com',
-      ],
-      blockedDomains: [],
-      providerProfiles: {},
-      providerRootHosts: [],
-      rules: {
-        videoDetection: {
-          extensions: ['m3u8', 'mpd', 'ts', 'm4s', 'mp4', 'webm', 'key'],
-          pathPatterns: [
-            '^/(embed|movie|tv|watch|player)/\\d+/.*(\\.(m3u8|mpd|mp4))',
-          ],
-          enableSessionTrust: true,
+    return NextResponse.json(
+      {
+        version: 2,
+        allowedCdnHosts: [
+          "akamai.net",
+          "akamaiedge.net",
+          "cloudfront.net",
+          "fastly.net",
+          "fastlylb.net",
+          "fonts.googleapis.com",
+          "fonts.gstatic.com",
+          "image.tmdb.org",
+          "api.themoviedb.org",
+          "gstatic.com",
+        ],
+        blockedDomains: [],
+        providerProfiles: {},
+        providerRootHosts: [],
+        rules: {
+          videoDetection: {
+            extensions: ["m3u8", "mpd", "ts", "m4s", "mp4", "webm", "key"],
+            pathPatterns: [
+              "^/(embed|movie|tv|watch|player)/\\d+/.*(\\.(m3u8|mpd|mp4))",
+            ],
+            enableSessionTrust: true,
+          },
         },
+        providers: [],
       },
-      providers: [],
-    }, { headers: { 'Content-Type': 'application/json' } });
+      { headers: { "Content-Type": "application/json" } },
+    );
   }
 }

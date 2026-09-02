@@ -35,7 +35,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import { getSeasonAction } from "@/lib/actions";
+import { tmdbApi } from "@/lib/tmdb";
 import {
   filterAnimeProviders,
   getEnabledProviders,
@@ -83,6 +83,8 @@ interface WatchClientContentProps {
    */
   initialMalId?: number;
   initialAnilistId?: number;
+  /** Pre-computed embed URL from URL params — enables immediate player mount. */
+  initialEmbedUrl?: string | null;
 }
 
 // ── Embed URL builder — direct ──────────────────────────────────
@@ -284,6 +286,7 @@ function WatchClientContent({
   initialResumeT,
   initialMalId,
   initialAnilistId,
+  initialEmbedUrl,
 }: WatchClientContentProps) {
   // ── Mount log for diagnostics + perf baseline mark ──
   useEffect(() => {
@@ -300,6 +303,11 @@ function WatchClientContent({
   const [isPending, startTransition] = useTransition();
   const [seasonData, setSeasonData] = useState(initialSeasonData);
   const [playerReady, setPlayerReady] = useState(false);
+
+  // Sync seasonData when the non-suspending query resolves
+  useEffect(() => {
+    if (initialSeasonData) setSeasonData(initialSeasonData);
+  }, [initialSeasonData]);
 
   // Hydration gate — resolves synchronously on the first client render (no
   // effect tick). Server snapshot `false` so SSR never emits the webview;
@@ -578,8 +586,11 @@ function WatchClientContent({
     embedUrl,
   );
 
-  // Reset loading state when URL changes
+  // Reset loading state when URL changes — but skip if the webview is already
+  // loaded via initialEmbedUrl (TMDB-derived URL arriving after initial mount
+  // should not flash a loading spinner over active playback).
   useEffect(() => {
+    if (initialEmbedUrl && playerReady) return; // already playing — don't reset
     setPlayerReady(false);
     setIframeLoadError(false);
     if (embedUrl) {
@@ -663,7 +674,7 @@ function WatchClientContent({
       setSelectedSeason(seasonNum);
       setActiveEpisode(1);
       startTransition(async () => {
-        const data = await getSeasonAction(contentid, seasonNum);
+        const data = await tmdbApi.getSeason(contentid, seasonNum);
         setSeasonData(data);
       });
     },
@@ -852,32 +863,36 @@ function WatchClientContent({
                 )}
 
               {/* Desktop: native WebContentsView (Phase 3 hybrid). Kept MOUNTED
-                  for the whole session; keyed on refreshKey only. */}
+                  for the whole session; keyed on refreshKey only.
+                  On first load, initialEmbedUrl bypasses the session gate
+                  so the webview mounts immediately while IPC runs in parallel. */}
               {isElectronEnv &&
-                sessionReady &&
-                appliedEmbedUrl &&
+                (sessionReady || initialEmbedUrl) &&
+                (appliedEmbedUrl || initialEmbedUrl) &&
                 currentProvider &&
                 !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
                   <div className="absolute inset-0 z-10">
                     <DesktopSecureWebview
                       key={`${refreshKey}-electron`}
-                      src={appliedEmbedUrl}
+                      src={appliedEmbedUrl || initialEmbedUrl || ""}
                       onLoad={handleIframeLoad}
                       onError={handleIframeError}
                     />
                   </div>
                 )}
 
-              {/* Web: SecureIframe with JS-level guards */}
+              {/* Web: SecureIframe with JS-level guards.
+                  On first load, initialEmbedUrl bypasses the TMDB-dependent
+                  embedUrl so the iframe mounts immediately. */}
               {!isElectronEnv &&
                 !cpuWarning &&
                 !iframeLoadError &&
-                embedUrl &&
+                (embedUrl || initialEmbedUrl) &&
                 currentProvider &&
                 !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
                   <SecureIframe
                     key={playerKey}
-                    src={embedUrl}
+                    src={embedUrl || initialEmbedUrl || ""}
                     sandbox={currentProvider?.sandbox}
                     csp={
                       currentProvider
@@ -1037,6 +1052,11 @@ interface WatchClientProps {
   initialEpisode?: number;
   /** Resume position in seconds (from ?t=) applied once playback starts. */
   initialResumeT?: number;
+  /** Anime identity from URL (?mid=, ?aid=). */
+  initialMalId?: number;
+  initialAnilistId?: number;
+  /** Pre-computed embed URL from URL params — enables immediate player mount. */
+  initialEmbedUrl?: string | null;
 }
 
 export default function WatchClient({
@@ -1050,6 +1070,9 @@ export default function WatchClient({
   initialSeason = 1,
   initialEpisode = 1,
   initialResumeT,
+  initialMalId,
+  initialAnilistId,
+  initialEmbedUrl,
 }: WatchClientProps) {
   return (
     <>
@@ -1078,6 +1101,9 @@ export default function WatchClient({
           initialSeasonData={initialSeasonData}
           minimal={minimal}
           initialResumeT={initialResumeT}
+          initialMalId={initialMalId}
+          initialAnilistId={initialAnilistId}
+          initialEmbedUrl={initialEmbedUrl}
         />
       </PlayerProvider>
     </>

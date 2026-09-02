@@ -213,11 +213,11 @@ export function SearchPalette({
         const type = item.tmdbShowId != null ? "tv" : "movie";
         const tmdbId = item.tmdbShowId ?? item.tmdbMovieId!;
         const aid = item.anilistId != null ? `&aid=${item.anilistId}` : "";
-        router.push(`/${type}/${tmdbId}?mid=${item.malId}${aid}`);
+        router.push(`/${type}?id=${tmdbId}&mid=${item.malId}${aid}`);
         return;
       }
       const type = item.media_type || "movie";
-      router.push(`/${type}/${item.id}`);
+      router.push(`/${type}?id=${item.id}`);
     },
     [query, close, router],
   );

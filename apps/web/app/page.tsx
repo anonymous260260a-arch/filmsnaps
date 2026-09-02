@@ -1,50 +1,65 @@
 // app/page.tsx
+"use client";
+
 import { Suspense } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { SkeletonHero } from "@/components/SkeletonLoader";
 import { LegalFooter } from "@/components/legal/LegalFooter";
 import { HomeModeFeed } from "@/components/HomeModeFeed";
-import { tmdb } from "@/lib/tmdb.server";
+import { tmdbApi } from "@/lib/tmdb";
 
-export default async function Home() {
-  let trendingMovies: any = { results: [] };
-  let trendingTV: any = { results: [] };
-  let popularMovies: any = { results: [] };
-  let upcomingMovies: any = { results: [] };
+function HomeContent() {
+  const { data: trendingMovies } = useQuery({
+    queryKey: ["movies", "trending"],
+    queryFn: () => tmdbApi.getTrendingMovies(),
+    staleTime: 10 * 60 * 1000, // 10 min
+  });
 
-  try {
-    [trendingMovies, trendingTV, popularMovies, upcomingMovies] =
-      await Promise.all([
-        tmdb("/trending/movie/week"),
-        tmdb("/trending/tv/week"),
-        tmdb("/movie/popular"),
-        tmdb("/movie/upcoming"),
-      ]);
-  } catch (e) {
-    console.error("[Home] Failed to fetch TMDB data:", e);
-  }
+  const { data: trendingTV } = useQuery({
+    queryKey: ["tv", "trending"],
+    queryFn: () => tmdbApi.getTrendingTV(),
+    staleTime: 10 * 60 * 1000,
+  });
 
-  const featuredMovies = trendingMovies.results.slice(0, 5) || [];
+  const { data: popularMovies } = useQuery({
+    queryKey: ["movies", "popular"],
+    queryFn: () => tmdbApi.getPopularMovies(),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const { data: upcomingMovies } = useQuery({
+    queryKey: ["movies", "upcoming"],
+    queryFn: () => tmdbApi.getUpcomingMovies(),
+    staleTime: 1000 * 60 * 60 * 24, // 24 hours — changes rarely
+  });
+
+  const featuredMovies = trendingMovies?.results?.slice(0, 5) || [];
 
   return (
-    <div className="min-h-screen bg-background text-foreground transition-colors duration-700">
+    <>
       <Header />
       <main>
-        {/* Single branded h1 for the home page — visually hidden so the hero
-            (an h2) and section titles carry the visual hierarchy while
-            crawlers/ATs still get a clean, keyword-rich top-level heading. */}
         <h1 className="sr-only">FilmSnaps — Discover Movies &amp; TV Shows</h1>
-        <Suspense fallback={<SkeletonHero />}>
-          <HomeModeFeed
-            trendingMovies={trendingMovies}
-            trendingTV={trendingTV}
-            popularMovies={popularMovies}
-            upcomingMovies={upcomingMovies}
-            featuredMovies={featuredMovies}
-          />
-        </Suspense>
+        <HomeModeFeed
+          trendingMovies={trendingMovies}
+          trendingTV={trendingTV}
+          popularMovies={popularMovies}
+          upcomingMovies={upcomingMovies}
+          featuredMovies={featuredMovies}
+        />
       </main>
       <LegalFooter />
+    </>
+  );
+}
+
+export default function Home() {
+  return (
+    <div className="min-h-screen bg-background text-foreground transition-colors duration-700">
+      <Suspense fallback={<SkeletonHero />}>
+        <HomeContent />
+      </Suspense>
     </div>
   );
 }

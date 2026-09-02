@@ -43,8 +43,8 @@ export default function DownloadButton({
     };
   }, [open]);
 
-  const nxshaHref = `/download/nxsha/${mediaType}/${tmdbId}`;
-  const falixHref = `/download/falix/${mediaType}/${tmdbId}`;
+  const nxshaHref = `/download/nxsha?type=${mediaType}&id=${tmdbId}`;
+  const falixHref = `/download/falix?type=${mediaType}&id=${tmdbId}`;
 
   return (
     <div ref={rootRef} className="relative">

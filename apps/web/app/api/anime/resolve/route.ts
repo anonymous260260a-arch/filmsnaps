@@ -13,6 +13,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCorsHeaders, handleOptions } from "@/lib/cors";
 import { resolveShow, resolveMovie, lookupMal } from "@/lib/anime/resolve";
+import { desktopSkip } from "../../desktop-skip";
+
+export const dynamic = "force-static";
 
 const cacheHeaders = {
   "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=86400",
@@ -35,6 +38,8 @@ function toInt(v: string | null): number | null {
 }
 
 export async function GET(req: NextRequest) {
+  const skip = desktopSkip();
+  if (skip) return skip;
   const sp = req.nextUrl.searchParams;
   const from = sp.get("from");
   const id = toInt(sp.get("id"));

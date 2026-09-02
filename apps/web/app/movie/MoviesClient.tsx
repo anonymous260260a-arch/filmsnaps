@@ -1,20 +1,21 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useMemo } from 'react';
-import { useInfiniteQuery } from '@tanstack/react-query';
-import { useInView } from 'react-intersection-observer';
-import { Header } from '@/components/Header';
-import { MediaGrid } from '@/components/MediaGrid';
-import { ChevronUp, Filter } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { GlassButton } from '@/components/ui/glass-button';
+import { useState, useEffect, useMemo } from "react";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInView } from "react-intersection-observer";
+import { Header } from "@/components/Header";
+import { MediaGrid } from "@/components/MediaGrid";
+import { ChevronUp, Filter } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { GlassButton } from "@/components/ui/glass-button";
 
-import { MediaFilter } from '@/components/MediaFilter';
+import { MediaFilter } from "@/components/MediaFilter";
+import { apiUrl } from "@/lib/tmdb";
 
 interface MoviesClientProps {
-  initialData: any;
-  genres: any[];
-  initialFilters: {
+  initialData?: any;
+  genres?: any[];
+  initialFilters?: {
     genreIds?: number[];
     sortBy?: string;
     yearRange?: [number, number];
@@ -25,13 +26,13 @@ interface MoviesClientProps {
 
 export default function MoviesClient({
   initialData,
-  initialFilters,
-  genres,
+  initialFilters = {},
+  genres = [],
 }: MoviesClientProps) {
   const getInitialFilters = () => {
-    if (typeof window === 'undefined') return initialFilters;
+    if (typeof window === "undefined") return initialFilters;
 
-    const stored = localStorage.getItem('movieFilters');
+    const stored = localStorage.getItem("movieFilters");
     if (stored) {
       try {
         return JSON.parse(stored);
@@ -43,28 +44,27 @@ export default function MoviesClient({
   };
 
   const [selectedGenres, setSelectedGenres] = useState<number[]>(
-    getInitialFilters().genreIds || []
+    getInitialFilters().genreIds || [],
   );
   const [sortBy, setSortBy] = useState<string>(
-    getInitialFilters().sortBy || 'popularity.desc'
+    getInitialFilters().sortBy || "popularity.desc",
   );
   const [yearRange, setYearRange] = useState<[number, number]>(
-    getInitialFilters().yearRange || [1900, new Date().getFullYear()]
+    getInitialFilters().yearRange || [1900, new Date().getFullYear()],
   );
   const [ratingRange, setRatingRange] = useState<[number, number]>(
-    getInitialFilters().ratingRange || [0, 10]
+    getInitialFilters().ratingRange || [0, 10],
   );
   const [language, setLanguage] = useState<string>(
-    getInitialFilters().language || ''
+    getInitialFilters().language || "",
   );
   const [showScrollTop, setShowScrollTop] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const { toast } = useToast();
   const { ref, inView } = useInView();
 
   const queryKey = useMemo(
-    () => ['movies', selectedGenres, sortBy, yearRange, ratingRange, language],
-    [selectedGenres, sortBy, yearRange, ratingRange, language]
+    () => ["movies", selectedGenres, sortBy, yearRange, ratingRange, language],
+    [selectedGenres, sortBy, yearRange, ratingRange, language],
   );
 
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, refetch } =
@@ -72,30 +72,32 @@ export default function MoviesClient({
       queryKey,
       queryFn: async ({ pageParam }) => {
         const params = new URLSearchParams();
-        params.set('page', (pageParam as number).toString());
-        params.set('sortBy', sortBy);
-        params.set('yearStart', yearRange[0].toString());
-        params.set('yearEnd', yearRange[1].toString());
-        params.set('minRating', ratingRange[0].toString());
-        params.set('maxRating', ratingRange[1].toString());
+        params.set("page", (pageParam as number).toString());
+        params.set("sortBy", sortBy);
+        params.set("yearStart", yearRange[0].toString());
+        params.set("yearEnd", yearRange[1].toString());
+        params.set("minRating", ratingRange[0].toString());
+        params.set("maxRating", ratingRange[1].toString());
         if (selectedGenres.length)
-          params.set('genres', selectedGenres.join(','));
-        if (language) params.set('language', language);
+          params.set("genres", selectedGenres.join(","));
+        if (language) params.set("language", language);
 
-        const res = await fetch(`/api/movies?${params.toString()}`);
-        if (!res.ok) throw new Error('Failed to fetch movies');
+        const res = await fetch(apiUrl(`/api/movies?${params.toString()}`));
+        if (!res.ok) throw new Error("Failed to fetch movies");
         return res.json();
       },
       getNextPageParam: (lastPage) =>
         lastPage.page < lastPage.total_pages ? lastPage.page + 1 : undefined,
       initialPageParam: 1,
-      initialData: { pages: [initialData], pageParams: [1] },
+      initialData: initialData
+        ? { pages: [initialData], pageParams: [1] }
+        : undefined,
       staleTime: 10 * 60 * 1000,
     });
 
   const movies = useMemo(
     () => data?.pages.flatMap((p) => p.results) ?? [],
-    [data]
+    [data],
   );
 
   useEffect(() => {
@@ -106,7 +108,7 @@ export default function MoviesClient({
       ratingRange,
       language,
     };
-    localStorage.setItem('movieFilters', JSON.stringify(filters));
+    localStorage.setItem("movieFilters", JSON.stringify(filters));
   }, [selectedGenres, sortBy, yearRange, ratingRange, language]);
 
   useEffect(() => {
@@ -115,27 +117,27 @@ export default function MoviesClient({
 
   useEffect(() => {
     const handleScroll = () => setShowScrollTop(window.scrollY > 300);
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
+  const scrollToTop = () => window.scrollTo({ top: 0, behavior: "smooth" });
 
   const handleGenreToggle = (genreId: number) => {
     setSelectedGenres((prev) =>
       prev.includes(genreId)
         ? prev.filter((id) => id !== genreId)
-        : [...prev, genreId]
+        : [...prev, genreId],
     );
   };
 
   const resetFilters = () => {
     const defaultFilters = {
       genreIds: [] as number[],
-      sortBy: 'popularity.desc',
+      sortBy: "popularity.desc",
       yearRange: [1900, new Date().getFullYear()] as [number, number],
       ratingRange: [0, 10] as [number, number],
-      language: '',
+      language: "",
     };
 
     setSelectedGenres(defaultFilters.genreIds);
@@ -144,16 +146,15 @@ export default function MoviesClient({
     setRatingRange(defaultFilters.ratingRange);
     setLanguage(defaultFilters.language);
 
-    localStorage.removeItem('movieFilters');
+    localStorage.removeItem("movieFilters");
 
-    toast({ title: 'Filters reset', description: 'All filters cleared' });
+    toast({ title: "Filters reset", description: "All filters cleared" });
     refetch();
   };
 
   const applyFilters = () => {
     refetch();
-    setDrawerOpen(false);
-    toast({ title: 'Filters applied', description: 'Movie list updated' });
+    toast({ title: "Filters applied", description: "Movie list updated" });
   };
 
   return (
@@ -163,7 +164,9 @@ export default function MoviesClient({
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div>
-            <h1 className="text-3xl md:text-4xl font-black tracking-tight">Movies</h1>
+            <h1 className="text-3xl md:text-4xl font-black tracking-tight">
+              Movies
+            </h1>
             <p className="text-sm text-muted-foreground/70 mt-1">
               Explore the cinematic universe
             </p>

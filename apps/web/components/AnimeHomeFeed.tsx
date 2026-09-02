@@ -17,10 +17,10 @@ import { lookupMal } from "@/lib/anime/resolve";
 function twinHref(item: AniListHomeItem): string | null {
   const twin = lookupMal(item.malId);
   if (twin?.tmdbShowId != null) {
-    return `/tv/${twin.tmdbShowId}?isAnime=1&mid=${item.malId}&aid=${item.anilistId ?? ""}`;
+    return `/tv?id=${twin.tmdbShowId}&isAnime=1&mid=${item.malId}&aid=${item.anilistId ?? ""}`;
   }
   if (twin?.tmdbMovieId != null) {
-    return `/movie/${twin.tmdbMovieId}?isAnime=1&mid=${item.malId}&aid=${item.anilistId ?? ""}`;
+    return `/movie?id=${twin.tmdbMovieId}&isAnime=1&mid=${item.malId}&aid=${item.anilistId ?? ""}`;
   }
   return null;
 }
