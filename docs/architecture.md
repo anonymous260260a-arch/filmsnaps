@@ -52,8 +52,8 @@ filmsnaps/
 
 ### `apps/desktop` — Electron desktop app
 
-- **Stack:** Electron 43 + a Next.js **standalone** build of the web app
-  (`BUILD_FOR_DESKTOP=true` → `.next/standalone`) spawned as a local server.
+- **Stack:** Electron 43 + a Next.js **static export** of the web app
+  (`BUILD_FOR_DESKTOP=true` → `out/`) served via `app://` protocol (no Node.js server).
 - **Role:** the web UI with a native, hardened provider player inside a
   `WebContentsView` on an isolated `persist:filmsnaps-provider` partition.
 - **Security:** see [docs/security.md](security.md) — R0–R8 cascade, L2–L8 layers,
@@ -168,15 +168,15 @@ Web uses a sandboxed iframe.
 
 Root scripts (`package.json`) drive everything through Turborepo:
 
-| Command                                  | What it runs                                           |
-| ---------------------------------------- | ------------------------------------------------------ |
-| `pnpm dev`                               | `turbo dev` — all apps in dev mode.                    |
-| `pnpm build`                             | `turbo build` — all apps/packages.                     |
-| `pnpm lint`                              | `turbo lint`.                                          |
-| `pnpm test`                              | Vitest (root config) — see `vitest.config.ts`.         |
-| `pnpm cf:deploy`                         | Build + deploy web to Cloudflare Pages.                |
-| `pnpm dist:desktop`                      | Desktop installer (web standalone + electron-builder). |
-| `pnpm compile:filters` / `build:filters` | Regenerate filter artifacts.                           |
+| Command                                  | What it runs                                              |
+| ---------------------------------------- | --------------------------------------------------------- |
+| `pnpm dev`                               | `turbo dev` — all apps in dev mode.                       |
+| `pnpm build`                             | `turbo build` — all apps/packages.                        |
+| `pnpm lint`                              | `turbo lint`.                                             |
+| `pnpm test`                              | Vitest (root config) — see `vitest.config.ts`.            |
+| `pnpm cf:deploy`                         | Build + deploy web to Cloudflare Pages.                   |
+| `pnpm dist:desktop`                      | Desktop installer (web static export + electron-builder). |
+| `pnpm compile:filters` / `build:filters` | Regenerate filter artifacts.                              |
 
 GitHub Actions (`.github/workflows/`): `ci.yml` (lint + typecheck + test),
 `cloudflare.yml` (web → Cloudflare Pages), `netlify.yml` (web → Netlify),

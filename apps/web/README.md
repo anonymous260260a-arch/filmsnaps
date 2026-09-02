@@ -18,9 +18,9 @@ pages with sandboxed provider embeds.
 ```
 app/
   api/                    API routes (tmdb, player, stream, anime, blocklist)
-  download/               Download landing page
-  history/  saved/  search/  movie/[id]/  tv/[id]/  person/[id]/
-  watch/[...id]/          Watch page (DesktopSecureWebview + React overlays)
+  download/               Download landing page (falix, nxsha — query param IDs)
+  history/  saved/  search/  movie/  tv/  person/
+  watch/                  Watch page (query param IDs, DesktopSecureWebview + React overlays)
   legal/  privacy/  how-it-works/  versions/
 components/
   ui/                     Button, input, dialog, etc.

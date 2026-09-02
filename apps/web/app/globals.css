@@ -1,4 +1,4 @@
-﻿@tailwind base;
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -229,6 +229,21 @@ html.fs-desktop .home-anime-feed {
  * DesktopAppShell adds the class after mount; web/browser stays at 16px. */
 html.fs-desktop {
   font-size: 18px;
+}
+
+/* ── Desktop hero height compensation ──
+ * The hero uses h-[90vh] which overflows below the visible fold when the
+ * in-flow 48px GlobalTopBar is present. Cap it so it sits within the
+ * scroll area. Web/browser pages are unaffected (no .fs-desktop class). */
+html.fs-desktop .hero-desktop {
+  max-height: calc(90vh - 48px);
+}
+
+/* ── Tabular nums for data displays ── */
+@layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
 }
 
 /* â”€â”€ Utility Classes â”€â”€ */
