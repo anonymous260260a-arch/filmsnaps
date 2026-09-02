@@ -2,7 +2,7 @@
  * FilmSnaps Desktop — Main Process
  *
  * Entry point for the Electron application.
- * Creates the main BrowserWindow (Next.js web app UI) and manages
+ * Creates the main BrowserWindow (static export UI) and manages
  * the application lifecycle.
  *
  * Key responsibilities:
@@ -10,7 +10,7 @@
  *   - Register IPC handlers (provider:init/clear, window controls)
  *   - Set up native app menu
  *   - Manage app lifecycle (macOS dock behavior, quit, etc.)
- *   - Spawn Next.js server in production mode
+ *   - Serve static web app via app:// protocol (no Node.js server)
  *   - Persist window state
  */
 
@@ -25,10 +25,12 @@ import {
   WebContentsView,
   webContents,
   screen,
+  protocol,
+  net,
 } from "electron";
 import { join } from "path";
-import { ChildProcess, spawn } from "child_process";
-import { createServer, type AddressInfo } from "net";
+import { pathToFileURL } from "url";
+import { existsSync } from "fs";
 import {
   loadWindowState,
   shouldStartMaximized,
@@ -68,9 +70,11 @@ import {
 // ── Constants ──
 
 const IS_DEV = process.argv.includes("--dev");
+// Production: static export in resources/web (served via app:// protocol).
+// Dev: source tree (connects to running Next.js dev server on localhost:3000).
 const WEB_APP_DIR = IS_DEV
   ? join(__dirname, "../../apps/web")
-  : join(process.resourcesPath, "web", "apps", "web");
+  : join(process.resourcesPath, "web");
 const DEV_SERVER_URL = "http://localhost:3000";
 
 /** Resolve path to an app resource (works in both dev and production) */
@@ -82,9 +86,6 @@ function resourcePath(...segments: string[]): string {
 }
 
 let mainWindow: BrowserWindow | null = null;
-let nextServerProcess: ChildProcess | null = null;
-/** The localhost port the Next.js server is actually running on (prod only). */
-let nextServerPort = 3000;
 
 // ── Provider session state (for inline webview) ──
 let currentProviderSession: ReturnType<typeof createProviderSession> | null =
@@ -439,13 +440,14 @@ function createMainWindow(): void {
 
   // Handle external navigation
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    // Allow same-origin navigation only
     try {
       const parsedUrl = new URL(url);
-      if (
-        parsedUrl.hostname !== "localhost" &&
-        parsedUrl.hostname !== "127.0.0.1"
-      ) {
+      // Allow same-origin navigation (localhost for dev, app:// for static export)
+      const isLocal =
+        parsedUrl.hostname === "localhost" ||
+        parsedUrl.hostname === "127.0.0.1";
+      const isAppProtocol = parsedUrl.protocol === "app:";
+      if (!isLocal && !isAppProtocol) {
         event.preventDefault();
         shell.openExternal(url);
       }
@@ -475,14 +477,14 @@ function createMainWindow(): void {
   // Remove native menu bar — app uses its own header navigation
   Menu.setApplicationMenu(null);
 
-  // Load the Next.js app
+  // Load the web app
   if (IS_DEV) {
     // In dev mode, connect to the already-running Next.js dev server
     mainWindow.loadURL(DEV_SERVER_URL);
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
-    // In production, spawn the Next.js server
-    startNextServer();
+    // In production, serve static export via app:// protocol (<200ms cold start)
+    mainWindow.loadURL("app://index.html");
   }
 
   mainWindow.on("closed", () => {
@@ -1360,175 +1362,120 @@ function preSeedTrustForProviderSessions(): { cdnDomains: Set<string> } {
   }
 }
 
-// ── Next.js Server (Production) ──
+// ── App Lifecycle ──
 
-/**
- * Find a free localhost port for the Next.js server.
- *
- * Binds a temporary server to port 0 (OS assigns any free port), reads the
- * actual port, then closes it. The tiny race window (another process grabbing
- * the port between close and spawn) is handled because the Next.js server
- * fails loudly on EADDRINUSE — never hang, and the app's webRequest has no
- * dependency on this port.
- */
-function findFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.on("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
-      const port = (srv.address() as AddressInfo).port;
-      srv.close(() => resolve(port));
+// ── Custom protocol for static export ─────────────────────────────────────
+// Must be registered BEFORE app.whenReady() (synchronous, top-level).
+// Serves the static Next.js export via app:// instead of file:// (which
+// breaks CORS, fetch(), and client-side routing).
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "app",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+]);
+
+// ── RC-1: Single-instance lock ────────────────────────────────────────────
+// Prevents multiple app instances when user double-clicks or after auto-update.
+// Without this, zombie Electron processes accumulate in Task Manager.
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    // Focus the existing window when the user tries to open a second instance.
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
+  app.whenReady().then(async () => {
+    // ── Serve static export via app:// protocol ──────────────────────────
+    if (!IS_DEV) {
+      // When packaged, files are in resourcesPath/web. When running unpackaged
+      // (pnpm exec electron .), fall back to the local out/ directory.
+      const webDir = app.isPackaged
+        ? join(process.resourcesPath, "web")
+        : join(__dirname, "../../web/out");
+
+      protocol.handle("app", (request) => {
+        const { pathname } = new URL(request.url);
+
+        // Static export files: / → index.html, /saved → saved.html,
+        // /download/falix → download/falix/index.html
+        const candidates = [
+          join(webDir, pathname === "/" ? "index.html" : pathname),
+          join(webDir, pathname === "/" ? "index.html" : pathname + ".html"),
+          join(webDir, pathname, "index.html"),
+        ];
+
+        for (const candidate of candidates) {
+          if (existsSync(candidate)) {
+            return net.fetch(pathToFileURL(candidate).toString());
+          }
+        }
+
+        // Fallback to root index.html
+        return net.fetch(pathToFileURL(join(webDir, "index.html")).toString());
+      });
+    }
+
+    // ── RC-6: Async pre-warm (no readFileSync on main thread) ───────────
+    // The compiled-engine.bin (~7MB) deserializes asynchronously. We kick
+    // this off BEFORE creating the main window so it runs in parallel with
+    // window setup. The engine singleton is stored globally so all R4
+    // handlers share one warm instance.
+    //
+    // NOTE: RC-6 globalThis pre-warm removed — the filter-engine.ts singleton
+    // already loads the same binary via resolveEnginePath() with correct
+    // dev/prod path resolution. The old path (join(__dirname, "..", "build"))
+    // was wrong and caused ENOENT noise.
+
+    // Kick off the filter-engine load BEFORE creating the main window so the
+    // 7MB engine deserializes in parallel with window setup instead of blocking
+    // the event loop for ~50-200ms. R4's onBeforeRequest awaits this same
+    // promise, so no provider request can bypass the engine even if it resolves
+    // after the first webview navigates.
+    const { initFilterEngine } = require("./security/filter-engine");
+    initFilterEngine().then((engine: any) => {
+      if (engine) {
+        console.log("[Main] Filter engine loaded (async) — R4 ready");
+      } else {
+        console.warn(
+          "[Main] Filter engine not available — R4 fallback disabled",
+        );
+      }
+    });
+
+    createMainWindow();
+    // Phase 2 — Media Download Manager: intercept provider-session downloads
+    // (will-download) and expose pause/resume/cancel + progress to the renderer.
+    initDownloadManager(() => mainWindow);
+    // Download sources — hidden nxsha scraper + falix detail proxy
+    // (nxsha/falix media pages in the web app drive these over IPC).
+    initMediaSources(() => mainWindow);
+    initUpdater();
+
+    // macOS: re-create window when dock icon is clicked
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createMainWindow();
+      }
     });
   });
 }
-
-/**
- * Start the Next.js standalone server on a FREE localhost port and load the
- * app. Picking a free port avoids clashing with whatever else the user runs
- * on 3000 (another dev server, Docker, etc.) — a hardcoded port would fail
- * with EADDRINUSE and leave the window blank.
- */
-async function startNextServer(): Promise<void> {
-  console.log("[Main] Starting Next.js production server...");
-
-  // The standalone output bundles the server at `server.js` inside WEB_APP_DIR.
-  // We run it directly with Node, passing the port via env.
-  const serverScript = join(WEB_APP_DIR, "server.js");
-  let port = 3000;
-
-  try {
-    port = await findFreePort();
-  } catch (err) {
-    // Fall back to 3000 — spawn will fail loudly if it's taken; the error
-    // handler below surfaces it instead of silently blanking.
-    console.warn("[Main] Free-port probe failed, using 3000:", err);
-  }
-  nextServerPort = port;
-
-  console.log(`[Main] Spawning Next.js server on localhost:${port}`);
-
-  nextServerProcess = spawn("node", [serverScript], {
-    cwd: WEB_APP_DIR,
-    env: {
-      ...process.env,
-      PORT: String(port),
-      HOSTNAME: "127.0.0.1",
-      NODE_ENV: "production",
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  nextServerProcess.stdout?.on("data", (data: Buffer) => {
-    const msg = data.toString();
-    console.log(`[NextServer] ${msg}`);
-    // Next.js prints "Local: http://127.0.0.1:<port>" / "Ready" once the
-    // standalone server is listening. Match both the localhost and 127.0.0.1
-    // forms (the server binds 127.0.0.1 via HOSTNAME) plus the legacy
-    // "started" string. Without the 127.0.0.1 match, readiness is never
-    // detected and the window stays on the background color forever.
-    if (
-      msg.includes("started") ||
-      msg.includes("localhost:") ||
-      msg.includes("127.0.0.1:")
-    ) {
-      // Server is ready — load the app on the ACTUAL bound address/port.
-      // Use 127.0.0.1 to exactly match what the server binds to.
-      mainWindow?.loadURL(`http://127.0.0.1:${nextServerPort}`);
-    }
-  });
-
-  nextServerProcess.stderr?.on("data", (data: Buffer) => {
-    console.error(`[NextServer Error] ${data.toString()}`);
-  });
-
-  nextServerProcess.on("error", (err) => {
-    console.error("[Main] Failed to start Next.js server:", err);
-  });
-
-  nextServerProcess.on("exit", (code) => {
-    console.log(`[NextServer] Exited with code ${code}`);
-    nextServerProcess = null;
-  });
-}
-
-// ── App Lifecycle ──
-
-app.whenReady().then(() => {
-  // ── Pre-warm @ghostery/adblocker (adblock-rs WASM) ──────────────────────
-  // The compiled-engine.bin (~7MB) deserializes asynchronously. Doing this
-  // during appReady (instead of on first provider click) means the engine is
-  // warm in memory before the user can trigger a provider load, eliminating
-  // the ~50-200ms cold-start freeze that would otherwise block UI responsiveness.
-  // The engine singleton is stored globally so all R4 handlers share one warm
-  // instance instead of deserializing separately.
-  try {
-    const { deserialize } = require("@ghostery/adblocker");
-    const { readFileSync } = require("fs");
-    const { join } = require("path");
-    const enginePath = join(__dirname, "..", "build", "compiled-engine.bin");
-    const engineBuffer = readFileSync(enginePath);
-    (async () => {
-      const engine = await deserialize(engineBuffer);
-      // Store on globalThis so the renderer and main R4 handlers share it.
-      // The engine is idempotent — deserialize is safe to call once.
-      (globalThis as Record<string, unknown>)["filmsnapsFiltersEngine"] =
-        engine;
-      console.log(
-        "[Main] @ghostery/adblocker WASM engine pre-warmed (deserialized, " +
-          (engine ? "ready" : "null") +
-          ")",
-      );
-    })();
-  } catch (err) {
-    console.warn(
-      "[Main] @ghostery/adblocker pre-warm failed (continuing without it):",
-      err,
-    );
-  }
-
-  // Kick off the filter-engine load BEFORE creating the main window so the
-  // 7MB engine deserializes in parallel with window setup instead of blocking
-  // the event loop for ~50-200ms. R4's onBeforeRequest awaits this same
-  // promise, so no provider request can bypass the engine even if it resolves
-  // after the first webview navigates.
-  const { initFilterEngine } = require("./security/filter-engine");
-  initFilterEngine().then((engine: any) => {
-    if (engine) {
-      console.log("[Main] Filter engine loaded (async) — R4 ready");
-    } else {
-      console.warn("[Main] Filter engine not available — R4 fallback disabled");
-    }
-  });
-
-  createMainWindow();
-  // Phase 2 — Media Download Manager: intercept provider-session downloads
-  // (will-download) and expose pause/resume/cancel + progress to the renderer.
-  initDownloadManager(() => mainWindow);
-  // Download sources — hidden nxsha scraper + falix detail proxy
-  // (nxsha/falix media pages in the web app drive these over IPC).
-  initMediaSources(() => mainWindow);
-  initUpdater();
-
-  // macOS: re-create window when dock icon is clicked
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
-    }
-  });
-});
 
 // Quit when all windows are closed (except on macOS)
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
-  }
-});
-
-// Clean up on quit
-app.on("before-quit", () => {
-  // Kill the Next.js server if running
-  if (nextServerProcess) {
-    nextServerProcess.kill();
-    nextServerProcess = null;
   }
 });

@@ -1,15 +1,18 @@
 # `@filmsnaps/desktop` — Desktop App
 
-Electron app for Windows/macOS/Linux. Wraps the Next.js web app as a local
-standalone server and provides a **hardened native player**: provider embeds
-load in a **`WebContentsView` (hybrid)** on an isolated session partition with
-the full R0–R8 rule cascade and L2–L8 security layers.
+Electron app for Windows/macOS/Linux. Serves the Next.js web app as a **static
+export** via `app://` custom protocol (<200ms cold start, no Node.js server)
+and provides a **hardened native player**: provider embeds load in a
+**`WebContentsView` (hybrid)** on an isolated session partition with the full
+R0–R8 rule cascade and L2–L8 security layers.
 
 ## Stack
 
-- **Electron 43** main process (`src/main.ts`).
-- **Next.js standalone build** of `@filmsnaps/web` (`BUILD_FOR_DESKTOP=true` →
-  `.next/standalone`) spawned as a local server on a free localhost port.
+- **Electron 42** main process (`src/main.ts`).
+- **Next.js static export** of `@filmsnaps/web` (`BUILD_FOR_DESKTOP=true` →
+  `out/`) served via `app://` protocol (no Node.js server).
+- **CF Worker** (`filmsnaps1.anonymous260260a.workers.dev`) proxies TMDB API
+  requests. Desktop fetches cross-origin from the Worker.
 - **electron-builder** for installers; **electron-updater** for auto-updates
   from GitHub Releases.
 - **`@ghostery/adblocker`** FiltersEngine (adblock-rs WASM core, compiled by
@@ -38,7 +41,7 @@ src/
     url-substring-filter.ts   Mobile-parity substring trie (R4b)
     structural-warnings.ts    Startup structural checks (Widevine, MutationObserver, pop-under)
 scripts/
-  build-web.mjs               Builds the web standalone bundle
+  build-web.mjs               Builds the web static export (app:// protocol)
   build-provider-preload.mjs  Bakes the shared guard bundle into provider-preload.js
 ```
 
@@ -57,14 +60,44 @@ pnpm test
 
 ## Build
 
+Two build modes — **production** (live CF Worker) and **dev** (local server):
+
+### Production build (default)
+
+Uses the live CF Worker API. **Requires** `app://index.html` in the CF Worker's
+CORS allowlist — otherwise the desktop app gets CORS-blocked.
+
 ```bash
-# Build + package installer (no publish)
+# From desktop dir — builds web export + TypeScript + packages installer
 pnpm dist
 
+# Or from repo root
+pnpm dist:desktop
+```
+
+### Dev build (localhost)
+
+For testing with a local dev server. **Requires** `pnpm dev:web` running in a
+separate terminal.
+
+```powershell
+# PowerShell
+$env:NEXT_PUBLIC_API_URL="http://localhost:3000"
+pnpm dist
+```
+
+```bash
+# Bash / macOS / Linux
+NEXT_PUBLIC_API_URL=http://localhost:3000 pnpm dist
+```
+
+### Other commands
+
+```bash
 # Build + publish to GitHub Releases
 GH_TOKEN=ghp_... pnpm dist:publish
 
-# Unpacked directory only (faster iteration)
+# Unpacked directory only (faster iteration, no installer)
 pnpm pack
 ```
 
@@ -74,8 +107,18 @@ Output goes to `apps/desktop/release/`:
 - **macOS:** `FilmSnaps-<version>-<arch>.dmg`
 - **Linux:** `FilmSnaps-<version>.AppImage`
 
-Production builds bundle: the web standalone build (`extraResources`), the
+Production builds bundle: the web static export (`extraResources`), the
 compiled filter engine, `providers.json`, `filters.txt`, `providers.json.sig`, and Ed25519 public key.
+
+### Build pipeline
+
+`pnpm build` (called by `pnpm dist`) runs three steps:
+
+1. `build-web.mjs` — builds `@filmsnaps/shared`, then runs `next build` with
+   `BUILD_FOR_DESKTOP=true` and `NEXT_PUBLIC_API_URL`. Produces `apps/web/out/`.
+2. `tsc` — compiles TypeScript to `dist/`.
+3. `build-provider-preload.mjs` — bakes the shared guard bundle into
+   `provider-preload.js`.
 
 ## Security
 
@@ -116,5 +159,5 @@ security stack allowed/blocked.
 background, and prompts to restart. Publishing a new version:
 
 1. Bump `version` in `package.json`.
-2. `pnpm dist:publish` (builds web standalone + packages + uploads).
+2. `pnpm dist:publish` (builds web static export + packages + uploads).
 3. Tag and push (`git tag vX.Y.Z && git push origin vX.Y.Z`).
