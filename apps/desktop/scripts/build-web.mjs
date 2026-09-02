@@ -1,27 +1,17 @@
 /**
  * FilmSnaps Desktop — Prepackage web build step
  *
- * The Electron app in production spawns the Next.js STANDALONE server from
- * `resources/web/apps/web/server.js` (see src/main.ts → startNextServer).
- * electron-builder maps `../web/.next/standalone` into the installer via the
- * `extraResources` config, but that directory only exists when the web app is
- * built with `BUILD_FOR_DESKTOP=true` (see apps/web/next.config.js).
+ * Builds the Next.js static export for desktop. The Electron app serves
+ * static files via app:// protocol (no Node.js server, <200ms cold start).
  *
- * Previously that env var was never set by any local build chain, so
- * `pnpm dist` silently shipped an EMPTY `resources/web` — the packaged app
- * opened to a blank screen. This script codifies the missing step:
+ *   1. Build @filmsnaps/shared (web app's build-time dependency).
+ *   2. Run `pnpm build` in apps/web with BUILD_FOR_DESKTOP=true + NEXT_PUBLIC_API_URL.
+ *   3. Verify apps/web/out/index.html exists.
  *
- *   1. Build @filmsnaps/shared (the web app's dist output is used at build
- *      time, and CI does this explicitly before building web).
- *   2. Run `pnpm build` in apps/web with `BUILD_FOR_DESKTOP=true` so
- *      `.next/standalone/` is produced.
- *   3. Verify `apps/web/.next/standalone/apps/web/server.js` exists and exit
- *      nonzero if it doesn't — a missing bundle must fail the build loudly
- *      instead of shipping another broken installer.
- *
- * Cross-platform: spawns pnpm with `shell: true` (resolves pnpm.cmd on
- * Windows), and sets the env var via the spawn `env` object rather than shell
- * quoting so there are no `VAR=x cmd` portability issues.
+ * API URL selection:
+ *   - Default (production): https://filmsnaps1.anonymous260260a.workers.dev
+ *   - Dev override: set NEXT_PUBLIC_API_URL=http://localhost:3000
+ *     (requires `pnpm dev:web` running in a separate terminal)
  */
 
 'use strict';
@@ -64,25 +54,30 @@ if (existsSync(join(monorepoRoot, 'pnpm-workspace.yaml'))) {
   console.log('[build-web] No pnpm workspace detected — skipping shared build');
 }
 
-// 2. Build the web app for desktop (standalone output).
+// 2. Build the web app for desktop (static export).
+//    NEXT_PUBLIC_API_URL: where the desktop app fetches API data from.
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://filmsnaps1.anonymous260260a.workers.dev';
+const isDev = API_URL.includes('localhost');
+console.log(`[build-web] API URL: ${API_URL} (${isDev ? 'dev — requires running dev server' : 'production'})`);
+
 runPnpm(['build'], {
   cwd: webRoot,
-  env: { ...process.env, BUILD_FOR_DESKTOP: 'true' },
+  env: { ...process.env, BUILD_FOR_DESKTOP: 'true', NEXT_PUBLIC_API_URL: API_URL },
 });
 
-// 3. Verify the standalone bundle the installer depends on actually exists.
-//    electron-builder maps `.next/standalone` → `resources/web`, and main.ts
-//    spawns `resources/web/apps/web/server.js`.
-const standaloneServer = join(webRoot, '.next', 'standalone', 'apps', 'web', 'server.js');
-if (!existsSync(standaloneServer)) {
+// 3. Verify the static export output exists.
+//    electron-builder maps `out/` → `resources/web`, and main.ts serves
+//    via app:// protocol (no Node.js server).
+const staticExport = join(webRoot, 'out', 'index.html');
+if (!existsSync(staticExport)) {
   console.error(
-    `[build-web] FAILED: standalone server not found at ${standaloneServer}`,
+    `[build-web] FAILED: static export not found at ${staticExport}`,
   );
   console.error(
-    '[build-web] Did `next build` produce .next/standalone? ' +
+    '[build-web] Did `next build` produce out/? ' +
       'Check that BUILD_FOR_DESKTOP=true reached apps/web/next.config.js.',
   );
   process.exit(1);
 }
 
-console.log(`[build-web] Web standalone bundle verified: ${standaloneServer}`);
+console.log(`[build-web] Web static export verified: ${staticExport}`);

@@ -1,6 +1,29 @@
 {
   "versions": [
     {
+      "version": "2.1.0",
+      "date": "2026-09-02",
+      "releaseNotes": "v2.1.0 — Faster watch page, redesigned Continue Watching, bug fixes\n\n Watch page loads instantly — embed URL computed from URL params before TMDB resolves, webview mounts immediately\n Continue Watching cards redesigned — 16:9 backdrops, always-visible play button, episode pill badges, gold progress bar (matches mobile app)\n Hero and card ratings now show 0-10 scale everywhere\n Falix backend migrated to dl.falixmovies.com\n\nBug fixes:\n Fixed React error #185 on history page (useSyncExternalStore snapshot mismatch)\n Fixed HomeModeFeed crash when query data is undefined\n Fixed Falix download page returning 'Missing required query parameter' (static export prerender issue)\n\nUnder the hood:\n- Route restructuring: detail/watch/download/person pages migrated from path params to query params for static export compatibility\n- Hover-prefetch on Watch Now buttons (movie/tv detail pages)\n- TV season short-circuits when ?season= already in URL",
+      "platforms": {
+        "win": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.1.0-desktop/FilmSnaps-Setup-2.1.0.exe",
+          "size": "119 MB"
+        },
+        "mac": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.1.0-desktop/FilmSnaps-2.1.0-x64.dmg",
+          "size": "~110 MB"
+        },
+        "mac-arm": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.1.0-desktop/FilmSnaps-2.1.0-arm64.dmg",
+          "size": "~105 MB"
+        },
+        "linux": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.1.0-desktop/FilmSnaps-2.1.0.AppImage",
+          "size": "~95 MB"
+        }
+      }
+    },
+    {
       "version": "2.0.0",
       "date": "2026-08-28",
       "releaseNotes": "v2.0.0 — Desktop app release\n\nFalix downloads fixed (dead host replaced with the live backend)\nWorking download speed limiter (Balanced / Slower caps) — now real pause/resume pacing, previously a silent no-op, and synced between Settings and Downloads\nClear Watch History now asks for confirmation before wiping\nCarousels swipe correctly on mouse drag (no more accidental card selection)\nAnime home feed with a movie/TV / anime mode toggle\nRewritten Transparency, Privacy and Legal pages (GPL-3.0, /how-it-works renamed to /transparency)\nPlayer and desktop-shell improvements: secure webview, episode sidebar, mobile episode sheet, audio toggle, playback recorder",

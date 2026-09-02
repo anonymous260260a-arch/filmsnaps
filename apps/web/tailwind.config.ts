@@ -112,12 +112,8 @@ const config: Config = {
           to: { opacity: "1", transform: "scale(1)" },
         },
         "ken-burns": {
-          from: { transform: "scale(1)" },
-          to: { transform: "scale(1.08)" },
-        },
-        shimmer: {
-          "0%": { backgroundPosition: "-200% 0" },
-          "100%": { backgroundPosition: "200% 0" },
+          "0%": { transform: "scale(1) translate(0, 0)" },
+          "100%": { transform: "scale(1.08) translate(-1%, -0.5%)" },
         },
         "slide-up": {
           "0%": { transform: "translateY(100%)" },
@@ -138,7 +134,6 @@ const config: Config = {
         "fade-up": "fade-up 0.6s ease-out",
         "scale-in": "scale-in 0.3s ease-out",
         "ken-burns": "ken-burns 8s ease-out forwards",
-        shimmer: "shimmer 2s linear infinite",
         "slide-up": "slide-up 0.3s ease-out",
         "slide-down": "slide-down 0.3s ease-out",
       },

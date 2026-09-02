@@ -76,7 +76,7 @@ native changes need a full native rebuild (`pnpm android` / `pnpm ios`).
 pnpm dev:desktop    # starts web dev server + Electron
 ```
 
-Desktop builds bundle a Next.js **standalone** build and a compiled filter
+Desktop builds bundle a Next.js **static export** and a compiled filter
 engine — see `apps/desktop/README.md`.
 
 ### Feedback

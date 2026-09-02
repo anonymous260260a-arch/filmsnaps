@@ -1,13 +1,13 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useMemo } from 'react';
-import { useInfiniteQuery } from '@tanstack/react-query';
-import { useInView } from 'react-intersection-observer';
-import { Header } from '@/components/Header';
-import { MediaGrid } from '@/components/MediaGrid';
-import { ChevronUp } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { MediaFilter } from '@/components/MediaFilter';
+import { useState, useEffect, useMemo } from "react";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInView } from "react-intersection-observer";
+import { Header } from "@/components/Header";
+import { MediaGrid } from "@/components/MediaGrid";
+import { ChevronUp } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { MediaFilter } from "@/components/MediaFilter";
 
 interface TVResponse {
   page: number;
@@ -16,9 +16,9 @@ interface TVResponse {
 }
 
 interface TVClientProps {
-  initialData: any;
-  genres: any[];
-  initialFilters: {
+  initialData?: any;
+  genres?: any[];
+  initialFilters?: {
     genreIds?: number[];
     sortBy?: string;
     yearRange?: [number, number];
@@ -29,13 +29,13 @@ interface TVClientProps {
 
 export default function TVClient({
   initialData,
-  initialFilters,
-  genres,
+  initialFilters = {},
+  genres = [],
 }: TVClientProps) {
   const getInitialFilters = () => {
-    if (typeof window === 'undefined') return initialFilters;
+    if (typeof window === "undefined") return initialFilters;
 
-    const stored = localStorage.getItem('TvFilters');
+    const stored = localStorage.getItem("TvFilters");
     if (stored) {
       try {
         return JSON.parse(stored);
@@ -47,33 +47,33 @@ export default function TVClient({
   };
 
   const [selectedGenres, setSelectedGenres] = useState<number[]>(
-    getInitialFilters().genreIds || []
+    getInitialFilters().genreIds || [],
   );
   const [sortBy, setSortBy] = useState<string>(
-    getInitialFilters().sortBy || 'popularity.desc'
+    getInitialFilters().sortBy || "popularity.desc",
   );
   const [yearRange, setYearRange] = useState<[number, number]>(
-    getInitialFilters().yearRange || [1900, new Date().getFullYear()]
+    getInitialFilters().yearRange || [1900, new Date().getFullYear()],
   );
   const [ratingRange, setRatingRange] = useState<[number, number]>(
-    getInitialFilters().ratingRange || [0, 10]
+    getInitialFilters().ratingRange || [0, 10],
   );
   const [language, setLanguage] = useState<string>(
-    getInitialFilters().language || ''
+    getInitialFilters().language || "",
   );
   const [showScrollTop, setShowScrollTop] = useState(false);
   const { toast } = useToast();
   const { ref, inView } = useInView();
 
   const queryKey = useMemo(
-    () => ['tv', selectedGenres, sortBy, yearRange, ratingRange, language],
-    [selectedGenres, sortBy, yearRange, ratingRange, language]
+    () => ["tv", selectedGenres, sortBy, yearRange, ratingRange, language],
+    [selectedGenres, sortBy, yearRange, ratingRange, language],
   );
 
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, refetch } =
     useInfiniteQuery<TVResponse>({
       queryKey: [
-        'tv',
+        "tv",
         selectedGenres,
         sortBy,
         yearRange,
@@ -82,18 +82,18 @@ export default function TVClient({
       ],
       queryFn: async ({ pageParam }): Promise<TVResponse> => {
         const params = new URLSearchParams();
-        params.set('page', (pageParam as number).toString());
-        params.set('sortBy', sortBy);
-        params.set('yearStart', yearRange[0].toString());
-        params.set('yearEnd', yearRange[1].toString());
-        params.set('minRating', ratingRange[0].toString());
-        params.set('maxRating', ratingRange[1].toString());
+        params.set("page", (pageParam as number).toString());
+        params.set("sortBy", sortBy);
+        params.set("yearStart", yearRange[0].toString());
+        params.set("yearEnd", yearRange[1].toString());
+        params.set("minRating", ratingRange[0].toString());
+        params.set("maxRating", ratingRange[1].toString());
         if (selectedGenres.length)
-          params.set('genres', selectedGenres.join(','));
-        if (language) params.set('language', language);
+          params.set("genres", selectedGenres.join(","));
+        if (language) params.set("language", language);
 
         const res = await fetch(`/api/tv?${params.toString()}`);
-        if (!res.ok) throw new Error('Failed to fetch TV shows');
+        if (!res.ok) throw new Error("Failed to fetch TV shows");
         return res.json();
       },
       getNextPageParam: (lastPage: TVResponse) => {
@@ -102,12 +102,11 @@ export default function TVClient({
       },
       initialPageParam: 1,
       staleTime: 10 * 60 * 1000,
-      gcTime: 30 * 60 * 1000,
     });
 
   const tvShows = useMemo(
     () => data?.pages.flatMap((p) => p.results) ?? [],
-    [data]
+    [data],
   );
 
   useEffect(() => {
@@ -121,32 +120,32 @@ export default function TVClient({
       ratingRange,
       language,
     };
-    localStorage.setItem('TvFilters', JSON.stringify(filters));
+    localStorage.setItem("TvFilters", JSON.stringify(filters));
   }, [selectedGenres, sortBy, yearRange, ratingRange, language]);
 
   useEffect(() => {
     const handleScroll = () => setShowScrollTop(window.scrollY > 300);
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
+  const scrollToTop = () => window.scrollTo({ top: 0, behavior: "smooth" });
 
   const handleGenreToggle = (genreId: number) => {
     setSelectedGenres((prev) =>
       prev.includes(genreId)
         ? prev.filter((id) => id !== genreId)
-        : [...prev, genreId]
+        : [...prev, genreId],
     );
   };
 
   const resetFilters = () => {
     const defaultFilters = {
       genreIds: [] as number[],
-      sortBy: 'popularity.desc',
+      sortBy: "popularity.desc",
       yearRange: [1900, new Date().getFullYear()] as [number, number],
       ratingRange: [0, 10] as [number, number],
-      language: '',
+      language: "",
     };
 
     setSelectedGenres(defaultFilters.genreIds);
@@ -155,9 +154,9 @@ export default function TVClient({
     setRatingRange(defaultFilters.ratingRange);
     setLanguage(defaultFilters.language);
 
-    localStorage.removeItem('TvFilters');
+    localStorage.removeItem("TvFilters");
 
-    toast({ title: 'Filters reset', description: 'All filters cleared' });
+    toast({ title: "Filters reset", description: "All filters cleared" });
     refetch();
   };
 
@@ -167,7 +166,9 @@ export default function TVClient({
       <main className="pt-24 px-4 sm:px-6 md:px-12 space-y-10">
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div>
-            <h1 className="text-3xl md:text-4xl font-black tracking-tight">TV Shows</h1>
+            <h1 className="text-3xl md:text-4xl font-black tracking-tight">
+              TV Shows
+            </h1>
             <p className="text-sm text-muted-foreground/70 mt-1">
               Binge your next favorite series
             </p>
@@ -186,12 +187,13 @@ export default function TVClient({
             language={language}
             onLanguageChange={setLanguage}
             onReset={resetFilters}
-            onApply={() =>
+            onApply={() => {
+              refetch();
               toast({
-                title: 'Filters applied',
-                description: 'TV show list updated',
-              })
-            }
+                title: "Filters applied",
+                description: "TV show list updated",
+              });
+            }}
           />
         </div>
 

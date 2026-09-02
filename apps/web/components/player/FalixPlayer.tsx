@@ -27,6 +27,7 @@ import "video.js/dist/video-js.css";
 import { Clapperboard, RefreshCw } from "lucide-react";
 import { WebCodecsPlayer } from "./WebCodecsPlayer";
 import { checkHevcSupport } from "@/lib/streamingMkvParser";
+import { apiUrl } from "@/lib/tmdb";
 import { createLocalStorageAdapter } from "@filmsnaps/shared";
 import type { WatchProgress } from "@filmsnaps/shared";
 
@@ -167,7 +168,7 @@ export function FalixPlayer({
       `[Falix] Step 1: Fetching metadata for tmdbId=${tmdbId}, mediaType=${mediaType}, season=${selectedSeason}, episode=${activeEpisode}`,
     );
 
-    fetch(`/api/player/falix?id=${tmdbId}`)
+    fetch(apiUrl(`/api/player/falix?id=${tmdbId}`))
       .then((res) => {
         if (!res.ok) throw new Error(`Falix API returned ${res.status}`);
         console.log(`[Falix] Step 1a: API responded with status ${res.status}`);
@@ -296,7 +297,7 @@ export function FalixPlayer({
   // Build video URL from telegram entry
   const videoUrl = useMemo(() => {
     if (!currentEntry) return "";
-    const url = `https://download-falixm.koyeb.app/dl/${currentEntry.id}/${encodeURIComponent(currentEntry.name)}`;
+    const url = `https://dl.falixmovies.com/dl/${currentEntry.id}/${encodeURIComponent(currentEntry.name)}`;
     console.log(`[Falix] Step 2f: Video URL built — ${url}`);
     return url;
   }, [currentEntry]);
@@ -525,7 +526,7 @@ export function FalixPlayer({
     setActiveAudioIdx(0);
     setAudioLabels(["Default"]);
 
-    fetch(`/api/player/falix?id=${tmdbId}`)
+    fetch(apiUrl(`/api/player/falix?id=${tmdbId}`))
       .then((res) => {
         if (!res.ok) throw new Error(`Falix API returned ${res.status}`);
         return res.json() as Promise<FalixApiData>;

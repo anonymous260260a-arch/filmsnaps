@@ -22,11 +22,11 @@ files:
 
 icon: resources/icon.png
 
-# In production, bundle the web app's Next.js standalone output so Electron
-# can serve the app locally. Built by scripts/build-web.mjs (which sets
-# BUILD_FOR_DESKTOP=true so next.config.js emits .next/standalone). The
-# standalone output includes the server + all necessary node_modules + static
-# files. `from` paths are relative to THIS file's directory (apps/desktop).
+# In production, bundle the web app's static export output so Electron
+# serves it via a custom app:// protocol (no Node.js server needed).
+# Built by scripts/build-web.mjs (which sets BUILD_FOR_DESKTOP=true so
+# next.config.js emits output: "export" → out/ directory).
+# `from` paths are relative to THIS file's directory (apps/desktop).
 extraResources:
   - from: ../../packages/filter-compiler/build/compiled-engine.bin
     to: filter-engine/compiled-engine.bin
@@ -45,12 +45,9 @@ extraResources:
   # Legacy v4 (mobile-facing; desktop reads v5 first, falls back to this).
   - from: ../../blocklist.json
     to: blocklist.json
-  - from: ../web/.next/standalone
+  # Static export: out/ contains all HTML/CSS/JS — no Node.js server needed.
+  - from: ../web/out
     to: web
-  - from: ../web/public
-    to: web/apps/web/public
-  - from: ../web/.next/static
-    to: web/apps/web/.next/static
 
 # GitHub Releases — used for distribution and auto-updates
 publish:
@@ -69,8 +66,10 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  allowElevation: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  deleteAppDataOnUninstall: false
   unicode: true
   perMachine: false
   artifactName: "FilmSnaps-Setup-${version}.${ext}"

@@ -10,7 +10,7 @@
  * gets season tabs, expandable episodes and a bulk "Download All" panel with
  * a quality-tier selector (lowest / medium / highest).
  *
- * Route: /download/falix/movie/{tmdbId} · /download/falix/tv/{tmdbId}
+ * Route: /download/falix?type=movie&id={tmdbId} · /download/falix?type=tv&id={tmdbId}
  */
 
 import React, {
@@ -21,7 +21,7 @@ import React, {
   useState,
 } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   ArrowDownCircle,
@@ -47,11 +47,11 @@ import {
   useDownloadList,
 } from "@/lib/downloadStore";
 import { formatBytes } from "@/lib/format";
-import { tmdbApi } from "@/lib/tmdb";
+import { tmdbApi, apiUrl } from "@/lib/tmdb";
 
 // ── API ──
 
-const FALIX_API_BASE = "https://download-falixm.koyeb.app";
+const FALIX_API_BASE = "https://dl.falixmovies.com";
 
 interface FalixTelegramFile {
   quality: string;
@@ -305,10 +305,14 @@ function getFileByTier(
 }
 
 export default function FalixDownloadPage() {
-  const params = useParams<{ id: string[] }>();
-  const segs = useMemo(() => params?.id ?? [], [params]);
-  const type = segs[0] === "tv" ? "tv" : segs[0] === "movie" ? "movie" : "";
-  const id = segs[1] ?? "";
+  const searchParams = useSearchParams();
+  const type =
+    searchParams.get("type") === "tv"
+      ? "tv"
+      : searchParams.get("type") === "movie"
+        ? "movie"
+        : "";
+  const id = searchParams.get("id") ?? "";
 
   const available = isDownloadAvailable();
 
@@ -365,7 +369,7 @@ export default function FalixDownloadPage() {
       ? (q) => api.getDetail<FalixData>(q)
       : async (q) => {
           const res = await fetch(
-            `/api/player/falix?id=${encodeURIComponent(q)}`,
+            apiUrl(`/api/player/falix?id=${encodeURIComponent(q)}`),
           );
           if (res.status === 404) throw new Error("404 not found");
           if (!res.ok) throw new Error(`Falix lookup failed (${res.status})`);

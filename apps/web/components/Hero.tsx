@@ -25,7 +25,7 @@ function formatRuntime(minutes: number) {
 }
 
 function formatRating(vote: number) {
-  return (vote / 2).toFixed(1);
+  return vote.toFixed(1);
 }
 
 export function Hero({ movies = [] }: { movies: any[] }) {
@@ -40,7 +40,7 @@ export function Hero({ movies = [] }: { movies: any[] }) {
   if (!movies.length) return null;
 
   return (
-    <section className="group relative w-full h-[90vh] min-h-[600px] overflow-hidden">
+    <section className="hero-desktop group relative w-full h-[90vh] min-h-[600px] overflow-hidden">
       {/* Ambient glow behind the hero */}
       <div className="absolute inset-0 ambient-glow z-10 pointer-events-none" />
       <div className="absolute inset-0 ambient-glow-warm z-10 pointer-events-none" />
@@ -142,7 +142,7 @@ export function Hero({ movies = [] }: { movies: any[] }) {
                           size="lg"
                           className="gap-2.5 font-bold px-8 py-3.5 h-auto text-base text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] border-0 shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
                           onClick={() =>
-                            router.push(`/watch/movie/${movie.id}`)
+                            router.push(`/watch?type=movie&id=${movie.id}`)
                           }
                         >
                           <Play className="w-5 h-5 fill-current" />
@@ -156,7 +156,7 @@ export function Hero({ movies = [] }: { movies: any[] }) {
                           className="px-5 py-3 h-auto text-sm font-medium hover:bg-white/[0.08] transition-all"
                         />
 
-                        <Link href={`/movie/${movie.id}`}>
+                        <Link href={`/movie?id=${movie.id}`}>
                           <Button
                             variant="outline"
                             className="h-auto px-5 py-3 rounded-xl border-white/[0.12] bg-white/[0.04] text-white/80 text-sm font-medium transition-all duration-200 hover:bg-white/[0.08] hover:text-white hover:border-white/[0.2]"

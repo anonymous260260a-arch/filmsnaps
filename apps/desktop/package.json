@@ -1,6 +1,6 @@
 {
   "name": "@filmsnaps/desktop",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": "FilmSnaps",
   "private": true,
   "description": "FilmSnaps Desktop App — secure streaming with Electron",
@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "dist": "pnpm build && electron-builder --publish=never",
+    "dist:dev": "cross-env NEXT_PUBLIC_API_URL=http://localhost:3000 pnpm build && electron-builder --publish=never",
     "dist:publish": "pnpm build && electron-builder --publish=always",
     "pack": "pnpm build && electron-builder --dir",
     "typecheck": "tsc --noEmit",
@@ -26,6 +27,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "concurrently": "^9.1.0",
+    "cross-env": "^10.1.0",
     "electron": "^42.4.1",
     "electron-builder": "^25.1.0",
     "typescript": "^5.7.0",

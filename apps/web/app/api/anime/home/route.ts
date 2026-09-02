@@ -12,6 +12,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCorsHeaders, handleOptions } from "@/lib/cors";
 import { lookupMal } from "@/lib/anime/resolve";
+import { desktopSkip } from "../../desktop-skip";
+
+export const dynamic = "force-static";
 
 const ANILIST_GRAPHQL = "https://graphql.anilist.co";
 const KITSU_BASE = "https://kitsu.io/api/edge/anime";
@@ -128,6 +131,8 @@ function mapMedia(item: Record<string, any>): SlimAnimeResult | null {
 }
 
 export async function GET(req: NextRequest) {
+  const skip = desktopSkip();
+  if (skip) return skip;
   const origin = req.headers.get("origin");
   const limitRaw = Number(req.nextUrl.searchParams.get("limit")) || 20;
   const limit = Math.min(Math.max(Math.trunc(limitRaw), 1), 25);

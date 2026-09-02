@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { desktopSkip } from "../../desktop-skip";
+
+export const dynamic = "force-static";
 import crypto from "node:crypto";
 
 /**
@@ -133,6 +136,8 @@ async function nxshaApiGet(
 }
 
 export async function GET(request: NextRequest) {
+  const skip = desktopSkip();
+  if (skip) return skip;
   const { searchParams } = new URL(request.url);
   const type = searchParams.get("type") === "tv" ? "tv" : "movie";
   const id = searchParams.get("id");

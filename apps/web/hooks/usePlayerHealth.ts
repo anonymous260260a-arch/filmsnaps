@@ -47,7 +47,6 @@ export function usePlayerHealth({
     queryFn: () => checkAllProviders(providers, { timeoutMs: 5000 }),
     staleTime: 3 * 60 * 1000, // 3 min freshness window
     gcTime: 10 * 60 * 1000, // 10 min in-memory retention
-    refetchOnMount: skipInitial ? false : true,
     refetchOnWindowFocus: false,
     refetchInterval: intervalMs === false ? false : intervalMs,
     enabled: providers.length > 0,

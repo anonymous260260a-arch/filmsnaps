@@ -4,6 +4,7 @@ import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import { Navigation, A11y, Autoplay } from "swiper/modules";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { MovieCard } from "@/components/MovieCard";
+import Link from "next/link";
 
 import { Swiper, SwiperSlide } from "swiper/react";
 import "swiper/css";
@@ -79,12 +80,15 @@ export function MediaCarousel({
         <h2 className="font-sans text-xl sm:text-2xl font-bold tracking-tight text-foreground">
           {title}
         </h2>
-        <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground/50">
-          Explore
-        </span>
+        <Link
+          href={mediaType === "tv" ? "/tv" : "/movie"}
+          className="text-[12px] font-semibold text-muted-foreground/60 hover:text-primary transition-colors duration-200"
+        >
+          See all →
+        </Link>
       </div>
 
-      <div className="relative px-5 sm:px-6 lg:px-8">
+      <div className="group/carousel relative px-5 sm:px-6 lg:px-8">
         {/* Edge fade indicators */}
         <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-background to-transparent z-10 pointer-events-none hidden sm:block" />
         <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-background to-transparent z-10 pointer-events-none hidden sm:block" />
@@ -93,7 +97,7 @@ export function MediaCarousel({
         <button
           ref={prevRef}
           aria-label="Previous"
-          className="hidden sm:flex absolute -left-1 top-1/2 -translate-y-1/2 z-20 w-11 h-11 items-center justify-center rounded-full glass-light text-white/50 hover:text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover:opacity-100 shadow-lg"
+          className="hidden sm:flex absolute -left-1 top-1/2 -translate-y-1/2 z-20 w-11 h-11 items-center justify-center rounded-full glass-light text-white/50 hover:text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover/carousel:opacity-100 shadow-lg"
         >
           <ChevronLeft className="h-5 w-5" />
         </button>
@@ -101,7 +105,7 @@ export function MediaCarousel({
         <button
           ref={nextRef}
           aria-label="Next"
-          className="hidden sm:flex absolute -right-1 top-1/2 -translate-y-1/2 z-20 w-11 h-11 items-center justify-center rounded-full glass-light text-white/50 hover:text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover:opacity-100 shadow-lg"
+          className="hidden sm:flex absolute -right-1 top-1/2 -translate-y-1/2 z-20 w-11 h-11 items-center justify-center rounded-full glass-light text-white/50 hover:text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover/carousel:opacity-100 shadow-lg"
         >
           <ChevronRight className="h-5 w-5" />
         </button>
@@ -142,7 +146,7 @@ export function MediaCarousel({
               spaceBetween: 20,
             },
             1280: {
-              slidesPerView: 6,
+              slidesPerView: 7,
               spaceBetween: 20,
             },
           }}

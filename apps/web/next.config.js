@@ -1,8 +1,10 @@
 /** @type {import('next').NextConfig} */
+const IS_DESKTOP = process.env.BUILD_FOR_DESKTOP === "true";
+
 const nextConfig = {
-  // Standalone output when building for the desktop app
-  // (bundles server + deps into .next/standalone/ for Electron)
-  output: process.env.BUILD_FOR_DESKTOP === "true" ? "standalone" : undefined,
+  // Desktop: static export (no Node.js server, <200ms cold start in Electron).
+  // Web/mobile: default server mode (SSR + API routes).
+  output: IS_DESKTOP ? "export" : undefined,
   reactStrictMode: true,
   allowedDevOrigins: ["192.168.100.7"],
   // Performance optimizations
@@ -12,27 +14,29 @@ const nextConfig = {
   // Production optimizations
   productionBrowserSourceMaps: false,
 
-  // Optimize images
-  images: {
-    formats: ["image/avif", "image/webp"],
-    deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
-    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
-    minimumCacheTTL: 60 * 60 * 24 * 30, // 30 days
-    qualities: [75, 85, 90],
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "image.tmdb.org",
-        pathname: "/t/p/**",
+  // Optimize images — static export requires unoptimized (images served from CDNs)
+  images: IS_DESKTOP
+    ? { unoptimized: true }
+    : {
+        formats: ["image/avif", "image/webp"],
+        deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
+        imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
+        minimumCacheTTL: 60 * 60 * 24 * 30, // 30 days
+        qualities: [75, 85, 90],
+        remotePatterns: [
+          {
+            protocol: "https",
+            hostname: "image.tmdb.org",
+            pathname: "/t/p/**",
+          },
+          {
+            // AniList cover CDN — anime search results only
+            protocol: "https",
+            hostname: "s4.anilist.co",
+            pathname: "/file/anilistcdn/**",
+          },
+        ],
       },
-      {
-        // AniList cover CDN — anime search results only
-        protocol: "https",
-        hostname: "s4.anilist.co",
-        pathname: "/file/anilistcdn/**",
-      },
-    ],
-  },
 
   // Webpack optimizations
   webpack: (config, { dev, isServer }) => {

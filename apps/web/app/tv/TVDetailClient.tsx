@@ -19,8 +19,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SaveButton } from "@/components/SaveButton";
 import { useResumeTarget } from "@/hooks/useResumeTarget";
+import { useQueryClient } from "@tanstack/react-query";
 import { Suspense } from "react";
-import VideoSkeleton from "@/components/VideoSkeleton";
+import { SkeletonPlayer } from "@/components/SkeletonLoader";
 import { useRouter, useSearchParams } from "next/navigation";
 import DownloadBadge from "@/components/download/DownloadBadge";
 import DownloadButton from "@/components/download/DownloadButton";
@@ -32,16 +33,21 @@ const VideoPlayer = dynamic(
     import("@/components/VideoPlayer").then((mod) => ({
       default: mod.VideoPlayer,
     })),
-  { ssr: false, loading: () => <VideoSkeleton /> },
+  { ssr: false, loading: () => <SkeletonPlayer /> },
 );
 
-export default function TVClient({ show }: { show: any }) {
+export default function TVDetailClient({ show }: { show: any }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const [trailerOpen, setTrailerOpen] = useState(false);
   const [overviewOpen, setOverviewOpen] = useState(false);
   const trailerKey = getTrailerKey(show.videos);
-  const resume = useResumeTarget(String(show.id), "tv", `/watch/tv/${show.id}`);
+  const resume = useResumeTarget(
+    String(show.id),
+    "tv",
+    `/watch?type=tv&id=${show.id}`,
+  );
   const mid = searchParams.get("mid");
   const aid = searchParams.get("aid");
   const animeQs = [mid ? `mid=${mid}` : "", aid ? `aid=${aid}` : ""]
@@ -55,17 +61,24 @@ export default function TVClient({ show }: { show: any }) {
     ? new Date(show.first_air_date).getFullYear()
     : null;
 
+  // Prefetch watch page data on hover — warms the cache before navigation
+  const handleWatchPrefetch = () => {
+    queryClient.prefetchQuery({
+      queryKey: ["tv", show.id],
+      queryFn: () =>
+        import("@/lib/tmdb").then((m) => m.tmdbApi.getTVDetails(show.id)),
+      staleTime: 1000 * 60 * 60 * 24 * 7,
+    });
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <main className="pt-16">
         {/* ════════════════════════════════════════════════════════════════
-            PHONE HERO  (<sm only) — P0/P2: full-bleed backdrop, tight
-            title block (with tagline), single dominant Watch action,
-            collapsible overview. Reference: Apple TV / Netflix mobile.
+            PHONE HERO  (<sm only)
            ══════════════════════════════════════════════════════════════ */}
         <div className="sm:hidden">
           <div className="relative">
-            {/* Full-bleed backdrop art */}
             <div className="relative w-full aspect-[3/4] max-h-[62vh] overflow-hidden">
               {(show.backdrop_path || show.poster_path) && (
                 <Image
@@ -98,7 +111,6 @@ export default function TVClient({ show }: { show: any }) {
                 />
               </div>
 
-              {/* Poster chip + title anchored to bottom of art */}
               <div className="absolute inset-x-0 bottom-0 px-4 pb-4 flex items-end gap-3">
                 {show.poster_path && (
                   <div className="relative w-20 aspect-[2/3] rounded-lg overflow-hidden shadow-2xl shadow-black/60 ring-1 ring-white/[0.12] flex-shrink-0">
@@ -132,9 +144,7 @@ export default function TVClient({ show }: { show: any }) {
               </div>
             </div>
 
-            {/* Body */}
             <div className="px-4 pt-4 pb-2 space-y-4">
-              {/* Meta row */}
               <div className="flex flex-wrap items-center gap-2.5">
                 {show.vote_average > 0 && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-accent/15 text-amber-accent text-xs font-bold">
@@ -175,10 +185,11 @@ export default function TVClient({ show }: { show: any }) {
                 </div>
               )}
 
-              {/* Primary action row */}
               <div className="flex items-center gap-2 pt-1">
                 <Button
                   onClick={() => router.push(watchHref)}
+                  onMouseEnter={handleWatchPrefetch}
+                  onFocus={handleWatchPrefetch}
                   className="flex-1 gap-2 h-12 rounded-full font-bold text-sm text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] active:scale-[0.98] active:brightness-95 transition-all duration-150"
                 >
                   <Play className="w-5 h-5 fill-current" />
@@ -188,7 +199,6 @@ export default function TVClient({ show }: { show: any }) {
               </div>
               <DownloadBadge />
 
-              {/* Overview — collapsible */}
               {show.overview && (
                 <div className="pt-1">
                   <button
@@ -211,14 +221,12 @@ export default function TVClient({ show }: { show: any }) {
                 </div>
               )}
 
-              {/* Cast Carousel */}
               {show.credits?.cast?.length > 0 && (
                 <div className="pt-1 -mx-4 px-4">
                   <CastCarousel cast={show.credits.cast} />
                 </div>
               )}
 
-              {/* Trailer */}
               {trailerKey && (
                 <div className="pt-1">
                   <div className="flex items-center justify-between mb-3">
@@ -234,7 +242,7 @@ export default function TVClient({ show }: { show: any }) {
                       Fullscreen
                     </button>
                   </div>
-                  <Suspense fallback={<VideoSkeleton />}>
+                  <Suspense fallback={<SkeletonPlayer />}>
                     <div className="rounded-xl overflow-hidden ring-1 ring-white/[0.06] shadow-xl">
                       <VideoPlayer videoKey={trailerKey} title={show.name} />
                     </div>
@@ -244,7 +252,6 @@ export default function TVClient({ show }: { show: any }) {
             </div>
           </div>
 
-          {/* Similar Section (phone) */}
           {show.similar?.results && show.similar.results.length > 0 && (
             <div className="relative py-8">
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
@@ -258,10 +265,9 @@ export default function TVClient({ show }: { show: any }) {
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════
-            DESKTOP / WEB-TABLET (sm: and up) — UNCHANGED from prior design
+            DESKTOP / WEB-TABLET (sm: and up)
            ══════════════════════════════════════════════════════════════ */}
         <div className="hidden sm:block">
-          {/* ── Backdrop Hero ── */}
           <div className="relative">
             {show.backdrop_path && (
               <div className="absolute inset-0 h-[60vh]">
@@ -290,7 +296,6 @@ export default function TVClient({ show }: { show: any }) {
               </Link>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
-                {/* Poster */}
                 <div className="lg:col-span-1">
                   {show.poster_path && (
                     <div className="relative aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl shadow-black/40 ring-1 ring-white/[0.06]">
@@ -305,7 +310,6 @@ export default function TVClient({ show }: { show: any }) {
                   )}
                 </div>
 
-                {/* Details */}
                 <div className="lg:col-span-2 space-y-6">
                   <div>
                     <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-foreground leading-[1.1]">
@@ -317,7 +321,6 @@ export default function TVClient({ show }: { show: any }) {
                       )}
                     </h1>
 
-                    {/* Meta row */}
                     <div className="flex flex-wrap items-center gap-4 mt-4">
                       {show.vote_average > 0 && (
                         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-accent/15 text-amber-accent text-sm font-semibold">
@@ -325,7 +328,6 @@ export default function TVClient({ show }: { show: any }) {
                           {show.vote_average.toFixed(1)}
                         </span>
                       )}
-
                       {show.first_air_date && (
                         <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
                           <Calendar className="h-3.5 w-3.5" />
@@ -339,7 +341,6 @@ export default function TVClient({ show }: { show: any }) {
                           )}
                         </span>
                       )}
-
                       {show.number_of_seasons && (
                         <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
                           <Tv className="h-3.5 w-3.5" />
@@ -349,7 +350,6 @@ export default function TVClient({ show }: { show: any }) {
                       )}
                     </div>
 
-                    {/* Genres */}
                     {show.genres && show.genres.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-4">
                         {show.genres.map((genre: any) => (
@@ -364,7 +364,6 @@ export default function TVClient({ show }: { show: any }) {
                       </div>
                     )}
 
-                    {/* Tagline */}
                     {show.tagline && (
                       <p className="text-base italic text-muted-foreground/70 leading-relaxed mt-4">
                         &quot;{show.tagline}&quot;
@@ -372,10 +371,11 @@ export default function TVClient({ show }: { show: any }) {
                     )}
                   </div>
 
-                  {/* Action buttons */}
                   <div className="flex flex-wrap items-center gap-3">
                     <Button
                       onClick={() => router.push(watchHref)}
+                      onMouseEnter={handleWatchPrefetch}
+                      onFocus={handleWatchPrefetch}
                       className="group gap-2.5 px-7 py-3.5 h-auto rounded-full font-bold text-sm text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
                     >
                       <Play className="w-5 h-5 fill-current" />
@@ -391,7 +391,6 @@ export default function TVClient({ show }: { show: any }) {
                     />
                   </div>
 
-                  {/* Overview */}
                   {show.overview && (
                     <div>
                       <h2 className="text-sm font-semibold uppercase tracking-[0.15em] text-muted-foreground/60 mb-3">
@@ -403,14 +402,12 @@ export default function TVClient({ show }: { show: any }) {
                     </div>
                   )}
 
-                  {/* Cast Carousel */}
                   {show.credits?.cast?.length > 0 && (
                     <div className="pt-4">
                       <CastCarousel cast={show.credits.cast} />
                     </div>
                   )}
 
-                  {/* Trailer */}
                   {trailerKey && (
                     <div className="pt-4">
                       <div className="flex items-center justify-between mb-4">
@@ -426,7 +423,7 @@ export default function TVClient({ show }: { show: any }) {
                           Fullscreen
                         </button>
                       </div>
-                      <Suspense fallback={<VideoSkeleton />}>
+                      <Suspense fallback={<SkeletonPlayer />}>
                         <div className="rounded-2xl overflow-hidden ring-1 ring-white/[0.06] shadow-xl">
                           <VideoPlayer
                             videoKey={trailerKey}
@@ -441,7 +438,6 @@ export default function TVClient({ show }: { show: any }) {
             </div>
           </div>
 
-          {/* ── Similar Section ── */}
           {show.similar?.results && show.similar.results.length > 0 && (
             <div className="relative py-14">
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />

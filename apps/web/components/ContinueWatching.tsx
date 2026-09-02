@@ -37,6 +37,7 @@ interface ContinueWatchingProps {
 interface EntryMeta {
   title: string;
   posterPath: string | null;
+  backdropPath: string | null;
   year: string;
 }
 
@@ -70,6 +71,7 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
             [key]: {
               title: m.name || m.title || "",
               posterPath: m.poster_path ?? null,
+              backdropPath: m.backdrop_path ?? null,
               year: releaseDate
                 ? String(new Date(releaseDate).getFullYear())
                 : "",
@@ -106,8 +108,8 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
         const tParam = Math.floor(entry.currentTime);
         const href =
           entry.mediaType === "tv"
-            ? `/watch/tv/${entry.tmdbId}?season=${entry.season ?? 1}&episode=${entry.episode ?? 1}&t=${tParam}`
-            : `/watch/movie/${entry.tmdbId}?t=${tParam}`;
+            ? `/watch?type=tv&id=${entry.tmdbId}&season=${entry.season ?? 1}&episode=${entry.episode ?? 1}&t=${tParam}`
+            : `/watch?type=movie&id=${entry.tmdbId}&t=${tParam}`;
         const pct = Math.min(Math.round((entry.percent ?? 0) * 100), 100);
         const sub =
           entry.mediaType === "tv"
@@ -120,26 +122,31 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
             className="py-2"
           >
             <div className="group relative">
-              {/* Poster */}
+              {/* Thumbnail */}
               <Link
                 prefetch
                 href={href}
                 onMouseEnter={() =>
                   router.prefetch(
                     entry.mediaType === "tv"
-                      ? `/watch/tv/${entry.tmdbId}`
-                      : `/watch/movie/${entry.tmdbId}`,
+                      ? `/watch?type=tv&id=${entry.tmdbId}`
+                      : `/watch?type=movie&id=${entry.tmdbId}`,
                   )
                 }
                 className="block"
               >
-                <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-secondary shadow-lg transition-all duration-500 group-hover:shadow-2xl group-hover:shadow-primary/5">
-                  {meta?.posterPath ? (
+                <div className="relative aspect-video rounded-xl overflow-hidden bg-secondary border border-white/[0.06] shadow-lg transition-all duration-300 group-hover:shadow-xl group-hover:shadow-primary/10 group-hover:border-white/[0.12]">
+                  {meta?.backdropPath || meta?.posterPath ? (
                     <Image
-                      src={getImageUrl(meta.posterPath, "w500") || ""}
-                      alt={meta.title || "Poster"}
+                      src={
+                        getImageUrl(
+                          meta?.backdropPath ?? meta?.posterPath ?? undefined,
+                          "w780",
+                        ) || ""
+                      }
+                      alt={meta?.title || "Poster"}
                       fill
-                      sizes="(max-width: 640px) 50vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 16vw"
+                      sizes="(max-width: 640px) 50vw, (max-width: 1024px) 30vw, 22vw"
                       loading="lazy"
                       quality={85}
                       className="object-cover transition-all duration-500 group-hover:scale-105"
@@ -150,36 +157,46 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
                     </div>
                   )}
 
-                  {/* Hover overlay */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                  {/* Dark overlay */}
+                  <div className="absolute inset-0 bg-black/30" />
 
-                  {/* Hover action */}
-                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-2 group-hover:translate-y-0">
-                    <span className="flex items-center gap-2 px-5 py-2 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-sm font-medium hover:bg-white/20 transition-all">
-                      <Play className="w-4 h-4 fill-current" />
-                      Resume
-                    </span>
+                  {/* Central play button (always visible) */}
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-10 h-10 rounded-full bg-black/70 border border-white/20 flex items-center justify-center transition-all duration-300 group-hover:scale-110 group-hover:bg-black/80">
+                      <Play className="w-4.5 h-4.5 fill-[#E8BC4F] text-[#E8BC4F] ml-0.5" />
+                    </div>
+                  </div>
+
+                  {/* TV episode pill badge */}
+                  {entry.mediaType === "tv" &&
+                    entry.season != null &&
+                    entry.episode != null && (
+                      <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/75 border border-white/10">
+                        <span className="text-[10px] font-semibold text-[#E8BC4F]">
+                          S{entry.season}:E{entry.episode}
+                        </span>
+                      </div>
+                    )}
+
+                  {/* Bottom progress bar (overlaid) */}
+                  <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-white/25 rounded-b-xl overflow-hidden">
+                    <div
+                      className="h-full bg-[#E8BC4F]"
+                      style={{ width: `${pct}%` }}
+                    />
                   </div>
                 </div>
               </Link>
 
-              {/* Progress bar under poster (MovieCard anatomy) */}
-              <div className="mt-1.5 h-1 w-full max-w-[92%] rounded-full overflow-hidden bg-white/[0.06]">
-                <div
-                  className="h-full rounded-full bg-[#5B9CF6]"
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-
               {/* Info below card */}
-              <Link href={href} className="block mt-2.5 space-y-0.5 px-0.5">
+              <Link href={href} className="block mt-2 px-0.5">
                 <h3 className="font-sans text-sm font-semibold text-foreground/90 line-clamp-1 group-hover:text-primary transition-colors duration-200">
                   {meta?.title ||
                     (entry.mediaType === "tv"
                       ? `S${entry.season ?? "?"} E${entry.episode ?? "?"}`
                       : "Untitled")}
                 </h3>
-                <p className="text-xs text-muted-foreground/70">{sub}</p>
+                <p className="text-xs text-muted-foreground/60 mt-0.5">{sub}</p>
               </Link>
             </div>
           </SwiperSlide>
@@ -197,12 +214,15 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
         <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
           Continue Watching
         </h2>
-        <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground/50">
-          History
-        </span>
+        <Link
+          href="/history"
+          className="text-[12px] font-semibold text-muted-foreground/60 hover:text-primary transition-colors duration-200"
+        >
+          See all →
+        </Link>
       </div>
 
-      <div className="relative px-5 sm:px-6 lg:px-8">
+      <div className="group/carousel relative px-5 sm:px-6 lg:px-8">
         {/* Edge fade indicators */}
         <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-background to-transparent z-10 pointer-events-none hidden sm:block" />
         <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-background to-transparent z-10 pointer-events-none hidden sm:block" />
@@ -211,7 +231,7 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
         <button
           ref={prevRef}
           aria-label="Previous"
-          className="hidden sm:flex absolute -left-1 top-1/2 -translate-y-1/2 z-20 w-11 h-11 items-center justify-center rounded-full glass-light text-white/50 hover:text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover/row:opacity-100 shadow-lg"
+          className="hidden sm:flex absolute -left-1 top-1/2 -translate-y-1/2 z-20 w-11 h-11 items-center justify-center rounded-full glass-light text-white/50 hover:text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover/carousel:opacity-100 shadow-lg"
         >
           <ChevronLeft className="h-5 w-5" />
         </button>
@@ -219,7 +239,7 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
         <button
           ref={nextRef}
           aria-label="Next"
-          className="hidden sm:flex absolute -right-1 top-1/2 -translate-y-1/2 z-20 w-11 h-11 items-center justify-center rounded-full glass-light text-white/50 hover:text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover/row:opacity-100 shadow-lg"
+          className="hidden sm:flex absolute -right-1 top-1/2 -translate-y-1/2 z-20 w-11 h-11 items-center justify-center rounded-full glass-light text-white/50 hover:text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover/carousel:opacity-100 shadow-lg"
         >
           <ChevronRight className="h-5 w-5" />
         </button>
@@ -234,28 +254,28 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
             nextEl: nextRef.current,
           }}
           onBeforeInit={handleBeforeInit}
-          spaceBetween={24}
-          slidesPerView={1.5}
+          spaceBetween={16}
+          slidesPerView={1.3}
           breakpoints={{
             480: {
-              slidesPerView: 1.8,
-              spaceBetween: 24,
+              slidesPerView: 1.6,
+              spaceBetween: 16,
             },
             640: {
-              slidesPerView: 2.5,
-              spaceBetween: 20,
+              slidesPerView: 2.2,
+              spaceBetween: 18,
             },
             768: {
-              slidesPerView: 3.5,
-              spaceBetween: 24,
+              slidesPerView: 2.8,
+              spaceBetween: 20,
             },
             1024: {
-              slidesPerView: 5,
+              slidesPerView: 3.5,
               spaceBetween: 20,
             },
             1280: {
-              slidesPerView: 6,
-              spaceBetween: 20,
+              slidesPerView: 4.2,
+              spaceBetween: 22,
             },
           }}
           className="pb-8"

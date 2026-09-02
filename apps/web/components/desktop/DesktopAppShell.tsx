@@ -116,7 +116,7 @@ export function DesktopAppShell({ children }: { children: React.ReactNode }) {
       <GlobalTopBar />
       <div className="flex flex-1 overflow-hidden">
         {isDesktopVp && !immersive && !isWatchPage && <Sidebar />}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden bg-[#070708]">
           {children}
         </main>
       </div>

@@ -42,7 +42,7 @@ export function RelatedPanel({ contentid, initialMeta }: RelatedPanelProps) {
           return (
             <Link
               key={movie.id}
-              href={`/watch/movie/${movie.id}`}
+              href={`/watch?type=movie&id=${movie.id}`}
               className="group block"
             >
               <div

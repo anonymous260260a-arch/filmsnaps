@@ -4,6 +4,8 @@
  * once per (title, season, episode) to get MegaPlay's MAL/AniList identity.
  */
 
+import { apiUrl } from "@/lib/tmdb";
+
 export interface ResolveShowOk {
   ok: true;
   malId: number;
@@ -29,7 +31,9 @@ export async function resolveAnimeShow(
   episode: number,
 ): Promise<ShowResolutionResult> {
   const res = await fetch(
-    `/api/anime/resolve?from=tmdb_show&id=${tmdbShowId}&season=${season}&episode=${episode}`,
+    apiUrl(
+      `/api/anime/resolve?from=tmdb_show&id=${tmdbShowId}&season=${season}&episode=${episode}`,
+    ),
   );
   if (!res.ok) throw new Error(`anime resolve failed (${res.status})`);
   return res.json();
@@ -42,7 +46,7 @@ export async function resolveAnimeMovie(
   | { ok: false; miss: true }
 > {
   const res = await fetch(
-    `/api/anime/resolve?from=tmdb_movie&id=${tmdbMovieId}`,
+    apiUrl(`/api/anime/resolve?from=tmdb_movie&id=${tmdbMovieId}`),
   );
   if (!res.ok) throw new Error(`anime resolve failed (${res.status})`);
   return res.json();

@@ -1,4 +1,4 @@
-import { cn } from '@/lib/utils';
+import { cn } from "@/lib/utils";
 
 export function SkeletonCard() {
   return (
@@ -74,5 +74,31 @@ export function SkeletonRow() {
         </div>
       </div>
     </div>
+  );
+}
+
+export function SkeletonDetail() {
+  return (
+    <div className="min-h-screen bg-[#070708] animate-pulse">
+      <div className="w-full h-[50vh] bg-secondary/20" />
+      <div className="max-w-6xl mx-auto px-4 -mt-32 relative z-10 flex gap-6">
+        <div className="w-48 aspect-[2/3] bg-secondary/30 rounded-xl shrink-0" />
+        <div className="flex-1 space-y-4 pt-48">
+          <div className="h-8 w-64 bg-secondary/30 rounded" />
+          <div className="h-4 w-96 bg-secondary/20 rounded" />
+          <div className="h-4 w-80 bg-secondary/20 rounded" />
+          <div className="flex gap-2 mt-4">
+            <div className="h-10 w-32 bg-secondary/30 rounded-lg" />
+            <div className="h-10 w-10 bg-secondary/30 rounded-lg" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SkeletonPlayer() {
+  return (
+    <div className="w-full aspect-video bg-secondary/30 rounded-xl animate-pulse" />
   );
 }

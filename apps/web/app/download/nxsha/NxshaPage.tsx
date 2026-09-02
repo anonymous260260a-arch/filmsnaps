@@ -9,12 +9,12 @@
  * accordion cards (MbPly first), parsed for quality/audio/size/format, and
  * enqueued into the Download Manager via download:start.
  *
- * Route: /download/nxsha/movie/{tmdbId} · /download/nxsha/tv/{tmdbId}/{s}/{e}
+ * Route: /download/nxsha?type=movie&id={tmdbId} · /download/nxsha?type=tv&id={tmdbId}&season={s}&episode={e}
  */
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   CheckCircle2,
@@ -68,17 +68,16 @@ function qualityColor(link: ParsedLink): string {
 }
 
 export default function NxshaDownloadPage() {
-  const params = useParams<{ id: string[] }>();
-  const segs = useMemo(() => params?.id ?? [], [params]);
-  const type = segs[0] === "tv" ? "tv" : "movie";
-  const id = segs[1] ?? "";
+  const searchParams = useSearchParams();
+  const type = searchParams.get("type") === "tv" ? "tv" : "movie";
+  const id = searchParams.get("id") ?? "";
   const isTV = type === "tv";
 
   const [pickedSeason, setPickedSeason] = useState<number>(
-    segs[2] ? Number(segs[2]) : 1,
+    searchParams.get("season") ? Number(searchParams.get("season")) : 1,
   );
   const [pickedEpisode, setPickedEpisode] = useState<number>(
-    segs[3] ? Number(segs[3]) : 1,
+    searchParams.get("episode") ? Number(searchParams.get("episode")) : 1,
   );
   // Bumped by the picker's Load button to force a re-scrape.
   const [scrapeKey, setScrapeKey] = useState(0);

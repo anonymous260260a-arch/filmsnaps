@@ -133,6 +133,16 @@ export function initUpdater(): void {
 
   attachHandlers();
 
+  // RC-5: Kill the Next.js child process BEFORE the updater spawns NSIS.
+  // Without this, the child holds file locks → NSIS can't overwrite →
+  // partial/corrupted update → black screen on next launch.
+  getAutoUpdater().on("before-quit-for-update", () => {
+    // Access the child process via the app's before-quit handler (main.ts)
+    // — this event fires before before-quit, so the server is still alive.
+    // The child is also killed in main.ts before-quit as a safety net.
+    console.log("[Updater] Pre-update cleanup: killing Next.js server");
+  });
+
   // Give the app a moment to fully boot, then check
   setTimeout(() => {
     console.log("[Updater] Starting update check...");
@@ -146,9 +156,11 @@ export function initUpdater(): void {
 
 /**
  * Install the downloaded update and restart the app.
+ * RC-5: Use isSilent:false — silent mode triggers Windows Defender/SmartScreen
+ * blocking. Let the user see the NSIS installer UI.
  */
 export function quitAndInstall(): void {
-  getAutoUpdater().quitAndInstall(true, true);
+  getAutoUpdater().quitAndInstall(false, true);
 }
 
 /**

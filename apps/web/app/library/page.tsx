@@ -305,10 +305,10 @@ function HistoryRow({ entry }: { entry: WatchProgress }) {
     <Link
       href={
         entry.mediaType === "tv"
-          ? `/watch/tv/${entry.tmdbId}?season=${entry.season ?? 1}&episode=${
+          ? `/watch?type=tv&id=${entry.tmdbId}&season=${entry.season ?? 1}&episode=${
               entry.episode ?? 1
             }`
-          : `/watch/movie/${entry.tmdbId}`
+          : `/watch?type=movie&id=${entry.tmdbId}`
       }
       className="flex items-center gap-4 p-4 rounded-xl bg-[#0E0E11] border border-[#222226] hover:border-[#D4A237]/20 transition-all group"
     >

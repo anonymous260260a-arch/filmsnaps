@@ -18,8 +18,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SaveButton } from "@/components/SaveButton";
 import { useResumeTarget } from "@/hooks/useResumeTarget";
+import { useQueryClient } from "@tanstack/react-query";
 import { Suspense } from "react";
-import VideoSkeleton from "@/components/VideoSkeleton";
+import { SkeletonPlayer } from "@/components/SkeletonLoader";
 import { useRouter, useSearchParams } from "next/navigation";
 
 const VideoPlayer = dynamic(
@@ -40,13 +41,14 @@ import DownloadButton from "@/components/download/DownloadButton";
 export default function MovieClient({ movie }: { movie: any }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const [trailerOpen, setTrailerOpen] = useState(false);
   const [overviewOpen, setOverviewOpen] = useState(false);
   const trailerKey = getTrailerKey(movie.videos);
   const resume = useResumeTarget(
     String(movie.id),
     "movie",
-    `/watch/movie/${movie.id}`,
+    `/watch?type=movie&id=${movie.id}`,
   );
   const mid = searchParams.get("mid");
   const aid = searchParams.get("aid");
@@ -57,6 +59,16 @@ export default function MovieClient({ movie }: { movie: any }) {
     !animeQs || resume.href.includes("mid=")
       ? resume.href
       : `${resume.href}${resume.href.includes("?") ? "&" : "?"}${animeQs}`;
+
+  // Prefetch watch page data on hover — warms the cache before navigation
+  const handleWatchPrefetch = () => {
+    queryClient.prefetchQuery({
+      queryKey: ["movie", movie.id],
+      queryFn: () =>
+        import("@/lib/tmdb").then((m) => m.tmdbApi.getMovieDetails(movie.id)),
+      staleTime: 1000 * 60 * 60 * 24 * 7,
+    });
+  };
   const runtime = movie.runtime
     ? `${Math.floor(movie.runtime / 60)}h ${movie.runtime % 60}m`
     : null;
@@ -69,9 +81,8 @@ export default function MovieClient({ movie }: { movie: any }) {
     <div className="min-h-screen bg-background">
       <main className="pt-16">
         {/* ════════════════════════════════════════════════════════════════
-            PHONE HERO  (<sm only) — P0/P2: full-bleed backdrop, tight
+            PHONE HERO  (<sm only) — full-bleed backdrop, tight
             title block, single dominant Watch action, collapsible overview.
-            Reference: Apple TV / Netflix mobile detail pages.
            ══════════════════════════════════════════════════════════════ */}
         <div className="sm:hidden">
           <div className="relative">
@@ -91,7 +102,6 @@ export default function MovieClient({ movie }: { movie: any }) {
                   className="object-cover"
                 />
               )}
-              {/* Cinematic gradients: top for legibility of back button, bottom to merge into body */}
               <div className="absolute inset-0 bg-gradient-to-t from-[#070708] via-[#070708]/10 to-black/40" />
               <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#070708] to-transparent" />
 
@@ -179,10 +189,12 @@ export default function MovieClient({ movie }: { movie: any }) {
                 </div>
               )}
 
-              {/* Primary action row — thumb-friendly, full width Watch button */}
+              {/* Primary action row */}
               <div className="flex items-center gap-2 pt-1">
                 <Button
                   onClick={() => router.push(watchHref)}
+                  onMouseEnter={handleWatchPrefetch}
+                  onFocus={handleWatchPrefetch}
                   className="flex-1 gap-2 h-12 rounded-full font-bold text-sm text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] active:scale-[0.98] active:brightness-95 transition-all duration-150"
                 >
                   <Play className="w-5 h-5 fill-current" />
@@ -192,7 +204,7 @@ export default function MovieClient({ movie }: { movie: any }) {
               </div>
               <DownloadBadge />
 
-              {/* Overview — collapsible so it doesn't dominate the fold */}
+              {/* Overview — collapsible */}
               {movie.overview && (
                 <div className="pt-1">
                   <button
@@ -238,7 +250,7 @@ export default function MovieClient({ movie }: { movie: any }) {
                       Fullscreen
                     </button>
                   </div>
-                  <Suspense fallback={<VideoSkeleton />}>
+                  <Suspense fallback={<SkeletonPlayer />}>
                     <div className="rounded-xl overflow-hidden ring-1 ring-white/[0.06] shadow-xl">
                       <VideoPlayer videoKey={trailerKey} title={movie.title} />
                     </div>
@@ -262,10 +274,10 @@ export default function MovieClient({ movie }: { movie: any }) {
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════
-            DESKTOP / WEB-TABLET (sm: and up) — UNCHANGED from prior design
+            DESKTOP / WEB-TABLET (sm: and up)
            ══════════════════════════════════════════════════════════════ */}
         <div className="hidden sm:block">
-          {/* ── Backdrop Hero ── */}
+          {/* Backdrop Hero */}
           <div className="relative">
             {movie.backdrop_path && (
               <div className="absolute inset-0 h-[60vh]">
@@ -373,6 +385,8 @@ export default function MovieClient({ movie }: { movie: any }) {
                   <div className="flex flex-wrap items-center gap-3">
                     <Button
                       onClick={() => router.push(watchHref)}
+                      onMouseEnter={handleWatchPrefetch}
+                      onFocus={handleWatchPrefetch}
                       className="group gap-2.5 px-7 py-3.5 h-auto rounded-full font-bold text-sm text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
                     >
                       <Play className="w-5 h-5 fill-current" />
@@ -423,7 +437,7 @@ export default function MovieClient({ movie }: { movie: any }) {
                           Fullscreen
                         </button>
                       </div>
-                      <Suspense fallback={<VideoSkeleton />}>
+                      <Suspense fallback={<SkeletonPlayer />}>
                         <div className="rounded-2xl overflow-hidden ring-1 ring-white/[0.06] shadow-xl">
                           <VideoPlayer
                             videoKey={trailerKey}
@@ -438,7 +452,7 @@ export default function MovieClient({ movie }: { movie: any }) {
             </div>
           </div>
 
-          {/* ── Similar Section ── */}
+          {/* Similar Section */}
           {movie.similar?.results?.length > 0 && (
             <div className="relative py-14">
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />

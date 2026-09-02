@@ -11,14 +11,12 @@ export function Providers({ children }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 10 * 60 * 1000, // 10 minutes — safety net, overridden per-query
+            staleTime: 5 * 60 * 1000, // 5 minutes — safety net, overridden per-query (matches mobile)
             gcTime: Infinity, // never GC mid-session; disk bounded by maxAge
             refetchOnWindowFocus: false,
-            refetchOnMount: false,
             refetchOnReconnect: true,
-            retry: 1,
+            retry: 2,
             retryDelay: 1000,
-            // Enable structural sharing for better performance
             structuralSharing: true,
           },
           mutations: {

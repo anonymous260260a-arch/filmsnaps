@@ -24,6 +24,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCorsHeaders, handleOptions } from "@/lib/cors";
+import { desktopSkip } from "../../desktop-skip";
+
+export const dynamic = "force-static";
 import { lookupMal } from "@/lib/anime/resolve";
 
 const ANILIST_GRAPHQL = "https://graphql.anilist.co";
@@ -126,6 +129,8 @@ async function fetchWithTimeout(
 }
 
 export async function GET(req: NextRequest) {
+  const skip = desktopSkip();
+  if (skip) return skip;
   const sp = req.nextUrl.searchParams;
   const q = (sp.get("q") ?? "").trim();
   const origin = req.headers.get("origin");
