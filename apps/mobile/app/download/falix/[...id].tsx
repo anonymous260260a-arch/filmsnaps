@@ -33,7 +33,7 @@ import { colors } from "../../../theme/colors";
 import { ProgressiveImage } from "../../../components/ProgressiveImage";
 
 // ── API Base ──
-const FALIX_API_BASE = "https://download-falixm.koyeb.app";
+const FALIX_API_BASE = "https://dl.falixmovies.com";
 
 // ── Types ──
 interface FalixTelegramFile {

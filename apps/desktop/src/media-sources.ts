@@ -42,7 +42,7 @@ const NXSHA_UA =
 /** Per-provider politeness gap between /api/sources calls. */
 const NXSHA_PROVIDER_DELAY_MS = 600;
 const NXSHA_API_TIMEOUT_MS = 15000;
-const FALIX_API_BASE = "https://download-falixm.koyeb.app";
+const FALIX_API_BASE = "https://dl.falixmovies.com";
 
 // ── Nxsha private-API crypto (replicates the site's encodeData/decodeData) ──
 
