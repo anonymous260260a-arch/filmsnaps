@@ -26,7 +26,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCorsHeaders, handleOptions } from "@/lib/cors";
 import { desktopSkip } from "../../desktop-skip";
 
-export const dynamic = "force-static";
+// force-static removed — same fix as tmdb route (was caching search at build time)
 import { lookupMal } from "@/lib/anime/resolve";
 
 const ANILIST_GRAPHQL = "https://graphql.anilist.co";

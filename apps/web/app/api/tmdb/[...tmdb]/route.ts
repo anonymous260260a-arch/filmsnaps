@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCorsHeaders, handleOptions } from "@/lib/cors";
 import { desktopSkip } from "../../desktop-skip";
 
-export const dynamic = "force-static";
+// ponytail: force-static removed — it cached the handler at build time so web
+// search never ran the handler at runtime (got stale/empty response). The
+// desktop export build is handled by generateStaticParams + desktopSkip().
+// Add back `export const dynamic = "force-static"` only if export build fails
+// without it — and pair it with a runtime check in desktopSkip().
 
 // Catch-all routes need generateStaticParams for output: 'export'.
 // Desktop never calls this route — return one dummy segment so it compiles.
