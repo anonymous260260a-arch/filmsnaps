@@ -1,6 +1,6 @@
 {
-  "latestVersion": "2.1.0",
-  "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.1.0/filmsnaps-v2.1.0.apk",
-  "releaseNotes": "v2.1.0 — Full anime support: toggle Anime mode for MegaPlay streaming, AniList search, automatic MAL ↔ AniList 410 fallback, per-title server selection, and a version-gated release announcement.",
+  "latestVersion": "2.2.0",
+  "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.2.0/filmsnaps-v2.2.0.apk",
+  "releaseNotes": "v2.2.0 — Direct on-device streaming: stream links are fetched straight from the provider on your device for faster starts, with a remote-updatable provider registry so source domains can change without an app update. Self-healing playback: if a source dies or times out, the player auto-switches to the next provider (plus a new Try Another Server button). Continue Watching pre-warms streams for your top 3 resume titles, including the next episode of finished ones. Player overhaul: audio track sheet, subtitle sheet with search, player settings, stream picker, double-tap seek, first-run language prompt. Fixes: video/audio now stop when the app is minimized, back-press toast auto-hides, Continue Watching row scrolls horizontally, no stuck loading spinner after minimize.",
   "versionsUrl": "https://filmsnap-pro.netlify.app/versions"
 }

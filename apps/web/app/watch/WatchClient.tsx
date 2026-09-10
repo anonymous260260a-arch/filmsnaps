@@ -51,6 +51,7 @@ import { PlayerProvider, usePlayer } from "@/components/player/PlayerProvider";
 import { SecureIframe } from "@/components/player/SecureIframe";
 import { DesktopSecureWebview } from "@/components/player/DesktopSecureWebview";
 import { FalixPlayer } from "@/components/player/FalixPlayer";
+import { DirectVideoPlayer } from "@/components/player/DirectVideoPlayer";
 import { ServerPickerSheet } from "@/components/player/ServerPickerSheet";
 import { MobileEpisodeSheet } from "@/components/player/MobileEpisodeSheet";
 import { EpisodeSidebar } from "@/components/player/EpisodeSidebar";
@@ -94,7 +95,7 @@ interface WatchClientContentProps {
  * These are rendered with a custom video.js player (FalixPlayer)
  * instead of SecureIframe/DesktopSecureWebview.
  */
-const DIRECT_VIDEO_PROVIDERS = new Set<string>(["falix"]);
+const DIRECT_VIDEO_PROVIDERS = new Set<string>(["falix", "direct"]);
 
 /** Resolved MegaPlay identity for this (title, season, episode). */
 interface MegaContext {
@@ -852,13 +853,27 @@ function WatchClientContent({
               {/* Direct-video player (Falix) */}
               {!cpuWarning &&
                 currentProvider &&
-                DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
+                currentProvider.id === "falix" && (
                   <FalixPlayer
                     tmdbId={contentid}
                     mediaType={plat}
                     selectedSeason={selectedSeason}
                     activeEpisode={activeEpisode}
                     onLoad={handleIframeLoad}
+                  />
+                )}
+
+              {/* Direct-video player (universal format) */}
+              {!cpuWarning &&
+                currentProvider &&
+                currentProvider.id === "direct" && (
+                  <DirectVideoPlayer
+                    tmdbId={contentid}
+                    mediaType={plat}
+                    selectedSeason={selectedSeason}
+                    activeEpisode={activeEpisode}
+                    onLoad={handleIframeLoad}
+                    onError={handleIframeError}
                   />
                 )}
 

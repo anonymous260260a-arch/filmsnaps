@@ -34,6 +34,27 @@
       "dismissible": true,
       "expiresAt": "2027-08-24T00:00:00Z",
       "hideFromVersion": "2.1.0"
+    },
+    {
+      "id": "v2-2-0-direct-streaming",
+      "type": "feature",
+      "title": "New version released — 2.2.0 with faster, self-healing streaming",
+      "subtitle": "Streams now load directly on your device and the player recovers automatically when a source fails. Update from https://filmsnaps1.anonymous260260a.workers.dev/download.",
+      "body": [
+        "FilmSnaps 2.2.0 makes streaming faster and far more resilient.",
+        "Stream links are now fetched directly on your device instead of hopping through our server, so playback starts sooner. Provider addresses live in a remote registry — if a source ever changes its domain, we can update it server-side and every app version keeps working, no update required on your end.",
+        "Playback is now self-healing: if a source dies mid-load or stops responding, the player automatically switches to the next provider. A new Try Another Server button lets you jump manually whenever you want.",
+        "Continue Watching is pre-warmed: streams for your three most recent titles are fetched and validated in the background while you browse — including the next episode of anything you finished — so tapping a card starts playing almost instantly.",
+        "The player got a major upgrade: audio track selection, a subtitle sheet with search, player settings, a stream picker, double-tap to seek, and a first-run language prompt.",
+        "Several reliability fixes are also in: video and audio now stop when you minimize the app, the back-press toast auto-hides, the Continue Watching row scrolls properly, and the loading spinner no longer sticks after you return from minimize.",
+        "Download version 2.2.0 from https://filmsnaps1.anonymous260260a.workers.dev/download."
+      ],
+      "actionLabel": "Download",
+      "externalUrl": "https://filmsnaps1.anonymous260260a.workers.dev/download",
+      "date": "September 10, 2026",
+      "dismissible": true,
+      "expiresAt": "2027-09-10T00:00:00Z",
+      "hideFromVersion": "2.2.0"
     }
   ]
 }

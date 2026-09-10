@@ -16,6 +16,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import type { TimeRange } from "./player-adapters";
 import {
   Play,
   Pause,
@@ -70,6 +71,32 @@ interface WebCodecsPlayerProps {
   audioLanguages?: string[];
   onLoad?: () => void;
   onError?: () => void;
+  /** Exposed to parent via ref for ControlBar integration */
+  onRefReady?: (handle: WebCodecsPlayerHandle) => void;
+}
+
+export interface WebCodecsPlayerHandle {
+  play(): void;
+  pause(): void;
+  seek(time: number): void;
+  setVolume(volume: number): void;
+  setMuted(muted: boolean): void;
+  setPlaybackRate(rate: number): void;
+  requestFullscreen(): void;
+  getCurrentTime(): number;
+  getDuration(): number;
+  isPaused(): boolean;
+  isMuted(): boolean;
+  getVolume(): number;
+  getBuffered(): TimeRanges;
+  /** Audio track switching — optional, for MKV multi-audio sources. */
+  getAudioTracks?: () => {
+    id: string;
+    label: string;
+    language?: string;
+    active?: boolean;
+  }[];
+  setAudioTrack?: (trackId: string) => void;
 }
 
 // ── Component ──────────────────────────────────────────────────────
@@ -79,6 +106,7 @@ export function WebCodecsPlayer({
   audioLanguages,
   onLoad,
   onError,
+  onRefReady,
 }: WebCodecsPlayerProps) {
   // ── UI state ──
   const [status, setStatus] = useState<PlayerStatus>("loading");
@@ -96,6 +124,82 @@ export function WebCodecsPlayer({
 
   // ── Refs (mutable values shared with callbacks) ──
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const playerHandleRef = useRef<WebCodecsPlayerHandle | null>(null);
+
+  // Build + expose handle for parent (ControlBar) integration
+  useEffect(() => {
+    if (!playerHandleRef.current) {
+      playerHandleRef.current = {
+        play: () => {
+          if (status === "ready" || status === "paused") {
+            isPausedRef.current = false;
+            setStatus("playing");
+            const ctx = audioCtxRef.current;
+            if (ctx?.state === "suspended") ctx.resume().catch(() => {});
+          } else if (status === "playing") {
+            isPausedRef.current = true;
+            setStatus("paused");
+            if (animFrameRef.current) {
+              cancelAnimationFrame(animFrameRef.current);
+              animFrameRef.current = 0;
+            }
+          }
+        },
+        pause: () => {
+          isPausedRef.current = true;
+          setStatus("paused");
+          if (animFrameRef.current) {
+            cancelAnimationFrame(animFrameRef.current);
+            animFrameRef.current = 0;
+          }
+        },
+        seek: (time: number) => {
+          videoDecoderRef.current?.flush();
+          audioDecoderRef.current?.flush();
+          for (const f of frameQueueRef.current) f.close();
+          frameQueueRef.current = [];
+          firstAudioTsRef.current = -1;
+          baseAudioTimeRef.current = 0;
+          nextAudioTimeRef.current = 0;
+          const ctx = audioCtxRef.current;
+          if (ctx) {
+            ctx.close();
+            audioCtxRef.current = new AudioContext();
+          }
+          currentTimeRef.current = time;
+          setCurrentTime(time);
+        },
+        setVolume: (v: number) => {
+          volumeRef.current = v;
+          setVolume(v);
+          if (v > 0) setIsMuted(false);
+        },
+        setMuted: (muted: boolean) => {
+          isMutedRef.current = muted;
+          setIsMuted(muted);
+        },
+        setPlaybackRate: (_rate: number) => {
+          // No-op: WebCodecsPlayer doesn't support rate shifting yet
+        },
+        requestFullscreen: () => {
+          containerRef.current?.requestFullscreen().catch(() => {});
+        },
+        getCurrentTime: () => currentTimeRef.current,
+        getDuration: () => duration,
+        isPaused: () => isPausedRef.current,
+        isMuted: () => isMutedRef.current,
+        getVolume: () => volumeRef.current,
+        getBuffered: () =>
+          ({
+            length: 0,
+            start: () => 0,
+            end: () => 0,
+          }) as unknown as TimeRanges,
+      };
+      onRefReady?.(playerHandleRef.current!);
+    }
+  }, [onRefReady, status, duration]);
+
   const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const videoDecoderRef = useRef<VideoDecoder | null>(null);
