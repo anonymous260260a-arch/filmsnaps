@@ -25,6 +25,8 @@ import { ProgressiveImage } from "../../components/ProgressiveImage";
 import { Shimmer } from "../../components/Shimmer";
 import { SeeAllButton } from "../../components/SeeAllButton";
 import { DeferredContent } from "../../components/DeferredContent";
+import { prefetchStreams } from "../../lib/streamPrefetch";
+import { getNextEpisode } from "../../lib/tvUtils";
 import {
   useTrendingMovies,
   useTrendingTV,
@@ -125,6 +127,67 @@ export default function HomeScreen() {
     });
     return () => unsub();
   }, []);
+
+  // ── Continue-watching stream prefetch ──
+  // Once the history hydrates, quietly fetch + rank + probe links for the
+  // first three CW titles so tapping a card reaches the player pre-warmed.
+  // Delayed and session-once so it never competes with app-startup work.
+  //
+  // The timer must NOT be cleared when storeHistory re-emits: hydration is
+  // followed by TMDB enrichment within seconds, and that dep-change cleanup
+  // used to cancel the pending timer while the session-once ref blocked a
+  // re-arm — so the prefetch never ran at all. Latest entries are read
+  // through a ref when the timer fires; only unmount clears the timer.
+  const cwPrefetchedRef = useRef(false);
+  const cwPrefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cwHistoryRef = useRef(storeHistory);
+  cwHistoryRef.current = storeHistory;
+  useEffect(() => {
+    if (cwPrefetchedRef.current || !settingsLoaded || storeHistory.length === 0)
+      return;
+    if (cwPrefetchTimerRef.current) return; // already armed — don't re-arm
+    cwPrefetchTimerRef.current = setTimeout(() => {
+      cwPrefetchTimerRef.current = null;
+      cwPrefetchedRef.current = true;
+      for (const entry of cwHistoryRef.current.slice(0, 3)) {
+        const p = entry.latest;
+        const tmdbIdNum = parseInt(p.tmdbId);
+        if (Number.isNaN(tmdbIdNum)) continue;
+        const prefetch = (season?: number, episode?: number) =>
+          prefetchStreams(tmdbIdNum, p.mediaType, season, episode, {
+            cellularMaxMB: settings.cellularMaxMB,
+            maxQuality: settings.maxQuality,
+            preferredAudioLanguage: settings.preferredAudioLanguage,
+          }).catch(() => {});
+        // Finished the latest episode? Warm the NEXT one — that's what the
+        // user will actually play from this card (season rollover aware).
+        // Fully-watched titles stay in CW for exactly this reason.
+        if (
+          entry.fullyWatched &&
+          p.mediaType === "tv" &&
+          p.season &&
+          p.episode
+        ) {
+          getNextEpisode(p.tmdbId, p.season, p.episode)
+            .then(({ nextSeason, nextEpisode, hasNext }) => {
+              if (hasNext) prefetch(nextSeason, nextEpisode);
+            })
+            .catch(() => {});
+        } else {
+          prefetch(p.season, p.episode);
+        }
+      }
+    }, 3000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeHistory, settingsLoaded]);
+  // Unmount cleanup — deliberately separate from the arm effect above,
+  // because clearing on dep changes is what killed the prefetch.
+  useEffect(
+    () => () => {
+      if (cwPrefetchTimerRef.current) clearTimeout(cwPrefetchTimerRef.current);
+    },
+    [],
+  );
 
   // More Like This — genre-based recommendations from last-watched item
   const { data: moreLikeThis } = useMoreLikeThis(historyEntries);
@@ -919,6 +982,10 @@ function ContinueWatchingSection({
                     ? `/watch/tv/${p.tmdbId}/${p.season ?? 1}/${p.episode ?? 1}`
                     : `/watch/movie/${p.tmdbId}`;
                 const params = new URLSearchParams({});
+                // Resume position — the player route reads this as `t`
+                if (p.currentTime > 5 && !item.fullyWatched) {
+                  params.set("t", String(Math.floor(p.currentTime)));
+                }
                 if (p.isAnime === true) {
                   params.set("isAnime", "1");
                   const ids = tmdbToAnimeIds(

@@ -36,6 +36,7 @@ import { colors } from "../../../theme/colors";
 import { EpisodeRail } from "../../../components/player/EpisodeRail";
 import { useDownloadInfra, useDownloadList } from "../../../lib/download";
 import { fetchNxshaSources } from "../../../lib/nxshaApi";
+import { getProviderApiBase } from "../../../lib/directStreams";
 import {
   organizeServers,
   extractFilename,
@@ -732,12 +733,35 @@ export default function NxshaDownloadScreen() {
   const effectiveEpisode = pickedEpisode ?? params.episode ?? 1;
   const isTV = params.type === "tv";
 
+  // dl/ URL base comes from the remote provider registry (30-min cache,
+  // bundled fallback) so a domain change needs no app update. Resolves in
+  // a tick thanks to the startup warmup; spinner-guarded below.
+  const [nxshaBase, setNxshaBase] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getProviderApiBase("nxsha")
+      .then((base) => {
+        if (!cancelled) setNxshaBase(base);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const downloadUrl = useMemo(() => {
-    if (!params.id || !params.type) return "";
+    if (!params.id || !params.type || !nxshaBase) return "";
     return isTV
-      ? `https://web.nxsha.app/dl/tv/${params.id}/${effectiveSeason}/${effectiveEpisode}`
-      : `https://web.nxsha.app/dl/movie/${params.id}`;
-  }, [params.id, params.type, isTV, effectiveSeason, effectiveEpisode]);
+      ? `${nxshaBase}/dl/tv/${params.id}/${effectiveSeason}/${effectiveEpisode}`
+      : `${nxshaBase}/dl/movie/${params.id}`;
+  }, [
+    params.id,
+    params.type,
+    isTV,
+    effectiveSeason,
+    effectiveEpisode,
+    nxshaBase,
+  ]);
 
   const handleEpisodeSelect = useCallback((season: number, episode: number) => {
     setPickedSeason(season);
@@ -914,6 +938,18 @@ export default function NxshaDownloadScreen() {
     } catch {}
     return true;
   }, []);
+
+  // ── Provider URL still resolving ──
+  // The startup warmup makes this near-instant; shown only so the
+  // invalid-params guard below can't flash while the config resolves.
+  if (params.id && params.type && !nxshaBase) {
+    return (
+      <View className="flex-1 items-center justify-center bg-black">
+        <StatusBar barStyle="light-content" />
+        <ActivityIndicator size="large" color={colors.gold} />
+      </View>
+    );
+  }
 
   // ── Error / Invalid params ──
   if (!params.id || !params.type || !downloadUrl) {

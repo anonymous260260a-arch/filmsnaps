@@ -28,12 +28,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useDownloadInfra, useDownloadList } from "../../../lib/download";
 import { tmdbApi } from "../../../lib/api";
+import { getProviderApiBase } from "../../../lib/directStreams";
 import { getImageUrl } from "@filmsnaps/shared";
 import { colors } from "../../../theme/colors";
 import { ProgressiveImage } from "../../../components/ProgressiveImage";
-
-// ── API Base ──
-const FALIX_API_BASE = "https://dl.falixmovies.com";
 
 // ── Types ──
 interface FalixTelegramFile {
@@ -401,8 +399,11 @@ export default function FalixDownloadScreen() {
     queryKey: ["falix", "detail", params.type, params.id],
     queryFn: async () => {
       if (!params.id) return null;
+      // API base comes from the remote provider registry (30-min cache,
+      // bundled fallback) so a domain change needs no app update.
+      const apiBase = await getProviderApiBase("falix");
       // 1. Try the TMDB id directly.
-      const directRes = await fetch(`${FALIX_API_BASE}/api/id/${params.id}`, {
+      const directRes = await fetch(`${apiBase}/api/id/${params.id}`, {
         cache: "no-store",
       });
       if (directRes.ok) {
@@ -416,10 +417,9 @@ export default function FalixDownloadScreen() {
           if (imdbRaw) {
             const imdbNum = Number(String(imdbRaw).replace(/^tt0*/, ""));
             if (Number.isFinite(imdbNum) && imdbNum > 0) {
-              const imdbRes = await fetch(
-                `${FALIX_API_BASE}/api/id/${imdbNum}`,
-                { cache: "no-store" },
-              );
+              const imdbRes = await fetch(`${apiBase}/api/id/${imdbNum}`, {
+                cache: "no-store",
+              });
               if (imdbRes.ok) {
                 return (await imdbRes.json()) as FalixData;
               }
@@ -481,15 +481,19 @@ export default function FalixDownloadScreen() {
   }, [allExpanded, data, selectedSeason]);
 
   // ── Build download URL ──
-  const buildDownloadUrl = (fileId: string, fileName: string): string => {
+  const buildDownloadUrl = async (
+    fileId: string,
+    fileName: string,
+  ): Promise<string> => {
+    const apiBase = await getProviderApiBase("falix");
     const encodedName = encodeURIComponent(fileName);
-    return `${FALIX_API_BASE}/dl/${fileId}/${encodedName}`;
+    return `${apiBase}/dl/${fileId}/${encodedName}`;
   };
 
   // ── Download file via store ──
   const downloadFile = useCallback(
-    (fileId: string, fileName: string, quality: string) => {
-      const url = buildDownloadUrl(fileId, fileName);
+    async (fileId: string, fileName: string, quality: string) => {
+      const url = await buildDownloadUrl(fileId, fileName);
       const ext = fileName.split(".").pop() || "mkv";
       const filename = `${data?.title || "video"}-${quality}.${ext}`;
 
@@ -510,8 +514,8 @@ export default function FalixDownloadScreen() {
   );
 
   // ── Open in external browser ──
-  const openInBrowser = (fileId: string, fileName: string) => {
-    const url = buildDownloadUrl(fileId, fileName);
+  const openInBrowser = async (fileId: string, fileName: string) => {
+    const url = await buildDownloadUrl(fileId, fileName);
     Linking.openURL(url).catch(() => Alert.alert("Could not open URL"));
   };
 
@@ -587,9 +591,9 @@ export default function FalixDownloadScreen() {
         { text: "Cancel", style: "cancel" },
         {
           text: "Download All",
-          onPress: () => {
+          onPress: async () => {
             for (const { episode, file } of bulkDownloadInfo.fileSelections) {
-              const url = buildDownloadUrl(file.id, file.name);
+              const url = await buildDownloadUrl(file.id, file.name);
               const ext = file.name.split(".").pop() || "mkv";
               const filename = `${data?.title || "video"}-S${String(selectedSeason).padStart(2, "0")}E${String(episode.episode_number).padStart(2, "0")}-${file.quality}.${ext}`;
 
