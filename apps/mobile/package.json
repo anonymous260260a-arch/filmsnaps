@@ -11,6 +11,7 @@
     }
   },
   "scripts": {
+    "eas-build-post-install": "pnpm --filter @filmsnaps/shared build",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",

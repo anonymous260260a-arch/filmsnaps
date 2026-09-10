@@ -86,6 +86,9 @@ build_commands.txt
 # pnpm — lockfile must be committed for reproducible builds
 # pnpm-lock.yaml
 
+# npm — project uses pnpm; stale lockfiles cause EAS to run npm ci
+package-lock.json
+
 # planning / design docs (not part of the app source)
 apps/feedback/.wrangler
 
