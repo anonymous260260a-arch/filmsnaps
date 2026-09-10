@@ -65,6 +65,7 @@
 import { readFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { app } from "electron";
+import { config } from "../lib/log";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -187,8 +188,8 @@ function ensureLoaded(): void {
     _substrings = realSubs;
     _blockedDomains = blockDoms;
     _allowedDomains = allowDoms;
-    console.log(
-      `[UrlSubstring] Loaded mobile-parity patterns from ${path}: ` +
+    config.log(
+      `Loaded mobile-parity patterns from ${path}: ` +
         `${realSubs.length} URL substrings (${subs.length - realSubs.length} degenerate dropped), ` +
         `${blockDoms.size} blocked domains (${net.blockedDomains.length - blockDoms.size} trash dropped), ` +
         `${allowDoms.size} allowed domains`,
@@ -197,8 +198,8 @@ function ensureLoaded(): void {
     _substrings = [];
     _blockedDomains = new Set();
     _allowedDomains = new Set();
-    console.warn(
-      "[UrlSubstring] android-adblock-patterns.json missing/invalid — substring layer disabled (R4/R5-R8 still active).",
+    config.warn(
+      "android-adblock-patterns.json missing/invalid — substring layer disabled (R4/R5-R8 still active).",
     );
   }
 }

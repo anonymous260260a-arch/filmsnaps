@@ -26,6 +26,7 @@ import {
 } from "./provider-config";
 import { getCurrentBlockingProviderId } from "./request-filter";
 import { getCosmeticFilterPayload } from "./filter-engine";
+import { net, security } from "../lib/log";
 
 const CDP_PROTOCOL = "1.3";
 /** How long after a committed navigation to probe the frame tree. */
@@ -131,11 +132,11 @@ export function attachProviderSecurity(
                 : String(h["Cookie"]).slice(0, 80)),
             "Auth/ApiKey=" + (h["Authorization"] ?? h["x-api-key"] ?? ""),
           ];
-          console.log(`[NET]>> ${line.join(" | ")}`);
+          net.log(`${line.join(" | ")}`);
           // Token/bootstrap POST → FULL header dump (definitive; may be large).
           if (isTokenEndpoint(u) && params?.request?.method === "POST") {
-            console.log(
-              `[NET]>> FULL HEADERS for token POST ${u.slice(0, 120)}:\n    ${fmtAllHeaders(h)}`,
+            net.log(
+              `FULL HEADERS for token POST ${u.slice(0, 120)}:\n    ${fmtAllHeaders(h)}`,
             );
           }
         } catch {}
@@ -152,16 +153,16 @@ export function attachProviderSecurity(
           if (!IS_AUTH_REQ.test(u)) return;
           const r = params?.response || {};
           const rh = r?.headers || {};
-          console.log(
-            `[NET]<< status=${r?.status} for ${u.slice(0, 120)} |` +
+          net.log(
+            `<< status=${r?.status} for ${u.slice(0, 120)} |` +
               (auditNetRuns < 5
                 ? ` Cookie=${rh["set-cookie"] ? String(rh["set-cookie"]).slice(0, 100) : ""} Allow=${rh["www-authenticate"] || ""} CType=${rh["content-type"] || ""}`
                 : ``),
           );
           // Token endpoint → dump ALL response headers (set-cookie = cf_clearance?).
           if (isTokenEndpoint(u)) {
-            console.log(
-              `[NET]<< FULL RESP HEADERS for token POST ${u.slice(0, 120)}:\n    ${fmtAllHeaders(rh)}`,
+            net.log(
+              `FULL RESP HEADERS for token POST ${u.slice(0, 120)}:\n    ${fmtAllHeaders(rh)}`,
             );
           }
         } catch {}
@@ -196,8 +197,8 @@ export function attachProviderSecurity(
             // OOPIF (its URL is '' until it commits) — skip it instead of
             // raising a false alarm. Only a REAL committed frame should warn.
             if (!frame.frame?.url) return;
-            console.warn(
-              `[ProviderSecurity] ⚠ Preload NOT active in frame ${frame.frame?.url} — ADS NOT BLOCKED`,
+            security.warn(
+              `⚠ Preload NOT active in frame ${frame.frame?.url} — ADS NOT BLOCKED`,
             );
           }
         } catch {
@@ -253,14 +254,14 @@ export function attachProviderSecurity(
       if (protectionSource) {
         try {
           await dbg.sendCommand("Page.addScriptToEvaluateOnNewDocument", {
-            source: `(() => { try { ${protectionSource} } catch (e) { console.error('[ProviderSecurity] doc-start inject failed', e); } })();`,
+            source: `(() => { try { ${protectionSource} } catch (e) { /* doc-start inject failed */ } })();`,
           });
-          console.log(
-            `[ProviderSecurity] L8 addScriptToEvaluateOnNewDocument armed on guest ${guest.id} (${protectionSource.length} chars)`,
+          security.log(
+            `L8 addScriptToEvaluateOnNewDocument armed on guest ${guest.id} (${protectionSource.length} chars)`,
           );
         } catch (err) {
-          console.error(
-            "[ProviderSecurity] Failed to arm Page.addScriptToEvaluateOnNewDocument:",
+          security.error(
+            "Failed to arm Page.addScriptToEvaluateOnNewDocument:",
             err,
           );
         }
@@ -294,23 +295,15 @@ export function attachProviderSecurity(
         try {
           await dbg.sendCommand("Network.enable");
         } catch (err) {
-          console.error(
-            "[ProviderSecurity] Failed to enable Network audit:",
-            err,
-          );
+          security.error("Failed to enable Network audit:", err);
         }
       }
 
-      console.log(
-        `[ProviderSecurity] CDP verification attached to guest ${guest.id}`,
-      );
+      security.log(`CDP verification attached to guest ${guest.id}`);
       if (verifyTimer) clearTimeout(verifyTimer);
       verifyTimer = setTimeout(() => void verifyProtection(), VERIFY_DELAY_MS);
     } catch (err) {
-      console.error(
-        `[ProviderSecurity] CDP verify attach failed on guest ${guest.id}:`,
-        err,
-      );
+      security.error(`CDP verify attach failed on guest ${guest.id}:`, err);
       if (dbg.isAttached()) {
         try {
           dbg.detach();
@@ -323,9 +316,7 @@ export function attachProviderSecurity(
 
   // ── Re-attach on cross-process navigation (debugger dies with old renderer) ──
   dbg.on("detach", (_e, reason) => {
-    console.log(
-      `[ProviderSecurity] Debugger detached from guest ${guest.id}: ${reason}`,
-    );
+    security.log(`Debugger detached from guest ${guest.id}: ${reason}`);
     if (guest.isDestroyed()) return;
     // did-navigate fires once the new renderer has committed — the deterministic
     // signal that re-attach will succeed. No arbitrary timeout loop needed.
@@ -365,8 +356,8 @@ function getProtectionSource(): string {
     const preloadPath = join(__dirname, "..", "preload", "provider-preload.js");
     _protectionSource = readFileSync(preloadPath, "utf8");
   } catch (err) {
-    console.error(
-      "[ProviderSecurity] Failed to read protection source for frame injection:",
+    security.error(
+      "Failed to read protection source for frame injection:",
       err,
     );
     _protectionSource = "";
@@ -446,9 +437,7 @@ export function verifyPreloadInFrames(
         for (const sc of SCRIPTS) { try { new Function(sc)(); } catch (e) {} }
       })()`;
       await frame.executeJavaScript(js);
-      console.log(
-        `[FrameSweep] Cosmetic injected into frame (ref ${refUrl.slice(0, 80)})`,
-      );
+      security.log(`Cosmetic injected into frame (ref ${refUrl.slice(0, 80)})`);
     } catch {
       // Frame mid-navigation — best-effort.
     }
@@ -465,8 +454,8 @@ export function verifyPreloadInFrames(
       await frame.executeJavaScript(js);
       // Cosmetic CSS uses the parent/top hostname (hole frames have no host).
       await injectCosmeticsIntoFrame(frame);
-      console.log(
-        `[ProviderSecurity] Injected protection into hole-scheme frame ${frame.url.slice(0, 80)}`,
+      security.log(
+        `Injected protection into hole-scheme frame ${frame.url.slice(0, 80)}`,
       );
     } catch {
       // Frame mid-navigation — it will be re-visited on the next sweep.
@@ -518,8 +507,8 @@ export function verifyPreloadInFrames(
             `(() => { const m = globalThis[Symbol.for('__filmsnaps_preload_guard')]; return !!(m && Array.isArray(m.hooks) && m.hooks.length > 0); })()`,
           );
           if (!hasGuard) {
-            console.warn(
-              `[ProviderSecurity] ⚠ PROTECTION NOT ACTIVE in frame ${frameUrl} — FAILING CLOSED (frame only)`,
+            security.warn(
+              `⚠ PROTECTION NOT ACTIVE in frame ${frameUrl} — FAILING CLOSED (frame only)`,
             );
             options.onFailClosed?.(frameUrl);
             // Per-frame fail-closed: stop THIS frame, never the whole webview.
@@ -564,9 +553,7 @@ export function verifyPreloadInFrames(
         if (await ensureFrameProtected(frame)) injected++;
       }
       if (injected > 0) {
-        console.log(
-          `[FrameSweep] Re-injected protection into ${injected} frame(s)`,
-        );
+        security.log(`Re-injected protection into ${injected} frame(s)`);
       }
     } catch {
       // Sweep is best-effort; never throw.

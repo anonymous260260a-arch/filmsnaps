@@ -11,6 +11,7 @@
  */
 
 import { BrowserWindow, WebContents } from "electron";
+import { nav } from "../lib/log";
 import { auditMainFramePopUnder } from "./structural-warnings";
 
 const BOOTSTRAP_DURATION_MS = 5000;
@@ -116,7 +117,7 @@ export function applyNavigationGuard(
       config.providerOrigin = parsed.origin;
       config.providerHostname = parsed.hostname;
     } catch {
-      console.error("[NavGuard] Invalid provider URL:", config.providerUrl);
+      nav.error("Invalid provider URL:", config.providerUrl);
       config.providerOrigin = "";
       config.providerHostname = "";
     }
@@ -167,8 +168,8 @@ export function applyNavigationGuard(
       // Already auto-reloaded once recently — escalate: stop reloading, tell
       // the renderer to show the source-unavailable/error UI.
       escapeCount++;
-      console.warn(
-        `[NavGuard] Home-page escape escalated (${escapeCount}x): ${url.slice(0, 120)}`,
+      nav.warn(
+        `Home-page escape escalated (${escapeCount}x): ${url.slice(0, 120)}`,
       );
       callbacks.onEscaped?.(escapeCount, url);
       return false; // still blocked (path was prevented by caller)
@@ -177,9 +178,7 @@ export function applyNavigationGuard(
     escapeOnce = true;
     lastEscapeAt = now;
     escapeCount++;
-    console.warn(
-      `[NavGuard] Home-page escape — reloading embed once: ${url.slice(0, 120)}`,
-    );
+    nav.warn(`Home-page escape — reloading embed once: ${url.slice(0, 120)}`);
     // Reload the original requested embed (re-enters the guarded session).
     try {
       webContents.loadURL(requestedUrl());
@@ -193,7 +192,7 @@ export function applyNavigationGuard(
   // This is the STRONGEST popup defense. Electron handles this at the
   // OS/Chromium level — no JavaScript in the page can override this.
   webContents.setWindowOpenHandler(({ url, features }) => {
-    console.log("[NavGuard] Blocked popup window");
+    nav.log("Blocked popup window");
     callbacks.onBlocked?.("popup", url);
 
     // Structural audit (Phase 2e): a window.open carrying width/height
@@ -223,16 +222,12 @@ export function applyNavigationGuard(
         return; // Allowed (or escape handled)
       }
 
-      console.log(
-        `[NavGuard] Blocked navigation to: ${targetHost} (${url.substring(0, 80)})`,
-      );
+      nav.log(`Blocked navigation to: ${targetHost} (${url.substring(0, 80)})`);
       event.preventDefault();
       callbacks.onBlocked?.("navigation", url);
     } catch {
       // Invalid URL — block it
-      console.log(
-        `[NavGuard] Blocked navigation (invalid URL): ${url.substring(0, 80)}`,
-      );
+      nav.log(`Blocked navigation (invalid URL): ${url.substring(0, 80)}`);
       event.preventDefault();
     }
   });
@@ -272,8 +267,8 @@ export function applyNavigationGuard(
         // never visited during the bootstrap window.
         if (isMainFrame && config.allowServerRedirects) {
           bootstrapWhitelist.add(targetHost);
-          console.log(
-            `[NavGuard] Server redirect allowed (allowServerRedirects) → whitelisted: ${targetHost}`,
+          nav.log(
+            `Server redirect allowed (allowServerRedirects) → whitelisted: ${targetHost}`,
           );
           return;
         }
@@ -281,13 +276,11 @@ export function applyNavigationGuard(
         // During bootstrap, add to whitelist
         if (!bootstrapEnded) {
           bootstrapWhitelist.add(targetHost);
-          console.log(`[NavGuard] Bootstrap whitelist added: ${targetHost}`);
+          nav.log(`Bootstrap whitelist added: ${targetHost}`);
           return;
         }
 
-        console.log(
-          `[NavGuard] Blocked redirect to: ${targetHost} (${url.substring(0, 80)})`,
-        );
+        nav.log(`Blocked redirect to: ${targetHost} (${url.substring(0, 80)})`);
         event.preventDefault();
         callbacks.onBlocked?.("redirect", url);
       } catch {
@@ -305,7 +298,7 @@ export function applyNavigationGuard(
     // this point the host-level bootstrap governs (the very first load must
     // never be misjudged as an escape).
     initialLoadComplete = true;
-    console.log("[NavGuard] Page loaded");
+    nav.log("Page loaded");
   });
 
   // Post-commit fallback: SPA transitions / location.replace() / client-side
@@ -321,8 +314,8 @@ export function applyNavigationGuard(
   // Bootstrap phase: record all domains visited in the first N seconds
   const bootstrapTimer = setTimeout(() => {
     bootstrapEnded = true;
-    console.log(
-      `[NavGuard] Bootstrap ended. Whitelisted hosts:`,
+    nav.log(
+      `Bootstrap ended. Whitelisted hosts:`,
       Array.from(bootstrapWhitelist),
     );
     callbacks.onBootstrapComplete?.(Array.from(bootstrapWhitelist));
@@ -363,8 +356,8 @@ export function applyNavigationGuard(
     escapeOnce = false;
     lastEscapeAt = 0;
     escapeCount = 0;
-    console.log(
-      `[NavGuard] Config updated → provider=${config.providerHostname || "?"} allowServerRedirects=${config.allowServerRedirects}`,
+    nav.log(
+      `Config updated → provider=${config.providerHostname || "?"} allowServerRedirects=${config.allowServerRedirects}`,
     );
   };
 
@@ -482,22 +475,22 @@ export function isHomeEscapeCjs(
 
   // DIAG: log every evaluation so an escape that slips through can be traced.
   // Filtered: FILMSNAPS_AUDIT=1 (console-message forward) → grep '[NavGuard]'
-  console.warn(
-    `[NavGuard][HOME-GUARD] evaluate target='${(targetUrl || "").slice(0, 120)}' -> path='${targetPath}' ` +
+  nav.warn(
+    `[HOME-GUARD] evaluate target='${(targetUrl || "").slice(0, 120)}' -> path='${targetPath}' ` +
       `embed='${embedPath}' universal=[${universalBlockPaths}] perProvider=[${blockHomePaths}]`,
   );
 
   // HARD ALLOW — same embed (exact full URL), or a sub-route that keeps the
   // media id. A bare-root home URL has no media id → NOT hard-allowed.
   if (embedFull && targetFull === embedFull) {
-    console.warn(
-      `[NavGuard][HOME-GUARD] ALLOW hard (target==embed full URL) path='${targetPath}' embed='${embedPath}'`,
+    nav.warn(
+      `[HOME-GUARD] ALLOW hard (target==embed full URL) path='${targetPath}' embed='${embedPath}'`,
     );
     return false;
   }
   if (targetPath === embedPath && looksEmbedLikeCjs(targetFull)) {
-    console.warn(
-      `[NavGuard][HOME-GUARD] ALLOW hard (same path, still embeds-like) path='${targetPath}'`,
+    nav.warn(
+      `[HOME-GUARD] ALLOW hard (same path, still embeds-like) path='${targetPath}'`,
     );
     return false;
   }
@@ -506,15 +499,15 @@ export function isHomeEscapeCjs(
     targetFull.startsWith(embedFull + "/") &&
     looksEmbedLikeCjs(targetFull)
   ) {
-    console.warn(
-      `[NavGuard][HOME-GUARD] ALLOW hard (sub-route under embed) path='${targetPath}' embed='${embedPath}'`,
+    nav.warn(
+      `[HOME-GUARD] ALLOW hard (sub-route under embed) path='${targetPath}' embed='${embedPath}'`,
     );
     return false;
   }
 
   if (isUniversalHomeEscapeCjs(targetPath, universalBlockPaths)) {
-    console.warn(
-      `[NavGuard][HOME-GUARD] BLOCK universal path='${targetPath}' url='${(targetUrl || "").slice(0, 120)}'`,
+    nav.warn(
+      `[HOME-GUARD] BLOCK universal path='${targetPath}' url='${(targetUrl || "").slice(0, 120)}'`,
     );
     return true;
   }
@@ -523,15 +516,15 @@ export function isHomeEscapeCjs(
     const b = normalizeHomeEscapePath(bp);
     if (b === "") continue;
     if (targetPath === b || targetPath === b + "/") {
-      console.warn(
-        `[NavGuard][HOME-GUARD] BLOCK perProvider bp='${bp}' path='${targetPath}' url='${(targetUrl || "").slice(0, 120)}'`,
+      nav.warn(
+        `[HOME-GUARD] BLOCK perProvider bp='${bp}' path='${targetPath}' url='${(targetUrl || "").slice(0, 120)}'`,
       );
       return true;
     }
   }
 
-  console.warn(
-    `[NavGuard][HOME-GUARD] ALLOW (no rule) path='${targetPath}' url='${(targetUrl || "").slice(0, 120)}'`,
+  nav.warn(
+    `[HOME-GUARD] ALLOW (no rule) path='${targetPath}' url='${(targetUrl || "").slice(0, 120)}'`,
   );
   return false;
 }

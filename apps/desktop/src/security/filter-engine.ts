@@ -16,6 +16,7 @@
 import { join, dirname } from "path";
 import { readFileSync, existsSync } from "fs";
 import { app } from "electron";
+import { config } from "../lib/log";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -95,7 +96,7 @@ export function initFilterEngine(): Promise<any | null> {
   _engineReadyPromise = (async () => {
     const enginePath = resolveEnginePath();
     if (!existsSync(enginePath)) {
-      console.warn(
+      config.warn(
         `[FilterEngine] Binary not found at: ${enginePath}. ` +
           "Run `pnpm --filter @filmsnaps/filter-compiler compile` first. " +
           "Falling back to legacy blocklist.",
@@ -108,13 +109,13 @@ export function initFilterEngine(): Promise<any | null> {
       const buffer = readFileSync(enginePath);
       _engine = FiltersEngine.deserialize(new Uint8Array(buffer));
       const stats = getEngineStats();
-      console.log(
+      config.log(
         `[FilterEngine] Loaded from ${enginePath} — ` +
           `${stats.networkFilters} network + ${stats.cosmeticFilters} cosmetic filters`,
       );
       return _engine;
     } catch (err) {
-      console.error("[FilterEngine] Failed to load:", err);
+      config.error("[FilterEngine] Failed to load:", err);
       return null;
     }
   })();
@@ -164,7 +165,7 @@ export function loadFilterEngineSync(): any | null {
 
   const enginePath = resolveEnginePath();
   if (!existsSync(enginePath)) {
-    console.warn(
+    config.warn(
       `[FilterEngine] Binary not found at: ${enginePath}. ` +
         "Run `pnpm --filter @filmsnaps/filter-compiler compile` first. " +
         "Falling back to legacy blocklist.",
@@ -177,14 +178,14 @@ export function loadFilterEngineSync(): any | null {
     const buffer = readFileSync(enginePath);
     _engine = FiltersEngine.deserialize(new Uint8Array(buffer));
     const stats = getEngineStats();
-    console.log(
+    config.log(
       `[FilterEngine] Sync loaded from ${enginePath} — ` +
         `${stats.networkFilters} network + ${stats.cosmeticFilters} cosmetic filters` +
         ` (${stats.totalFilters} total filters)`,
     );
     return _engine;
   } catch (err) {
-    console.error("[FilterEngine] Sync load failed:", err);
+    config.error("[FilterEngine] Sync load failed:", err);
     return null;
   }
 }

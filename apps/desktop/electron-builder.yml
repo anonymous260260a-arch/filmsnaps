@@ -48,6 +48,12 @@ extraResources:
   # Static export: out/ contains all HTML/CSS/JS — no Node.js server needed.
   - from: ../web/out
     to: web
+  # mpv portable binaries for universal format playback (MKV, HEVC, AVI, etc.)
+  # Bundle entire directory — mpv.exe + all dependency DLLs
+  - from: vendor/mpv
+    to: mpv
+    filter:
+      - "**/*"
 
 # GitHub Releases — used for distribution and auto-updates
 publish:

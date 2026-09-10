@@ -15,6 +15,7 @@
 import { app } from "electron";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
+import { main as logMain } from "./log";
 
 function getStatePath(): string {
   return join(app.getPath("userData"), "legal-accepted.json");
@@ -53,6 +54,6 @@ export function setLegalAccepted(value: boolean): void {
       "utf-8",
     );
   } catch (err) {
-    console.warn("[LegalAccept] Failed to save:", err);
+    logMain.warn("[LegalAccept] Failed to save:", err);
   }
 }

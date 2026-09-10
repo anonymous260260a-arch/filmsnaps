@@ -27,6 +27,7 @@ import { readFileSync, existsSync, watch } from "fs";
 import { join, dirname, resolve } from "path";
 import { app } from "electron";
 import { verify as cryptoVerify } from "crypto";
+import { config } from "../lib/log";
 
 // ── Types (mirrored from @filmsnaps/adblock-config) ─────────────────────────
 
@@ -240,7 +241,7 @@ export function loadBlocklistConfig(): BlocklistConfig | null {
 
   const path = resolveConfigPath();
   if (!path || !existsSync(path)) {
-    console.warn("[ProviderConfig] providers.json not found at resolved paths");
+    config.warn("providers.json not found at resolved paths");
     return null;
   }
 
@@ -249,8 +250,8 @@ export function loadBlocklistConfig(): BlocklistConfig | null {
     _config = JSON.parse(raw) as BlocklistConfig;
     _configPath = path;
     const isV5 = _config.version >= 5;
-    console.log(
-      `[ProviderConfig] Loaded: ${path} (v${_config.version}, ` +
+    config.log(
+      `Loaded: ${path} (v${_config.version}, ` +
         `${_config.providers?.length || 0} providers, ` +
         `${_config.allowedCdnHosts?.length || 0} CDN hosts, ` +
         `${isV5 ? "signed" : "legacy v4"})`,
@@ -261,7 +262,7 @@ export function loadBlocklistConfig(): BlocklistConfig | null {
 
     return _config;
   } catch (err) {
-    console.error("[ProviderConfig] Failed to parse providers.json:", err);
+    config.error("[ProviderConfig] Failed to parse providers.json:", err);
     return null;
   }
 }
@@ -277,12 +278,12 @@ function startFileWatcher(path: string): void {
   try {
     watch(path, (eventType) => {
       if (eventType === "change") {
-        console.log("[ProviderConfig] providers.json changed — reloading");
+        config.log("[ProviderConfig] providers.json changed — reloading");
         reloadConfig();
       }
     });
   } catch (err) {
-    console.warn("[ProviderConfig] Failed to watch providers.json:", err);
+    config.warn("[ProviderConfig] Failed to watch providers.json:", err);
   }
 }
 

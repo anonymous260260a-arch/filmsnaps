@@ -32,6 +32,7 @@
 // ── Types ───────────────────────────────────────────────────────────────────
 
 import { isVideoResponse, isDisguisedMediaUrl } from "./mime-sniffer";
+import { security } from "../lib/log";
 
 export interface TrustEntry {
   hostname: string;
@@ -149,8 +150,8 @@ export class SessionTrustManager {
       // Only ADDS trust — never removes — so it can't cause playback regression.
       if (isDisguisedMediaUrl(url)) {
         this.addTrust(hostname, this.getPathPrefix(url));
-        console.log(
-          `[SecurityFilter] Trust added: ${hostname} (disguised media segment: ${this.getPathname(url).slice(-60)})`,
+        security.log(
+          `Trust added: ${hostname} (disguised media segment: ${this.getPathname(url).slice(-60)})`,
         );
         return true;
       }

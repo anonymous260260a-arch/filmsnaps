@@ -26,7 +26,6 @@ import {
   webContents,
   screen,
   protocol,
-  net,
 } from "electron";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -54,6 +53,7 @@ import {
   verifyPreloadInFrames,
 } from "./security/provider-security";
 import { registerCosmeticFilterIPC } from "./security/cosmetic-filter";
+import { registerMpvIPC } from "./mpv";
 import {
   startOtaConfigLoop,
   stopOtaConfigLoop,
@@ -66,6 +66,19 @@ import {
   auditProviderSessionWarnings,
   auditPreloadObserverBookkeeping,
 } from "./security/structural-warnings";
+import { startCdnDiagnostic } from "./security/cdn-diagnostic";
+import { startNxshaPlayer } from "./experimental/nxsha-player";
+import {
+  main as logMain,
+  net,
+  security,
+  nav,
+  fs as logFs,
+  provider as logProvider,
+  cosmetic,
+  config as logConfig,
+  cdn as logCdn,
+} from "./lib/log";
 
 // ── Constants ──
 
@@ -99,14 +112,9 @@ let currentProviderId: string | null = null;
  */
 let lastContentFrame: { processId: number; frameId: number } | null = null;
 
-// ── Fullscreen debug tracing (set FILMSNAPS_FS_DEBUG=1 to enable) ──
-// Lets us OBSERVE (not guess) how the provider triggers fullscreen and how main
-// reacts. Logs every fullscreen-state change and every renderer bounds push so we
-// can see the race (a small bounds push arriving after the expand).
-const FS_DEBUG = process.env.FILMSNAPS_FS_DEBUG === "1";
-const fsLog = (...args: unknown[]): void => {
-  if (FS_DEBUG) console.log("[FS-DEBUG]", ...args);
-};
+// ── Logging ──
+// Controlled by FILMSNAPS_LOG env var (see lib/log.ts for categories).
+// Usage: FILMSNAPS_LOG=net,security pnpm exec electron .
 
 // ── Provider WebContentsView (Phase 3 hybrid migration) ─────────────
 // A single native WebContentsView owns the provider embed. Created lazily on
@@ -253,7 +261,41 @@ function createMainWindow(): void {
   // installed only once. Subsequent provider:init IPC calls will reuse
   // this session and its accumulated trust.
   createProviderSession();
-  console.log("[Main] Provider session pre-created with R0-R8 filters");
+  logMain.log("Provider session pre-created with R0-R8 filters");
+
+  // ── Network request logging (FILMSNAPS_LOG includes 'net') ──
+  if (process.env.FILMSNAPS_LOG) {
+    const providerSess = session.fromPartition("persist:filmsnaps-provider");
+    providerSess.webRequest.onBeforeRequest((details, callback) => {
+      const method = details.method || "GET";
+      net.log(`${method} ${details.url.slice(0, 150)}`);
+      callback({ cancel: false });
+    });
+    providerSess.webRequest.onHeadersReceived((details, callback) => {
+      const status = details.statusLine || "";
+      net.log(`← ${details.url.slice(0, 120)} [${status}]`);
+      callback({ responseHeaders: details.responseHeaders });
+    });
+  }
+
+  // ── [EXPERIMENTAL] CDN Diagnostic Logger ──
+  // Set FILMSNAPS_CDN_DIAG=1 to capture what Chromium sends to CDN domains.
+  // Logs all request headers (including Sec-Fetch-*) and Set-Cookie responses.
+  // Rollback: remove this import + call, delete security/cdn-diagnostic.ts
+  if (process.env.FILMSNAPS_CDN_DIAG) {
+    startCdnDiagnostic();
+    logCdn.log("CDN diagnostic logger active (FILMSNAPS_CDN_DIAG=1)");
+  }
+
+  // ── [EXPERIMENTAL] Nxsha Stream Player (Electron-native proxy) ──
+  // Uses net.fetch() with Chromium's TLS stack — no fingerprint mismatch.
+  // Rollback: remove import + this block, delete experimental/nxsha-player.ts
+  if (process.env.FILMSNAPS_NXSHA_PLAYER) {
+    startNxshaPlayer();
+    logCdn.log(
+      "Nxsha player active (FILMSNAPS_NXSHA_PLAYER=1) — http://localhost:9482/",
+    );
+  }
 
   // Structural warnings (Phase 2e) — surface likely security-drift without
   // changing behavior. Gated to FILMSNAPS_AUDIT=1 so production stays quiet
@@ -280,7 +322,7 @@ function createMainWindow(): void {
       );
       auditPreloadObserverBookkeeping(readFileSync(preloadPath, "utf8"));
     } catch (e) {
-      console.warn(
+      logMain.warn(
         "[Structural] Could not read preload for observer audit:",
         e,
       );
@@ -302,6 +344,9 @@ function createMainWindow(): void {
   // DOM sweeper posts class/id/href tokens here and gets the engine's cosmetic
   // CSS + scriptlets back to apply to the live page.
   registerCosmeticFilterIPC();
+
+  // Register mpv engine IPC handlers (universal format playback via mpv child process)
+  registerMpvIPC(mainWindow);
 
   // Register updater IPC handlers
   ipcMain.handle("update:check", () => checkForUpdates());
@@ -333,7 +378,7 @@ function createMainWindow(): void {
       // Provider session cache lives on its own partition.
       await clear(session.fromPartition("persist:filmsnaps-provider"));
     } catch (e) {
-      console.error("[Main] clear-cache error:", e);
+      logMain.error("clear-cache error:", e);
     }
     return { success: true };
   });
@@ -383,7 +428,7 @@ function createMainWindow(): void {
   mainWindow.on("enter-full-screen", () => {
     // Main now owns the view bounds; the renderer's ResizeObserver must not
     // shrink it back. Set the guards FIRST so a resize tick can't race.
-    fsLog("win enter-full-screen fired");
+    logFs.log("win enter-full-screen fired");
     isProviderFullscreen = true;
     winFullscreenState = true;
     // Fill authoritatively. Windows isFullScreen() is STILL false at this
@@ -396,7 +441,7 @@ function createMainWindow(): void {
   });
   mainWindow.on("leave-full-screen", () => {
     // Hand bounds back to the renderer and clear the guard so its pushes resume.
-    fsLog("win leave-full-screen fired");
+    logFs.log("win leave-full-screen fired");
     isProviderFullscreen = false;
     winFullscreenState = false;
     restoreProviderView();
@@ -575,8 +620,8 @@ function scheduleAnime410Scan(wc: Electron.WebContents): void {
           mainWindow &&
           !mainWindow.isDestroyed()
         ) {
-          console.log(
-            "[Main] MegaPlay reported Error Code: 410 — advancing anime chain",
+          logMain.log(
+            "MegaPlay reported Error Code: 410 — advancing anime chain",
           );
           mainWindow.webContents.send("player:source-missing", { code: 410 });
         }
@@ -603,7 +648,7 @@ function sendPlayerFullscreenState(): void {
   // enter-/leave-full-screen handlers the native getter returns the PREVIOUS
   // state (false on enter, true on leave), which desyncs the renderer's chrome
   // (top bar wouldn't hide on enter, wouldn't return on leave — Bug B).
-  fsLog("sendPlayerFullscreenState ->", winFullscreenState);
+  logFs.log("sendPlayerFullscreenState ->", winFullscreenState);
   sendPlayerState({ isFullscreen: winFullscreenState });
 }
 
@@ -660,19 +705,23 @@ function ensureProviderView(): WebContentsView | null {
   const wc = view.webContents;
   const providerId = getCurrentBlockingProviderId();
 
-  // ── Forward the provider page's console to the terminal (FS_DEBUG only) ──
-  // The session preload logs here when it sees a fullscreen call, so we can watch
-  // EXACTLY what the provider does (real Fullscreen API vs CSS fake-fullscreen)
-  // without opening DevTools. Gated on FILMSNAPS_FS_DEBUG=1.
-  if (FS_DEBUG) {
-    wc.on(
-      "console-message",
-      (_e, level: number, message: string, _line: number, sourceId: string) => {
-        const tag = level >= 2 ? "ERR" : level === 1 ? "WARN" : "LOG";
-        console.log(`[FS-PROVIDER][${tag}][${sourceId}] ${message}`);
-      },
-    );
-  }
+  // ── Forward provider console + network nav events (category-gated) ──
+  wc.on(
+    "console-message",
+    (_e, level: number, message: string, _line: number, sourceId: string) => {
+      const tag = level >= 2 ? "ERR" : level === 1 ? "WARN" : "LOG";
+      logFs.provider(`[${tag}][${sourceId}] ${message}`);
+    },
+  );
+  wc.on("did-start-navigation", (_e, url, isInPlace, isMainFrame) => {
+    if (isMainFrame) net.nav(url);
+  });
+  wc.on("did-navigate", (_e, url) => {
+    net.nav(url);
+  });
+  wc.on("did-navigate-in-page", (_e, url, isMainFrame) => {
+    if (isMainFrame) net.nav(url);
+  });
 
   // ── Forward load/error/audit state to the renderer (player:state) ──
   wc.on("did-start-loading", () => {
@@ -701,8 +750,8 @@ function ensureProviderView(): WebContentsView | null {
     if (code === -3) return;
     if (desc && recordProviderFailure(providerId ?? "", desc)) {
       // OTA watchdog reverted config — reload so the healed config applies.
-      console.warn(
-        `[Main] OTA watchdog reverted config after ${desc} — reloading embed`,
+      logMain.warn(
+        `OTA watchdog reverted config after ${desc} — reloading embed`,
       );
       void wc.loadURL(providerViewUrl);
       return;
@@ -715,8 +764,8 @@ function ensureProviderView(): WebContentsView | null {
     // A provisional failure on the initial server hop (redirect-mesh) is often
     // transient — the embed may redirect to the real player host. The renderer
     // shows an error only if no load completes shortly after.
-    console.warn(
-      `[Main] Provider provisional load failed ${code} ${desc} ${url.slice(0, 100)}`,
+    logMain.warn(
+      `Provider provisional load failed ${code} ${desc} ${url.slice(0, 100)}`,
     );
     sendPlayerState({ provisionalError: desc || "Failed to load" });
   });
@@ -727,7 +776,7 @@ function ensureProviderView(): WebContentsView | null {
       message.includes("[PROTECTION]") ||
       message.includes("[STREAM-AUDIT]")
     ) {
-      console.log(`[ProviderView console][${level}] ${message}`);
+      logProvider.log(`[${level}] ${message}`);
       sendPlayerState({ audit: message });
     }
   });
@@ -746,8 +795,7 @@ function ensureProviderView(): WebContentsView | null {
     universalBlockPaths: getUniversalBlockPaths(),
     allowServerRedirects: getAllowServerRedirects(providerId ?? ""),
     additionalAllowedHosts: Array.from(allowed),
-    onBlocked: (type, url) =>
-      console.warn(`[NavGuard] Blocked ${type}: ${url.slice(0, 120)}`),
+    onBlocked: (type, url) => nav.warn(`Blocked ${type}: ${url.slice(0, 120)}`),
     onEscaped: (count, url) => {
       if (mainWindow?.isDestroyed()) return;
       mainWindow?.webContents.send("provider:escape-blocked", { url, count });
@@ -760,8 +808,8 @@ function ensureProviderView(): WebContentsView | null {
   verifyPreloadInFrames(wc, {
     onFailClosed: (frameUrl) => {
       if (wc.isDestroyed()) return;
-      console.warn(
-        `[Main] FAIL-CLOSED: protection absent in ${frameUrl.slice(0, 120)} — frame stopped`,
+      logMain.warn(
+        `FAIL-CLOSED: protection absent in ${frameUrl.slice(0, 120)} — frame stopped`,
       );
     },
   });
@@ -779,12 +827,12 @@ function ensureProviderView(): WebContentsView | null {
   wc.on("enter-html-full-screen", () => {
     const win = mainWindow;
     if (!win || win.isDestroyed()) return;
-    fsLog("wc enter-html-full-screen fired");
+    logFs.log("wc enter-html-full-screen fired");
     handleProviderFullscreen(true);
   });
   wc.on("leave-html-full-screen", () => {
     const win = mainWindow;
-    fsLog("wc leave-html-full-screen fired");
+    logFs.log("wc leave-html-full-screen fired");
     if (!win || win.isDestroyed()) return;
     handleProviderFullscreen(false);
   });
@@ -796,8 +844,8 @@ function ensureProviderView(): WebContentsView | null {
   });
 
   providerViewSecurityAttached = true;
-  console.log(
-    `[Main] Provider WebContentsView created (wc ${wc.id}), security attached`,
+  logMain.log(
+    `Provider WebContentsView created (wc ${wc.id}), security attached`,
   );
   return view;
 }
@@ -835,8 +883,7 @@ function openProviderView(embedUrl: string): void {
     universalBlockPaths: getUniversalBlockPaths(),
     allowServerRedirects: getAllowServerRedirects(providerId ?? ""),
     additionalAllowedHosts: Array.from(allowed),
-    onBlocked: (type, url) =>
-      console.warn(`[NavGuard] Blocked ${type}: ${url.slice(0, 120)}`),
+    onBlocked: (type, url) => nav.warn(`Blocked ${type}: ${url.slice(0, 120)}`),
     onEscaped: (count, url) => {
       if (mainWindow?.isDestroyed()) return;
       mainWindow?.webContents.send("provider:escape-blocked", { url, count });
@@ -851,7 +898,7 @@ function openProviderView(embedUrl: string): void {
   // server dropdown) that must win. The view keeps its current visibility;
   // DesktopSecureWebview shows it when no overlay is active.
   view.webContents.loadURL(embedUrl).catch((err) => {
-    console.warn(`[Main] player:open loadURL failed:`, err);
+    logMain.warn(`player:open loadURL failed:`, err);
     sendPlayerState({ error: String(err?.message ?? err) });
   });
 }
@@ -884,7 +931,7 @@ function closeProviderView(): void {
  */
 function setProviderBounds(rect: Electron.Rectangle): void {
   const win = mainWindow;
-  fsLog(
+  logFs.log(
     "setProviderBounds",
     JSON.stringify(rect),
     "IGNORED=" + !!(isProviderFullscreen || (win && win.isFullScreen())),
@@ -922,14 +969,14 @@ async function clearProviderStorage(): Promise<void> {
   try {
     await providerView.webContents.session.clearStorageData();
     await providerView.webContents.session.clearCache();
-    console.log(
-      "[Main] Session storage cleared between provider switches (provider: " +
+    logMain.log(
+      "Session storage cleared between provider switches (provider: " +
         getCurrentBlockingProviderId() +
         ")",
     );
   } catch (err) {
     // Best-effort — if the view isn't attached yet, skip.
-    console.warn("[Main] Failed to clear session storage:", err);
+    logMain.warn("Failed to clear session storage:", err);
   }
 }
 
@@ -1000,7 +1047,7 @@ function setProviderFullscreen(fullscreen: boolean): void {
 function handleProviderFullscreen(fullscreen: boolean): void {
   const win = mainWindow;
   if (!win || win.isDestroyed()) return;
-  fsLog(
+  logFs.log(
     "handleProviderFullscreen",
     fullscreen,
     "winIsFull=" + win.isFullScreen(),
@@ -1085,7 +1132,7 @@ function registerPlayerViewIPC(): void {
   let boundsDebounceTimeout: NodeJS.Timeout | null = null;
 
   ipcMain.handle("player:set-bounds", (_e, rect: Electron.Rectangle) => {
-    fsLog("player:set-bounds IPC received", JSON.stringify(rect));
+    logFs.log("player:set-bounds IPC received", JSON.stringify(rect));
     if (boundsDebounceTimeout) clearTimeout(boundsDebounceTimeout);
     boundsDebounceTimeout = setTimeout(() => {
       setProviderBounds(rect ?? { x: 0, y: 0, width: 0, height: 0 });
@@ -1249,7 +1296,7 @@ function registerProviderSessionIPC(): void {
     (_event, params: { providerId: string; embedUrl: string }) => {
       const { providerId, embedUrl } = params;
 
-      console.log(`[Main] Initializing provider session: ${providerId}`);
+      logMain.log(`Initializing provider session: ${providerId}`);
 
       // CRITICAL: Do NOT clear the session on every provider switch.
       // createProviderSession is now idempotent — it reuses the existing
@@ -1279,7 +1326,7 @@ function registerProviderSessionIPC(): void {
           addProviderAllowlistDomains,
         } = require("./security/provider-config");
         addProviderAllowlistDomains(providerId, [embedHost]);
-        console.log(`[Main] Allowlisted embed host (R1/R3): ${embedHost}`);
+        logMain.log(`Allowlisted embed host (R1/R3): ${embedHost}`);
       } catch {}
 
       // Pre-seed the startup-built domain set into the R1/R2 allowlists
@@ -1349,15 +1396,15 @@ function preSeedTrustForProviderSessions(): { cdnDomains: Set<string> } {
       );
     }
 
-    console.log(
-      `[Main] Collected ${allCdnDomains.size} CDN/embed domains for R1/R2 allowlists:`,
+    logMain.log(
+      `Collected ${allCdnDomains.size} CDN/embed domains for R1/R2 allowlists:`,
       Array.from(allCdnDomains).slice(0, 5).join(", ") +
         (allCdnDomains.size > 5 ? ", ..." : ""),
     );
 
     return { cdnDomains: allCdnDomains };
   } catch (err) {
-    console.error("[Main] Failed to collect allowlist domains:", err);
+    logMain.error("Failed to collect allowlist domains:", err);
     return { cdnDomains: new Set<string>() };
   }
 }
@@ -1419,12 +1466,16 @@ if (!gotTheLock) {
 
         for (const candidate of candidates) {
           if (existsSync(candidate)) {
-            return net.fetch(pathToFileURL(candidate).toString());
+            return require("electron").net.fetch(
+              pathToFileURL(candidate).toString(),
+            );
           }
         }
 
         // Fallback to root index.html
-        return net.fetch(pathToFileURL(join(webDir, "index.html")).toString());
+        return require("electron").net.fetch(
+          pathToFileURL(join(webDir, "index.html")).toString(),
+        );
       });
     }
 
@@ -1447,11 +1498,9 @@ if (!gotTheLock) {
     const { initFilterEngine } = require("./security/filter-engine");
     initFilterEngine().then((engine: any) => {
       if (engine) {
-        console.log("[Main] Filter engine loaded (async) — R4 ready");
+        logMain.log("Filter engine loaded (async) — R4 ready");
       } else {
-        console.warn(
-          "[Main] Filter engine not available — R4 fallback disabled",
-        );
+        logMain.warn("Filter engine not available — R4 fallback disabled");
       }
     });
 

@@ -6,16 +6,17 @@
   "description": "FilmSnaps Desktop App — secure streaming with Electron",
   "main": "dist/main.js",
   "scripts": {
-    "dev": "concurrently -k \"cd ../web && pnpm dev\" \"wait-on http://localhost:3000 && pnpm build && pnpm exec electron . --dev\"",
+    "dev": "node scripts/download-mpv.mjs && concurrently -k \"cd ../web && pnpm dev\" \"wait-on http://localhost:3000 && pnpm build && pnpm exec electron . --dev\"",
+    "prebuild": "node scripts/download-mpv.mjs",
     "build": "node scripts/build-web.mjs && tsc && node scripts/build-provider-preload.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dist": "pnpm build && electron-builder --publish=never",
-    "dist:dev": "cross-env NEXT_PUBLIC_API_URL=http://localhost:3000 pnpm build && electron-builder --publish=never",
-    "dist:publish": "pnpm build && electron-builder --publish=always",
-    "pack": "pnpm build && electron-builder --dir",
+    "dist": "node scripts/download-mpv.mjs && pnpm build && electron-builder --publish=never",
+    "dist:dev": "cross-env NEXT_PUBLIC_API_URL=http://localhost:3000 node scripts/download-mpv.mjs && pnpm build && electron-builder --publish=never",
+    "dist:publish": "node scripts/download-mpv.mjs && pnpm build && electron-builder --publish=always",
+    "pack": "node scripts/download-mpv.mjs && pnpm build && electron-builder --dir",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist release"
+    "clean": "rm -rf dist release vendor/mpv"
   },
   "dependencies": {
     "@filmsnaps/adblock-config": "workspace:*",
