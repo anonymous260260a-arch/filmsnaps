@@ -198,6 +198,19 @@ export function lookupMal(malId: string | number): MalLookup | null {
 }
 
 /**
+ * TMDB show id → lowest MAL entry. Used by the TMDB-discover last-resort
+ * feed link where results arrive TMDB-first and need the MAL key.
+ */
+export function lookupTmdbShow(
+  tmdbShowId: string | number,
+): { malId: number; anilistId: number | null } | null {
+  const cands = shows[String(tmdbShowId)];
+  if (!cands || cands.length === 0) return null;
+  const c = pickLowestMal(cands)!;
+  return { malId: c.m, anilistId: c.a ?? m2a[String(c.m)] ?? null };
+}
+
+/**
  * Resolve the anime-native ids (MAL + AniList) for a TMDB twin so a history /
  * CW press can re-open the anime session WITHOUT the user re-tapping the feed.
  * TV is cour-aware (resolveShow); movie uses resolveMovie. Returns null when the
