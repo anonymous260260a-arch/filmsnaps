@@ -70,6 +70,14 @@ export function SwipeExemptScrollView({
   children,
   ...scrollViewProps
 }: React.ComponentProps<typeof ScrollView>) {
+  const swipeTab = useSwipeTabNavigator();
+  const nativeGesture = useMemo(() => Gesture.Native(), []);
+
+  useEffect(() => {
+    if (!horizontal || !swipeTab) return;
+    return swipeTab.registerCarousel(nativeGesture);
+  }, [horizontal, swipeTab, nativeGesture]);
+
   if (!horizontal) {
     return (
       <ScrollView horizontal={false} style={style} {...scrollViewProps}>
@@ -77,11 +85,14 @@ export function SwipeExemptScrollView({
       </ScrollView>
     );
   }
+  // GestureDetector must wrap the scrollable DIRECTLY — an intermediate View
+  // between them breaks the native-gesture binding and the ScrollView stops
+  // scrolling entirely (MediaCarousel's direct wrap is the working reference).
   return (
-    <SwipeExempt>
+    <GestureDetector gesture={nativeGesture}>
       <ScrollView horizontal style={style} {...scrollViewProps}>
         {children}
       </ScrollView>
-    </SwipeExempt>
+    </GestureDetector>
   );
 }

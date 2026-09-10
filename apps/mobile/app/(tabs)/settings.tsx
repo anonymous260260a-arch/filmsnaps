@@ -34,6 +34,7 @@ import { getInfoAsync, documentDirectory } from "expo-file-system/legacy";
 import Constants from "expo-constants";
 import { colors } from "../../theme/colors";
 import * as Haptics from "expo-haptics";
+import { LanguagePromptSheet } from "../../components/player/LanguagePromptSheet";
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes === 0) return "0 B";
@@ -261,6 +262,7 @@ export default function SettingsScreen() {
   const [cacheSize, setCacheSize] = useState<number | null>(null);
   const [calculatingStorage, setCalculatingStorage] = useState(false);
   const storageCalculated = useRef(false);
+  const [showLangSheet, setShowLangSheet] = useState(false);
 
   const totalDownloadSize = useMemo(() => {
     return downloads
@@ -449,6 +451,36 @@ export default function SettingsScreen() {
 
         {/* ── 1. Playback & Experience ── */}
         <SectionCard title="Playback & Interface">
+          <SettingsRow
+            icon="language-outline"
+            label="Audio Language"
+            subtitle="Preferred audio for source ranking"
+            color={colors.gold}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setShowLangSheet(true);
+            }}
+            right={
+              <View
+                style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
+              >
+                <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+                  {{
+                    auto: "Auto",
+                    multi: "Multi audio",
+                    hindi: "Hindi",
+                    english: "English",
+                  }[settings.preferredAudioLanguage ?? "auto"] ?? "Auto"}
+                </Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={16}
+                  color={colors.textTertiary}
+                />
+              </View>
+            }
+          />
+          <Divider />
           <SettingsRow
             icon="grid-outline"
             label="Customize Home Layout"
@@ -965,6 +997,19 @@ export default function SettingsScreen() {
           </Text>
         </View>
       </ScrollView>
+
+      {/* Preferred audio language picker (same options as the first-run prompt) */}
+      <LanguagePromptSheet
+        visible={showLangSheet}
+        onClose={() => setShowLangSheet(false)}
+        currentValue={settings.preferredAudioLanguage ?? "auto"}
+        title="Preferred audio language"
+        subtitle="New sources are ranked to match this. Already-playing streams are never interrupted."
+        onSelect={(value) => {
+          updateSetting("preferredAudioLanguage", value);
+          setShowLangSheet(false);
+        }}
+      />
     </View>
   );
 }

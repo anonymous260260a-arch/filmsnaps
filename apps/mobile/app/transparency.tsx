@@ -2,8 +2,10 @@
  * Transparency & Security — explains the streaming threat landscape and the
  * layered protections FilmSnaps applies, plus a FAQ.
  *
- * Content mirrors apps/web/app/transparency. Rendered with plain (open)
- * sections; the FAQ entries are collapsible for readability on mobile.
+ * Content mirrors apps/web/app/transparency, with mobile additions covering
+ * the direct-stream player (probe, signature validation, source fallback).
+ * Rendered with plain (open) sections; the FAQ entries are collapsible for
+ * readability on mobile.
  *
  * Redesigned for readability: numbered sections, friendlier layer titles,
  * softer bullets, subtle dividers, unified text color.
@@ -73,7 +75,7 @@ export default function TransparencyScreen() {
           className="text-sm leading-7 mb-6"
           style={{ color: colors.textSecondary }}
         >
-          Last updated: August 2026
+          Last updated: September 2026
         </Text>
 
         <Text
@@ -139,12 +141,29 @@ export default function TransparencyScreen() {
             </Body>
           </SubSection>
 
+          <SubSection title="Direct Playback — Skip the Danger Zone Entirely">
+            <Body>
+              When a provider exposes a direct video link, FilmSnaps doesn't
+              render the provider's page at all — it streams the video file
+              itself. Before playing anything, the app sends a small ranged
+              request and verifies the response is a real video file by checking
+              its <Bold>binary container signature</Bold> (the actual
+              MP4/MKV/WebM bytes, not just a header a server claims). Links that
+              fail — dead servers, error pages, or disguised HTML — are rejected
+              before playback and the app automatically moves to the next
+              source. It also remembers the server that last worked for a title.
+              All of this probing, validation, and source selection runs
+              entirely on your device.
+            </Body>
+          </SubSection>
+
           <SubSection title="Smart Trust — Video Plays, Ads Don't">
             <Body>
-              Once we verify a server is delivering actual video content (via
-              MIME-type detection), we whitelist it for the session so playback
-              is never interrupted by false positives. This keeps the video you
-              actually want playing while everything else stays blocked.
+              Once a server is verified as delivering actual video content (via
+              binary container-signature detection), we whitelist it for the
+              session so playback is never interrupted by false positives. This
+              keeps the video you actually want playing while everything else
+              stays blocked.
             </Body>
           </SubSection>
         </Section>
@@ -187,6 +206,7 @@ export default function TransparencyScreen() {
         <Section num={++sectionIndex} title="Known Limitations">
           <Bullet text="Our WebView sandbox is strong but not theoretically impenetrable. Zero-day exploits in browser engines are rare but possible — keep your OS updated." />
           <Bullet text="Ad-blocking is a cat-and-mouse game. Some sophisticated ads may temporarily bypass our filters until we update our rules." />
+          <Bullet text="Large, high-bitrate files (some MKV releases exceed 5 GB) can need a few extra seconds of buffering at the very start on slower connections — the beginning of such files is often encoded at several times the average bitrate of the rest." />
           <Bullet text="We rely on third-party metadata (TMDB) for titles and descriptions. We have no control over TMDB's accuracy or availability." />
           <Bullet text="Offline downloads are stored in your device's shared Downloads folder (Android 10+). They remain on your device after uninstalling FilmSnaps." />
         </Section>
@@ -252,6 +272,18 @@ export default function TransparencyScreen() {
               data to sell, and we do not show ads ourselves. The ad blocking
               technology exists solely to protect you from third-party threats.
               There is no business incentive to collect or share your data.
+            </Body>
+          </FaqItem>
+
+          <FaqItem question="Sometimes the app streams directly instead of opening the provider page — is that safe?">
+            <Body>
+              Yes, and it's actually the safer path. When a direct video link is
+              available, FilmSnaps verifies the file's binary container
+              signature before playing and streams only that video file — no
+              provider page, so no ads, pop-ups, or scripts from that page can
+              reach you at all. If a direct source fails validation or stops
+              working mid-playback, the app automatically tries the next source,
+              and if none work it falls back to the sandboxed provider WebView.
             </Body>
           </FaqItem>
 
