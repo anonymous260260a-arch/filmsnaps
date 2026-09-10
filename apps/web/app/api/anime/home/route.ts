@@ -1,29 +1,48 @@
 /**
- * /api/anime/home — AniList GraphQL proxy for the home browse feed, 24h edge
- * cached. Mirrors /api/anime/search (same upstream, same TMDB-spine gate, same
- * Kitsu fallback shape) but pulls Trending / Popular / This-Season rails instead
- * of keyword search.
+ * /api/anime/home — anime browse feed for the home rails, 24h edge cached.
  *
- * Each result is cross-linked to its TMDB twin through the derived map; titles
- * without a twin are dropped (same Q1 rule as search — no parallel detail
- * surface for unmapped anime). The three rails share one cached upstream call.
+ * Provider chain (2026-09 rework; see lib/anime/upstreams.ts for rationale):
+ *   Kitsu → Shikimori → AniList (opportunistic) → TMDB discover → 502.
+ * AniList 403-blocked Cloudflare Workers egress IPs in Sep 2026, so it can no
+ * longer be the primary from this Worker; TMDB is the terminal link because
+ * every result must map to a TMDB twin anyway (Q1 gate) — the feed can only
+ * blank if TMDB itself is down.
+ *
+ * Each result is cross-linked to its TMDB twin through the derived map;
+ * titles without a twin are dropped. The three rails share one cached
+ * response per source.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCorsHeaders, handleOptions } from "@/lib/cors";
-import { lookupMal } from "@/lib/anime/resolve";
 import { desktopSkip } from "../../desktop-skip";
-
-// force-static removed — same fix as tmdb/search routes (was caching at build time)
-
-const ANILIST_GRAPHQL = "https://graphql.anilist.co";
-const KITSU_BASE = "https://kitsu.io/api/edge/anime";
+import { lookupMal, lookupTmdbShow } from "@/lib/anime/resolve";
+import {
+  ANILIST_GRAPHQL,
+  FORMAT_LABELS,
+  KITSU_BASE,
+  SHIKIMORI_BASE,
+  SlimAnimeResult,
+  currentSeasonName,
+  fetchWithTimeout,
+  parseKitsuToSlim,
+  parseShikimoriToSlim,
+} from "@/lib/anime/upstreams";
 
 const UPSTREAM_TIMEOUT_MS = 9000;
+
+// Kitsu caps page[limit] at 20.
+const KITSU_MAX_LIMIT = 20;
 
 const cacheHeaders = {
   "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=3600",
 };
+
+interface HomeBundle {
+  trending: SlimAnimeResult[];
+  popular: SlimAnimeResult[];
+  seasonal: SlimAnimeResult[];
+}
 
 export async function OPTIONS(request: Request) {
   return handleOptions(request);
@@ -42,34 +61,115 @@ function corsResponse(
   });
 }
 
-interface SlimAnimeResult {
-  malId: number;
-  anilistId: number | null;
-  tmdbShowId?: number;
-  tmdbMovieId?: number;
-  title: string;
-  titleEnglish: string | null;
-  image: string | null;
-  year: number | null;
-  episodes: number | null;
-  type: string | null;
-  score: number | null;
-  members: number | null;
+function bundleHasContent(bundle: HomeBundle): boolean {
+  return (
+    bundle.trending.length > 0 ||
+    bundle.popular.length > 0 ||
+    bundle.seasonal.length > 0
+  );
 }
 
-const FORMAT_LABELS: Record<string, string> = {
-  TV: "TV",
-  TV_SHORT: "TV",
-  MOVIE: "Movie",
-  SPECIAL: "Special",
-  OVA: "OVA",
-  ONA: "ONA",
-  MUSIC: "Music",
-  TV_SPECIAL: "Special",
-};
+export async function GET(req: NextRequest) {
+  const skip = desktopSkip();
+  if (skip) return skip;
+  const origin = req.headers.get("origin");
+  const limitRaw = Number(req.nextUrl.searchParams.get("limit")) || 20;
+  const limit = Math.min(Math.max(Math.trunc(limitRaw), 1), 25);
+
+  const chain: Array<[string, () => Promise<HomeBundle | null>]> = [
+    ["kitsu", () => fetchFromKitsuHome(limit)],
+    ["shikimori", () => fetchFromShikimoriHome(limit)],
+    ["anilist", () => fetchFromAnilist(limit)],
+    ["tmdb", () => fetchFromTmdbHome(limit)],
+  ];
+
+  for (const [source, fetcher] of chain) {
+    try {
+      const bundle = await fetcher();
+      if (bundle && bundleHasContent(bundle)) {
+        console.log(`[AnimeHome] serving from ${source}`);
+        return corsResponse({ source, ...bundle }, origin);
+      }
+      console.warn(`[AnimeHome] ${source} returned empty — trying next`);
+    } catch (e: any) {
+      console.warn(`[AnimeHome] ${source} failed:`, e?.message ?? e);
+    }
+  }
+
+  console.warn("[AnimeHome] all upstreams failed — 502");
+  return corsResponse(
+    { error: "anime home unavailable (all upstreams down)", source: "none" },
+    origin,
+    { status: 502 },
+  );
+}
+
+// ── Link 1: Kitsu ──────────────────────────────────────────────────────
+
+async function fetchKitsuRail(params: string): Promise<SlimAnimeResult[]> {
+  const url = `${KITSU_BASE}?page%5Blimit%5D=${KITSU_MAX_LIMIT}&include=mappings&${params}`;
+  const res = await fetchWithTimeout(url, {
+    headers: { Accept: "application/vnd.api+json" },
+  });
+  if (!res.ok) throw new Error(`kitsu rail ${res.status}`);
+  const parsed = parseKitsuToSlim(await res.json());
+  return parsed?.results ?? [];
+}
+
+async function fetchFromKitsuHome(limit: number): Promise<HomeBundle | null> {
+  const season = currentSeasonName().toLowerCase();
+  const year = new Date().getFullYear();
+  // Three independent rails; best-effort per rail (allSettled).
+  const [trending, popular, seasonal] = await Promise.allSettled([
+    fetchKitsuRail("sort=-userCount&filter%5Bstatus%5D=current"),
+    fetchKitsuRail("sort=-userCount"),
+    fetchKitsuRail(
+      `sort=-userCount&filter%5Bseason%5D=${season}&filter%5Bseason_year%5D=${year}`,
+    ),
+  ]);
+  const pick = (r: PromiseSettledResult<SlimAnimeResult[]>) =>
+    r.status === "fulfilled" ? r.value.slice(0, limit) : [];
+  return {
+    trending: pick(trending),
+    popular: pick(popular),
+    seasonal: pick(seasonal),
+  };
+}
+
+// ── Link 2: Shikimori ──────────────────────────────────────────────────
+
+async function fetchShikimoriRail(params: string): Promise<SlimAnimeResult[]> {
+  const res = await fetchWithTimeout(`${SHIKIMORI_BASE}/animes?${params}`, {
+    headers: { "User-Agent": "Filmsnaps/2.2 (anime feed)" },
+  });
+  if (!res.ok) throw new Error(`shikimori rail ${res.status}`);
+  const parsed = parseShikimoriToSlim(await res.json());
+  return parsed?.results ?? [];
+}
+
+async function fetchFromShikimoriHome(
+  limit: number,
+): Promise<HomeBundle | null> {
+  const season = currentSeasonName().toLowerCase();
+  const year = new Date().getFullYear();
+  const [trending, popular, seasonal] = await Promise.allSettled([
+    fetchShikimoriRail(`limit=25&status=ongoing&order=popularity`),
+    fetchShikimoriRail(`limit=25&order=popularity`),
+    fetchShikimoriRail(`limit=25&season=${season}_${year}&order=popularity`),
+  ]);
+  const pick = (r: PromiseSettledResult<SlimAnimeResult[]>) =>
+    r.status === "fulfilled" ? r.value.slice(0, limit) : [];
+  return {
+    trending: pick(trending),
+    popular: pick(popular),
+    seasonal: pick(seasonal),
+  };
+}
+
+// ── Link 3: AniList (opportunistic — 403s from Workers egress since 2026-09)
 
 const HOME_QUERY = `
-query AnimeHome($perPage: Int) {
+query AnimeHome($perPage: Int, $season: MediaSeason, $seasonYear: Int) {
   Trending: Page(page: 1, perPage: $perPage) {
     media(sort: TRENDING_DESC, type: ANIME, isAdult: false) {
       id idMal title { romaji english } coverImage { extraLarge }
@@ -83,28 +183,14 @@ query AnimeHome($perPage: Int) {
     }
   }
   Season: Page(page: 1, perPage: $perPage) {
-    media(season: ${currentSeasonName()}, seasonYear: ${currentYear()}, sort: POPULARITY_DESC, type: ANIME, isAdult: false) {
+    media(season: $season, seasonYear: $seasonYear, sort: POPULARITY_DESC, type: ANIME, isAdult: false) {
       id idMal title { romaji english } coverImage { extraLarge }
       startDate { year } episodes format averageScore popularity
     }
   }
 }`;
 
-function currentYear(): number {
-  return new Date().getFullYear();
-}
-
-function currentSeasonName(): string {
-  const m = new Date().getMonth();
-  // Northern-hemisphere anime seasons: WINTER (Dec-Feb), SPRING (Mar-May),
-  // SUMMER (Jun-Aug), FALL (Sep-Nov).
-  if (m <= 1 || m === 11) return "WINTER";
-  if (m <= 4) return "SPRING";
-  if (m <= 7) return "SUMMER";
-  return "FALL";
-}
-
-function mapMedia(item: Record<string, any>): SlimAnimeResult | null {
+function mapAnilistMedia(item: Record<string, any>): SlimAnimeResult | null {
   const malId = Number(item.idMal);
   if (!Number.isFinite(malId)) return null;
   const mapped = lookupMal(malId);
@@ -130,32 +216,10 @@ function mapMedia(item: Record<string, any>): SlimAnimeResult | null {
   };
 }
 
-export async function GET(req: NextRequest) {
-  const skip = desktopSkip();
-  if (skip) return skip;
-  const origin = req.headers.get("origin");
-  const limitRaw = Number(req.nextUrl.searchParams.get("limit")) || 20;
-  const limit = Math.min(Math.max(Math.trunc(limitRaw), 1), 25);
-
-  const bundle = await fetchFromAnilist(limit);
-  if (bundle) {
-    return corsResponse({ source: "anilist", ...bundle }, origin);
-  }
-  return corsResponse(
-    { error: "anime home unavailable (upstream down)", source: "none" },
-    origin,
-    { status: 502 },
-  );
-}
-
-async function fetchFromAnilist(limit: number): Promise<{
-  trending: SlimAnimeResult[];
-  popular: SlimAnimeResult[];
-  seasonal: SlimAnimeResult[];
-} | null> {
-  let upstream: Response;
-  try {
-    upstream = await fetchWithTimeout(ANILIST_GRAPHQL, {
+async function fetchFromAnilist(limit: number): Promise<HomeBundle | null> {
+  const upstream = await fetchWithTimeout(
+    ANILIST_GRAPHQL,
+    {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -163,47 +227,106 @@ async function fetchFromAnilist(limit: number): Promise<{
       },
       body: JSON.stringify({
         query: HOME_QUERY,
-        variables: { perPage: limit },
+        variables: {
+          perPage: limit,
+          season: currentSeasonName(),
+          seasonYear: new Date().getFullYear(),
+        },
       }),
-    });
-  } catch {
-    return null;
-  }
-  if (!upstream.ok) return null;
-
-  let payload: {
-    data?: Record<string, { media?: Array<Record<string, any>> }>;
-  };
-  try {
-    payload = await upstream.json();
-  } catch {
-    return null;
-  }
-
+    },
+    UPSTREAM_TIMEOUT_MS,
+  );
+  if (!upstream.ok) throw new Error(`anilist ${upstream.status}`);
+  const payload = await upstream.json();
   const toList = (key: string) =>
     (payload.data?.[key]?.media ?? [])
-      .map(mapMedia)
+      .map(mapAnilistMedia)
       .filter((x: SlimAnimeResult | null): x is SlimAnimeResult => x != null);
-
-  const trending = toList("Trending");
-  const popular = toList("Popular");
-  const seasonal = toList("Season");
-  if (trending.length === 0 && popular.length === 0 && seasonal.length === 0) {
-    return null;
-  }
-  return { trending, popular, seasonal };
+  return {
+    trending: toList("Trending"),
+    popular: toList("Popular"),
+    seasonal: toList("Season"),
+  };
 }
 
-async function fetchWithTimeout(
-  url: string,
-  init: RequestInit,
-  ms = UPSTREAM_TIMEOUT_MS,
-): Promise<Response> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal });
-  } finally {
-    clearTimeout(t);
-  }
+// ── Link 4: TMDB discover (terminal — same infra as the TMDB spine) ─────
+
+function mapTmdbShow(item: Record<string, any>):
+  | (SlimAnimeResult & {
+      _rank: number;
+    })
+  | null {
+  const tmdbShowId = Number(item.id);
+  if (!Number.isFinite(tmdbShowId)) return null;
+  const hit = lookupTmdbShow(tmdbShowId);
+  if (!hit) return null; // map gate: unmapped TMDB anime has no MAL key
+  const score = typeof item.vote_average === "number" ? item.vote_average : 0;
+  return {
+    malId: hit.malId,
+    anilistId: hit.anilistId,
+    tmdbShowId,
+    title: item.name ?? "",
+    titleEnglish: item.name ?? null,
+    image:
+      typeof item.poster_path === "string"
+        ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
+        : null,
+    year:
+      typeof item.first_air_date === "string"
+        ? Number(item.first_air_date.slice(0, 4)) || null
+        : null,
+    episodes: null,
+    type: "TV",
+    score: score > 0 ? score : null,
+    members: null,
+    _rank: score,
+  };
+}
+
+async function fetchTmdbRail(
+  path: string,
+  apiKey: string,
+  limit: number,
+): Promise<SlimAnimeResult[]> {
+  const url = `https://api.themoviedb.org/3${path}${path.includes("?") ? "&" : "?"}api_key=${apiKey}&page=1`;
+  const res = await fetchWithTimeout(url, {});
+  if (!res.ok) throw new Error(`tmdb rail ${res.status}`);
+  const payload = await res.json();
+  const items: Array<Record<string, any>> = path.startsWith("/trending")
+    ? (payload.results ?? []).filter((r: Record<string, any>) =>
+        Array.isArray(r.genre_ids) ? r.genre_ids.includes(16) : false,
+      )
+    : (payload.results ?? []);
+  return items
+    .map(mapTmdbShow)
+    .filter((x): x is SlimAnimeResult & { _rank: number } => x != null)
+    .sort((a, b) => b._rank - a._rank)
+    .map(({ _rank, ...slim }) => slim)
+    .slice(0, limit);
+}
+
+async function fetchFromTmdbHome(limit: number): Promise<HomeBundle | null> {
+  const apiKey = process.env.TMDB_API_KEY;
+  if (!apiKey) throw new Error("TMDB_API_KEY not configured");
+  const year = new Date().getFullYear();
+  const [trending, popular, seasonal] = await Promise.allSettled([
+    fetchTmdbRail("/trending/tv/week", apiKey, limit * 2),
+    fetchTmdbRail(
+      "/discover/tv?with_genres=16&sort_by=popularity.desc&vote_count.gte=10",
+      apiKey,
+      limit,
+    ),
+    fetchTmdbRail(
+      `/discover/tv?with_genres=16&sort_by=popularity.desc&first_air_date_year=${year}`,
+      apiKey,
+      limit,
+    ),
+  ]);
+  const pick = (r: PromiseSettledResult<SlimAnimeResult[]>) =>
+    r.status === "fulfilled" ? r.value.slice(0, limit) : [];
+  return {
+    trending: pick(trending),
+    popular: pick(popular),
+    seasonal: pick(seasonal),
+  };
 }

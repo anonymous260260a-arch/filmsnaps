@@ -1,21 +1,15 @@
 /**
- * /api/anime/search — AniList GraphQL proxy with 24h edge cache + Kitsu fallback.
+ * /api/anime/search — anime keyword search, 24h edge cached.
  *
- * Originally a Jikan (MyAnimeList) proxy per verdict §9 Q3/F4; swapped to
- * AniList after Jikan's MyAnimeList upstream proved chronically unavailable
- * (2026-08-23 outage: only Redis-cached URLs answered). AniList is keyless,
- * returns BOTH ids natively (`id` + `idMal`), so the downstream contract —
- * lookupMal() twin-mapping gate keyed by malId — is unchanged.
- *
- * 2026-08-23: AniList began returning 403 "temporarily disabled due to severe
- * stability issues" — a hard upstream outage. Kitsu is the fallback: it is
- * independent of AniList AND MyAnimeList, and its `include=mappings` yields a
- * `myanimelist/anime` external id, so the same MalId→TMDB-spine gate holds.
- * Kitsu is the secondary, not the default: AniList still wins when reachable
- * because it returns both ids and ranks better.
+ * Provider chain (2026-09 rework; see lib/anime/upstreams.ts for rationale):
+ *   Kitsu → Shikimori → AniList (opportunistic) → 502.
+ * Originally a Jikan proxy, then AniList-primary until AniList 403-blocked
+ * Cloudflare Workers egress in Sep 2026. Kitsu and Shikimori are both
+ * keyless and independent of each other; both yield a MAL id so the
+ * MalId→TMDB-spine gate (verdict Q1) is unchanged regardless of source.
  *
  * One upstream request per call per source; the edge caches results for a day
- * so debounced client queries stay well under AniList's ~90 req/min ceiling.
+ * so debounced client queries stay well under provider rate ceilings.
  *
  * Each result is cross-linked to its TMDB twin through the derived map;
  * titles WITHOUT a TMDB twin are dropped (verdict Q1 — hide unmapped titles
@@ -28,16 +22,25 @@ import { desktopSkip } from "../../desktop-skip";
 
 // force-static removed — same fix as tmdb route (was caching search at build time)
 import { lookupMal } from "@/lib/anime/resolve";
+import {
+  ANILIST_GRAPHQL,
+  FORMAT_LABELS,
+  KITSU_BASE,
+  SHIKIMORI_BASE,
+  SlimBundle,
+  fetchWithTimeout,
+  parseKitsuToSlim,
+  parseShikimoriToSlim,
+} from "@/lib/anime/upstreams";
 
-const ANILIST_GRAPHQL = "https://graphql.anilist.co";
-const KITSU_BASE = "https://kitsu.io/api/edge/anime";
-
-// Both upstreams get a hard timeout so a hung endpoint (AniList hung ~7.5s
-// during the 2026-08-23 outage) can't stall the route.
+// Both upstreams get a hard timeout so a hung endpoint can't stall the route.
 const UPSTREAM_TIMEOUT_MS = 9000;
 
-// 24h edge cache. SWR keeps serving stale results while revalidating so
-// bursts never hit AniList.
+// Kitsu caps page[limit] at 20 (400 above that); keep the two providers
+// independent so a 30-result client request doesn't 400 the fallback.
+const KITSU_MAX_LIMIT = 20;
+
+// 24h edge cache. SWR keeps serving stale results while revalidating.
 const cacheHeaders = {
   "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=3600",
 };
@@ -61,35 +64,88 @@ function corsResponse(
   });
 }
 
-interface SlimAnimeResult {
-  malId: number;
-  anilistId: number | null;
-  tmdbShowId?: number;
-  tmdbMovieId?: number;
-  title: string;
-  titleEnglish: string | null;
-  image: string | null;
-  year: number | null;
-  episodes: number | null;
-  /** TV | Movie | OVA | ONA | Special */
-  type: string | null;
-  score: number | null;
-  members: number | null;
+export async function GET(req: NextRequest) {
+  const skip = desktopSkip();
+  if (skip) return skip;
+  const sp = req.nextUrl.searchParams;
+  const q = (sp.get("q") ?? "").trim();
+  const origin = req.headers.get("origin");
+
+  if (!q) return corsResponse({ error: "missing q" }, origin);
+
+  const limitRaw = Number(sp.get("limit")) || 20;
+  const limit = Math.min(Math.max(Math.trunc(limitRaw), 1), 25);
+
+  // Kitsu → Shikimori → AniList. On any failure (throw / non-ok / invalid
+  // json / empty) fall through so a single upstream outage never blanks search.
+  const kitsuResults = await fetchFromKitsu(q, limit).catch(() => null);
+  if (kitsuResults) {
+    return corsResponse({ query: q, source: "kitsu", ...kitsuResults }, origin);
+  }
+
+  const shikimoriResults = await fetchFromShikimori(q, limit).catch(() => null);
+  if (shikimoriResults) {
+    return corsResponse(
+      { query: q, source: "shikimori", ...shikimoriResults },
+      origin,
+    );
+  }
+
+  const anilistResults = await fetchFromAnilist(q, limit).catch(() => null);
+  if (anilistResults) {
+    return corsResponse(
+      { query: q, source: "anilist", ...anilistResults },
+      origin,
+    );
+  }
+
+  return corsResponse(
+    { error: "anime search unavailable (all upstreams down)", source: "none" },
+    origin,
+    { status: 502 },
+  );
 }
 
-/** AniList format → the card badge vocabulary the UI expects. */
-const FORMAT_LABELS: Record<string, string> = {
-  // AniList formats
-  TV: "TV",
-  TV_SHORT: "TV",
-  MOVIE: "Movie",
-  SPECIAL: "Special",
-  OVA: "OVA",
-  ONA: "ONA",
-  MUSIC: "Music",
-  // Kitsu subtypes (uppercased before lookup)
-  TV_SPECIAL: "Special",
-};
+/** Kitsu primary. Keyless, independent of AniList and MAL. */
+async function fetchFromKitsu(
+  q: string,
+  limit: number,
+): Promise<SlimBundle | null> {
+  const kitsuLimit = Math.min(limit, KITSU_MAX_LIMIT);
+  const url = `${KITSU_BASE}?filter%5Btext%5D=${encodeURIComponent(
+    q,
+  )}&page%5Blimit%5D=${kitsuLimit}&include=mappings`;
+  const upstream = await fetchWithTimeout(url, {
+    headers: { Accept: "application/vnd.api+json" },
+  });
+  if (!upstream.ok) return null;
+  const parsed = parseKitsuToSlim(await upstream.json());
+  if (!parsed) return null;
+  return {
+    count: parsed.results.length,
+    hiddenUnmapped: parsed.hiddenUnmapped,
+    results: parsed.results,
+  };
+}
+
+/** Shikimori fallback. Keyless; its `id` IS the MAL id. */
+async function fetchFromShikimori(
+  q: string,
+  limit: number,
+): Promise<SlimBundle | null> {
+  const url = `${SHIKIMORI_BASE}/animes?limit=${limit}&search=${encodeURIComponent(q)}`;
+  const upstream = await fetchWithTimeout(url, {
+    headers: { "User-Agent": "Filmsnaps/2.2 (anime search)" },
+  });
+  if (!upstream.ok) return null;
+  const parsed = parseShikimoriToSlim(await upstream.json());
+  if (!parsed) return null;
+  return {
+    count: parsed.results.length,
+    hiddenUnmapped: parsed.hiddenUnmapped,
+    results: parsed.results,
+  };
+}
 
 const SEARCH_QUERY = `
 query AnimeSearch($search: String, $perPage: Int) {
@@ -108,73 +164,17 @@ query AnimeSearch($search: String, $perPage: Int) {
   }
 }`;
 
-// Kitsu caps page[limit] at 20 (400 above that); AniList's perPage is fine up
-// to the route's 25. Keep the two independent so a 30-result client request
-// doesn't 400 the fallback.
-const KITSU_MAX_LIMIT = 20;
-
-/** fetch with a hard timeout — rejects on timeout so callers can fall back. */
-async function fetchWithTimeout(
-  url: string,
-  init: RequestInit,
-  ms = UPSTREAM_TIMEOUT_MS,
-): Promise<Response> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal });
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-export async function GET(req: NextRequest) {
-  const skip = desktopSkip();
-  if (skip) return skip;
-  const sp = req.nextUrl.searchParams;
-  const q = (sp.get("q") ?? "").trim();
-  const origin = req.headers.get("origin");
-
-  if (!q) return corsResponse({ error: "missing q" }, origin);
-
-  const limitRaw = Number(sp.get("limit")) || 20;
-  const limit = Math.min(Math.max(Math.trunc(limitRaw), 1), 25);
-
-  // Primary: AniList. On any failure (throw / non-ok / invalid json / empty),
-  // fall back to Kitsu so a single upstream outage never blanks search.
-  const anilistResults = await fetchFromAnilist(q, limit);
-  if (anilistResults) {
-    return corsResponse(
-      { query: q, source: "anilist", ...anilistResults },
-      origin,
-    );
-  }
-
-  const kitsuResults = await fetchFromKitsu(q, limit);
-  if (kitsuResults) {
-    return corsResponse({ query: q, source: "kitsu", ...kitsuResults }, origin);
-  }
-
-  return corsResponse(
-    { error: "anime search unavailable (all upstreams down)", source: "none" },
-    origin,
-    { status: 502 },
-  );
-}
-
-type SlimBundle = {
-  count: number;
-  hiddenUnmapped: number;
-  results: SlimAnimeResult[];
-};
-
+/**
+ * AniList opportunistic link — 403s from Cloudflare Workers egress since
+ * 2026-09, kept for when requests arrive from other IPs.
+ */
 async function fetchFromAnilist(
   q: string,
   limit: number,
 ): Promise<SlimBundle | null> {
-  let upstream: Response;
-  try {
-    upstream = await fetchWithTimeout(ANILIST_GRAPHQL, {
+  const upstream = await fetchWithTimeout(
+    ANILIST_GRAPHQL,
+    {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -184,35 +184,25 @@ async function fetchFromAnilist(
         query: SEARCH_QUERY,
         variables: { search: q, perPage: limit },
       }),
-    });
-  } catch {
-    return null;
-  }
-
+    },
+    UPSTREAM_TIMEOUT_MS,
+  );
   if (!upstream.ok) return null;
 
-  let payload: {
+  const payload: {
     data?: { Page?: { media?: Array<Record<string, any>> } };
-    errors?: Array<{ message: string }>;
-  };
-  try {
-    payload = await upstream.json();
-  } catch {
-    return null;
-  }
+  } = await upstream.json();
 
   let hiddenUnmapped = 0;
-  const results: SlimAnimeResult[] = [];
+  const results = [];
 
   for (const item of payload.data?.Page?.media ?? []) {
     const malId = Number(item.idMal);
     if (!Number.isFinite(malId)) {
-      // No MAL id → MegaPlay can't be keyed → same bucket as unmapped.
       hiddenUnmapped++;
       continue;
     }
 
-    // TMDB-spine gate: no twin → hidden from v1 results.
     const mapped = lookupMal(malId);
     if (!mapped || (mapped.tmdbShowId == null && mapped.tmdbMovieId == null)) {
       hiddenUnmapped++;
@@ -221,7 +211,6 @@ async function fetchFromAnilist(
 
     results.push({
       malId,
-      // Upstream IS AniList — its own id is authoritative over the map's.
       anilistId: Number(item.id) || mapped.anilistId || null,
       tmdbShowId: mapped.tmdbShowId,
       tmdbMovieId: mapped.tmdbMovieId,
@@ -237,114 +226,6 @@ async function fetchFromAnilist(
           ? Math.round((item.averageScore / 10) * 10) / 10
           : null,
       members: typeof item.popularity === "number" ? item.popularity : null,
-    });
-  }
-
-  // Empty list (e.g. query returned nothing) — let Kitsu take a shot.
-  return results.length > 0
-    ? { count: results.length, hiddenUnmapped, results }
-    : null;
-}
-
-/** Kitsu fallback. Independent of AniList + MAL; yields a MAL id via mappings. */
-async function fetchFromKitsu(
-  q: string,
-  limit: number,
-): Promise<SlimBundle | null> {
-  let upstream: Response;
-  try {
-    const kitsuLimit = Math.min(limit, KITSU_MAX_LIMIT);
-    const url = `${KITSU_BASE}?filter%5Btext%5D=${encodeURIComponent(
-      q,
-    )}&page%5Blimit%5D=${kitsuLimit}&include=mappings`;
-    upstream = await fetchWithTimeout(url, {
-      headers: { Accept: "application/vnd.api+json" },
-    });
-  } catch {
-    return null;
-  }
-
-  if (!upstream.ok) return null;
-
-  let payload: {
-    data?: Array<Record<string, any>>;
-    included?: Array<Record<string, any>>;
-  };
-  try {
-    payload = await upstream.json();
-  } catch {
-    return null;
-  }
-
-  const media = payload.data ?? [];
-  if (media.length === 0) return null;
-
-  // Build kitsu-mapping-id → MAL external id index from the included block.
-  const malByMappingId = new Map<string, string>();
-  for (const inc of payload.included ?? []) {
-    if (
-      inc.type === "mappings" &&
-      inc.attributes?.externalSite === "myanimelist/anime" &&
-      typeof inc.attributes?.externalId === "string"
-    ) {
-      malByMappingId.set(String(inc.id), inc.attributes.externalId);
-    }
-  }
-
-  let hiddenUnmapped = 0;
-  const results: SlimAnimeResult[] = [];
-
-  for (const item of media) {
-    const attr = item.attributes ?? {};
-    // Collect MAL ids from this anime's mappings relationships.
-    const rel = item.relationships?.mappings?.data;
-    const mappingRefs = Array.isArray(rel) ? rel : rel ? [rel] : [];
-    const malCandidates = mappingRefs
-      .map((r: { id: string }) => malByMappingId.get(String(r.id)))
-      .filter((v: string | undefined): v is string => !!v && /^\d+$/.test(v))
-      .map(Number);
-
-    const malId = malCandidates[0];
-    if (!Number.isFinite(malId)) {
-      hiddenUnmapped++;
-      continue;
-    }
-
-    const mapped = lookupMal(malId);
-    if (!mapped || (mapped.tmdbShowId == null && mapped.tmdbMovieId == null)) {
-      hiddenUnmapped++;
-      continue;
-    }
-
-    const titles: Record<string, string> = attr.titles ?? {};
-    const titleEnglish = titles.en ?? titles.en_jp ?? null;
-    const titleRomaji = titles.en_jp ?? titles.ja_ro ?? null;
-
-    results.push({
-      malId,
-      // Kitsu has no AniList id; rely on the map's m2a derivation only.
-      anilistId: mapped.anilistId ?? null,
-      tmdbShowId: mapped.tmdbShowId,
-      tmdbMovieId: mapped.tmdbMovieId,
-      title: titleEnglish ?? titleRomaji ?? attr.canonicalTitle ?? "",
-      titleEnglish,
-      image:
-        (attr.posterImage?.original as string | undefined) ??
-        (attr.posterImage?.large as string | undefined) ??
-        null,
-      year:
-        typeof attr.startDate?.year === "number" ? attr.startDate.year : null,
-      episodes:
-        typeof attr.episodeCount === "number" ? attr.episodeCount : null,
-      // Kitsu subtypes: TV, MOVIE, OVA, ONA, SPECIAL, MUSIC, TV_SPECIAL …
-      type:
-        FORMAT_LABELS[(attr.subtype ?? attr.showType ?? "").toUpperCase()] ??
-        null,
-      score:
-        typeof attr.averageRating === "string"
-          ? Math.round((Number(attr.averageRating) / 10) * 10) / 10
-          : null,
-      members: typeof attr.userCount === "number" ? attr.userCount : null,
     });
   }
 

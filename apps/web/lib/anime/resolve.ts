@@ -181,3 +181,17 @@ function getReverseIndex(): Map<number, MalLookup> {
 export function lookupMal(malId: string | number): MalLookup | null {
   return getReverseIndex().get(Number(malId)) ?? null;
 }
+
+/**
+ * TMDB show id → lowest MAL entry (anime-map `shows` candidates). Used by the
+ * TMDB-discover last-resort feed link, where results arrive TMDB-first and
+ * need the MAL key the client contract expects.
+ */
+export function lookupTmdbShow(
+  tmdbShowId: string | number,
+): { malId: number; anilistId: number | null } | null {
+  const cands = shows[String(tmdbShowId)];
+  if (!cands || cands.length === 0) return null;
+  const c = pickLowestMal(cands)!;
+  return { malId: c.m, anilistId: c.a ?? m2a[String(c.m)] ?? null };
+}
