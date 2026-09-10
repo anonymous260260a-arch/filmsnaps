@@ -27,6 +27,7 @@
 
 import { session as electronSession, Session } from "electron";
 import { join } from "path";
+import crypto from "crypto";
 import { shouldBlockRequest, checkResponseForTrust } from "./rule-cascade";
 import { initFilterEngine } from "./filter-engine";
 import {
@@ -35,6 +36,51 @@ import {
 } from "./url-substring-filter";
 import { addGlobalCdnAllowlistDomains } from "./provider-config";
 import type { SessionTrustManager } from "./session-trust";
+import { net, security, audit, config } from "../lib/log";
+
+// ── Nxsha API decode (for source-name audit) ──
+const NXSHA_API_KEY = Buffer.from([
+  83, 56, 120, 33, 74, 107, 52, 90, 80, 49, 117, 71, 56, 36, 109, 121,
+]);
+
+function evpKdf(password: Buffer, salt: Buffer): Buffer {
+  const data = Buffer.concat([password, salt]);
+  const out: Buffer[] = [];
+  let prev = Buffer.alloc(0);
+  let total = 0;
+  while (total < 32 + 16) {
+    prev = crypto
+      .createHash("md5")
+      .update(Buffer.concat([prev, data]))
+      .digest();
+    out.push(prev);
+    total += prev.length;
+  }
+  return Buffer.concat(out);
+}
+
+function nxshaDecodeApi(str: string): Record<string, unknown> | null {
+  try {
+    let b64 = str.replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4 !== 0) b64 += "=";
+    const raw = Buffer.from(b64, "base64");
+    if (raw.subarray(0, 8).toString() !== "Salted__") return null;
+    const keyiv = evpKdf(NXSHA_API_KEY, raw.subarray(8, 16));
+    const decipher = crypto.createDecipheriv(
+      "aes-256-cbc",
+      keyiv.subarray(0, 32),
+      keyiv.subarray(32),
+    );
+    return JSON.parse(
+      Buffer.concat([
+        decipher.update(raw.subarray(16)),
+        decipher.final(),
+      ]).toString("utf8"),
+    );
+  } catch {
+    return null;
+  }
+}
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -127,8 +173,8 @@ function buildCleanDesktopUA(): string {
  */
 export function setBlockingProviderId(providerId?: string): void {
   if (providerId && providerId !== _currentBlockingProviderId) {
-    console.log(
-      `[SecurityFilter] Blocking provider updated: ${_currentBlockingProviderId ?? "none"} → ${providerId}`,
+    security.log(
+      `Blocking provider updated: ${_currentBlockingProviderId ?? "none"} → ${providerId}`,
     );
   }
   _currentBlockingProviderId = providerId;
@@ -179,15 +225,13 @@ export function createProviderSession(providerId?: string): Session {
 
   // Idempotency check: if we already initialized this session, reuse it
   if (initializedSessions.has(SESSION_PARTITION)) {
-    console.log(
-      `[SecurityFilter] Reusing existing session (provider: ${providerId})`,
-    );
+    security.log(`Reusing existing session (provider: ${providerId})`);
 
     // Still update the provider context for the existing trust manager
     const existingTm = trustManagers.get(providerSession);
     if (existingTm) {
-      console.log(
-        `[SecurityFilter] Session reusing trust manager with ${existingTm.size} trusted hosts`,
+      security.log(
+        `Session reusing trust manager with ${existingTm.size} trusted hosts`,
       );
     }
 
@@ -211,9 +255,7 @@ export function createProviderSession(providerId?: string): Session {
   providerSession.setUserAgent(buildCleanDesktopUA());
 
   if (process.env.FILMSNAPS_AUDIT === "1") {
-    console.log(
-      `[SecurityFilter] Provider UA set: ${providerSession.getUserAgent()}`,
-    );
+    security.log(`Provider UA set: ${providerSession.getUserAgent()}`);
   }
 
   // ── Network-layer HTML protection injection (L8) ──
@@ -242,9 +284,9 @@ export function createProviderSession(providerId?: string): Session {
       filePath: preloadPath,
       type: "frame",
     });
-    console.log(`[SecurityFilter] Provider preload registered: ${preloadPath}`);
+    security.log(`Provider preload registered: ${preloadPath}`);
   } catch (err) {
-    console.error("[SecurityFilter] Failed to set provider preload:", err);
+    security.error("Failed to set provider preload:", err);
   }
 
   // Warm the mobile-parity URL-substring filter (R4b/R5b) off the critical
@@ -252,13 +294,13 @@ export function createProviderSession(providerId?: string): Session {
   // read. Idempotent — loads once. Falls back gracefully if absent.
   try {
     initUrlSubstringFilter();
-    console.log(
-      `[SecurityFilter] Mobile-parity substring filter ready: ` +
+    security.log(
+      `Mobile-parity substring filter ready: ` +
         `${getSubstringFilterStats().substringCount} URL substrings + ` +
         `${getSubstringFilterStats().blockedDomainCount} blocked domains`,
     );
   } catch (err) {
-    console.warn("[SecurityFilter] Url-substring filter warm-up failed:", err);
+    security.warn("Url-substring filter warm-up failed:", err);
   }
 
   // Kick off the filter engine load asynchronously (non-blocking). The engine
@@ -268,8 +310,8 @@ export function createProviderSession(providerId?: string): Session {
   initFilterEngine().then((engine) => {
     if (engine) {
       const stats = getEngineStats();
-      console.log(
-        `[SecurityFilter] Filter engine ready: ${stats.networkFilters} network + ${stats.cosmeticFilters} cosmetic filters`,
+      security.log(
+        `Filter engine ready: ${stats.networkFilters} network + ${stats.cosmeticFilters} cosmetic filters`,
       );
     }
   });
@@ -367,6 +409,26 @@ function setupRequestFilter(session: Session, providerId?: string): void {
       // load, matchUrl() no-ops and R5-R8 still apply.
       await initFilterEngine();
 
+      // DEBUG: decrypt nxsha API query params to see source names
+      if (
+        process.env.FILMSNAPS_AUDIT === "1" &&
+        url.includes("/api/sources?q=")
+      ) {
+        try {
+          const u = new URL(url);
+          const q = decodeURIComponent(u.searchParams.get("q") || "");
+          const decoded = nxshaDecodeApi(q);
+          if (decoded) {
+            console.log(
+              "[nxsha-source]",
+              "provider=" + (decoded as any).provider,
+              "type=" + (decoded as any).type,
+              "season=" + (decoded as any).season,
+            );
+          }
+        } catch {}
+      }
+
       // Run the R0-R8 cascade using the mutable provider ID
       const sourceUrl =
         (details as any).initiator || (details as any).documentUrl || url;
@@ -379,9 +441,7 @@ function setupRequestFilter(session: Session, providerId?: string): void {
       });
 
       if (decision.blocked) {
-        console.log(
-          `[SecurityFilter] Blocked [${decision.rule}]: ${decision.reason} — ${url.substring(0, 120)}`,
-        );
+        net.block(decision.rule, decision.reason, url);
         return callback({ cancel: true });
       }
 
@@ -393,20 +453,21 @@ function setupRequestFilter(session: Session, providerId?: string): void {
       if (process.env.FILMSNAPS_AUDIT === "1") {
         try {
           const host = new URL(url).hostname;
-          console.log(
-            `[ReqLog] ALLOW [${decision.rule}] ${details.resourceType} ${host} ${url.substring(0, 140)}`,
+          audit.log(
+            `ALLOW [${decision.rule}]`,
+            details.resourceType,
+            host,
+            url.substring(0, 140),
           );
         } catch {
           /* unparseable — skip audit line */
         }
       }
-
-      return callback({});
     },
   );
 
-  console.log(
-    `[SecurityFilter] R0-R8 cascade active${providerId ? ` (provider: ${providerId})` : ""}`,
+  security.log(
+    `R0-R8 cascade active${providerId ? ` (provider: ${providerId})` : ""}`,
   );
 }
 
@@ -452,8 +513,9 @@ function setupTrustTracking(session: Session): void {
           const ct = pickContentType(details.responseHeaders);
           const trusted = checkResponseForTrust(trustManager, details.url, ct);
           if (trusted) {
-            console.log(
-              `[SecurityFilter] Trust added (headers): ${new URL(details.url).hostname} (Content-Type: ${ct ?? "(none)"})`,
+            net.trust(
+              new URL(details.url).hostname,
+              `(headers) Content-Type: ${ct ?? "(none)"}`,
             );
           }
         }
@@ -489,8 +551,9 @@ function setupTrustTracking(session: Session): void {
           .find((e) => new URL(details.url).hostname.endsWith(e.hostname));
         if (entry) prefix = entry.pathPrefix || "/";
       } catch {}
-      console.log(
-        `[SecurityFilter] Trust added: ${new URL(details.url).hostname} (video content detected, pathPrefix: ${JSON.stringify(prefix)})`,
+      net.trust(
+        new URL(details.url).hostname,
+        `video content detected, pathPrefix: ${JSON.stringify(prefix)}`,
       );
     }
   });
@@ -563,8 +626,8 @@ function preSeedAllowlistsFromConfig(): void {
       );
     }
 
-    console.log(
-      `[SecurityFilter] Pre-seeded ${domains.size} CDN/embed domains into R1/R2 allowlists (R0 starts EMPTY — trust is earned only by serving video)`,
+    config.log(
+      `Pre-seeded ${domains.size} CDN/embed domains into R1/R2 allowlists (R0 starts EMPTY — trust is earned only by serving video)`,
     );
   } catch {
     // Config not available — allowlists resolve lazily from provider-config.
@@ -584,8 +647,8 @@ export function preSeedProviderAllowlists(cdnDomains: Set<string>): void {
     addGlobalCdnAllowlistDomains([domain]);
     count++;
   }
-  console.log(
-    `[SecurityFilter] Fed ${count} CDN/embed domains into the R1/R2 allowlists (R0 trust untouched)`,
+  config.log(
+    `Fed ${count} CDN/embed domains into the R1/R2 allowlists (R0 trust untouched)`,
   );
 }
 
@@ -594,7 +657,7 @@ export function preSeedProviderAllowlists(cdnDomains: Set<string>): void {
  */
 export function resetSessionHandlers(): void {
   initializedSessions.clear();
-  console.log("[SecurityFilter] Session handler tracking reset");
+  security.log("Session handler tracking reset");
 }
 
 // ── Session cleanup ─────────────────────────────────────────────────────────
@@ -614,7 +677,7 @@ export async function clearProviderSession(session: Session): Promise<void> {
     if (trustManager) {
       trustManager.clear();
       trustManagers.delete(session);
-      console.log("[SecurityFilter] Session trust cleared");
+      security.log("Session trust cleared");
     }
 
     // Clear runtime-augmented R1/R2 allowlists (embed host + pre-seed domains)
@@ -622,7 +685,7 @@ export async function clearProviderSession(session: Session): Promise<void> {
     try {
       const { clearRuntimeAllowlists } = require("./provider-config");
       clearRuntimeAllowlists();
-      console.log("[SecurityFilter] Runtime R1/R2 allowlists cleared");
+      config.log("Runtime R1/R2 allowlists cleared");
     } catch {}
 
     await session.clearStorageData({
@@ -636,9 +699,9 @@ export async function clearProviderSession(session: Session): Promise<void> {
       ],
     });
     await session.clearCache();
-    console.log("[SecurityFilter] Provider session cleared");
+    security.log("Provider session cleared");
   } catch (err) {
-    console.error("[SecurityFilter] Failed to clear session:", err);
+    security.error("Failed to clear session:", err);
   }
 }
 
@@ -678,9 +741,7 @@ export function setupSecurityHeaders(session: Session): void {
         const origin = new URL(details.url).origin;
         if (/^https?:/.test(origin)) {
           headers["Referer"] = `${origin}/`;
-          console.log(
-            `[SecurityFilter] Seeded cold Referer ${origin}/ ← ${details.url}`,
-          );
+          net.log(`Seeded cold Referer ${origin}/ ← ${details.url}`);
         }
       } catch {
         // unparseable URL — send as-is

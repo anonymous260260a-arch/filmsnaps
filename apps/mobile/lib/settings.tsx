@@ -51,6 +51,17 @@ export interface AppSettings {
 
   // Player — whether to show per-server usage notes below player
   showServerNotes: boolean;
+
+  /** Stream selector: max file size on cellular (MB) */
+  cellularMaxMB: number;
+  /** Stream selector: user cap on max quality (null = no limit) */
+  maxQuality: string | null;
+  /** Stream selector: preferred audio language ("auto" = Multi > Hindi > English) */
+  preferredAudioLanguage: "auto" | "multi" | "hindi" | "english";
+  /** Whether the first-run language prompt has been answered */
+  hasAnsweredLanguagePrompt: boolean;
+  /** Background speed test: enabled (non-blocking, cached) */
+  enableSpeedTest: boolean;
 }
 
 type SettingKey = keyof AppSettings;
@@ -97,6 +108,13 @@ const DEFAULT_SETTINGS: AppSettings = {
 
   // Player — show per-server usage notes below player
   showServerNotes: true,
+
+  // Stream selector defaults
+  cellularMaxMB: 3000,
+  maxQuality: null,
+  preferredAudioLanguage: "auto",
+  hasAnsweredLanguagePrompt: false,
+  enableSpeedTest: true,
 };
 
 // ── Context ──

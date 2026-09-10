@@ -21,6 +21,9 @@ import { DownloadInfraProvider, useDownloadQueue } from "../lib/download";
 import { migrateDownloads, isMigrationDone } from "../lib/download/migration";
 import { SettingsProvider, useSettings } from "../lib/settings";
 import { persistQueryClient } from "@tanstack/react-query-persist-client";
+import { initNetworkMonitor } from "../lib/networkMonitor";
+import { initPlayerConfig } from "../lib/playerConfig";
+import { warmProviderConfig } from "../lib/directStreams";
 import {
   asyncStoragePersister,
   isPersistableQuery,
@@ -191,6 +194,29 @@ function AppContent() {
     return initLongTaskMonitor((duration, name) => {
       console.warn(`[Perf] Long JS task: ${duration.toFixed(0)}ms — ${name}`);
     });
+  }, []);
+
+  // ── Network monitor (speed test in background) ──
+  // Triggers initial speed test on app start, then on network changes.
+  // Non-blocking — uses cached speed for immediate decisions.
+  // Gated by user setting (enableSpeedTest).
+  useEffect(() => {
+    if (!settings.enableSpeedTest) return;
+    return initNetworkMonitor();
+  }, [settings.enableSpeedTest]);
+
+  // ── Player config (remote-tunable player settings) ──
+  // Cache-first, then a background refresh; applies native knobs
+  // (MKV extractor mode, HTTP timeouts, default headers). Never blocks.
+  useEffect(() => {
+    initPlayerConfig();
+  }, []);
+
+  // ── Stream/download provider registry (remote-updatable URLs) ──
+  // Warms the config so the first stream or download fetch doesn't wait on
+  // the remote lookup. Never blocks.
+  useEffect(() => {
+    warmProviderConfig();
   }, []);
 
   // Reset the navigation interlock on every screen focus.

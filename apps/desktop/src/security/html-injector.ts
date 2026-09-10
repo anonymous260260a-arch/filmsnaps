@@ -25,6 +25,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { getCosmeticFilterPayload } from "./filter-engine";
+import { config } from "../lib/log";
 
 // ── Protection source (loaded once per module) ─────────────────────────────────────────
 
@@ -59,9 +60,7 @@ export function getProtectionSource(): string {
   // Try primary path first (compiled dist)
   try {
     _protectionSource = readFileSync(PRIMARY_PRELOAD_PATH, "utf8");
-    console.log(
-      `[HtmlInjector] Protection source loaded (${_protectionSource.length} chars)`,
-    );
+    config.log(`Protection source loaded (${_protectionSource.length} chars)`);
     return _protectionSource;
   } catch {
     // Primary not available — ignore and try fallback
@@ -70,15 +69,12 @@ export function getProtectionSource(): string {
   // Try fallback path (dev without build, or different workspace layout)
   try {
     _protectionSource = readFileSync(FALLBACK_PRELOAD_PATH, "utf8");
-    console.log(
-      `[HtmlInjector] Protection source loaded from fallback (${_protectionSource.length} chars)`,
+    config.log(
+      `Protection source loaded from fallback (${_protectionSource.length} chars)`,
     );
     return _protectionSource;
   } catch (err) {
-    console.error(
-      "[HtmlInjector] Failed to load protection source from both paths:",
-      err,
-    );
+    config.error("Failed to load protection source from both paths:", err);
     _protectionSource = "";
   }
 

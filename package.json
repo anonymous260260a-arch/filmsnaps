@@ -10,7 +10,16 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
-    "postinstall": "pnpm --filter @filmsnaps/shared build",
+    "devDependencies": {
+      "turbo": "^2.0.0",
+      "prettier": "^3.0.0",
+      "vitest": "^3.2.1",
+      "@vitest/coverage-v8": "^3.2.1",
+      "husky": "^9.1.7",
+      "lint-staged": "^15.5.2",
+      "patch-package": "^6.5.1",
+      "postinstall-postinstall": "^2.1.0"
+    },
     "build:shared": "cd packages/shared && pnpm build",
     "compile:filters": "cd packages/filter-compiler && node dist/compile.js",
     "build:filters": "cd packages/filter-compiler && pnpm build",
@@ -26,12 +35,13 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "turbo": "^2.0.0",
-    "prettier": "^3.0.0",
-    "vitest": "^3.2.1",
     "@vitest/coverage-v8": "^3.2.1",
     "husky": "^9.1.7",
-    "lint-staged": "^15.5.2"
+    "lint-staged": "^15.5.2",
+    "patch-package": "^6.5.1",
+    "prettier": "^3.0.0",
+    "turbo": "^2.0.0",
+    "vitest": "^3.2.1"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [

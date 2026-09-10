@@ -20,6 +20,8 @@
  *      hole worth surfacing.
  */
 
+import { security } from "../lib/log";
+
 /**
  * Emit structural warnings for the provider session. Returns the number of
  * warnings emitted (for tests/CI gating).
@@ -33,7 +35,7 @@ export function auditProviderSessionWarnings(options: {
   warn?: (message: string) => void;
 }): number {
   const warn =
-    options.warn ?? ((m: string) => console.warn(`[Structural] ${m}`));
+    options.warn ?? ((m: string) => security.warn(`[Structural] ${m}`));
   let count = 0;
 
   // 1. Widevine on the provider session.
@@ -67,7 +69,7 @@ export function auditPreloadObserverBookkeeping(
   } = {},
 ): number {
   const warn =
-    options.warn ?? ((m: string) => console.warn(`[Structural] ${m}`));
+    options.warn ?? ((m: string) => security.warn(`[Structural] ${m}`));
   let count = 0;
 
   if (!preloadSource) return 0;
@@ -103,7 +105,7 @@ export function auditMainFramePopUnder(options: {
 }): boolean {
   const { windowFeatures, frameUrl } = options;
   const warn =
-    options.warn ?? ((m: string) => console.warn(`[Structural] ${m}`));
+    options.warn ?? ((m: string) => security.warn(`[Structural] ${m}`));
 
   // Pop-under signature: width + height present in the features string at the
   // ROOT context (Chromium pop-unders are opened from the top frame).

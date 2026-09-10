@@ -11,34 +11,34 @@
  * No dependencies, ~350 lines.
  */
 
-'use client';
+"use client";
 
 // ── EBML element IDs (raw bytes including VINT marker bits) ─────────
 
-const ELEM_EBML = 0x1A45DFA3;
+const ELEM_EBML = 0x1a45dfa3;
 const ELEM_SEGMENT = 0x18538067;
-const ELEM_SEEK_HEAD = 0x114D9B74;
-const ELEM_INFO = 0x1549A966;
-const ELEM_TIMECODE_SCALE = 0x2AD7B1;
+const ELEM_SEEK_HEAD = 0x114d9b74;
+const ELEM_INFO = 0x1549a966;
+const ELEM_TIMECODE_SCALE = 0x2ad7b1;
 const ELEM_DURATION = 0x4489;
-const ELEM_TRACKS = 0x1654AE6B;
-const ELEM_TRACK_ENTRY = 0xAE;
-const ELEM_TRACK_NUMBER = 0xD7;
+const ELEM_TRACKS = 0x1654ae6b;
+const ELEM_TRACK_ENTRY = 0xae;
+const ELEM_TRACK_NUMBER = 0xd7;
 const ELEM_TRACK_TYPE = 0x83;
 const ELEM_CODEC_ID = 0x86;
-const ELEM_CODEC_PRIVATE = 0x63A2;
-const ELEM_LANGUAGE = 0x22B59C;
-const ELEM_PIXEL_WIDTH = 0xB0;
-const ELEM_PIXEL_HEIGHT = 0xBA;
-const ELEM_CHANNELS = 0x9B;
-const ELEM_SAMPLE_RATE = 0x9A;
-const ELEM_CLUSTER = 0x1F43B675;
-const ELEM_CLUSTER_TIMECODE = 0xE7;
-const ELEM_SIMPLE_BLOCK = 0xA3;
-const ELEM_BLOCK_GROUP = 0xA0;
-const ELEM_BLOCK = 0xA1;
-const ELEM_BLOCK_DURATION = 0xAB;
-const ELEM_REFERENCE_BLOCK = 0xFB;
+const ELEM_CODEC_PRIVATE = 0x63a2;
+const ELEM_LANGUAGE = 0x22b59c;
+const ELEM_PIXEL_WIDTH = 0xb0;
+const ELEM_PIXEL_HEIGHT = 0xba;
+const ELEM_CHANNELS = 0x9b;
+const ELEM_SAMPLE_RATE = 0x9a;
+const ELEM_CLUSTER = 0x1f43b675;
+const ELEM_CLUSTER_TIMECODE = 0xe7;
+const ELEM_SIMPLE_BLOCK = 0xa3;
+const ELEM_BLOCK_GROUP = 0xa0;
+const ELEM_BLOCK = 0xa1;
+const ELEM_BLOCK_DURATION = 0xab;
+const ELEM_REFERENCE_BLOCK = 0xfb;
 
 // ── Matroska Master Elements ───────────────────────────────────────
 // These contain child elements rather than immediate data
@@ -58,7 +58,7 @@ const MASTER_ELEMENTS = new Set<number>([
 
 export interface TrackMeta {
   trackNumber: number;
-  trackType: number;        // 1=video, 2=audio, 3=subtitle
+  trackType: number; // 1=video, 2=audio, 3=subtitle
   codecId: string;
   codecPrivate?: Uint8Array;
   language: string;
@@ -70,7 +70,7 @@ export interface TrackMeta {
 
 export interface ParsedBlock {
   trackNumber: number;
-  timecode: number;         // absolute timestamp in microseconds
+  timecode: number; // absolute timestamp in microseconds
   isKeyframe: boolean;
   data: Uint8Array;
 }
@@ -123,7 +123,7 @@ function readVintValue(
   if (offset + vintLen > bytes.length) return null;
 
   // Mask to clear the VINT marker bits in the first byte
-  const mask = 0xFF >> vintLen;
+  const mask = 0xff >> vintLen;
   let value = firstByte & mask;
   for (let i = 1; i < vintLen; i++) {
     value = (value << 8) | bytes[offset + i];
@@ -131,7 +131,7 @@ function readVintValue(
 
   // Check for unknown-size sentinel (all data bits = 1)
   // Total data bits = (first byte has 8-vintLen data bits) + (vintLen-1 full bytes)
-  const dataBits = (8 - vintLen) + 8 * (vintLen - 1);
+  const dataBits = 8 - vintLen + 8 * (vintLen - 1);
   const maxValue = (1 << dataBits) - 1;
   if (value === maxValue) {
     return { value: -1, length: vintLen, unknown: true };
@@ -161,7 +161,7 @@ function readUint(data: Uint8Array): number {
 }
 
 function readString(data: Uint8Array): string {
-  return new TextDecoder().decode(data).replace(/\0+$/, '');
+  return new TextDecoder().decode(data).replace(/\0+$/, "");
 }
 
 // ── SimpleBlock parser ─────────────────────────────────────────────
@@ -183,7 +183,11 @@ function parseSimpleBlock(
 
   // Timecode (int16, signed, relative to cluster in ms)
   if (offset + 2 > data.length) return [];
-  const relativeTimecode = new DataView(data.buffer, data.byteOffset + offset, 2).getInt16(0, false);
+  const relativeTimecode = new DataView(
+    data.buffer,
+    data.byteOffset + offset,
+    2,
+  ).getInt16(0, false);
   offset += 2;
 
   // Flags
@@ -247,7 +251,7 @@ function parseSimpleBlock(
         const byte = data[offset];
         offset++;
         size += byte;
-        if (byte !== 0xFF) break;
+        if (byte !== 0xff) break;
       }
       frameSizes.push(size);
       sum += size;
@@ -309,7 +313,9 @@ export class StreamingMkvParser {
    * Start parsing from a ReadableStream reader.
    * Resolves when the stream ends (not when playback is complete).
    */
-  async parseStream(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  async parseStream(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+  ): Promise<void> {
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -368,7 +374,8 @@ export class StreamingMkvParser {
         this.contextRemaining.length > 0 &&
         this.contextRemaining[this.contextRemaining.length - 1] >= 0
       ) {
-        const remaining = this.contextRemaining[this.contextRemaining.length - 1];
+        const remaining =
+          this.contextRemaining[this.contextRemaining.length - 1];
         if (headerSize + dataSize > remaining) {
           // We've consumed all of the current master's data — pop and re-check
           this.contextRemaining.pop();
@@ -378,7 +385,8 @@ export class StreamingMkvParser {
       }
 
       // Check if the full element data is available in the buffer
-      const elementEnd = this.offset + headerSize + (dataSize >= 0 ? dataSize : 0);
+      const elementEnd =
+        this.offset + headerSize + (dataSize >= 0 ? dataSize : 0);
       if (elementEnd > this.buffer.length) {
         // Need more data
         if (dataSize < 0) {
@@ -430,7 +438,10 @@ export class StreamingMkvParser {
     const idResult = readElementId(this.buffer, this.offset);
     if (!idResult) return null;
 
-    const sizeResult = readVintValue(this.buffer, this.offset + idResult.length);
+    const sizeResult = readVintValue(
+      this.buffer,
+      this.offset + idResult.length,
+    );
     if (!sizeResult) return null;
 
     const dataSize = sizeResult.unknown ? -1 : sizeResult.value;
@@ -438,7 +449,11 @@ export class StreamingMkvParser {
     // Sanity check: dataSize should not be astronomically large for non-master elements
     // (this prevents OOM from corrupt data)
     if (dataSize > 500_000_000 && !MASTER_ELEMENTS.has(idResult.id)) {
-      this.onError?.(new Error(`Element 0x${idResult.id.toString(16)} has implausible dataSize ${dataSize}`));
+      this.onError?.(
+        new Error(
+          `Element 0x${idResult.id.toString(16)} has implausible dataSize ${dataSize}`,
+        ),
+      );
       return null;
     }
 
@@ -517,7 +532,7 @@ export class StreamingMkvParser {
           trackNumber: track.trackNumber,
           trackType: track.trackType,
           codecId: track.codecId,
-          language: track.language || 'eng',
+          language: track.language || "eng",
           codecPrivate: track.codecPrivate,
           width: track.width,
           height: track.height,
@@ -542,7 +557,8 @@ export class StreamingMkvParser {
     if (this.inSegment && !this.inCluster) {
       switch (id) {
         case ELEM_DURATION:
-          this.duration = readFloat(data) * (this.timecodeScale / 1_000_000_000);
+          this.duration =
+            readFloat(data) * (this.timecodeScale / 1_000_000_000);
           this.tryEmitMetadata();
           return;
         case ELEM_TIMECODE_SCALE:
@@ -612,7 +628,11 @@ export class StreamingMkvParser {
   // ── SimpleBlock → ParsedBlock emission ─────────────────────────
 
   private emitSimpleBlocks(data: Uint8Array): void {
-    const blocks = parseSimpleBlock(data, this.clusterTimecode, this.timecodeScale);
+    const blocks = parseSimpleBlock(
+      data,
+      this.clusterTimecode,
+      this.timecodeScale,
+    );
     for (const block of blocks) {
       // Skip audio tracks that aren't the selected one (if selection is active)
       const track = this.tracks.get(block.trackNumber);
@@ -647,31 +667,39 @@ export class StreamingMkvParser {
 // ── Codec Mapping (Matroska → WebCodecs) ────────────────────────────
 
 const VIDEO_CODEC_MAP: Record<string, string[]> = {
-  'V_MPEGH/ISO/HEVC': [
-    'hev1.1.6.L150.B0',   // Main, Level 5.0
-    'hev1.1.6.L120.B0',   // Main, Level 4.0
-    'hvc1.1.6.L150.B0',   // hvc1 brand
-    'hev1.2.4.L150.B0',   // Main10, Level 5.0
-    'hvc1.2.4.L150.B0',   // Main10, hvc1 brand
-    'hev1.1.6.L93.B0',    // Main, Level 3.1
-    'hev1.2.4.L120.B0',   // Main10, Level 4.0
+  "V_MPEGH/ISO/HEVC": [
+    "hev1.1.6.L150.B0", // Main, Level 5.0
+    "hev1.1.6.L120.B0", // Main, Level 4.0
+    "hvc1.1.6.L150.B0", // hvc1 brand
+    "hev1.2.4.L150.B0", // Main10, Level 5.0
+    "hvc1.2.4.L150.B0", // Main10, hvc1 brand
+    "hev1.1.6.L93.B0", // Main, Level 3.1
+    "hev1.2.4.L120.B0", // Main10, Level 4.0
   ],
-  'V_MPEGH/ISO/HEVC/HDR': [
-    'hev1.2.6.L150.B0',
-    'hev1.2.6.L120.B0',
-    'hvc1.2.6.L150.B0',
+  "V_MPEGH/ISO/HEVC/HDR": [
+    "hev1.2.6.L150.B0",
+    "hev1.2.6.L120.B0",
+    "hvc1.2.6.L150.B0",
   ],
-  'V_MPEGH/ISO/HEVC/HDR10': [
-    'hev1.2.6.L150.B0',
-    'hev1.2.6.L120.B0',
-    'hvc1.2.6.L150.B0',
+  "V_MPEGH/ISO/HEVC/HDR10": [
+    "hev1.2.6.L150.B0",
+    "hev1.2.6.L120.B0",
+    "hvc1.2.6.L150.B0",
   ],
-  'V_MPEG4/ISO/AVC': ['avc1.64001f'],
-  'V_VP9': ['vp09.00.10.08'],
-  'V_AV1': ['av01.0.00M.08'],
+  "V_MPEG4/ISO/AVC": [
+    "avc1.42E01F", // Constrained Baseline, Level 3.1
+    "avc1.4D401F", // Main, Level 3.1
+    "avc1.64001F", // High, Level 3.1
+    "avc1.640028", // High, Level 4.0
+    "avc1.640032", // High, Level 5.0
+    "avc1.640034", // High, Level 5.1
+    "avc1.42E028", // Constrained Baseline, Level 4.0
+  ],
+  V_VP9: ["vp09.00.10.08"],
+  V_AV1: ["av01.0.00M.08"],
 };
 
-const DEFAULT_HEVC_CANDIDATES = VIDEO_CODEC_MAP['V_MPEGH/ISO/HEVC'];
+const DEFAULT_HEVC_CANDIDATES = VIDEO_CODEC_MAP["V_MPEGH/ISO/HEVC"];
 
 /** Get WebCodecs codec string candidates for a Matroska video codec ID. */
 export function getVideoCodecCandidates(codecId: string): string[] {
@@ -687,84 +715,104 @@ export function getVideoCodecCandidates(codecId: string): string[] {
  * Returns true if ANY method reports support.
  */
 export async function checkHevcSupport(): Promise<boolean> {
-  if (typeof window === 'undefined') return false; // SSR guard
+  if (typeof window === "undefined") return false; // SSR guard
   const diag: string[] = [];
 
   // ── Method 1: WebCodecs VideoDecoder.isConfigSupported ──
-  if (typeof VideoDecoder !== 'undefined') {
+  if (typeof VideoDecoder !== "undefined") {
     for (const codec of DEFAULT_HEVC_CANDIDATES) {
       try {
         // Include width/height hints — some browser implementations
         // need them to validate the config against hardware capabilities
-        const cfg: VideoDecoderConfig = { codec, codedWidth: 1920, codedHeight: 1080 };
+        const cfg: VideoDecoderConfig = {
+          codec,
+          codedWidth: 1920,
+          codedHeight: 1080,
+        };
         const result = await VideoDecoder.isConfigSupported(cfg);
-        diag.push(`VD:${codec.split('.')[0]}..=${result.supported}`);
+        diag.push(`VD:${codec.split(".")[0]}..=${result.supported}`);
         if (result.supported) {
           console.log(`[HEVC] Supported via VideoDecoder: ${codec}`);
           return true;
         }
       } catch (e) {
-        diag.push(`VD:${codec.split('.')[0]}..=ERR`);
+        diag.push(`VD:${codec.split(".")[0]}..=ERR`);
       }
     }
   } else {
-    diag.push('VD:unavailable');
+    diag.push("VD:unavailable");
   }
 
   // ── Method 2: MediaSource.isTypeSupported (MSE API) ──
-  if (typeof MediaSource !== 'undefined' && typeof MediaSource.isTypeSupported === 'function') {
-    for (const codec of ['hev1.1.6.L150.B0', 'hvc1.1.6.L150.B0', 'hev1.1.6.L120.B0', 'hvc1.1.6.L120.B0']) {
+  if (
+    typeof MediaSource !== "undefined" &&
+    typeof MediaSource.isTypeSupported === "function"
+  ) {
+    for (const codec of [
+      "hev1.1.6.L150.B0",
+      "hvc1.1.6.L150.B0",
+      "hev1.1.6.L120.B0",
+      "hvc1.1.6.L120.B0",
+    ]) {
       try {
         const mime = `video/mp4;codecs="${codec}"`;
         const ok = MediaSource.isTypeSupported(mime);
-        diag.push(`MS:${codec.split('.')[0]}..=${ok}`);
+        diag.push(`MS:${codec.split(".")[0]}..=${ok}`);
         if (ok) {
           console.log(`[HEVC] Supported via MediaSource: ${codec}`);
           return true;
         }
       } catch {
-        diag.push(`MS:${codec.split('.')[0]}..=ERR`);
+        diag.push(`MS:${codec.split(".")[0]}..=ERR`);
       }
     }
   } else {
-    diag.push('MS:unavailable');
+    diag.push("MS:unavailable");
   }
 
   // ── Method 3: HTMLVideoElement.canPlayType (legacy) ──
   try {
-    const v = document.createElement('video');
-    for (const codec of ['hev1.1.6.L150.B0', 'hvc1.1.6.L150.B0', 'hev1.1.6.L120.B0', 'hvc1.1.6.L120.B0']) {
+    const v = document.createElement("video");
+    for (const codec of [
+      "hev1.1.6.L150.B0",
+      "hvc1.1.6.L150.B0",
+      "hev1.1.6.L120.B0",
+      "hvc1.1.6.L120.B0",
+    ]) {
       const mime = `video/mp4;codecs="${codec}"`;
       const result = v.canPlayType(mime);
-      diag.push(`CPT:${codec.split('.')[0]}..=${result}`);
-      if (result === 'probably' || result === 'maybe') {
+      diag.push(`CPT:${codec.split(".")[0]}..=${result}`);
+      if (result === "probably" || result === "maybe") {
         console.log(`[HEVC] Supported via canPlayType: ${codec}`);
         return true;
       }
     }
   } catch {
-    diag.push('CPT:ERR');
+    diag.push("CPT:ERR");
   }
 
-  console.warn(`[HEVC] All detection methods returned false. Diagnostics:`, diag.join(', '));
+  console.warn(
+    `[HEVC] All detection methods returned false. Diagnostics:`,
+    diag.join(", "),
+  );
   return false;
 }
 
 const AUDIO_CODEC_MAP: Record<string, string> = {
-  'A_AAC': 'mp4a.40.2',
-  'A_AAC/MPEG4/LC': 'mp4a.40.2',
-  'A_AAC/MPEG4/LC/SBR': 'mp4a.40.2',
-  'A_AAC/MPEG4/HE': 'mp4a.40.5',
-  'A_AAC/MPEG4/HE/SBR': 'mp4a.40.5',
-  'A_AC3': 'ac-3',
-  'A_EAC3': 'ec-3',
-  'A_OPUS': 'opus',
-  'A_VORBIS': 'vorbis',
-  'A_FLAC': 'flac',
-  'A_PCM/INT/BIG': 'pcm-s16be',
-  'A_PCM/INT/LIT': 'pcm-s16le',
+  A_AAC: "mp4a.40.2",
+  "A_AAC/MPEG4/LC": "mp4a.40.2",
+  "A_AAC/MPEG4/LC/SBR": "mp4a.40.2",
+  "A_AAC/MPEG4/HE": "mp4a.40.5",
+  "A_AAC/MPEG4/HE/SBR": "mp4a.40.5",
+  A_AC3: "ac-3",
+  A_EAC3: "ec-3",
+  A_OPUS: "opus",
+  A_VORBIS: "vorbis",
+  A_FLAC: "flac",
+  "A_PCM/INT/BIG": "pcm-s16be",
+  "A_PCM/INT/LIT": "pcm-s16le",
 };
 
 export function mapAudioCodec(codecId: string): string {
-  return AUDIO_CODEC_MAP[codecId] || 'mp4a.40.2';
+  return AUDIO_CODEC_MAP[codecId] || "mp4a.40.2";
 }

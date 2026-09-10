@@ -221,6 +221,29 @@ export const PROVIDERS: ProviderDefinition[] = [
     },
     platforms: ["mobile"],
   },
+  // ── Direct-Play (universal format) ───────────────────────────────
+  // TBS: The URL source format is not yet wired — this provider serves raw
+  // video file URLs (MP4, HLS, DASH, MKV, WebM, AV1, HEVC, etc.) and is routed
+  // to DirectVideoPlayer (format-agnostic) instead of SecureIframe.
+  // Enable when the video URL endpoint is specified.
+  {
+    id: "direct",
+    name: "Direct",
+    displayName: "Direct-Play",
+    note: "Universal format · Direct streaming",
+    order: 8,
+    baseUrl: "",
+    // URL is built at runtime from the resolved video source — not a static
+    // embed path. The embed functions are placeholders; the actual URL comes
+    // from the provider's API (resolved server-side via /api/player/direct).
+    embed: {
+      movie: (id) => `/api/id/${id}`,
+      tv: (id) => `/api/id/${id}`,
+    },
+    // No platforms restriction — visible on all platforms once enabled.
+    // No sandbox needed — the player renders a direct <video> / WebCodecs
+    // canvas, NOT an iframe.
+  },
   // ── Server 22 (disabled — was Server 5) ──────────────────────
   {
     id: "multiembed",

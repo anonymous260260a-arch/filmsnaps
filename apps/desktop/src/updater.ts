@@ -13,6 +13,7 @@
  */
 
 import { BrowserWindow } from "electron";
+import { updater as logUpdater } from "./lib/log";
 
 // Lazy-loaded — electron-updater crashes outside production builds
 // because it reads app.getVersion() at module init time
@@ -73,12 +74,12 @@ function attachHandlers(): void {
   const a = getAutoUpdater();
 
   a.on("checking-for-update", () => {
-    console.log("[Updater] Checking for updates...");
+    logUpdater.log("[Updater] Checking for updates...");
     sendStatus({ type: "checking" });
   });
 
   a.on("update-available", (info: any) => {
-    console.log(`[Updater] Update available: v${info.version}`);
+    logUpdater.log(`[Updater] Update available: v${info.version}`);
     sendStatus({
       type: "available",
       version: info.version,
@@ -87,13 +88,13 @@ function attachHandlers(): void {
     });
     // Auto-start download
     a.downloadUpdate().catch((err: any) => {
-      console.error("[Updater] Download failed:", err);
+      logUpdater.error("[Updater] Download failed:", err);
       sendStatus({ type: "error", message: err.message });
     });
   });
 
   a.on("update-not-available", () => {
-    console.log("[Updater] No updates available");
+    logUpdater.log("[Updater] No updates available");
     sendStatus({ type: "not-available" });
   });
 
@@ -108,12 +109,12 @@ function attachHandlers(): void {
   });
 
   a.on("update-downloaded", (info: any) => {
-    console.log(`[Updater] Update downloaded: v${info.version}`);
+    logUpdater.log(`[Updater] Update downloaded: v${info.version}`);
     sendStatus({ type: "downloaded", version: info.version });
   });
 
   a.on("error", (err: Error) => {
-    console.error("[Updater] Error:", err.message);
+    logUpdater.error("[Updater] Error:", err.message);
     sendStatus({ type: "error", message: err.message });
   });
 }
@@ -127,7 +128,7 @@ function attachHandlers(): void {
 export function initUpdater(): void {
   // In dev, don't actually check — only in production builds
   if (process.argv.includes("--dev")) {
-    console.log("[Updater] Skipping update check in dev mode");
+    logUpdater.log("[Updater] Skipping update check in dev mode");
     return;
   }
 
@@ -140,16 +141,16 @@ export function initUpdater(): void {
     // Access the child process via the app's before-quit handler (main.ts)
     // — this event fires before before-quit, so the server is still alive.
     // The child is also killed in main.ts before-quit as a safety net.
-    console.log("[Updater] Pre-update cleanup: killing Next.js server");
+    logUpdater.log("[Updater] Pre-update cleanup: killing Next.js server");
   });
 
   // Give the app a moment to fully boot, then check
   setTimeout(() => {
-    console.log("[Updater] Starting update check...");
+    logUpdater.log("[Updater] Starting update check...");
     getAutoUpdater()
       .checkForUpdates()
       .catch((err: any) => {
-        console.error("[Updater] Check failed:", err.message);
+        logUpdater.error("[Updater] Check failed:", err.message);
       });
   }, 5000);
 }
@@ -170,7 +171,7 @@ export function checkForUpdates(): void {
   getAutoUpdater()
     .checkForUpdates()
     .catch((err: any) => {
-      console.error("[Updater] Manual check failed:", err.message);
+      logUpdater.error("[Updater] Manual check failed:", err.message);
     });
 }
 

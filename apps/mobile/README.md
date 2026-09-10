@@ -1,8 +1,9 @@
 # `@filmsnaps/mobile` — Mobile App
 
 Expo / React Native app for Android and iOS. Content discovery, watchlist &
-history, SQLite-backed downloads, and a native hardened player powered by the
-`player-webview` Expo module.
+history, SQLite-backed downloads, and two playback paths: a direct-stream
+player built on expo-video (with a vendored MKV extractor) and a native
+hardened provider player powered by the `player-webview` Expo module.
 
 ## Stack
 
@@ -20,18 +21,45 @@ history, SQLite-backed downloads, and a native hardened player powered by the
 ```
 app/                      Expo Router routes (tabs, movie, tv, watch, download, history, …)
 components/               UI components
-  VideoWebView.tsx        Player host — injects the shared guard bundle, drives PlayerWebView
-  player/                 Player controls, server picker, episode rail, subtitles
+  VideoWebView.tsx        Provider player host — injects the shared guard bundle, drives PlayerWebView
+  HevcPlayer.tsx          Direct-stream player — source probing/fallback, rebuffer watchdog,
+                          remembered-source promotion, adaptive buffer profiles
+  player/                 Player controls, server picker, episode rail, subtitles,
+                          ExpoVideoAdapter (expo-video PlayerAdapter implementation)
 modules/player-webview/   Native hardened player (Android + iOS)
 lib/
   api.ts                  TMDB client
+  streamSelector.ts       Candidate link discovery + ranking across providers
+  streamValidator.ts      Range-probe validation — container-signature check before playback
+  streamPrefetch.ts       Stream cache for instant replay of a title
+  playerConfig.ts         Player tuning (JS + native knobs) with remote override —
+                          GET {API}/api/player-config; post-ship fixes without a store release
+  subtitleSearch.ts       Online subtitles — server /api/subtitles proxy runs the
+                          Subdl→Wyzie fallback chain (keys stay server-side); on
+                          double rate-limit the sheet shows "not found"
+  bufferProfiles.ts       Per-format ExoPlayer buffer profiles (start/rebuffer/forward targets)
+  lastWorkingSource.ts    Remembers the server URL that last played per title
+  networkMonitor.ts       On-device bandwidth measurement
+  perfMetrics.ts          Player perf session telemetry (logs only, stays on device)
+  hevc.ts                 MKV/HEVC format detection helpers
+  nxshaApi.ts             NXSha provider API (AES-CBC request encoding)
   download/               Download engine (manager, store, SQLite, native adapter)
   watchHistory.ts         Watch progress/history
   settings.tsx            App settings (incl. global `mode`: `movie_tv` | `anime`)
   introDetect.ts          Skip-intro detection
   anime/                  Anime mode: AniList search, MAL/AniList ID resolution
                           (OTA-bundled `anime-map.json`), threaded into the player
+patches/                  (repo root) pnpm patch for expo-video@55.0.18 — vendored
+                          SecondarySeekHeadMatroskaExtractor, HTTP traffic diagnostics,
+                          JS-tunable knobs (MKV extractor kill switch, HTTP timeouts,
+                          default headers), sidecar-subtitle support
 ```
+
+Playback pipeline: `watch/[...id]` resolves candidates (`streamSelector`) →
+probes/validates them on-device (`streamValidator`) → promotes the last
+working source (`lastWorkingSource`) → plays direct links through
+`HevcPlayer` (expo-video + the vendored MKV extractor), falling back to the
+sandboxed `VideoWebView` provider player when no direct link survives.
 
 ## Run
 

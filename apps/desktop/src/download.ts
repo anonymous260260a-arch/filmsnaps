@@ -39,6 +39,7 @@ import {
   unlinkSync,
 } from "fs";
 import { randomUUID } from "crypto";
+import { main as logMain } from "./lib/log";
 
 export type DownloadStatus =
   | "active"
@@ -449,5 +450,5 @@ export function initDownloadManager(getWindow: WindowGetter): void {
   if (manager) return;
   manager = new DownloadManager(getWindow);
   manager.init();
-  console.log("[Main] DownloadManager initialized");
+  logMain.log("DownloadManager initialized");
 }

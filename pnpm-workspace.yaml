@@ -1,7 +1,9 @@
 packages:
-  - 'apps/*'
-  - 'packages/*'
+  - apps/*
+  - packages/*
 allowBuilds:
   esbuild: true
   sharp: true
   workerd: true
+patchedDependencies:
+  expo-video@55.0.18: patches/expo-video@55.0.18.patch

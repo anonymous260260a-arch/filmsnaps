@@ -10,6 +10,14 @@ commit.
 | [Security](security.md)         | The full security stack: threat model, R0–R8 cascade, L2–L8 desktop layers, mobile native protection, `providers.json` + `filters.txt` v5 config, Ed25519 OTA, audit diagnostics. |
 | [Packages](packages.md)         | The internal workspace packages (`shared`, `adblock-config`, `filter-compiler`) and how to add a new one.                                                                         |
 
+## Player & streaming (mobile)
+
+| Doc                                                                     | Contents                                                                                                                                                   |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [MKV secondary-SeekHead extractor](mkV-secondary-seekhead-extractor.md) | The vendored `SecondarySeekHeadMatroskaExtractor` in `patches/expo-video@55.0.18.patch` — problem, byte-level evidence, design, verification, maintenance. |
+| [Patching expo-video](expo-video-patching.md)                           | How to edit, commit, and verify the `expo-video` pnpm patch: lockfile hash reconciliation, `buildFromSource`, Windows pitfalls, compile checks.            |
+| [NXSha download API findings](nxsha-download-api-findings.md)           | Reverse-engineered API responses from the NXSha download provider (2026-08-22).                                                                            |
+
 ## Architecture decision records (ADR)
 
 | Doc                                  | Decision                                                            |

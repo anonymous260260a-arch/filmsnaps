@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "2.2.0",
+      "date": "2026-09-10",
+      "releaseNotes": "Direct on-device streaming: stream links are fetched straight from the provider on your device for faster starts, backed by a remote-updatable provider registry so source domains can change without an app update. Self-healing playback: if a source dies or times out, the player automatically switches to the next provider, with a new Try Another Server button. Continue Watching pre-warms and validates streams for your top 3 resume titles in the background — including the next episode of titles you finished. Player overhaul: audio track sheet, subtitle sheet with server-side search, player settings, stream picker, double-tap seek with ripple feedback, refined progress bar, and a first-run language prompt. Reliability fixes: video and audio now stop when you minimize the app, the back-press toast auto-hides, the Continue Watching row scrolls horizontally, and the loading spinner no longer sticks after returning from minimize. Smarter streaming: network speed badge, adaptive buffer profiles, byte-level stream validation (fewer falsely-dead sources), and last-working-source memory.",
+      "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.2.0/filmsnaps-v2.2.0.apk",
+      "size": "~90 MB"
+    },
+    {
       "version": "2.1.0",
       "date": "2026-08-24",
       "releaseNotes": "Full anime support: Anime mode toggle surfaces anime titles via AniList search and routes playback to MegaPlay. Every anime title auto-matches to its MyAnimeList / AniList ID with automatic 410 fallback between ID spaces. Movie/TV and anime libraries stay separate — watch history, continue-watching, and saved lists are organized by content type, and any title always opens with the correct set of servers regardless of active mode. Search filter simplified to Movies/TV and Anime. Version-gated in-app announcement drives users to the website download.",

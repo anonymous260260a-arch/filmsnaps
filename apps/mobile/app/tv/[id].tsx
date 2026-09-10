@@ -38,6 +38,8 @@ import {
 import { getResumePoint } from "../../lib/watchHistory";
 import { downloadToast } from "../../lib/download";
 import { prefetchArtwork } from "../../lib/prefetchArtwork";
+import { prefetchStreams } from "../../lib/streamPrefetch";
+import { useSettings } from "../../lib/settings";
 import type { WatchProgress } from "../../lib/watchHistory";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
@@ -50,6 +52,7 @@ export default function TVDetailScreen() {
   const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = useWindowDimensions();
+  const { settings } = useSettings();
   const { data, isLoading } = useTVDetails(id!);
 
   const BACKDROP_HEIGHT = Math.min(SCREEN_HEIGHT * 0.42, 350);
@@ -73,9 +76,20 @@ export default function TVDetailScreen() {
       isBookmarked(id!).then(setBookmarked);
       getResumePoint(id!, "tv").then((p) => {
         if (p) setResumeState(p);
+        // Pre-warm stream links for the resume episode (or first episode)
+        const season = p?.season ?? 1;
+        const episode = p?.episode ?? 1;
+        prefetchStreams(parseInt(id), "tv", season, episode, {
+          cellularMaxMB: settings.cellularMaxMB,
+          maxQuality: settings.maxQuality,
+          preferredAudioLanguage: settings.preferredAudioLanguage,
+        }).catch((err) => {
+          console.log(`[TVDetail] Prefetch failed:`, err?.message);
+        });
       });
     }
-  }, [id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, settings]);
 
   const toggleBookmark = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

@@ -6,9 +6,10 @@
  * No external dependencies needed.
  */
 
-import { app, BrowserWindow, Rectangle, screen } from 'electron';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { app, BrowserWindow, Rectangle, screen } from "electron";
+import { readFileSync, writeFileSync, existsSync } from "fs";
+import { join } from "path";
+import { main as logMain } from "./log";
 
 interface WindowState {
   x?: number;
@@ -24,14 +25,14 @@ const DEFAULT_HEIGHT = 800;
 let savedBounds: Rectangle | null = null;
 
 function getStatePath(): string {
-  return join(app.getPath('userData'), 'window-state.json');
+  return join(app.getPath("userData"), "window-state.json");
 }
 
 function loadState(): WindowState | null {
   try {
     const statePath = getStatePath();
     if (!existsSync(statePath)) return null;
-    const raw = readFileSync(statePath, 'utf-8');
+    const raw = readFileSync(statePath, "utf-8");
     return JSON.parse(raw) as WindowState;
   } catch {
     return null;
@@ -41,9 +42,9 @@ function loadState(): WindowState | null {
 function saveState(state: WindowState): void {
   try {
     const statePath = getStatePath();
-    writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
+    writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
   } catch (err) {
-    console.warn('[WindowState] Failed to save:', err);
+    logMain.warn("[WindowState] Failed to save:", err);
   }
 }
 
@@ -52,7 +53,9 @@ function saveRestoreBounds(bounds: Rectangle): void {
 }
 
 function restoreBounds(): Rectangle {
-  return savedBounds || { x: 0, y: 0, width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT };
+  return (
+    savedBounds || { x: 0, y: 0, width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
+  );
 }
 
 /**
@@ -96,12 +99,20 @@ export function loadWindowState(): Partial<Electron.BrowserWindowConstructorOpti
   const displayBounds = screen.getPrimaryDisplay().workArea;
 
   // Ensure the window is visible on the current display
-  const x = saved.x !== undefined
-    ? Math.max(displayBounds.x, Math.min(saved.x, displayBounds.x + displayBounds.width - 200))
-    : undefined;
-  const y = saved.y !== undefined
-    ? Math.max(displayBounds.y, Math.min(saved.y, displayBounds.y + displayBounds.height - 200))
-    : undefined;
+  const x =
+    saved.x !== undefined
+      ? Math.max(
+          displayBounds.x,
+          Math.min(saved.x, displayBounds.x + displayBounds.width - 200),
+        )
+      : undefined;
+  const y =
+    saved.y !== undefined
+      ? Math.max(
+          displayBounds.y,
+          Math.min(saved.y, displayBounds.y + displayBounds.height - 200),
+        )
+      : undefined;
   const width = Math.min(saved.width, displayBounds.width);
   const height = Math.min(saved.height, displayBounds.height);
 

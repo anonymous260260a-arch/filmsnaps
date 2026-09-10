@@ -215,6 +215,79 @@ export interface ElectronAPI {
      */
     getDetail: <T = unknown>(tmdbId: string) => Promise<T>;
   };
+
+  /**
+   * mpv engine namespace. Universal format playback via mpv child process
+   * with real-time event-driven IPC over named pipe.
+   * Desktop-only — undefined in web builds.
+   */
+  mpv?: {
+    start: () => Promise<{ ready: boolean }>;
+    destroy: () => Promise<void>;
+    play: (url: string) => Promise<{ success: boolean }>;
+    pause: () => Promise<void>;
+    resume: () => Promise<void>;
+    stop: () => Promise<void>;
+    seek: (seconds: number) => Promise<void>;
+    setVolume: (volume: number) => Promise<void>;
+    setMuted: (muted: boolean) => Promise<void>;
+    setSpeed: (rate: number) => Promise<void>;
+    setFullscreen: (fullscreen: boolean) => Promise<void>;
+    getState: () => Promise<{
+      paused: boolean;
+      position: number;
+      duration: number;
+      volume: number;
+      muted: boolean;
+      speed: number;
+      aid: number;
+      sid: number;
+      trackList: Array<{
+        id: number;
+        type: string;
+        lang?: string;
+        title?: string;
+        codec?: string;
+      }>;
+    } | null>;
+    getAudioTracks: () => Promise<
+      Array<{
+        id: number;
+        type: string;
+        lang?: string;
+        title?: string;
+        codec?: string;
+      }>
+    >;
+    setAudioTrack: (trackId: number) => Promise<void>;
+    getSubtitleTracks: () => Promise<
+      Array<{
+        id: number;
+        type: string;
+        lang?: string;
+        title?: string;
+        codec?: string;
+      }>
+    >;
+    setSubtitleTrack: (trackId: number) => Promise<void>;
+    setVideoBounds: (bounds: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }) => Promise<void>;
+    hideVideo: () => Promise<void>;
+    showVideo: () => Promise<void>;
+    /** Real-time mpv events (playback-restart, pause, seek, etc.) */
+    onEvent: (
+      callback: (event: {
+        type: string;
+        value?: any;
+        code?: number | null;
+        message?: string;
+      }) => void,
+    ) => () => void;
+  };
 }
 
 /**
@@ -428,5 +501,57 @@ contextBridge.exposeInMainWorld("electronAPI", {
   falix: {
     getDetail: <T = unknown>(tmdbId: string) =>
       ipcRenderer.invoke("falix:detail", tmdbId) as Promise<T>,
+  },
+
+  mpv: {
+    start: () => ipcRenderer.invoke("mpv:start"),
+    destroy: () => ipcRenderer.invoke("mpv:destroy"),
+    play: (url: string) => ipcRenderer.invoke("mpv:play", url),
+    pause: () => ipcRenderer.invoke("mpv:pause"),
+    resume: () => ipcRenderer.invoke("mpv:resume"),
+    stop: () => ipcRenderer.invoke("mpv:stop"),
+    seek: (seconds: number) => ipcRenderer.invoke("mpv:seek", seconds),
+    setVolume: (volume: number) => ipcRenderer.invoke("mpv:setVolume", volume),
+    setMuted: (muted: boolean) => ipcRenderer.invoke("mpv:setMuted", muted),
+    setSpeed: (rate: number) => ipcRenderer.invoke("mpv:setSpeed", rate),
+    setFullscreen: (fullscreen: boolean) =>
+      ipcRenderer.invoke("mpv:setFullscreen", fullscreen),
+    getState: () => ipcRenderer.invoke("mpv:getState"),
+    getAudioTracks: () => ipcRenderer.invoke("mpv:getAudioTracks"),
+    setAudioTrack: (trackId: number) =>
+      ipcRenderer.invoke("mpv:setAudioTrack", trackId),
+    getSubtitleTracks: () => ipcRenderer.invoke("mpv:getSubtitleTracks"),
+    setSubtitleTrack: (trackId: number) =>
+      ipcRenderer.invoke("mpv:setSubtitleTrack", trackId),
+    setVideoBounds: (bounds: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }) => ipcRenderer.invoke("mpv:setVideoBounds", bounds),
+    hideVideo: () => ipcRenderer.invoke("mpv:hideVideo"),
+    showVideo: () => ipcRenderer.invoke("mpv:showVideo"),
+    onEvent: (
+      callback: (event: {
+        type: string;
+        value?: any;
+        code?: number | null;
+        message?: string;
+      }) => void,
+    ) => {
+      const listener = (
+        _event: unknown,
+        data: {
+          type: string;
+          value?: any;
+          code?: number | null;
+          message?: string;
+        },
+      ) => callback(data);
+      ipcRenderer.on("mpv:event", listener);
+      return () => {
+        ipcRenderer.removeListener("mpv:event", listener);
+      };
+    },
   },
 });

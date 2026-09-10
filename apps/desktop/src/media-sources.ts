@@ -31,6 +31,7 @@
 import { BrowserWindow, ipcMain, session, shell } from "electron";
 import { join } from "path";
 import crypto from "crypto";
+import { main as logMain, audit } from "./lib/log";
 
 // ── Constants ──
 
@@ -496,6 +497,21 @@ class MediaSources {
       const j = (await res.json()) as { _hash?: string };
       const decoded = j && j._hash ? nxshaDecode(j._hash) : null;
       if (!decoded) throw new Error("decode failed");
+      // Debug: log decrypted payload so source names are visible (audit path)
+      if (process.env.FILMSNAPS_AUDIT === "1") {
+        const preview = (decoded as any)?.sources
+          ? (decoded as any).sources.map((s: any) => ({
+              provider: s.provider,
+              url: (s.url || "").slice(0, 80),
+              org_uri: (s.org_uri || "").slice(0, 80),
+              label: s.label,
+            }))
+          : (decoded as any)?.servers?.map((s: any) => s.scraper);
+        // Gated by FILMSNAPS_AUDIT=1 — prints via the original console.log
+        // (bypasses the category-filter patched wrapper, since the audit env
+        // var is the trigger, not the FILMSNAPS_LOG set).
+        console.log("[nxsha-decrypt]", path, JSON.stringify(preview));
+      }
       return decoded;
     } finally {
       clearTimeout(timer);
@@ -551,6 +567,14 @@ class MediaSources {
           ? (src.sources as NxApiSource[]).filter(Boolean)
           : [];
         if (list.length === 0) continue;
+        if (process.env.FILMSNAPS_AUDIT === "1") {
+          for (const it of list) {
+            console.log(
+              "[NET] nxsha-source provider=" + (it.provider || provider),
+              "url=" + (it.url || it.org_uri || "?"),
+            );
+          }
+        }
         const links: NxshaScrapeLink[] = list.map((it) => ({
           url: String(it.url || it.org_uri || ""),
           label: String(it.label || it.quality || "").trim(),
@@ -682,5 +706,5 @@ export function initMediaSources(getWindow: WindowGetter): void {
   mediaSources.init();
   // Touch the partition once so it exists with default (unfiltered) behavior.
   session.fromPartition(MEDIA_DL_PARTITION);
-  console.log("[Main] MediaSources initialized (nxsha scraper + falix proxy)");
+  logMain.log("MediaSources initialized (nxsha scraper + falix proxy)");
 }

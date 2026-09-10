@@ -1,0 +1,23 @@
+{
+  "version": 3,
+  "providers": [
+    {
+      "id": "hdhub",
+      "apiBase": "https://hdhub.thevolecitor.qzz.io",
+      "kind": "streams",
+      "enabled": true
+    },
+    {
+      "id": "falix",
+      "apiBase": "https://dl.falixmovies.com",
+      "kind": "downloads",
+      "enabled": true
+    },
+    {
+      "id": "nxsha",
+      "apiBase": "https://web.nxsha.app",
+      "kind": "downloads",
+      "enabled": true
+    }
+  ]
+}

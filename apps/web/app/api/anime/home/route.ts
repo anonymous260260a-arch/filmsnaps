@@ -14,7 +14,7 @@ import { getCorsHeaders, handleOptions } from "@/lib/cors";
 import { lookupMal } from "@/lib/anime/resolve";
 import { desktopSkip } from "../../desktop-skip";
 
-export const dynamic = "force-static";
+// force-static removed — same fix as tmdb/search routes (was caching at build time)
 
 const ANILIST_GRAPHQL = "https://graphql.anilist.co";
 const KITSU_BASE = "https://kitsu.io/api/edge/anime";

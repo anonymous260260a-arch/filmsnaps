@@ -17,6 +17,7 @@
 
 import { ipcMain } from "electron";
 import { getCosmeticFilterPayload, initFilterEngine } from "./filter-engine";
+import { cosmetic } from "../lib/log";
 
 export interface CosmeticProbePayload {
   classes?: string[];
@@ -73,8 +74,8 @@ export function registerCosmeticFilterIPC(): void {
         try {
           hostname = new URL(pageUrl).hostname;
         } catch {}
-        console.log(
-          `[cosmetic] ${hostname}: ${result.styles?.length ?? 0} chars CSS, ${result.scripts?.length ?? 0} scriptlets (probe)`,
+        cosmetic.log(
+          `${hostname}: ${result.styles?.length ?? 0} chars CSS, ${result.scripts?.length ?? 0} scriptlets (probe)`,
         );
 
         // Per-frame injection (V4 step 6 / V5 §3.2): inject the returned styles

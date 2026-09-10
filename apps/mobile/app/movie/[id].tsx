@@ -38,6 +38,8 @@ import {
 import { getProgress } from "../../lib/watchHistory";
 import { downloadToast } from "../../lib/download";
 import { prefetchArtwork } from "../../lib/prefetchArtwork";
+import { prefetchStreams } from "../../lib/streamPrefetch";
+import { useSettings } from "../../lib/settings";
 import type { WatchProgress } from "../../lib/watchHistory";
 import { resolveMovie } from "../../lib/anime/resolve";
 import * as Haptics from "expo-haptics";
@@ -72,6 +74,7 @@ export default function MovieDetailScreen() {
   const [trailerOpen, setTrailerOpen] = useState(false);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
   const [resumeState, setResumeState] = useState<WatchProgress | null>(null);
+  const { settings } = useSettings();
   const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
 
   useEffect(() => {
@@ -82,8 +85,17 @@ export default function MovieDetailScreen() {
           if (p && p.percent > 0) setResumeState(p);
         },
       );
+      // Prefetch and validate stream links in background — cached for 5min
+      prefetchStreams(parseInt(id), "movie", undefined, undefined, {
+        cellularMaxMB: settings.cellularMaxMB,
+        maxQuality: settings.maxQuality,
+        preferredAudioLanguage: settings.preferredAudioLanguage,
+      }).catch((err) => {
+        console.log(`[MovieDetail] Prefetch failed:`, err?.message);
+      });
     }
-  }, [id, animeHit]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, animeHit, settings]);
 
   const toggleBookmark = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

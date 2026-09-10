@@ -32,6 +32,7 @@ import {
   verifyConfigFileSignature,
   verifyConfigSignature,
 } from "./provider-config";
+import { config } from "../lib/log";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -102,7 +103,7 @@ function logHealEvent(event: {
       event.detail ? `detail=${event.detail}` : "",
     ].filter(Boolean);
     appendFileSync(healLogPath(), parts.join(" | ") + "\n", "utf-8");
-    console.log(`[HealEvents] ${parts.join(" | ")}`);
+    config.log(`[HealEvents] ${parts.join(" | ")}`);
   } catch {
     // Logging must never crash the app.
   }

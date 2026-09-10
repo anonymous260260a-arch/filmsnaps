@@ -23,13 +23,14 @@ import { usePlayer } from "@/components/player/PlayerProvider";
 import { DesktopSecureWebview } from "@/components/player/DesktopSecureWebview";
 import { SecureIframe } from "@/components/player/SecureIframe";
 import { FalixPlayer } from "@/components/player/FalixPlayer";
+import { DirectVideoPlayer } from "@/components/player/DirectVideoPlayer";
 import { buildIframeCSP } from "@/lib/movieProviders/cspBuilder";
 import { PlayerErrorState } from "./PlayerErrorState";
 import { ServerDropdown } from "./ServerDropdown";
 import { AudioToggle } from "@/components/player/AudioToggle";
 import type { AnimeChainState } from "./DesktopWatchLayout";
 
-const DIRECT_VIDEO_PROVIDERS = new Set<string>(["falix"]);
+const DIRECT_VIDEO_PROVIDERS = new Set<string>(["falix", "direct"]);
 
 interface VideoZoneProps {
   embedUrl: string;
@@ -249,15 +250,27 @@ export function VideoZone({
             )}
 
           {/* Direct-video player (Falix) */}
+          {!cpuWarning && currentProvider && currentProvider.id === "falix" && (
+            <FalixPlayer
+              tmdbId={contentid}
+              mediaType={plat}
+              selectedSeason={selectedSeason}
+              activeEpisode={activeEpisode}
+              onLoad={onIframeLoad}
+            />
+          )}
+
+          {/* Direct-video player (universal — any format) */}
           {!cpuWarning &&
             currentProvider &&
-            DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
-              <FalixPlayer
+            currentProvider.id === "direct" && (
+              <DirectVideoPlayer
                 tmdbId={contentid}
                 mediaType={plat}
                 selectedSeason={selectedSeason}
                 activeEpisode={activeEpisode}
                 onLoad={onIframeLoad}
+                onError={onIframeError}
               />
             )}
 
