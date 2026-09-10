@@ -7,6 +7,9 @@ const nextConfig = {
   output: IS_DESKTOP ? "export" : undefined,
   reactStrictMode: true,
   allowedDevOrigins: ["192.168.100.7"],
+
+  // Workspace packages must be transpiled for webpack to resolve them in pnpm monorepos.
+  transpilePackages: ["@filmsnaps/shared"],
   // Performance optimizations
   poweredByHeader: false,
   compress: true,

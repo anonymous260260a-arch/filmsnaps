@@ -105,7 +105,7 @@ export function auditMainFramePopUnder(options: {
 }): boolean {
   const { windowFeatures, frameUrl } = options;
   const warn =
-    options.warn ?? ((m: string) => security.warn(`[Structural] ${m}`));
+    options.warn ?? ((m: string) => console.warn(`[Structural] ${m}`));
 
   // Pop-under signature: width + height present in the features string at the
   // ROOT context (Chromium pop-unders are opened from the top frame).

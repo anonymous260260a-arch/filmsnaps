@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "cf:build": "npx @opennextjs/cloudflare build",
+    "cf:build": "pnpm --filter @filmsnaps/shared build && npx @opennextjs/cloudflare build",
     "cf:deploy": "npx wrangler deploy",
     "cf:deploy:prod": "npx wrangler deploy --env production",
     "cf:preview": "cd apps/web && npx wrangler dev --remote",
