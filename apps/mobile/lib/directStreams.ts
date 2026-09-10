@@ -24,6 +24,21 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiBaseUrl, tmdbApi } from "./api";
 import type { StreamLink } from "../components/player/streamTypes";
 
+// ── Native MKV extractor detection ──────────────────────────────────────
+// The secondary-SeekHead MKV extractor lives in a native patch on expo-video.
+// v2.2.0+ ships it; v2.1.0 does not. Without it, MKV files with complex
+// seek patterns fail to seek. Detected once at module load via the same
+// property-check pattern as playerConfig.ts applyNativeKnobs().
+const HAS_CUSTOM_MKV_EXTRACTOR = (() => {
+  try {
+    const { requireNativeModule } = require("expo-modules-core");
+    const mod = requireNativeModule("ExpoVideo") as Record<string, unknown>;
+    return mod != null && mod.mkvExtractorMode !== undefined;
+  } catch {
+    return false;
+  }
+})();
+
 // ── Provider registry (remote-updatable) ──
 
 /** What an entry's API serves. */
@@ -337,13 +352,21 @@ function parseStreamEntry(stream: HdHubStream) {
 /**
  * Playback priority (lower = tried first). Unlike the web proxy there is no
  * Windows penalty — Android hardware-decodes HEVC and HevcPlayer exists for it.
+ * When the native MKV extractor is absent (v2.1.0), MKV files that need the
+ * secondary-SeekHead get a heavy penalty so MP4/WebM alternatives are tried first.
  */
-function computePriority(p: ReturnType<typeof parseStreamEntry>): number {
+function computePriority(
+  p: ReturnType<typeof parseStreamEntry>,
+  rawDesc: string,
+): number {
   if (p.isDownloadOnly) return 100 + (p.size ?? 0) / 1_000_000_000;
   if (p.isWebReady && p.codec === "h264") return 0;
   if (p.codec === "h264") return 10;
   if (p.codec === "hevc") return 20;
   if (p.codec === "av1" || p.codec === "vp9") return 30;
+  // MKV without the native extractor: files with complex seek patterns will
+  // fail to seek. Push below download-only so MP4/WebM alternatives win.
+  if (!HAS_CUSTOM_MKV_EXTRACTOR && /\.mkv\b/i.test(rawDesc)) return 200;
   return 40;
 }
 
@@ -353,7 +376,11 @@ function mapHdhubStreams(streams: HdHubStream[]): StreamLink[] {
     .filter((s) => !!s.url)
     .map((s) => ({ raw: s, parsed: parseStreamEntry(s) }));
 
-  parsed.sort((a, b) => computePriority(a.parsed) - computePriority(b.parsed));
+  parsed.sort(
+    (a, b) =>
+      computePriority(a.parsed, a.raw.description || "") -
+      computePriority(b.parsed, b.raw.description || ""),
+  );
 
   return parsed.map((s, idx) => {
     const desc = s.raw.description || "";
@@ -391,8 +418,152 @@ export interface DirectStreamBundle {
   links: StreamLink[];
 }
 
+// ── Falix fallback ─────────────────────────────────────────────────────
+
+interface FalixTelegramFile {
+  quality: string;
+  id: string;
+  name: string;
+  size: string;
+}
+
+interface FalixTVData {
+  tmdb_id: number;
+  title: string;
+  media_type: "tv";
+  seasons: Array<{
+    season_number: number;
+    episodes: Array<{
+      episode_number: number;
+      telegram: FalixTelegramFile[];
+    }>;
+  }>;
+}
+
+interface FalixMovieData {
+  tmdb_id: number;
+  title: string;
+  media_type: "movie";
+  telegram: FalixTelegramFile[];
+}
+
+function parseFalixSize(sizeStr: string): number {
+  if (!sizeStr) return 0;
+  const m = sizeStr.match(/([\d.]+)\s*(GB|MB|KB)/i);
+  if (!m) return 0;
+  const n = parseFloat(m[1]);
+  const unit = m[2].toUpperCase();
+  if (unit === "GB") return Math.round(n * 1024 * 1024 * 1024);
+  if (unit === "MB") return Math.round(n * 1024 * 1024);
+  return Math.round(n * 1024);
+}
+
+function parseFalixCodec(name: string): string {
+  if (/x265|HEVC|H\.265|x266/i.test(name)) return "hevc";
+  if (/AV1|av01/i.test(name)) return "av1";
+  if (/x264|H\.264|AVC/i.test(name)) return "h264";
+  return "h264";
+}
+
+function parseFalixAudio(name: string): string {
+  if (/DTS-HD/i.test(name)) return "DTS-HD";
+  if (/DTS/i.test(name)) return "DTS";
+  if (/DDP|E-?AC-?3|Dolby Digital Plus/i.test(name)) return "Dolby Digital 5.1";
+  if (/DD\b|AC-?3/i.test(name)) return "Dolby Digital 5.1";
+  if (/AAC/i.test(name)) return "AAC";
+  return "Unknown";
+}
+
+function mapFalixFiles(
+  files: FalixTelegramFile[],
+  title: string,
+  idOffset: number,
+): StreamLink[] {
+  return files
+    .filter((f) => !!f.id && !!f.name)
+    .map((f, i) => {
+      const sizeBytes = parseFalixSize(f.size);
+      const ext = f.name.split(".").pop()?.toLowerCase() ?? "mp4";
+      return {
+        quality: f.quality || "Unknown",
+        name: `[Falix] ${title} — ${f.name}`,
+        id: `falix-${idOffset + i}`,
+        size: f.size || undefined,
+        url: "", // filled below by caller with apiBase
+        type: ext === "mkv" ? "mkv" : "mp4",
+        _meta: {
+          codec: parseFalixCodec(f.name),
+          audio: parseFalixAudio(f.name),
+          source: "Falix",
+          isDownloadOnly: false,
+          isWebReady: false,
+          sizeBytes,
+        },
+      };
+    });
+}
+
+/**
+ * Fetch streamable links from falix when the primary provider returns too few.
+ * Falix URLs are streamable directly — same as any other source.
+ */
+async function fetchFalixLinks(
+  tmdbId: number,
+  mediaType: "movie" | "tv",
+  season?: number,
+  episode?: number,
+): Promise<StreamLink[]> {
+  try {
+    const apiBase = await getProviderApiBase("falix");
+    const res = await fetch(`${apiBase}/api/id/${tmdbId}`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as FalixTVData | FalixMovieData;
+
+    let files: FalixTelegramFile[] = [];
+    if (
+      mediaType === "tv" &&
+      "seasons" in data &&
+      season != null &&
+      episode != null
+    ) {
+      const s = data.seasons.find((s) => s.season_number === season);
+      const ep = s?.episodes.find((e) => e.episode_number === episode);
+      files = ep?.telegram ?? [];
+    } else if ("telegram" in data) {
+      files = data.telegram ?? [];
+    }
+
+    if (files.length === 0) return [];
+
+    const links = mapFalixFiles(files, data.title, 9000);
+    // Fill in the streaming URL for each link.
+    for (let i = 0; i < links.length; i++) {
+      const f = files[i];
+      const encodedName = encodeURIComponent(f.name);
+      links[i].url = `${apiBase}/dl/${f.id}/${encodedName}`;
+    }
+    console.log(
+      `[DirectStreams] falix: ${files.length} files for tmdbId=${tmdbId}`,
+    );
+    return links;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Count non-download-only links in the array.
+ */
+function countPlayable(links: StreamLink[]): number {
+  return links.filter((l) => !l._meta?.isDownloadOnly).length;
+}
+
 /**
  * Fetch stream links directly from the upstream provider (no server proxy).
+ * When the primary returns ≤3 playable links, falix is fetched as fallback.
  * Throws on failure so callers can surface their own error state.
  */
 export async function fetchDirectStreams(
@@ -435,5 +606,22 @@ export async function fetchDirectStreams(
   console.log(
     `[DirectStreams] ${mediaType} ${tmdbId} (${imdbId}) → ${links.length} links via ${apiBase}`,
   );
+
+  // Falix fallback: when the primary provider returns ≤3 playable links,
+  // fetch falix for the same title and append streamable alternatives.
+  if (countPlayable(links) <= 3) {
+    const falixLinks = await fetchFalixLinks(
+      tmdbId,
+      mediaType,
+      season,
+      episode,
+    );
+    if (falixLinks.length > 0) {
+      console.log(
+        `[DirectStreams] falix fallback: +${falixLinks.length} links`,
+      );
+      links.push(...falixLinks);
+    }
+  }
   return { tmdbId, imdbId, mediaType, links };
 }

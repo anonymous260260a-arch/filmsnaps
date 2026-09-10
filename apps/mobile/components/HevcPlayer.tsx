@@ -489,11 +489,29 @@ export function HevcPlayer({
         !failedLinksRef.current.has(i) &&
         !playbackFailedRef.current.has(i);
 
+      // After content has been playing, only fall back to a lighter-or-equal
+      // stream — never upgrade to a bigger file mid-playback.
+      const currentSize = hasPlayedRef.current
+        ? ((links[activeIndexRef.current]?._meta?.sizeBytes as
+            | number
+            | undefined) ?? 0)
+        : 0;
+      const withinSizeCap = (i: number) =>
+        !hasPlayedRef.current ||
+        currentSize === 0 || // unknown current size — allow anything
+        ((links[i]?._meta?.sizeBytes as number | undefined) ?? 0) <=
+          currentSize;
+
       for (let i = 0; i < n; i++) {
-        if (isUsable(i) && linkStatusesRef.current[i] === "valid") return i;
+        if (
+          isUsable(i) &&
+          withinSizeCap(i) &&
+          linkStatusesRef.current[i] === "valid"
+        )
+          return i;
       }
       for (let i = 0; i < n; i++) {
-        if (isUsable(i)) return i;
+        if (isUsable(i) && withinSizeCap(i)) return i;
       }
       return null;
     },
@@ -582,6 +600,8 @@ export function HevcPlayer({
     const numLinks = links?.length ?? 0;
     if (numLinks <= 1) {
       setSwitchInfo(null);
+      setExhausted(true);
+      onExhausted?.();
       return;
     }
 
@@ -704,11 +724,14 @@ export function HevcPlayer({
       // Promote a verified link over a dead/unknown active link. Deliberately
       // NOT over a merely-untested active link — the old behavior stole
       // playback from links that were loading perfectly fine.
+      // Also never promote while content is actually playing — playback is
+      // ground truth over probe verdicts (CDN hiccups mislead probes).
       if (
         result.outcome === "valid" &&
         idx !== activeIndexRef.current &&
         !isManualSelectionRef.current &&
-        switchInfoRef.current === null
+        switchInfoRef.current === null &&
+        !hasPlayedRef.current
       ) {
         const activeOutcome = linkStatusesRef.current[activeIndexRef.current];
         if (
@@ -1206,7 +1229,6 @@ export function HevcPlayer({
 
   // Error-based fallback (safety net for playback failures the probe didn't catch)
   useEffect(() => {
-    if (!isMultiLink) return;
     if (!adapter.onError) return;
 
     const unsubscribe = adapter.onError((error) => {

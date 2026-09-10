@@ -205,6 +205,19 @@ export function isCamPrint(link: StreamLink): boolean {
   return /\b(hdtc|hdts|camrip|telesync|screener)\b|\bcam\b/i.test(link.name);
 }
 
+/**
+ * Promotional / fake links — short clips disguised as full episodes.
+ * Pattern: "360p | MovieBox/Sunny\nNative App Stream (MP4)" or similar.
+ * These never contain real content; filter them unconditionally.
+ */
+function isPromotionalLink(link: StreamLink): boolean {
+  const name = link.name || "";
+  if (/Native App Stream/i.test(name)) return true;
+  if (/MovieBox|Sunny/i.test(name) && /360[pP]/i.test(link.quality))
+    return true;
+  return false;
+}
+
 /** true when the link plays without the custom MKV extractor (mp4/webm/ts). */
 function isWebPlayable(link: StreamLink): boolean {
   if (link.type === "mkv") return false;
@@ -338,6 +351,7 @@ export async function selectBestStream(
   // ── Pass 1: hard filters ──
   let filtered = links.filter((link) => {
     if (/\bsample\b/i.test(link.name)) return false;
+    if (isPromotionalLink(link)) return false;
     if (isDownloadOnlyLink(link)) return false;
     const sizeMB = sizeOf(link) / (1024 * 1024);
     const minMB = MIN_SIZE_MB[effectiveQuality(link)] ?? 200;

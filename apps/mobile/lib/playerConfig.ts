@@ -53,7 +53,7 @@ export interface PlayerTuning {
 const DEFAULT_TUNING: PlayerTuning = {
   validationTimeoutMs: 7000,
   switchTimeoutMs: 12000,
-  rebufferLimit: 3,
+  rebufferLimit: 5,
   rebufferWindowMs: 20_000,
   subtitleErrorWindowMs: 6000,
   providerFallbackDelayMs: 600,
