@@ -72,6 +72,30 @@ const nextConfig = {
 
   // Headers for performance
   async headers() {
+    // Desktop static export: headers() is a server feature and is skipped in
+    // export builds — guard so `BUILD_FOR_DESKTOP=true next build` stays clean.
+    const corsHeaders = IS_DESKTOP
+      ? []
+      : [
+          {
+            // The Electron desktop app loads its UI from the app:// protocol
+            // (static export) and fetches APIs from this server. Without an
+            // explicit ACAO for that origin, every /api call from the desktop
+            // shell dies to CORS (non-dev mode).
+            source: "/api/:path*",
+            headers: [
+              { key: "Access-Control-Allow-Origin", value: "app://index.html" },
+              {
+                key: "Access-Control-Allow-Methods",
+                value: "GET,POST,PUT,DELETE,OPTIONS",
+              },
+              {
+                key: "Access-Control-Allow-Headers",
+                value: "Content-Type,Authorization",
+              },
+            ],
+          },
+        ];
     return [
       {
         source: "/:path*",
@@ -104,6 +128,7 @@ const nextConfig = {
           },
         ],
       },
+      ...corsHeaders,
     ];
   },
 
