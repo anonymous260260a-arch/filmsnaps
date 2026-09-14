@@ -23,20 +23,12 @@ import { MpvManager } from "./MpvManager";
 import { VLCVideoWindow } from "../vlc/VLCVideoWindow";
 import { media as logMpv } from "../lib/log";
 
-// Overlay page URL — must be resolved LAZILY (not at module load): in dev the
-// main window loads the Next.js dev server, and only packaged builds serve the
-// static export on app://. Module-level resolution used to run before main.ts
-// could set ELECTRON_DEV_URL, so dev silently pointed at the unserved app://
-// scheme and the controls overlay never loaded.
-function resolveOverlayUrl(): string {
-  if (process.env.ELECTRON_DEV_URL) {
-    return `${process.env.ELECTRON_DEV_URL}/mpv-overlay`;
-  }
-  if (process.argv.includes("--dev")) {
-    return "http://localhost:3000/mpv-overlay";
-  }
-  return "app:///mpv-overlay";
-}
+/**
+ * The video window hosts NO page — a composited web frame renders above
+ * mpv's child HWND and hides the video (empirically proven). All player UI
+ * and event handling live in the MAIN window's renderer; fwd() sends events
+ * there only.
+ */
 
 let mpvManager: MpvManager | null = null;
 let videoWindow: VLCVideoWindow | null = null;
@@ -116,8 +108,10 @@ function logMpvLogSummary(tag: string): void {
 
 /** Forward mpv events to both windows and apply click-through. */
 function fwd(ev: any): void {
-  const raw = ev?.raw ?? ev;
-  const type = raw?.event ?? ev?.event;
+  // MpvManager emits two shapes: synthesized {type:"pause"}-style events and
+  // a broadcast {type, raw} carrying mpv's IPC event. raw.event is most
+  // specific; ev.type covers the synthesized form.
+  const type = ev?.raw?.event ?? ev?.type ?? ev?.event;
 
   // Apply WS_EX_TRANSPARENT on file-loaded / playback-restart (idempotent)
   if (type === "file-loaded" || type === "playback-restart") {
@@ -132,8 +126,7 @@ function fwd(ev: any): void {
     setTimeout(() => logOutputState("playback+5s").catch(() => {}), 5000);
   }
 
-  // Fan out to BOTH windows
-  videoWindow?.sendEvent(ev);
+  // Events go to the MAIN window only — the video window has no page.
   if (mainWin && !mainWin.isDestroyed()) {
     mainWin.webContents.send("mpv:event", ev);
   }
@@ -172,12 +165,11 @@ export function registerMpvIPC(mainWindow: BrowserWindow): void {
   mainWindow.on("resize", syncWindowPosition);
   mainWindow.on("restore", syncWindowPosition);
 
-  // Relay main-window fullscreen state to both windows so the overlay's
-  // fullscreen button icon stays in sync (the overlay can't use
-  // document.fullscreenElement — it's the main window that goes fullscreen).
+  // Relay main-window fullscreen state to the main window's renderer (the
+  // player UI can't use document.fullscreenElement meaningfully for the
+  // native video window).
   const fwdFullscreen = (value: boolean) => {
     const ev = { type: "host-fullscreen", value };
-    videoWindow?.sendEvent(ev);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("mpv:event", ev);
     }
@@ -206,17 +198,10 @@ export function registerMpvIPC(mainWindow: BrowserWindow): void {
       logMpv.log("[mpv:start] Handler invoked");
       try {
         if (!videoWindow) {
-          // Same compiled preload as the main window (dist/preload.js) — it
-          // exposes window.electronAPI which the overlay page's adapter needs.
-          // (dist/preload/index.js does not exist.)
-          const preloadPath = join(__dirname, "../preload.js");
-          const overlayUrl = resolveOverlayUrl();
-          logMpv.log(`[mpv:start] Overlay URL: ${overlayUrl}`);
-          videoWindow = new VLCVideoWindow(mainWindow, {
-            preload: preloadPath,
-            overlayUrl,
-          });
-          logMpv.log("[mpv:start] Created VLCVideoWindow with overlay");
+          videoWindow = new VLCVideoWindow(mainWindow);
+          logMpv.log(
+            "[mpv:start] Created VLCVideoWindow (pure output surface)",
+          );
         }
         const childWin = videoWindow.create();
 
@@ -226,12 +211,11 @@ export function registerMpvIPC(mainWindow: BrowserWindow): void {
           logMpv.log("[mpv:start] Replayed lastRendererBounds");
         }
 
+        // The window carries no web contents, so ready-to-show never fires —
+        // settle for it being created (it is shown later, by showVideo).
         await new Promise<void>((resolve) => {
           if (childWin.isVisible()) resolve();
-          else {
-            childWin.once("ready-to-show", () => resolve());
-            setTimeout(resolve, 500);
-          }
+          else setTimeout(resolve, 500);
         });
 
         const hwnd = videoWindow.getNativeHandle();

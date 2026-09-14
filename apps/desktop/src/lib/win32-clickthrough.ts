@@ -1,11 +1,11 @@
 /**
  * win32-clickthrough — Makes mpv's child HWND click-through via WS_EX_TRANSPARENT.
  *
- * mpv renders into a child HWND inside the transparent BrowserWindow.
- * Without WS_EX_TRANSPARENT, Win32 hit-testing routes all mouse input to
- * mpv's child, preventing the overlay page from receiving clicks.
+ * mpv renders into a child HWND inside the video BrowserWindow. Without
+ * WS_EX_TRANSPARENT, Win32 hit-testing routes all mouse input to mpv's
+ * child, preventing the main window beneath from receiving clicks.
  * Setting WS_EX_TRANSPARENT removes the child from hit-testing while
- * keeping its rendering intact — the overlay page receives all input.
+ * keeping its rendering intact — the main window receives all input.
  */
 
 import koffi from "koffi";
@@ -32,8 +32,8 @@ const readHwnd = (b: Buffer): number => Number(b.readBigUInt64LE(0));
 
 /**
  * Marks every foreign child of `hwnd` WS_EX_TRANSPARENT so mouse input falls
- * through to the Electron window's own page. Modern Electron windows have no
- * child HWNDs of their own — in practice this is mpv's video child only.
+ * through to the main window beneath. Modern Electron windows have no child
+ * HWNDs of their own — in practice this is mpv's video child only.
  * Idempotent; safe to call on every file-loaded / playback-restart.
  */
 export function makeChildWindowsClickThrough(hwndBuffer: Buffer): number {

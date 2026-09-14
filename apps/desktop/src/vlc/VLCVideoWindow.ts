@@ -1,24 +1,22 @@
 /**
- * VLCVideoWindow — Transparent child window for mpv video output.
+ * VLCVideoWindow — Child window for mpv video output.
  *
- * Creates a frameless, transparent BrowserWindow parented to the main app window.
+ * Creates a frameless child BrowserWindow parented to the main app window.
  * mpv renders video into this window via --wid={hwnd}.
  *
- * The transparent page composes above mpv's child HWND (D3D11 surface),
- * allowing HTML controls to overlay the video. Input reaches the overlay
- * page because mpv's child HWND has WS_EX_TRANSPARENT (win32-clickthrough.ts).
+ * The window carries NO web contents: any successfully-composited web frame
+ * (even a fully transparent page) layers ABOVE mpv's child HWND and hides
+ * the video entirely — proven empirically: video was visible while the
+ * overlay URL failed to load, and vanished the moment a page loaded
+ * successfully. We therefore swap the content view for an empty View right
+ * after creation, leaving the window a pure native surface for mpv's child.
  *
  * thickFrame: false removes invisible resize borders (WS_THICKFRAME).
  */
 
-import { BrowserWindow, type Rectangle } from "electron";
+import { BrowserWindow, View, type Rectangle } from "electron";
 import { media as logVlc } from "../lib/log";
 import { makeChildWindowsClickThrough } from "../lib/win32-clickthrough";
-
-export interface VideoWindowOptions {
-  preload: string;
-  overlayUrl: string;
-}
 
 export class VLCVideoWindow {
   private window: BrowserWindow | null = null;
@@ -26,11 +24,9 @@ export class VLCVideoWindow {
   private lastLocal: Rectangle | null = null;
   private hasBeenShown = false;
   private isHidden = false;
-  private readonly opts: VideoWindowOptions;
 
-  constructor(parentWindow: BrowserWindow, opts: VideoWindowOptions) {
+  constructor(parentWindow: BrowserWindow) {
     this.parentWindow = parentWindow;
-    this.opts = opts;
   }
 
   create(): BrowserWindow {
@@ -52,11 +48,10 @@ export class VLCVideoWindow {
     this.window = new BrowserWindow({
       parent: this.parentWindow,
       frame: false,
-      // Keep TRANSPARENT: setIgnoreMouseEvents (below) marks the window
-      // WS_EX_LAYERED, and an opaque window never gets its layer attributes
-      // configured — DWM then refuses to composite it entirely (audio plays,
-      // no video). Transparent windows are the supported path for
-      // click-through surfaces; the page behind mpv is empty anyway.
+      // Transparent so parts of the window mpv hasn't painted (letterbox
+      // bars during aspect negotiation, the pre-load moment) don't occlude
+      // the app beneath. The web contents never submits frames here (empty
+      // content view), so the transparency costs nothing.
       transparent: true,
       thickFrame: false,
       hasShadow: false,
@@ -74,13 +69,17 @@ export class VLCVideoWindow {
       width: w,
       height: h,
       webPreferences: {
-        preload: this.opts.preload,
         contextIsolation: true,
         nodeIntegration: false,
       },
     });
 
-    this.window.loadURL(this.opts.overlayUrl);
+    // CRITICAL: evict the window's web contents. A composited web frame —
+    // even a 100% transparent page — renders above mpv's child HWND and
+    // blanked the video (this exact regression shipped when the overlay URL
+    // first loaded successfully). An empty View submits no frames, so the
+    // window stays a pure native surface for mpv.
+    this.window.contentView = new View();
 
     // Pure output surface: this window exists ONLY to host mpv's child HWND.
     // All player UI (controls, gestures, picker) lives in the MAIN window's
@@ -89,49 +88,23 @@ export class VLCVideoWindow {
     // separate window. forward:true keeps hover/move events flowing to the
     // main window so its UI stays interactive.
     this.window.setIgnoreMouseEvents(true, { forward: true });
-    this.window.webContents.on("did-fail-load", (_e, code, desc, url) => {
-      logVlc.error(
-        `[videoWindow] overlay failed to load (${code} ${desc}) url=${url}`,
-      );
-    });
-    this.window.webContents.on("did-finish-load", () => {
-      logVlc.log("[videoWindow] overlay page loaded");
-    });
-    // Overlay console messages were invisible in the main-process log, which
-    // made renderer-side failures (dead bridge, adapter errors) undebuggable.
-    this.window.webContents.on("console-message", (_e, level, message) => {
-      const prefix = "[overlay]";
-      if (level >= 2) logVlc.error(`${prefix} ${message}`);
-      else logVlc.log(`${prefix} ${message}`);
-    });
+
     this.window.webContents.on("render-process-gone", (_e, details) => {
-      logVlc.error(`[videoWindow] overlay renderer gone: ${details.reason}`);
-    });
-    this.window.once("ready-to-show", () => {
-      if (this.window && !this.window.isDestroyed() && this.lastLocal) {
-        this.window.show();
-        this.hasBeenShown = true;
-        this.hasBeenShown = true;
-      }
+      logVlc.error(`[videoWindow] renderer gone: ${details.reason}`);
     });
 
-    logVlc.log(`[videoWindow] created at (${x},${y}) ${w}x${h}`);
+    logVlc.log(
+      `[videoWindow] created at (${x},${y}) ${w}x${h} (no web contents)`,
+    );
     return this.window;
   }
 
   /** Called on file-loaded / playback-restart. Makes mpv's child HWND
-   *  click-through so the overlay page receives mouse input. */
+   *  click-through so mouse input reaches the main window beneath. */
   applyChildClickThrough(): void {
     if (!this.window || this.window.isDestroyed()) return;
     const n = makeChildWindowsClickThrough(this.window.getNativeWindowHandle());
     logVlc.log(`[videoWindow] click-through applied to ${n} child window(s)`);
-  }
-
-  /** Forward mpv events to the overlay page. */
-  sendEvent(payload: unknown): void {
-    if (this.window && !this.window.isDestroyed()) {
-      this.window.webContents.send("mpv:event", payload);
-    }
   }
 
   getNativeHandle(): Buffer {
@@ -197,6 +170,9 @@ export class VLCVideoWindow {
           height: Math.max(1, Math.round(this.lastLocal.height)),
         });
       }
+      logVlc.log(
+        `[videoWindow] show() — visible=${this.window.isVisible()} bounds=${JSON.stringify(this.window.getBounds())}`,
+      );
     }
   }
 
