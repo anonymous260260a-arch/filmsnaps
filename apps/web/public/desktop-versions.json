@@ -1,6 +1,29 @@
 {
   "versions": [
     {
+      "version": "2.2.0",
+      "date": "2026-09-13",
+      "releaseNotes": "v2.2.0 — Native playback engine + smarter sources\n\n Direct sources now play in a native mpv engine — MKV, HEVC and AV1 play without transcoding, with hardware decoding and fast seeking\n Source health you can trust: every source is byte-validated before you click it (no more green links that fail to play), and a source that fails during playback turns red and sinks to the bottom of the picker\n Automatic failover that actually works: if a source dies, the player walks ranked alternatives and remembers the last source that worked for next time\n Visible Audio and Subtitle buttons on the player with online subtitle search, plus a preferred audio language setting\n If every direct source dies, the app falls back to the web embed automatically instead of a dead-end error\n Instant watch pages: continue-watching titles, the next episode and top sources are prefetched in the background\n Window-level fullscreen on the player, first-run language prompt, and the source picker now shows the auto-pick reason and verified counts\n\nFixes:\n Ad-blocking is now guaranteed active on embed servers — a debug-logging listener could silently replace the filter engine and let ads through",
+      "platforms": {
+        "win": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.2.0-desktop/FilmSnaps-Setup-2.2.0.exe",
+          "size": "~150 MB"
+        },
+        "mac": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.2.0-desktop/FilmSnaps-2.2.0-x64.dmg",
+          "size": "~150 MB"
+        },
+        "mac-arm": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.2.0-desktop/FilmSnaps-2.2.0-arm64.dmg",
+          "size": "~145 MB"
+        },
+        "linux": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.2.0-desktop/FilmSnaps-2.2.0.AppImage",
+          "size": "~140 MB"
+        }
+      }
+    },
+    {
       "version": "2.1.0",
       "date": "2026-09-02",
       "releaseNotes": "v2.1.0 — Faster watch page, redesigned Continue Watching, bug fixes\n\n Watch page loads instantly — embed URL computed from URL params before TMDB resolves, webview mounts immediately\n Continue Watching cards redesigned — 16:9 backdrops, always-visible play button, episode pill badges, gold progress bar (matches mobile app)\n Hero and card ratings now show 0-10 scale everywhere\n Falix backend migrated to dl.falixmovies.com\n\nBug fixes:\n Fixed React error #185 on history page (useSyncExternalStore snapshot mismatch)\n Fixed HomeModeFeed crash when query data is undefined\n Fixed Falix download page returning 'Missing required query parameter' (static export prerender issue)\n\nUnder the hood:\n- Route restructuring: detail/watch/download/person pages migrated from path params to query params for static export compatibility\n- Hover-prefetch on Watch Now buttons (movie/tv detail pages)\n- TV season short-circuits when ?season= already in URL",
