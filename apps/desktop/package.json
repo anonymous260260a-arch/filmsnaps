@@ -7,7 +7,7 @@
   "main": "dist/main.js",
   "scripts": {
     "dev": "node scripts/download-mpv.mjs && concurrently -k \"cd ../web && pnpm dev\" \"wait-on http://localhost:3000 && pnpm build && pnpm exec electron . --dev\"",
-    "prebuild": "node scripts/download-mpv.mjs",
+    "prebuild": "node scripts/download-mpv.mjs && node scripts/copy-koffi.mjs",
     "build": "node scripts/build-web.mjs && tsc && node scripts/build-provider-preload.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -23,7 +23,8 @@
     "@filmsnaps/filter-compiler": "workspace:*",
     "@filmsnaps/shared": "workspace:*",
     "@ghostery/adblocker": "^2.18.2",
-    "electron-updater": "^6.3.0"
+    "electron-updater": "^6.3.0",
+    "koffi": "^3.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -31,7 +32,6 @@
     "cross-env": "^10.1.0",
     "electron": "^42.4.1",
     "electron-builder": "^25.1.0",
-    "koffi": "^3.2.1",
     "typescript": "^5.7.0",
     "wait-on": "^8.0.0"
   }
