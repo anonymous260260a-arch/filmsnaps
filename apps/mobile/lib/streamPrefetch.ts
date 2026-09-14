@@ -1,78 +1,89 @@
 /**
- * Stream cache — the ONE prefetch/validation cache for stream links.
+ * Stream pipeline — the SINGLE source of truth for direct stream links.
  *
- * Fetches and sorts links on the details screen (while the user reads the
- * description) and probes the top candidates so the watch screen can start
- * playing instantly.
+ * One pipeline per episode key (`tv:969681:s1:e1`), started from the page
+ * where the user's intent forms (details screen, continue-watching on home)
+ * and consumed by the watch screen. Every caller joins the same run — nobody
+ * re-fetches, re-ranks, or replaces a ranked list.
  *
- * Design notes:
- *  - Single module-level cache with ONE key scheme (`movie:969681:s0:e0`).
- *    (The old duplicate streamPrewarm cache was removed — it had a different
- *    key format, different value shape, and zero callers.)
- *  - In-flight dedup: navigating details→watch twice (or a double effect fire)
- *    shares one pipeline instead of racing two fetch+probe runs.
- *  - Validation outcomes are stored per-URL with their own freshness rules
- *    from streamValidator (valid 90 s, dead 60 s, unknown never cached).
- *  - Expired entries are purged on every insert, and the cache is capped —
- *    browsing many titles no longer grows the map without bound.
- *  - Selection options come from the caller (user settings), not hardcoded.
- *  - `bestValidated` distinguishes "best link was probe-verified" from
- *    "deadline hit, first link by ranking" — the watch screen uses this to
- *     decide whether to show a checking stage.
+ * Stages (each logs one [Flow] line, in order):
+ *   1. FETCH   — both providers on-device (directStreams), timed.
+ *   2. RANK    — selectBestStream (language buckets × size cap → CDN).
+ *                The ranked array is FROZEN from here on.
+ *   3. HEAD    — probe the CHAMPION (selection.bestIndex — NOT picker row 0)
+ *                ALONE. valid → done. dead → strike it, badge moves to the
+ *                next ranked candidate, probe that one (the "walk").
+ *                unknown → good enough, play it (playback is the ground
+ *                truth; the switch timeout is the safety net). The whole
+ *                walk is budget-capped so a slow probe never delays startup.
+ *   4. READY   — consumers mount the head. The player probes the remaining
+ *                links itself at play time (for the picker + fallback), so
+ *                the pipeline stops here — probing everything on the details
+ *                page is wasted work: verdicts expire in 60–90 s anyway.
+ *
+ * The cache entry is NEVER consumed-away: it stays until TTL/LRU eviction,
+ * so re-entering the same title is instant and late head-walk verdicts are
+ * recorded for the next reader. Re-ranking with different user options
+ * (language / caps) invalidates the entry and reruns the pipeline.
  */
 
 import type { StreamLink } from "../components/player/streamTypes";
 import type { ValidationResult } from "./streamValidator";
 import { validateStreamUrl } from "./streamValidator";
-import { selectBestStream, type PreferredLanguage } from "./streamSelector";
+import {
+  selectBestStream,
+  effectiveQuality,
+  type PreferredLanguage,
+} from "./streamSelector";
 import { fetchDirectStreams } from "./directStreams";
 
 export interface StreamCacheOptions {
   cellularMaxMB?: number;
   maxQuality?: string | null;
   preferredAudioLanguage?: PreferredLanguage;
+  /** Who started this pipeline — appears in the [Flow] START line. */
+  trigger?: "details" | "home-cw" | "watch" | "next-episode";
 }
 
 export interface StreamCacheResult {
-  /** Links sorted by the selector (best first). */
+  /** Links in recommendation order — FROZEN once handed out. */
   links: StreamLink[];
-  /** Index into `links` of the recommended source. */
+  /** Chain head: what will play (and what the "Best" badge mirrors). */
   bestIndex: number;
-  /** True when the recommended link was probe-verified, false = ranking only. */
+  /** True when the head's probe returned valid, false = unverified/unknown. */
   bestValidated: boolean;
-  /** Per-URL probe outcomes gathered during prefetch. */
+  /** Per-URL probe outcomes gathered so far (head walk). */
   validationResults: Map<string, ValidationResult>;
-  /** How many links finished probing before the deadline. */
-  probedCount: number;
-  /** Human-readable reason for the recommendation (may be empty). */
+  /** True when the walk probed every link and all were dead. */
+  allDead: boolean;
+  /** Human-readable reason the head was picked. */
   selectionReason: string;
+  /** The connection cap (bytes) the chain was ranked against. */
+  capBytes: number;
   prefetchedAt: number;
 }
 
 interface CacheEntry extends StreamCacheResult {
   expiresAt: number;
-  /** Last time probe outcomes were refreshed (link ranking aside). */
-  probedAt: number;
-  reprobeCount: number;
+  /** Options the entry was ranked with — a change invalidates the ranking. */
+  rankOptions: {
+    cellularMaxMB: number;
+    maxQuality: string | null;
+    preferredAudioLanguage: PreferredLanguage;
+  };
 }
 
 const CACHE = new Map<string, CacheEntry>();
 const IN_FLIGHT = new Map<string, Promise<StreamCacheResult | null>>();
-const REPROBE_IN_FLIGHT = new Set<string>();
 
-const MAX_CONCURRENT_PROBES = 4;
-const PROBE_DEADLINE_MS = 3000;
-const MIN_VALID_LINKS = 3;
 /**
- * Two-tier freshness: links are presigned for 8 hours, so the ranked list
- * stays usable far longer than a probe verdict does. The cache keeps links
- * for 45 min (a user reading the details page no longer triggers a re-fetch)
- * while probe outcomes are refreshed lazily in the background on each hit.
+ * Startup budget for the head walk. The champion's probe verdict normally
+ * lands in well under a second; when it doesn't, we play unverified rather
+ * than stall the user. Late verdicts are still recorded into the entry.
  */
-const CACHE_TTL_MS = 45 * 60 * 1000;
-const PROBE_REFRESH_MS = 90 * 1000;
-/** Max background re-probe rounds per entry — bounded work for never-consumed entries. */
-const MAX_REPROBE_ROUNDS = 2;
+const HEAD_WALK_BUDGET_MS = 2500;
+
+const CACHE_TTL_MS = 45 * 60 * 1000; // links are presigned for 8 h
 const MAX_ENTRIES = 8;
 
 function getCacheKey(
@@ -81,11 +92,7 @@ function getCacheKey(
   season?: number,
   episode?: number,
 ): string {
-  const key = `${mediaType}:${tmdbId}:s${season ?? 0}:e${episode ?? 0}`;
-  console.log(
-    `[StreamCache] getCacheKey: tmdbId=${tmdbId}, type=${mediaType}, season=${season}, episode=${episode} → key="${key}"`,
-  );
-  return key;
+  return `${mediaType}:${tmdbId}:s${season ?? 0}:e${episode ?? 0}`;
 }
 
 function purgeExpired(): void {
@@ -93,7 +100,6 @@ function purgeExpired(): void {
   for (const [key, entry] of CACHE) {
     if (now >= entry.expiresAt) CACHE.delete(key);
   }
-  // Hard cap: drop the oldest entries beyond MAX_ENTRIES
   while (CACHE.size > MAX_ENTRIES) {
     let oldestKey: string | null = null;
     let oldestAt = Infinity;
@@ -108,13 +114,18 @@ function purgeExpired(): void {
   }
 }
 
-function entryIsFresh(entry: CacheEntry): boolean {
-  return Date.now() < entry.expiresAt;
+function normalizeOptions(options: StreamCacheOptions) {
+  return {
+    cellularMaxMB: options.cellularMaxMB ?? 3000,
+    maxQuality: options.maxQuality ?? null,
+    preferredAudioLanguage: options.preferredAudioLanguage ?? "auto",
+  };
 }
 
 /**
- * Fetch, sort, and probe the stream links for a title.
- * Concurrent calls for the same key share one pipeline.
+ * Fetch → rank → probe the champion → ready. Concurrent callers for the same
+ * key share one pipeline; a fresh entry with the same rank options returns
+ * immediately.
  */
 export async function prefetchStreams(
   tmdbId: number,
@@ -124,48 +135,67 @@ export async function prefetchStreams(
   options: StreamCacheOptions = {},
 ): Promise<StreamCacheResult | null> {
   const cacheKey = getCacheKey(tmdbId, mediaType, season, episode);
+  const rankOptions = normalizeOptions(options);
 
   purgeExpired();
   const cached = CACHE.get(cacheKey);
-  if (cached && entryIsFresh(cached)) {
-    console.log(`[StreamCache] prefetchStreams: cache HIT (${cacheKey})`);
-    refreshProbesInBackground(cacheKey, cached);
+  if (
+    cached &&
+    Date.now() < cached.expiresAt &&
+    cached.rankOptions.cellularMaxMB === rankOptions.cellularMaxMB &&
+    cached.rankOptions.maxQuality === rankOptions.maxQuality &&
+    cached.rankOptions.preferredAudioLanguage ===
+      rankOptions.preferredAudioLanguage
+  ) {
+    const head = cached.links[cached.bestIndex];
+    console.log(
+      `[Flow] pipeline ${cacheKey}: cache HIT — head #${cached.bestIndex} ${head?.quality ?? "?"} verified=${cached.bestValidated}`,
+    );
     return cached;
   }
 
   const existing = IN_FLIGHT.get(cacheKey);
   if (existing) {
     console.log(
-      `[StreamCache] prefetchStreams: joining in-flight pipeline (${cacheKey})`,
+      `[Flow] pipeline ${cacheKey}: joining in-flight run (${options.trigger ?? "unknown"})`,
     );
     return existing;
   }
 
-  const pipeline = runPrefetchPipeline(
+  console.log(
+    `[Flow] ▶ pipeline START ${cacheKey} (trigger=${options.trigger ?? "unknown"})`,
+  );
+  const startedAt = Date.now();
+  const pipeline = runPipeline(
     cacheKey,
     tmdbId,
     mediaType,
     season,
     episode,
-    options,
-  ).finally(() => {
-    IN_FLIGHT.delete(cacheKey);
-  });
-
+    rankOptions,
+  )
+    .finally(() => IN_FLIGHT.delete(cacheKey))
+    .then((result) => {
+      if (result)
+        console.log(
+          `[Flow] ■ pipeline DONE ${cacheKey} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s — head #${result.bestIndex} verified=${result.bestValidated} allDead=${result.allDead}`,
+        );
+      return result;
+    });
   IN_FLIGHT.set(cacheKey, pipeline);
   return pipeline;
 }
 
-async function runPrefetchPipeline(
+async function runPipeline(
   cacheKey: string,
   tmdbId: number,
   mediaType: "movie" | "tv",
   season: number | undefined,
   episode: number | undefined,
-  options: StreamCacheOptions,
+  rankOptions: CacheEntry["rankOptions"],
 ): Promise<StreamCacheResult | null> {
   try {
-    // 1. Fetch links directly from the upstream provider (on-device, no proxy)
+    // ── 1. Fetch ──
     let rawLinks: StreamLink[];
     try {
       const bundle = await fetchDirectStreams(
@@ -176,206 +206,130 @@ async function runPrefetchPipeline(
       );
       rawLinks = bundle.links;
     } catch (err) {
-      console.warn(`[StreamCache] direct fetch failed for ${cacheKey}:`, err);
+      console.log(
+        `[Flow] fetch ${cacheKey}: FAILED — ${err instanceof Error ? err.message : err}`,
+      );
       return null;
     }
-    if (rawLinks.length === 0) return null;
+    if (rawLinks.length === 0) {
+      console.log(`[Flow] fetch ${cacheKey}: 0 links — nothing to rank`);
+      return null;
+    }
 
-    // 2. Rank via the selector with the caller's settings
+    // ── 2. Rank (the array is frozen from here on) ──
     const selection = await selectBestStream(rawLinks, {
-      cellularMaxMB: options.cellularMaxMB ?? 3000,
-      maxQuality: options.maxQuality ?? null,
-      preferredLanguage: options.preferredAudioLanguage ?? "auto",
-      // Bitrate cap needs an assumed duration (selector default = movie)
+      cellularMaxMB: rankOptions.cellularMaxMB,
+      maxQuality: rankOptions.maxQuality,
+      preferredLanguage: rankOptions.preferredAudioLanguage,
       runtimeMinutes: mediaType === "tv" ? 45 : 120,
     });
-    const { sortedLinks } = selection;
+    const links = selection.sortedLinks;
+    const champion = links[0]; // chain head — bestIndex is always 0
+    const champGb = (champion?._meta?.sizeBytes ?? 0) / 1e9;
+    console.log(
+      `[Flow] rank ${cacheKey}: ${rawLinks.length} → ${links.length} playable · ` +
+        `head #0 = ${champion ? effectiveQuality(champion) : "?"} ` +
+        `${champGb > 0 ? `${champGb.toFixed(2)}GB ` : ""}` +
+        `(cap ${Math.round(selection.capBytes / 1e6)}MB) — ${selection.selectionReason}`,
+    );
 
-    // 3. Probe the top candidates (concurrency-limited, deadline-bounded).
-    //    The list is already in recommendation order, so probe in that order.
-    const validationResults = new Map<string, ValidationResult>();
-    let validCount = 0;
-    let probedCount = 0;
+    // ── 3. Head walk — probe chain[0]; strike dead, advance, repeat ──
+    const probedUrls = new Map<string, ValidationResult>();
+    const head = await probeHeadWalk(links, 0, probedUrls);
 
-    const startTime = Date.now();
-
-    outer: for (let i = 0; i < sortedLinks.length; i += MAX_CONCURRENT_PROBES) {
-      if (Date.now() - startTime > PROBE_DEADLINE_MS) {
-        console.log("[StreamCache] Probe deadline reached, stopping");
-        break;
-      }
-
-      const batch = sortedLinks.slice(i, i + MAX_CONCURRENT_PROBES);
-      await Promise.allSettled(
-        batch.map(async (link) => {
-          const result = await validateStreamUrl(link.url);
-          validationResults.set(link.url, result);
-          probedCount++;
-          if (result.outcome === "valid") validCount++;
-        }),
-      );
-
-      if (validCount >= MIN_VALID_LINKS) {
-        console.log(
-          `[StreamCache] Found ${validCount} valid links, stopping early`,
-        );
-        break outer;
-      }
-    }
-
-    // 4. Best index: first link in ranking order with a verified outcome.
-    //    "unknown" outcomes do not block — they just don't count as verified.
-    let bestIndex = selection.bestIndex;
-    let bestValidated = false;
-    if (
-      validationResults.get(sortedLinks[bestIndex]?.url)?.outcome === "valid"
-    ) {
-      bestValidated = true;
-    } else {
-      for (let i = 0; i < sortedLinks.length; i++) {
-        if (validationResults.get(sortedLinks[i].url)?.outcome === "valid") {
-          bestIndex = i;
-          bestValidated = true;
-          break;
-        }
-      }
-    }
-
-    // 5. Cache and return
     const result: StreamCacheResult = {
-      links: sortedLinks,
-      bestIndex,
-      bestValidated,
-      validationResults,
-      probedCount,
+      links,
+      bestIndex: head.index,
+      bestValidated: head.validated,
+      validationResults: probedUrls,
+      allDead: head.allDead,
       selectionReason: selection.selectionReason,
+      capBytes: selection.capBytes,
       prefetchedAt: Date.now(),
     };
 
     CACHE.set(cacheKey, {
       ...result,
       expiresAt: Date.now() + CACHE_TTL_MS,
-      probedAt: Date.now(),
-      reprobeCount: 0,
+      rankOptions,
     });
     purgeExpired();
-
-    console.log(
-      `[StreamCache] Completed: ${validCount} valid / ${probedCount} probed of ${sortedLinks.length} links, bestIndex=${bestIndex} (validated=${bestValidated})`,
-    );
     return result;
   } catch (error) {
-    console.warn("[StreamCache] Prefetch failed:", error);
+    console.log(
+      `[Flow] pipeline ${cacheKey}: crashed — ${error instanceof Error ? error.message : error}`,
+    );
     return null;
   }
 }
 
-/**
- * Refresh stale probe outcomes for a cached entry without blocking the caller.
- * The consumer starts playing immediately on the existing ranking; this keeps
- * the picker statuses and bestIndex honest while the user is still reading.
- * Mutates the cached entry in place (statuses are advisory everywhere).
- */
-async function refreshProbesInBackground(
-  cacheKey: string,
-  entry: CacheEntry,
-): Promise<void> {
-  if (REPROBE_IN_FLIGHT.has(cacheKey)) return;
-  if (Date.now() - entry.probedAt < PROBE_REFRESH_MS) return;
-  if (entry.reprobeCount >= MAX_REPROBE_ROUNDS) return;
-
-  REPROBE_IN_FLIGHT.add(cacheKey);
-  try {
-    const results = new Map(entry.validationResults);
-    let validCount = 0;
-    let probedCount = 0;
-    const startTime = Date.now();
-
-    outer: for (let i = 0; i < entry.links.length; i += MAX_CONCURRENT_PROBES) {
-      if (Date.now() - startTime > PROBE_DEADLINE_MS) break;
-      const batch = entry.links.slice(i, i + MAX_CONCURRENT_PROBES);
-      await Promise.allSettled(
-        batch.map(async (link) => {
-          // validateStreamUrl's own cache (valid 90s / dead 60s) naturally
-          // skips outcomes that are still fresh.
-          const result = await validateStreamUrl(link.url);
-          results.set(link.url, result);
-          probedCount++;
-          if (result.outcome === "valid") validCount++;
-        }),
-      );
-      if (validCount >= MIN_VALID_LINKS) break outer;
-    }
-
-    // Recompute the recommendation: prefer the ranked best if verified, else
-    // the first probe-verified link (mirrors runPrefetchPipeline step 4).
-    let bestIndex = entry.bestIndex;
-    let bestValidated = false;
-    if (results.get(entry.links[bestIndex]?.url)?.outcome === "valid") {
-      bestValidated = true;
-    } else {
-      for (let i = 0; i < entry.links.length; i++) {
-        if (results.get(entry.links[i].url)?.outcome === "valid") {
-          bestIndex = i;
-          bestValidated = true;
-          break;
-        }
-      }
-    }
-
-    entry.validationResults = results;
-    entry.probedCount = probedCount;
-    entry.bestIndex = bestIndex;
-    entry.bestValidated = bestValidated;
-    entry.probedAt = Date.now();
-    entry.reprobeCount += 1;
-
-    console.log(
-      `[StreamCache] Background re-probe (${cacheKey}): ${validCount} valid / ${probedCount} probed, bestIndex=${bestIndex}`,
-    );
-  } catch (e) {
-    console.warn("[StreamCache] Background re-probe failed:", e);
-  } finally {
-    REPROBE_IN_FLIGHT.delete(cacheKey);
-  }
+interface HeadVerdict {
+  index: number;
+  validated: boolean;
+  allDead: boolean;
 }
 
+const sleep = (ms: number) => new Promise<null>((r) => setTimeout(r, ms, null));
+
 /**
- * Take the prefetched result on the watch screen (one-shot per entry).
- * Returns null when nothing was cached or the entry expired.
+ * Probe the priority chain from `startIndex` (0 = the champion). The array
+ * IS the chain — index 0 is what should play, index 1 is the next fallback,
+ * so the walk simply advances through it. Only a DEAD verdict strikes a
+ * candidate — unknown plays (playback is ground truth). The whole walk is
+ * capped at HEAD_WALK_BUDGET_MS: when the budget runs out the current
+ * candidate plays unverified and its in-flight probe keeps running, its
+ * verdict recorded into `probedUrls` for the next reader.
  */
-export function consumePrefetch(
-  tmdbId: number,
-  mediaType: "movie" | "tv",
-  season?: number,
-  episode?: number,
-): StreamCacheResult | null {
-  const cacheKey = getCacheKey(tmdbId, mediaType, season, episode);
-  const entry = CACHE.get(cacheKey);
+async function probeHeadWalk(
+  links: StreamLink[],
+  startIndex: number,
+  probedUrls: Map<string, ValidationResult>,
+): Promise<HeadVerdict> {
+  const deadline = Date.now() + HEAD_WALK_BUDGET_MS;
+
+  for (let idx = startIndex; idx < links.length; idx++) {
+    const link = links[idx];
+    const probe = validateStreamUrl(link.url);
+    const remaining = deadline - Date.now();
+    const settled =
+      remaining > 0 ? await Promise.race([probe, sleep(remaining)]) : null;
+
+    if (!settled) {
+      // Budget spent — play this candidate unverified; record the late verdict.
+      console.log(
+        `[Flow] probe #${idx} (${effectiveQuality(link)}): budget ${HEAD_WALK_BUDGET_MS}ms hit — playing unverified`,
+      );
+      probe
+        .then((r) => {
+          probedUrls.set(link.url, r);
+          console.log(
+            `[Flow] probe #${idx}: late verdict ${r.outcome}${r.error ? ` (${r.error})` : ""}`,
+          );
+        })
+        .catch(() => {});
+      return { index: idx, validated: false, allDead: false };
+    }
+
+    probedUrls.set(link.url, settled);
+    if (settled.outcome !== "dead") {
+      console.log(
+        `[Flow] probe #${idx} (${effectiveQuality(link)}) → ${settled.outcome} in ${settled.probeMs ?? "?"}ms`,
+      );
+      return {
+        index: idx,
+        validated: settled.outcome === "valid",
+        allDead: false,
+      };
+    }
+    console.log(
+      `[Flow] probe #${idx} (${effectiveQuality(link)}) → DEAD (${settled.error ?? "?"}, ${settled.probeMs ?? "?"}ms) — strike, badge moves to #${idx + 1}`,
+    );
+  }
 
   console.log(
-    `[StreamCache] consumePrefetch: cacheKey=${cacheKey}, found=${!!entry}, cacheSize=${CACHE.size}`,
+    `[Flow] head walk: every candidate from #${startIndex} probed dead — handing off to embed`,
   );
-
-  if (entry && entryIsFresh(entry)) {
-    CACHE.delete(cacheKey);
-    return entry;
-  }
-
-  if (entry) CACHE.delete(cacheKey);
-  return null;
-}
-
-/** Peek without consuming. */
-export function hasPrefetch(
-  tmdbId: number,
-  mediaType: "movie" | "tv",
-  season?: number,
-  episode?: number,
-): boolean {
-  const cacheKey = getCacheKey(tmdbId, mediaType, season, episode);
-  const entry = CACHE.get(cacheKey);
-  return !!(entry && entryIsFresh(entry));
+  return { index: startIndex, validated: false, allDead: true };
 }
 
 /** Drop the whole cache (player close, media change, "re-check all" flow). */

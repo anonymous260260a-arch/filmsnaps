@@ -150,9 +150,13 @@ export function StreamPickerSheet({
     return Array.from(set);
   }, [links]);
 
-  // Rows with language section headers (links arrive ranked from the selector).
-  // Confirmed-failed links sink to the very end under their own section — they
-  // stay selectable (probe verdicts can be wrong) but never clutter the top.
+  // Rows with language section headers. The links array is the PRIORITY
+  // CHAIN (best first) — displayed here grouped by section for browsing, in
+  // first-seen section order, chain order preserved inside each group. The
+  // array itself is never reordered: `index` must keep mapping to the
+  // player's per-index statuses. Confirmed-failed links sink to the very end
+  // under their own section — they stay selectable (probe verdicts can be
+  // wrong) but never clutter the top.
   const rows = useMemo<PickerRow[]>(() => {
     const matching = links
       .map((link, index) => ({ link, index }))
@@ -166,18 +170,34 @@ export function StreamPickerSheet({
 
     const out: PickerRow[] = [];
     const dead: PickerRow[] = [];
-    let lastSection: string | null = null;
+    const groups: Array<{ label: string; rows: PickerRow[] }> = [];
+    const byLabel = new Map<string, { label: string; rows: PickerRow[] }>();
     for (const { link, index } of matching) {
-      if (linkStatuses[index] === "dead") {
+      // Falix returns only 2–3 curated files and is the slow-connection
+      // lifeline — never hide its rows in the Failed section. A dead probe
+      // verdict still shows its status icon (and keeps it out of auto-fallback)
+      // but the link stays right here, selectable.
+      if (linkStatuses[index] === "dead" && link._meta?.source !== "Falix") {
         dead.push({ kind: "link", key: `${link.id}-${link.url}`, link, index });
         continue;
       }
       const section = getLanguageSection(link, preferredLanguage);
-      if (section !== lastSection) {
-        out.push({ kind: "header", key: `h-${section}`, label: section });
-        lastSection = section;
+      let group = byLabel.get(section);
+      if (!group) {
+        group = { label: section, rows: [] };
+        byLabel.set(section, group);
+        groups.push(group);
       }
-      out.push({ kind: "link", key: `${link.id}-${link.url}`, link, index });
+      group.rows.push({
+        kind: "link",
+        key: `${link.id}-${link.url}`,
+        link,
+        index,
+      });
+    }
+    for (const group of groups) {
+      out.push({ kind: "header", key: `h-${group.label}`, label: group.label });
+      out.push(...group.rows);
     }
     if (dead.length > 0) {
       out.push({ kind: "header", key: "h-failed", label: "Failed" });

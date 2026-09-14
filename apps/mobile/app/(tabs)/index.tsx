@@ -128,10 +128,11 @@ export default function HomeScreen() {
     return () => unsub();
   }, []);
 
-  // ── Continue-watching stream prefetch ──
-  // Once the history hydrates, quietly fetch + rank + probe links for the
-  // first three CW titles so tapping a card reaches the player pre-warmed.
-  // Delayed and session-once so it never competes with app-startup work.
+  // ── Continue-watching stream pipeline ──
+  // Once the history hydrates, quietly run the stream pipeline (fetch →
+  // rank → probe the champion) for the first two CW titles so tapping a card
+  // reaches the player pre-warmed. Delayed and session-once so it never
+  // competes with app-startup work.
   //
   // The timer must NOT be cleared when storeHistory re-emits: hydration is
   // followed by TMDB enrichment within seconds, and that dep-change cleanup
@@ -149,7 +150,7 @@ export default function HomeScreen() {
     cwPrefetchTimerRef.current = setTimeout(() => {
       cwPrefetchTimerRef.current = null;
       cwPrefetchedRef.current = true;
-      for (const entry of cwHistoryRef.current.slice(0, 3)) {
+      for (const entry of cwHistoryRef.current.slice(0, 2)) {
         const p = entry.latest;
         const tmdbIdNum = parseInt(p.tmdbId);
         if (Number.isNaN(tmdbIdNum)) continue;
@@ -158,6 +159,7 @@ export default function HomeScreen() {
             cellularMaxMB: settings.cellularMaxMB,
             maxQuality: settings.maxQuality,
             preferredAudioLanguage: settings.preferredAudioLanguage,
+            trigger: "home-cw",
           }).catch(() => {});
         // Finished the latest episode? Warm the NEXT one — that's what the
         // user will actually play from this card (season rollover aware).

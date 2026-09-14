@@ -41,6 +41,8 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   private _isSeeking = false;
   private _targetSeekTime = 0;
   private _seekGeneration = 0;
+  /** Seek generation whose "suppressing pre-seek update" line was last logged. */
+  private _suppressLogGen = -1;
   private _seekSafetyTimer: ReturnType<typeof setTimeout> | null = null;
 
   private timeListeners: ((time: number, duration: number) => void)[] = [];
@@ -71,13 +73,13 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   private isSeekResolved(time: number): boolean {
     if (!this._isSeeking) return true;
     const target = this._targetSeekTime;
-    if (target <= 10) {
-      return time >= 0 && time <= 20;
-    }
-    // When seeking forward/deep (target > 10):
-    // Reject transient pre-seek timestamps near 0 (e.g. 0.14s, 0.17s)
-    const diff = Math.abs(time - target);
-    return time > 2.0 && (diff <= 60 || time >= target - 30);
+    // Landed = reported position genuinely AT the target. The old
+    // `diff <= 60 || time >= target - 30` ALSO matched the still-playing
+    // PRE-seek position (a +10s tap leaves it 10s short of the target), so
+    // the seek resolved instantly and the UI bounced optimistic → old → new.
+    // ExoPlayer seeks exactly, so ±3s around the target is a safe landing
+    // window; the 5s safety timer un-sticks anything weirder.
+    return target <= 15 ? time <= target + 3 : Math.abs(time - target) <= 3;
   }
 
   constructor(private player: VideoPlayer) {
@@ -107,8 +109,19 @@ export class ExpoVideoAdapter implements PlayerAdapter {
             this.isSeekResolved(time)
           ) {
             this._isSeeking = false;
+            console.log(
+              `[Seek] gen=${this._seekGeneration} landed at ${time.toFixed(1)}s (target ${this._targetSeekTime.toFixed(1)}s)`,
+            );
           } else {
-            return; // still resolving — suppress transient/stale values
+            // Still resolving — suppress transient/stale values. One log per
+            // seek shows the pre-seek updates the UI must NOT display.
+            if (this._suppressLogGen !== this._seekGeneration) {
+              this._suppressLogGen = this._seekGeneration;
+              console.log(
+                `[Seek] gen=${this._seekGeneration} suppressing pre-seek update ${time.toFixed(1)}s (target ${this._targetSeekTime.toFixed(1)}s)`,
+              );
+            }
+            return;
           }
         }
 
@@ -211,6 +224,9 @@ export class ExpoVideoAdapter implements PlayerAdapter {
             if (this._isSeeking) {
               if (this.isSeekResolved(time)) {
                 this._isSeeking = false;
+                console.log(
+                  `[Seek] gen=${this._seekGeneration} landed (status) at ${time.toFixed(1)}s (target ${this._targetSeekTime.toFixed(1)}s)`,
+                );
                 this.timeListeners.forEach((l) => l(time, dur));
               }
             } else if (time > 0) {
@@ -624,6 +640,9 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       const resolvedTime = this.isSeekResolved(actualTime)
         ? actualTime
         : clamped;
+      console.log(
+        `[Seek] gen=${myGeneration} safety resolve at ${resolvedTime.toFixed(1)}s (target ${clamped.toFixed(1)}s)`,
+      );
       this.timeListeners.forEach((l) => l(resolvedTime, this.getDuration()));
 
       // If the player failed to seek (stuck near 0 while target was >10s),

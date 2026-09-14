@@ -19,13 +19,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { VideoWebView } from "../../components/VideoWebView";
 import { HevcPlayer } from "../../components/HevcPlayer";
 import { isDirectVideoUrl } from "../../lib/hevc";
-import { fetchDirectStreams } from "../../lib/directStreams";
 import { useSettings } from "../../lib/settings";
 import { getProvidersForMode } from "@filmsnaps/shared";
-import { selectBestStream } from "../../lib/streamSelector";
-import { consumePrefetch } from "../../lib/streamPrefetch";
+import { prefetchStreams } from "../../lib/streamPrefetch";
 import type { ValidationResult } from "../../lib/streamValidator";
-import { getLastWorkingSource } from "../../lib/lastWorkingSource";
+import {
+  forgetWorkingSource,
+  getLastWorkingSource,
+} from "../../lib/lastWorkingSource";
 import { LanguagePromptSheet } from "../../components/player/LanguagePromptSheet";
 import type { StreamLink } from "../../components/player/streamTypes";
 
@@ -97,7 +98,11 @@ export default function WatchScreen() {
     undefined,
   );
   const [selectionReason, setSelectionReason] = useState<string>("");
-  const [directLoading, setDirectLoading] = useState(false);
+  // Loading starts TRUE for direct sessions: the pipeline hasn't answered
+  // yet, and "loading=false with 0 links" on the very first render is
+  // indistinguishable from "finished, nothing found" — it once made the
+  // player's auto-fallback fire before the pipeline even started.
+  const [directLoading, setDirectLoading] = useState(isDirectPlayback);
   const [directError, setDirectError] = useState<string | null>(null);
   /** Bumped by Retry to re-run the fetch. */
   const [fetchToken, setFetchToken] = useState(0);
@@ -129,96 +134,96 @@ export default function WatchScreen() {
     setDirectLoading(true);
     setDirectError(null);
 
-    const mediaType: "movie" | "tv" = type;
-
-    // 1. Try consuming prefetched results (includes probe outcomes)
-    const prefetched = consumePrefetch(
-      parseInt(id),
-      mediaType,
-      directSeason,
-      directEpisode,
-    );
-    if (prefetched) {
-      console.log(
-        `[WatchScreen] Using stream cache (bestIndex=${prefetched.bestIndex}, validated=${prefetched.bestValidated}, probed=${prefetched.probedCount})`,
-      );
-      // Promote the source that worked last time (stable URL identity).
-      // Resolved BEFORE handing links over so the player mounts once with the
-      // final index instead of opening one source and discarding it mid-load.
-      (async () => {
-        let idx = prefetched.bestIndex;
-        let lastUsed: number | undefined;
-        try {
-          const lastKey = await getLastWorkingSource(mediaType, id);
-          if (!cancelled && lastKey) {
-            const found = prefetched.links.findIndex(
-              (l) => l.url.split("?")[0] === lastKey,
-            );
-            if (found >= 0) {
-              idx = found;
-              lastUsed = found;
-            }
-          }
-        } catch {}
-        if (cancelled) return;
-        setDirectLinks(prefetched.links);
-        setPrevalidatedResults(prefetched.validationResults);
-        setSelectionReason(prefetched.selectionReason);
-        setBestLinkIndex(idx);
-        setLastWorkingIndex(lastUsed);
-        setDirectLoading(false);
-      })();
-      return;
-    }
-
-    // No cache — fetch fresh. Runs entirely on-device: the upstream stream
-    // API is called directly (provider list comes from the remote
-    // stream-providers.json config) — no server proxy hop.
+    // Single source of truth: join the pipeline the details page / CW home
+    // already started (or start it here). The snapshot's links are frozen and
+    // its head is probe-resolved (dead candidates struck, badge advanced) —
+    // the player mounts straight on the head with no re-ranking.
     (async () => {
       try {
-        const bundle = await fetchDirectStreams(
+        const snap = await prefetchStreams(
           parseInt(id, 10),
-          mediaType,
+          type,
           directSeason,
           directEpisode,
+          {
+            cellularMaxMB: settingsRef.current.cellularMaxMB ?? 3000,
+            maxQuality: settingsRef.current.maxQuality ?? null,
+            preferredAudioLanguage:
+              settingsRef.current.preferredAudioLanguage ?? "auto",
+            trigger: "watch",
+          },
         );
         if (cancelled) return;
-        if (bundle.links.length === 0) {
+        if (!snap || snap.links.length === 0) {
           setDirectError(
             "No streams available for this title right now. Try again later.",
           );
           return;
         }
-        const selection = await selectBestStream(bundle.links, {
-          cellularMaxMB: settingsRef.current.cellularMaxMB ?? 3000,
-          maxQuality: settingsRef.current.maxQuality ?? null,
-          preferredLanguage:
-            settingsRef.current.preferredAudioLanguage ?? "auto",
-          runtimeMinutes: type === "tv" ? 45 : 120,
-        });
+        console.log(
+          `[Flow] watch: pipeline ready — head #${snap.bestIndex} verified=${snap.bestValidated} allDead=${snap.allDead}`,
+        );
 
-        // Promote the source that worked last time (stable URL identity)
-        let bestIndex = selection.bestIndex;
+        // Promote the source that worked last time (stable URL identity) by
+        // REORDERING the chain: the head (index 0) is always what plays
+        // first, so promotion moves the remembered source to the front and
+        // keeps the rest in priority order. A remembered URL the probes
+        // condemned is poisoned — forgotten, never promoted.
+        let links = snap.links;
+        let bestIndex = snap.bestIndex;
         let lastUsed: number | undefined;
         try {
-          const lastKey = await getLastWorkingSource(mediaType, id);
-          if (lastKey) {
-            const found = selection.sortedLinks.findIndex(
+          const lastKey = await getLastWorkingSource(type, id);
+          if (!cancelled && lastKey) {
+            const found = links.findIndex(
               (l) => l.url.split("?")[0] === lastKey,
             );
             if (found >= 0) {
-              bestIndex = found;
-              lastUsed = found;
+              const outcome = snap.validationResults.get(
+                links[found].url,
+              )?.outcome;
+              if (outcome === "dead") {
+                console.log(
+                  "[Flow] watch: remembered source is probe-dead — forgetting it",
+                );
+                forgetWorkingSource(type, id).catch(() => {});
+              } else {
+                // Promotion must respect the same cap the chain was ranked
+                // with: a remembered file that is known-oversize for the
+                // current connection auto-buffered last time — it plays only
+                // if the user picks it manually.
+                const sizeBytes = links[found]._meta?.sizeBytes ?? 0;
+                if (
+                  sizeBytes > 0 &&
+                  snap.capBytes > 0 &&
+                  sizeBytes > snap.capBytes
+                ) {
+                  console.log(
+                    `[Flow] watch: remembered source is ${(sizeBytes / 1e9).toFixed(1)}GB — over the ${Math.round(snap.capBytes / 1e6)}MB cap, not promoting`,
+                  );
+                } else {
+                  console.log(
+                    `[Flow] watch: promoting last-working source to chain head (was #${found})`,
+                  );
+                  links = [
+                    links[found],
+                    ...links.slice(0, found),
+                    ...links.slice(found + 1),
+                  ];
+                  bestIndex = 0;
+                  lastUsed = 0;
+                }
+              }
             }
           }
         } catch {}
 
         if (cancelled) return;
-        setDirectLinks(selection.sortedLinks);
+        setDirectLinks(links);
+        setPrevalidatedResults(snap.validationResults);
+        setSelectionReason(snap.selectionReason);
         setBestLinkIndex(bestIndex);
         setLastWorkingIndex(lastUsed);
-        setSelectionReason(selection.selectionReason);
-        setPrevalidatedResults(null);
       } catch (err: any) {
         if (!cancelled) {
           setDirectError(

@@ -1264,9 +1264,6 @@ export function VideoWebView({
     );
     return minifyGuardScript(raw);
   }, [providerId, reactSafe, suppressInjection, configVersion]);
-  console.log(
-    `[VideoWebView] script length (memoized+minified): ${injectedScriptValue.length}, provider: ${currentProvider?.id ?? "null"}, reactSafe: ${reactSafe}, disableInjection: ${suppressInjection}, devtoolPatch: ${devtoolPatchScript.length > 0}, configVersion: ${configVersion}`,
-  );
 
   // App media hook for `progress: 'app'` providers (nxsha / zxcstream /
   // cinemaos / videasy / etc.) — reads the page's own <video> at ~1 Hz and
@@ -1578,6 +1575,7 @@ export function VideoWebView({
           cellularMaxMB: settings.cellularMaxMB,
           maxQuality: settings.maxQuality,
           preferredAudioLanguage: settings.preferredAudioLanguage,
+          trigger: "next-episode",
         }).catch(() => {});
       })
       .catch(() => {});
@@ -1808,7 +1806,10 @@ export function VideoWebView({
   }, [providers, providerId]);
 
   // ── Auto-fallback: when direct has 0 links or an error, switch to the next
-  // provider once per mount. Gated to avoid infinite loops. ──
+  // provider once per mount. Gated to avoid infinite loops. The one-shot ref
+  // is consumed INSIDE the timeout — scheduling then getting cancelled by a
+  // prop change (the watch screen flips loading=true right after mount) must
+  // not burn the only shot. ──
   const autoDirectFallbackUsedRef = useRef(false);
 
   useEffect(() => {
@@ -1820,11 +1821,14 @@ export function VideoWebView({
       !autoDirectFallbackUsedRef.current &&
       providers.length > 1
     ) {
-      autoDirectFallbackUsedRef.current = true;
-      const timer = setTimeout(
-        () => tryNextProvider(),
-        getPlayerTuning().providerFallbackDelayMs,
-      );
+      const timer = setTimeout(() => {
+        if (autoDirectFallbackUsedRef.current) return;
+        autoDirectFallbackUsedRef.current = true;
+        console.log(
+          "[Flow] direct provider empty — auto-switching to next provider",
+        );
+        tryNextProvider();
+      }, getPlayerTuning().providerFallbackDelayMs);
       return () => clearTimeout(timer);
     }
   }, [isDirect, directStream, tryNextProvider, providers.length]);

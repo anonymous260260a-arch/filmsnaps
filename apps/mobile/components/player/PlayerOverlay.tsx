@@ -117,6 +117,16 @@ export function PlayerOverlay({
   const insets = useSafeAreaInsets();
   const [isPaused, setIsPaused] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
+  // Ref mirror of the displayed position. Seek gestures (double-tap, ±10s
+  // buttons) base their math on this instead of player.getCurrentTime():
+  // the native position lags behind pending seeks/buffering on network
+  // streams, so "+10" computed from it could land BEHIND what the user is
+  // looking at (reported as "double right does -10").
+  const currentTimeRef = useRef(0);
+  const applyTime = useCallback((t: number) => {
+    currentTimeRef.current = t;
+    setCurrentTime(t);
+  }, []);
   const [duration, setDuration] = useState(0);
   const [isBuffering, setIsBuffering] = useState(true);
   const [showRemainingTime, setShowRemainingTime] = useState(false);
@@ -148,6 +158,11 @@ export function PlayerOverlay({
   const [overlayState, setOverlayState] =
     useState<OverlayState>("CONTROLS_VISIBLE");
   const overlayOpacity = useSharedValue(1);
+  // Live width of the gesture surface (updates on rotation/fullscreen), used
+  // by the double-tap worklet. SCREEN_WIDTH is captured once at module load
+  // and goes stale in fullscreen landscape — left-zone taps then classify as
+  // middle and wrongly seek +10.
+  const gestureSurfaceWidth = useSharedValue(0);
   const autoHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 2X Speed Hold state
@@ -169,16 +184,18 @@ export function PlayerOverlay({
 
   // Reset playback timing when player changes (new source loaded)
   useEffect(() => {
-    setCurrentTime(0);
+    applyTime(0);
     setDuration(0);
     setIsBuffering(true);
     setIsPaused(true);
-  }, [player]);
+  }, [player, applyTime]);
 
   // ── Optimistic Seek Lock State Machine ──
   // Prevents stale timeUpdate events from causing the progress bar to rubber-band / bounce-back
   const isSeekLockedRef = useRef(false);
   const targetSeekTimeRef = useRef(0);
+  /** One "[Seek] lock holding" log per lock — per-update logging would spam. */
+  const seekHoldLogRef = useRef(false);
   const seekLockTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const releaseSeekLock = useCallback(() => {
@@ -193,7 +210,8 @@ export function PlayerOverlay({
   const acquireSeekLock = useCallback((seekTime: number) => {
     isSeekLockedRef.current = true;
     targetSeekTimeRef.current = seekTime;
-    setCurrentTime(seekTime);
+    seekHoldLogRef.current = false;
+    applyTime(seekTime);
     setIsBuffering(true);
 
     if (seekLockTimeoutRef.current) clearTimeout(seekLockTimeoutRef.current);
@@ -288,17 +306,25 @@ export function PlayerOverlay({
         }
         if (isSeekLockedRef.current) {
           const target = targetSeekTimeRef.current;
-          const diff = Math.abs(time - target);
+          // Mirror the adapter's tight landing rule — the old
+          // `diff <= 60` also matched the still-playing pre-seek position,
+          // releasing the lock early and bouncing the timeline back.
           const isLanded =
-            target <= 10
-              ? time >= 0 && time <= 20
-              : time > 2.0 && (diff <= 60 || time >= target - 30);
+            target <= 15 ? time <= target + 3 : Math.abs(time - target) <= 3;
           if (isLanded) {
+            console.log(
+              `[Seek] lock released: update ${time.toFixed(1)}s ≈ target ${target.toFixed(1)}s`,
+            );
             releaseSeekLock();
-            setCurrentTime(time);
+            applyTime(time);
+          } else if (!seekHoldLogRef.current) {
+            seekHoldLogRef.current = true;
+            console.log(
+              `[Seek] lock holding: ignoring pre-seek update ${time.toFixed(1)}s (target ${target.toFixed(1)}s)`,
+            );
           }
         } else {
-          setCurrentTime(time);
+          applyTime(time);
         }
       }),
       player.onPlayPause((paused) => {
@@ -309,7 +335,7 @@ export function PlayerOverlay({
       }),
     ];
     return () => unsubs.forEach((u) => u());
-  }, [player, releaseSeekLock]);
+  }, [player, releaseSeekLock, applyTime]);
 
   useEffect(() => {
     return () => {
@@ -342,12 +368,18 @@ export function PlayerOverlay({
       }
 
       const delta = side === "left" ? -10 : 10;
+      // Base the math on the displayed (optimistic) position — during rapid
+      // taps the native player is still catching up to the previous seek,
+      // and a stale native base makes +10 land behind the visible position.
       const current = isSeekLockedRef.current
         ? targetSeekTimeRef.current
-        : player.getCurrentTime();
+        : currentTimeRef.current;
       const newTarget = Math.max(
         0,
         Math.min(duration > 0 ? duration : 99999, current + delta),
+      );
+      console.log(
+        `[Seek] double-tap ${side}: base ${current.toFixed(1)}s → target ${newTarget.toFixed(1)}s${isSeekLockedRef.current ? " (burst)" : ""}`,
       );
 
       acquireSeekLock(newTarget);
@@ -430,11 +462,17 @@ export function PlayerOverlay({
     .numberOfTaps(2)
     .maxDuration(280)
     .onEnd((e) => {
-      const tapX = e.x;
-      const threshold = SCREEN_WIDTH * 0.4;
-      if (tapX < threshold) {
+      // e.x is relative to the gesture surface; threshold against that same
+      // surface's live width (falls back to the captured screen width until
+      // the first onLayout fires).
+      const width =
+        gestureSurfaceWidth.value > 0
+          ? gestureSurfaceWidth.value
+          : SCREEN_WIDTH;
+      const threshold = width * 0.4;
+      if (e.x < threshold) {
         runOnJS(handleSideDoubleTap)("left");
-      } else if (tapX > SCREEN_WIDTH - threshold) {
+      } else if (e.x > width - threshold) {
         runOnJS(handleSideDoubleTap)("right");
       } else {
         runOnJS(handleSideDoubleTap)("right");
@@ -471,7 +509,7 @@ export function PlayerOverlay({
   const seekForward = useCallback(() => {
     const current = isSeekLockedRef.current
       ? targetSeekTimeRef.current
-      : player.getCurrentTime();
+      : currentTimeRef.current;
     const target = Math.min(duration > 0 ? duration : 99999, current + 10);
     acquireSeekLock(target);
     player.seek(target);
@@ -481,7 +519,7 @@ export function PlayerOverlay({
   const seekBackward = useCallback(() => {
     const current = isSeekLockedRef.current
       ? targetSeekTimeRef.current
-      : player.getCurrentTime();
+      : currentTimeRef.current;
     const target = Math.max(0, current - 10);
     acquireSeekLock(target);
     player.seek(target);
@@ -528,7 +566,13 @@ export function PlayerOverlay({
     <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
       {/* ── Gesture Layer (Layer 2) ── */}
       <GestureDetector gesture={composedGestures}>
-        <View style={styles.gestureSurface} collapsable={false}>
+        <View
+          style={styles.gestureSurface}
+          collapsable={false}
+          onLayout={(e) => {
+            gestureSurfaceWidth.value = e.nativeEvent.layout.width;
+          }}
+        >
           {/* Multi-Tap Seek Arc Overlay */}
           <DoubleTapRippleOverlay
             side={doubleTapSide}

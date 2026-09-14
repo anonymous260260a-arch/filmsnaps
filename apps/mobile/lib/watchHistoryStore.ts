@@ -74,12 +74,8 @@ function filterByMode(
   const out = entries.filter((e) =>
     mode === "anime" ? e.latest.isAnime === true : e.latest.isAnime !== true,
   );
-  if (__DEV__)
-    console.log(
-      `[FS-WH] filterByMode mode=${mode} total=${entries.length} shown=${out.length} flags=${JSON.stringify(
-        entries.map((e) => e.latest.isAnime),
-      )}`,
-    );
+  if (__DEV__ && out.length > 0)
+    console.log(`[FS-WH] filterByMode mode=${mode} shown=${out.length}`);
   return out;
 }
 

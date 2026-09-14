@@ -47,6 +47,8 @@ export interface ValidationResult {
 }
 
 const validationCache = new Map<string, ValidationResult>();
+/** Probes in flight — the pipeline and the player often probe the same URL. */
+const inFlightProbes = new Map<string, Promise<ValidationResult>>();
 
 function cacheTtlFor(outcome: ProbeOutcome): number {
   if (outcome === "valid") return VALID_CACHE_TTL;
@@ -86,10 +88,6 @@ function getNativeProbe(): NativeProbeFn | null {
     const mod = requireNativeModule("ExpoVideo");
     nativeProbeFn =
       typeof mod?.probeStream === "function" ? mod.probeStream.bind(mod) : null;
-    if (nativeProbeFn)
-      console.log(
-        "[Validator] native OkHttp probe available (player HTTP stack)",
-      );
   } catch {
     nativeProbeFn = null;
   }
@@ -394,32 +392,46 @@ export async function validateStreamUrl(
     validationCache.delete(url);
   }
 
-  // Attempt 1 — headers identical to what playback sends.
-  const first = await probeAttempt(url, headersForUrl(url));
-  if (first.outcome !== "dead") {
-    if (first.outcome !== "unknown") validationCache.set(url, first);
+  // The pipeline's head walk and the player's live probes can target the
+  // same URL seconds apart — share one request instead of doubling traffic.
+  const inFlight = inFlightProbes.get(url);
+  if (inFlight) return inFlight;
+
+  const attempt = (async () => {
+    // Attempt 1 — headers identical to what playback sends.
+    const first = await probeAttempt(url, headersForUrl(url));
+    if (first.outcome !== "dead") {
+      if (first.outcome !== "unknown") validationCache.set(url, first);
+      return first;
+    }
+
+    // Attempt 2 — a single failure never condemns a link. Confirm with a
+    // minimal header set on a fresh request: some CDNs / edge rules 403 the
+    // full browser-fingerprint header pair (Referer, Accept-Encoding) while
+    // the player's plain request plays fine. Only two agreeing failures count.
+    const second = await probeAttempt(url, {
+      "User-Agent": headersForUrl(url)["User-Agent"],
+    });
+    if (second.outcome !== "dead") {
+      if (__DEV__)
+        console.log(
+          `[Validator] probe healed after retry: ${url.slice(0, 80)} (first attempt: ${first.error ?? "dead"})`,
+        );
+      if (second.outcome !== "unknown") validationCache.set(url, second);
+      return second;
+    }
+
+    // Confirmed dead by both attempts — cache the verdict.
+    validationCache.set(url, first);
     return first;
-  }
+  })();
 
-  // Attempt 2 — a single failure never condemns a link. Confirm with a
-  // minimal header set on a fresh request: some CDNs / edge rules 403 the
-  // full browser-fingerprint header pair (Referer, Accept-Encoding) while the
-  // player's plain request plays fine. Only two agreeing failures count.
-  const second = await probeAttempt(url, {
-    "User-Agent": headersForUrl(url)["User-Agent"],
-  });
-  if (second.outcome !== "dead") {
-    if (__DEV__)
-      console.log(
-        `[Validator] probe healed after retry: ${url.slice(0, 80)} (first attempt: ${first.error ?? "dead"})`,
-      );
-    if (second.outcome !== "unknown") validationCache.set(url, second);
-    return second;
+  inFlightProbes.set(url, attempt);
+  try {
+    return await attempt;
+  } finally {
+    inFlightProbes.delete(url);
   }
-
-  // Confirmed dead by both attempts — cache the verdict.
-  validationCache.set(url, first);
-  return first;
 }
 
 /** Forget the cached verdict for one URL (e.g. after a playback error). */
