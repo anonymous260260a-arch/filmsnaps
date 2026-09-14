@@ -403,6 +403,14 @@ function setupRequestFilter(session: Session, providerId?: string): void {
         return callback({});
       }
 
+      // [NET] request logging — deliberately INSIDE the cascade listener.
+      // webRequest keeps ONE listener per event per session, so registering
+      // a logging listener anywhere else silently REPLACES this cascade
+      // (shipped once: every FILMSNAPS_LOG run lost all ad-blocking).
+      if (process.env.FILMSNAPS_LOG) {
+        net.log(`${details.method || "GET"} ${url.slice(0, 150)}`);
+      }
+
       // Ensure the filter engine (R4) is loaded before running the cascade.
       // Resolves immediately once initFilterEngine() completes (app startup
       // or the fire-and-forget in createProviderSession). If the engine can't
@@ -463,6 +471,11 @@ function setupRequestFilter(session: Session, providerId?: string): void {
           /* unparseable — skip audit line */
         }
       }
+
+      // Allowed — the callback MUST still fire. Dropping it (regression from
+      // the async engine-await refactor) leaves every allowed request's fate
+      // to Electron's uncalled-callback fallback.
+      return callback({});
     },
   );
 
@@ -751,6 +764,12 @@ export function setupSecurityHeaders(session: Session): void {
   });
 
   session.webRequest.onHeadersReceived((details, callback) => {
+    // [NET] response logging — same one-listener rule as the cascade above:
+    // this is the provider session's surviving onHeadersReceived, so the
+    // status lines are emitted here, never from a second registration.
+    if (process.env.FILMSNAPS_LOG) {
+      net.log(`← ${details.url.slice(0, 120)} [${details.statusLine || ""}]`);
+    }
     const responseHeaders = {
       ...details.responseHeaders,
       "Content-Security-Policy": [

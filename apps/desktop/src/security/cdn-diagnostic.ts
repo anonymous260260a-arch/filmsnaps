@@ -54,6 +54,14 @@ export function startCdnDiagnostic(sess?: Session): void {
         session.fromPartition("persist:filmsnaps-provider"),
       ];
 
+  // webRequest keeps ONE listener per event per session — the listeners below
+  // REPLACE the provider session's header handlers while active: cold-Referer
+  // seeding and the security-header/CSP response rewrite are disabled until
+  // the app restarts without FILMSNAPS_CDN_DIAG. Diagnostic use only.
+  cdn.warn(
+    "CDN diagnostic REPLACES provider-session header listeners while active — Referer seeding and CSP headers are off until restart",
+  );
+
   for (const s of sessions) {
     installListeners(s);
   }
