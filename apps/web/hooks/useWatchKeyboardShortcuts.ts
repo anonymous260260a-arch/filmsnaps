@@ -57,6 +57,16 @@ export function useWatchKeyboardShortcuts({
       )
         return;
 
+      // Desktop mpv playback claims F / M / ← / → (fullscreen, mute, seek —
+      // see useMpvDesktopShortcuts). Without this defer, F toggled the
+      // Electron window fullscreen twice and ← / → both seeked and skipped
+      // episodes. Episode navigation stays on N / P.
+      if ((window as any).__fsMpvKeysActive) {
+        const k = e.key.toLowerCase();
+        if (k === "f" || k === "m" || k === "arrowleft" || k === "arrowright")
+          return;
+      }
+
       switch (e.key.toLowerCase()) {
         case "f":
           e.preventDefault();
@@ -104,7 +114,18 @@ export function useWatchKeyboardShortcuts({
             onServerToggle();
           } else if (isFullscreen) {
             e.preventDefault();
-            document.exitFullscreen();
+            // Desktop fullscreen is WINDOW-level (Electron setFullScreen) —
+            // document.exitFullscreen() is a silent no-op there, which left
+            // ESC dead while fullscreen. The mpv shortcut hook also handles
+            // Escape; a second exit request is a no-op, so both can run.
+            if (
+              typeof window !== "undefined" &&
+              (window as any).electronAPI?.isDesktop
+            ) {
+              (window as any).electronAPI.player?.setFullscreen?.(false);
+            } else {
+              document.exitFullscreen();
+            }
           } else if (onGoBack) {
             e.preventDefault();
             onGoBack();

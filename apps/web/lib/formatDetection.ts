@@ -467,12 +467,7 @@ export function isH264Encoding(name: string): boolean {
 
 // ── Decoder selection ─────────────────────────────────────────────────
 
-export type DecoderType =
-  | "native"
-  | "videojs"
-  | "webcodecs"
-  | "mpv"
-  | "unsupported";
+export type DecoderType = "movi" | "mpv" | "unsupported";
 
 export async function selectDecoder(
   format: DetectedFormat,
@@ -485,67 +480,21 @@ export async function selectDecoder(
     `[selectDecoder] format=${format.type} entryName=${entryName?.slice(0, 40)} isDesktop=${isDesktop}`,
   );
   if (isDesktop) {
-    const mpvPreferred =
-      format.type === "avi" ||
-      format.type === "mpegts" ||
-      (entryName && isHevcEncoding(entryName));
-    console.log(`[selectDecoder] mpvPreferred=${mpvPreferred}`);
-    if (mpvPreferred) return "mpv";
+    // Desktop contract: EVERY video plays through mpv. mpv handles all
+    // container formats and codecs reliably (MKV, AVI, MPEG-TS, WebM, MP4,
+    // HLS, HEVC/AV1) — routing any format to the experimental native <video>
+    // MKV path or WebCodecs made desktop playback unpredictable. One decoder,
+    // one code path, one set of bugs.
+    console.log(`[selectDecoder] desktop → mpv`);
+    return "mpv";
   }
 
-  // 1. HEVC in MKV → always WebCodecs (even native MKV not supported in <video>)
-  if (format.type === "mkv" && entryName && isHevcEncoding(entryName)) {
-    const supported = await checkHevcSupport();
-    return supported ? "webcodecs" : "unsupported";
-  }
-
-  // 2. MKV → native on modern browsers (Chrome 130+, Firefox, Edge, Safari 18+)
-  // WebCodecs fallback for very old browsers only
-  if (format.type === "mkv") {
-    // Chrome 130+ has full MKV support (H.264, HEVC, VP8/VP9, AV1)
-    const chromeVersion = getChromeVersion();
-    if (chromeVersion && chromeVersion >= 130) {
-      return "native";
-    }
-    // Safari 18+ has full MKV support
-    if (isSafariBrowser()) {
-      return "native";
-    }
-    // Firefox and Edge: use canPlayType feature detection
-    const testEl = document.createElement("video");
-    if (testEl.canPlayType("video/x-matroska") !== "") {
-      return "native";
-    }
-    // Very old browser without MKV support → WebCodecs
-    return "webcodecs";
-  }
-
-  // 3. HLS → video.js with VHS (hls.js) for Chrome; native for Safari
-  if (format.type === "hls") {
-    if (canPlayNatively(format)) return "native";
-    return "videojs";
-  }
-
-  // 4. DASH → always video.js (no native DASH support)
-  if (format.type === "dash") {
-    return "videojs";
-  }
-
-  // 5. MP4/WebM → native if supported
-  if (format.type === "mp4" || format.type === "webm") {
-    if (canPlayNatively(format)) return "native";
-    // HEVC in MP4 → WebCodecs
-    if (entryName && isHevcEncoding(entryName)) {
-      const supported = await checkHevcSupport();
-      return supported ? "webcodecs" : "unsupported";
-    }
-    // AV1 → check support
-    if (entryName && /av01|av1/i.test(entryName)) {
-      if (await checkAV1Support()) return "native";
-      // AV1 with WebCodecs fallback possible but rare in practice
-    }
-    return "unsupported";
-  }
-
-  return "unsupported";
+  // 1. Web — movi-player plays EVERY format (MP4/WebM/MKV/HLS/DASH/HEVC/AV1).
+  // Its WASM demuxer + WebCodecs decode covers what <video> can't, it escalates
+  // engines internally (wasm → shaka → native), and it reports standard media
+  // events, so the player UI never branches on format again. A source movi
+  // genuinely can't open surfaces as an `error` event → the ranked source
+  // fallback chain, exactly like any other playback failure.
+  console.log(`[selectDecoder] web → movi`);
+  return "movi";
 }

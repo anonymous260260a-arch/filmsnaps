@@ -5,7 +5,7 @@
  * with animated seek arrows and dynamic duration counter text.
  */
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import Animated, {
   useSharedValue,
@@ -27,6 +27,16 @@ export function DoubleTapRippleOverlay({
   side,
   seekAmount,
 }: DoubleTapRippleOverlayProps) {
+  // The ripple must keep its original side while fading out: `side` flips to
+  // null when the overlay dismisses it, and rendering that fade with the
+  // null-default right styling made a LEFT-seek ripple visibly jump to the
+  // right side as it faded — a phantom forward-seek indicator.
+  const [lastSide, setLastSide] = useState<"left" | "right">("right");
+  useEffect(() => {
+    if (side) setLastSide(side);
+  }, [side]);
+  const isLeft = (side ?? lastSide) === "left";
+
   const opacity = useSharedValue(0);
   const scale = useSharedValue(0.7);
   const iconTranslateX = useSharedValue(0);
@@ -61,8 +71,6 @@ export function DoubleTapRippleOverlay({
   const iconStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: iconTranslateX.value }],
   }));
-
-  const isLeft = side === "left";
 
   return (
     <Animated.View

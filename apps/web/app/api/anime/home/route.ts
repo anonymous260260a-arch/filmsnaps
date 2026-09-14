@@ -16,6 +16,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCorsHeaders, handleOptions } from "@/lib/cors";
 import { desktopSkip } from "../../desktop-skip";
+// revalidate=1: satisfies output:'export' (static 410 via desktopSkip) while
+// keeping web builds live — matches player/direct + player/falix pattern.
+export const revalidate = 1;
 import { lookupMal, lookupTmdbShow } from "@/lib/anime/resolve";
 import {
   ANILIST_GRAPHQL,

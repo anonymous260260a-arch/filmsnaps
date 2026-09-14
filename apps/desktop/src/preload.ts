@@ -278,6 +278,18 @@ export interface ElectronAPI {
     }) => Promise<void>;
     hideVideo: () => Promise<void>;
     showVideo: () => Promise<void>;
+    setProperty: (
+      name: string,
+      value: unknown,
+    ) => Promise<{ success: boolean }>;
+    toggleFullscreen: () => Promise<{ success: boolean }>;
+    /** Probe a URL from the main process (no CORS, inspects body bytes). Returns "valid"|"dead"|"unknown". */
+    probe: (url: string, timeoutMs?: number) => Promise<string>;
+    /** Download an external subtitle file and load it into mpv (online search). */
+    subAdd: (
+      url: string,
+      title?: string,
+    ) => Promise<{ success: boolean; error?: string }>;
     /** Real-time mpv events (playback-restart, pause, seek, etc.) */
     onEvent: (
       callback: (event: {
@@ -531,6 +543,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }) => ipcRenderer.invoke("mpv:setVideoBounds", bounds),
     hideVideo: () => ipcRenderer.invoke("mpv:hideVideo"),
     showVideo: () => ipcRenderer.invoke("mpv:showVideo"),
+    setProperty: (name: string, value: unknown) =>
+      ipcRenderer.invoke("mpv:setProperty", name, value),
+    toggleFullscreen: () => ipcRenderer.invoke("mpv:toggleFullscreen"),
+    probe: (url: string, timeoutMs?: number) =>
+      ipcRenderer.invoke("mpv:probe", url, timeoutMs),
+    subAdd: (url: string, title?: string) =>
+      ipcRenderer.invoke("mpv:subAdd", url, title),
     onEvent: (
       callback: (event: {
         type: string;

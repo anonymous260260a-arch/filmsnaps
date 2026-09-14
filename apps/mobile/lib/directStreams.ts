@@ -418,7 +418,7 @@ export interface DirectStreamBundle {
   links: StreamLink[];
 }
 
-// ── Falix fallback ─────────────────────────────────────────────────────
+// ── Falix (second provider, fetched for every title) ───────────────────
 
 interface FalixTelegramFile {
   quality: string;
@@ -477,7 +477,7 @@ function parseFalixAudio(name: string): string {
 function mapFalixFiles(
   files: FalixTelegramFile[],
   title: string,
-  idOffset: number,
+  dlBase: string,
 ): StreamLink[] {
   return files
     .filter((f) => !!f.id && !!f.name)
@@ -487,9 +487,11 @@ function mapFalixFiles(
       return {
         quality: f.quality || "Unknown",
         name: `[Falix] ${title} — ${f.name}`,
-        id: `falix-${idOffset + i}`,
+        id: `falix-${i}`,
         size: f.size || undefined,
-        url: "", // filled below by caller with apiBase
+        // dlBase is either the falix host itself or the worker stream proxy
+        // (see fetchFalixLinks) — both end in /dl.
+        url: `${dlBase}/${f.id}/${encodeURIComponent(f.name)}`,
         type: ext === "mkv" ? "mkv" : "mp4",
         _meta: {
           codec: parseFalixCodec(f.name),
@@ -504,67 +506,169 @@ function mapFalixFiles(
 }
 
 /**
- * Fetch streamable links from falix when the primary provider returns too few.
- * Falix URLs are streamable directly — same as any other source.
+ * fetch() with a hard timeout. RN's AbortSignal polyfill (abort-controller)
+ * has NO static .timeout() — calling it throws "not a function" on device,
+ * which used to make every falix lookup fail silently inside its try/catch.
+ * Manual AbortController + setTimeout works on all RN versions.
  */
-async function fetchFalixLinks(
-  tmdbId: number,
-  mediaType: "movie" | "tv",
-  season?: number,
-  episode?: number,
-): Promise<StreamLink[]> {
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs: number,
+  init?: RequestInit,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const apiBase = await getProviderApiBase("falix");
-    const res = await fetch(`${apiBase}/api/id/${tmdbId}`, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as FalixTVData | FalixMovieData;
-
-    let files: FalixTelegramFile[] = [];
-    if (
-      mediaType === "tv" &&
-      "seasons" in data &&
-      season != null &&
-      episode != null
-    ) {
-      const s = data.seasons.find((s) => s.season_number === season);
-      const ep = s?.episodes.find((e) => e.episode_number === episode);
-      files = ep?.telegram ?? [];
-    } else if ("telegram" in data) {
-      files = data.telegram ?? [];
-    }
-
-    if (files.length === 0) return [];
-
-    const links = mapFalixFiles(files, data.title, 9000);
-    // Fill in the streaming URL for each link.
-    for (let i = 0; i < links.length; i++) {
-      const f = files[i];
-      const encodedName = encodeURIComponent(f.name);
-      links[i].url = `${apiBase}/dl/${f.id}/${encodedName}`;
-    }
-    console.log(
-      `[DirectStreams] falix: ${files.length} files for tmdbId=${tmdbId}`,
-    );
-    return links;
-  } catch {
-    return [];
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 /**
- * Count non-download-only links in the array.
+ * Fetch streamable links from falix. Runs for EVERY title in parallel with
+ * the primary provider — there is no link-count gate — and its links join
+ * the same pool, ranked together with the primary's by the stream pipeline
+ * (lib/streamPrefetch → selectBestStream).
+ *
+ * Falix keys titles inconsistently (some by zero-stripped IMDB numeric id,
+ * some by their real TMDB id — its "tmdb_id" field stores whichever), so
+ * both ids are tried.
+ *
+ * Some ISPs intermittently block dl.falixmovies.com at the connection level
+ * ("Network request failed" — metadata API and /dl/ streams share the host).
+ * When a direct lookup fails that way, the remaining lookups AND the stream
+ * URLs go through the web app's worker proxy (/api/player/falix*), the same
+ * Cloudflare channel as the TMDB pass-through. Never throws.
  */
-function countPlayable(links: StreamLink[]): number {
-  return links.filter((l) => !l._meta?.isDownloadOnly).length;
+async function fetchFalixLinks(
+  tmdbId: number,
+  imdbId: string,
+  mediaType: "movie" | "tv",
+  season?: number,
+  episode?: number,
+): Promise<StreamLink[]> {
+  let apiBase: string;
+  try {
+    apiBase = await getProviderApiBase("falix");
+  } catch (err: any) {
+    console.log(
+      `[Flow] fetch falix ⚠ provider unavailable: ${err?.message ?? err}`,
+    );
+    return [];
+  }
+
+  const workerBase = getApiBaseUrl().replace(/\/$/, "");
+  let directReachable = true;
+  let useProxy = false;
+  let data: FalixTVData | FalixMovieData | null = null;
+
+  const imdbNum = imdbId.replace(/^tt0*/, "");
+  for (const id of [imdbNum, String(tmdbId)]) {
+    if (!id) continue;
+    if (directReachable) {
+      try {
+        // 4s — an ISP-blocked host won't answer within this anyway, and a
+        // hung direct attempt must not gate the whole pipeline (the worker
+        // proxy picks up immediately after).
+        const res = await fetchWithTimeout(`${apiBase}/api/id/${id}`, 4_000);
+        if (res.ok) {
+          try {
+            data = (await res.json()) as FalixTVData | FalixMovieData;
+          } catch (err: any) {
+            // Non-JSON body — e.g. an ISP hijack/challenge page returned as 200.
+            console.log(
+              `[Flow] fetch falix lookup ${id}: HTTP 200 but body is not JSON — ${err?.message ?? err}`,
+            );
+            continue;
+          }
+          console.log(`[Flow] fetch falix lookup ${id}: OK (direct)`);
+          break;
+        }
+        // 404 etc. — the server answered, so this id simply isn't in the
+        // catalog; try the next id directly.
+        console.log(`[Flow] fetch falix lookup ${id}: HTTP ${res.status}`);
+        continue;
+      } catch (err: any) {
+        directReachable = false;
+        console.log(
+          `[Flow] fetch falix direct unreachable (${err?.name ?? "Error"}: ${err?.message ?? err}) — switching to worker proxy`,
+        );
+      }
+    }
+    try {
+      const res = await fetchWithTimeout(
+        `${workerBase}/api/player/falix?id=${id}`,
+        12_000,
+      );
+      if (res.ok) {
+        try {
+          data = (await res.json()) as FalixTVData | FalixMovieData;
+        } catch (err: any) {
+          console.log(
+            `[Flow] fetch falix proxy ${id}: HTTP 200 but body is not JSON — ${err?.message ?? err}`,
+          );
+          continue;
+        }
+        useProxy = true;
+        console.log(`[Flow] fetch falix lookup ${id}: OK (worker proxy)`);
+        break;
+      }
+      console.log(`[Flow] fetch falix proxy ${id}: HTTP ${res.status}`);
+    } catch (err: any) {
+      console.log(
+        `[Flow] fetch falix proxy ${id}: ${err?.name ?? "Error"}: ${err?.message ?? err}`,
+      );
+    }
+  }
+
+  if (!data) {
+    console.log(
+      `[Flow] fetch falix: no entry for tmdbId=${tmdbId} (imdb ${imdbId}, base ${apiBase})`,
+    );
+    return [];
+  }
+
+  let files: FalixTelegramFile[] = [];
+  if (
+    mediaType === "tv" &&
+    "seasons" in data &&
+    season != null &&
+    episode != null
+  ) {
+    const s = data.seasons.find((s) => s.season_number === season);
+    const ep = s?.episodes.find((e) => e.episode_number === episode);
+    files = ep?.telegram ?? [];
+    if (files.length === 0) {
+      console.log(
+        `[Flow] fetch falix: S${season}E${episode} EMPTY (seasons=${data.seasons?.length ?? 0}, foundSeason=${!!s})`,
+      );
+    }
+  } else if ("telegram" in data) {
+    files = data.telegram ?? [];
+  }
+
+  if (files.length === 0) return [];
+
+  const links = mapFalixFiles(
+    files,
+    data.title,
+    useProxy ? `${workerBase}/api/player/falix/stream/dl` : `${apiBase}/dl`,
+  );
+  console.log(
+    `[Flow] fetch falix: ${links.length} files for tmdbId=${tmdbId}${useProxy ? " (via worker proxy)" : ""}`,
+  );
+  return links;
 }
 
 /**
- * Fetch stream links directly from the upstream provider (no server proxy).
- * When the primary returns ≤3 playable links, falix is fetched as fallback.
- * Throws on failure so callers can surface their own error state.
+ * Fetch stream links on-device from BOTH providers: the HDHub-style stream
+ * API (primary) and falix — for every title, no link-count gate. The merged
+ * pool is ranked once by the stream pipeline (lib/streamPrefetch →
+ * selectBestStream). Falix problems never fail the load; a primary failure
+ * is rescued by falix links when it has any.
+ * Throws only when both providers come up empty-and-broken, so callers can
+ * surface their own error state.
  */
 export async function fetchDirectStreams(
   tmdbId: number,
@@ -572,10 +676,24 @@ export async function fetchDirectStreams(
   season?: number,
   episode?: number,
 ): Promise<DirectStreamBundle> {
+  const fetchStartedAt = Date.now();
   const imdbId = await resolveImdbId(mediaType, tmdbId);
   if (!imdbId) {
     throw new Error("Couldn't resolve this title's IMDB id.");
   }
+  console.log(
+    `[Flow] fetch ${mediaType}:${tmdbId}: imdb=${imdbId} resolved in ${Date.now() - fetchStartedAt}ms — starting hdhub + falix in parallel`,
+  );
+
+  // Falix starts regardless of what the primary provider does — even a
+  // disabled/unreachable primary doesn't stop it.
+  const falixPromise = fetchFalixLinks(
+    tmdbId,
+    imdbId,
+    mediaType,
+    season,
+    episode,
+  ).catch(() => [] as StreamLink[]);
 
   const apiBase = await getStreamsApiBase();
   const apiUrl =
@@ -583,45 +701,48 @@ export async function fetchDirectStreams(
       ? `${apiBase}/stream/series/${imdbId}:${season}:${episode}.json`
       : `${apiBase}/stream/movie/${imdbId}.json`;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
-  let res: Response;
-  try {
-    res = await fetch(apiUrl, {
-      headers: { Accept: "application/json" },
-      signal: controller.signal,
-    });
-  } catch {
-    throw new Error("Couldn't reach the stream provider.");
-  } finally {
-    clearTimeout(timer);
-  }
-
-  if (!res.ok) {
-    throw new Error(`Stream provider returned HTTP ${res.status}`);
-  }
-
-  const raw = (await res.json()) as { streams?: HdHubStream[] };
-  const links = mapHdhubStreams(Array.isArray(raw?.streams) ? raw.streams : []);
-  console.log(
-    `[DirectStreams] ${mediaType} ${tmdbId} (${imdbId}) → ${links.length} links via ${apiBase}`,
-  );
-
-  // Falix fallback: when the primary provider returns ≤3 playable links,
-  // fetch falix for the same title and append streamable alternatives.
-  if (countPlayable(links) <= 3) {
-    const falixLinks = await fetchFalixLinks(
-      tmdbId,
-      mediaType,
-      season,
-      episode,
-    );
-    if (falixLinks.length > 0) {
-      console.log(
-        `[DirectStreams] falix fallback: +${falixLinks.length} links`,
-      );
-      links.push(...falixLinks);
+  // Both fetches run concurrently; results are collected sequentially so a
+  // slow primary never delays an already-finished falix response.
+  const hdhubPromise = (async (): Promise<StreamLink[]> => {
+    let res: Response;
+    try {
+      res = await fetchWithTimeout(apiUrl, 15_000, {
+        headers: { Accept: "application/json" },
+      });
+    } catch {
+      throw new Error("Couldn't reach the stream provider.");
     }
+    if (!res.ok) {
+      throw new Error(`Stream provider returned HTTP ${res.status}`);
+    }
+    const raw = (await res.json()) as { streams?: HdHubStream[] };
+    return mapHdhubStreams(Array.isArray(raw?.streams) ? raw.streams : []);
+  })();
+
+  let links: StreamLink[] = [];
+  let primaryError: unknown = null;
+  try {
+    links = await hdhubPromise;
+    console.log(
+      `[Flow] fetch hdhub: ${links.length} links via ${apiBase} (total ${Date.now() - fetchStartedAt}ms)`,
+    );
+  } catch (err) {
+    primaryError = err;
+    console.warn(
+      `[DirectStreams] primary provider failed for ${mediaType} ${tmdbId}:`,
+      err,
+    );
   }
+
+  const falixLinks = await falixPromise;
+  if (falixLinks.length > 0) {
+    console.log(`[Flow] fetch falix: +${falixLinks.length} links`);
+    links.push(...falixLinks);
+  }
+
+  // Nothing from either side: surface the primary's error if it failed,
+  // else return the empty bundle and let callers show "no streams".
+  if (links.length === 0 && primaryError) throw primaryError;
+
   return { tmdbId, imdbId, mediaType, links };
 }

@@ -28,6 +28,14 @@ const TRACK_HEIGHT_ACTIVE = 6;
 const PREVIEW_WIDTH = 114;
 const PREVIEW_HEIGHT = 64;
 
+// YouTube-style intent detection: a touch on the bar only becomes a scrub
+// once it moves HORIZONTALLY. Vertical-first movement (Android gesture-nav
+// swipe from bottom center, home swipe) FAILS the gesture so the system
+// gets it — the old code committed a seek at the touch-down point for
+// every touch that ended on the bar, swipe or not.
+const VERTICAL_FAIL_PX = 12;
+const HORIZONTAL_ACTIVATE_PX = 8;
+
 interface ProgressBarProps {
   currentTime: number;
   duration: number;
@@ -135,6 +143,10 @@ export function ProgressBar({
     }
   }, []);
 
+  const logScrubJS = useCallback((msg: string) => {
+    console.log(`[Scrub] bar: ${msg}`);
+  }, []);
+
   // Measure container layout width
   const handleLayout = useCallback((e: LayoutChangeEvent) => {
     const width = e.nativeEvent.layout.width;
@@ -174,25 +186,56 @@ export function ProgressBar({
     },
   );
 
-  // --- Pan gesture: drag the thumb across timeline ---
+  // --- Pan gesture: drag the thumb across the timeline (manual activation) ---
+  // Nothing happens on touch-down — the scrub (preview card, thumb jump,
+  // seek on release) only exists once the touch proves horizontal intent.
+  const touchStartX = useSharedValue(0);
+  const touchStartY = useSharedValue(0);
+  const touchDownX = useSharedValue(0);
+  const tapStartY = useSharedValue(0);
+
   const panGesture = Gesture.Pan()
     .hitSlop({ top: 16, bottom: 16, left: 20, right: 20 })
-    .onBegin((e) => {
-      const width = trackWidthSV.value;
-      if (width <= 0) return;
-
-      isDraggingSV.value = true;
-      runOnJS(handleScrubStateJS)(true);
-
-      const startX = Math.max(0, Math.min(width, e.x));
-      panStartX.value = startX;
-      thumbX.value = startX;
-      thumbScale.value = withSpring(THUMB_SIZE_ACTIVE / THUMB_SIZE, {
-        damping: 14,
-        stiffness: 350,
-      });
-
-      runOnJS(updateScrubTextJS)(startX / width);
+    .manualActivation(true)
+    .onTouchesDown((e) => {
+      const t = e.allTouches[0];
+      if (!t) return;
+      touchStartX.value = t.absoluteX;
+      touchStartY.value = t.absoluteY;
+      touchDownX.value = t.x;
+    })
+    .onTouchesMove((e, s) => {
+      const t = e.allTouches[0];
+      if (!t) return;
+      const dx = Math.abs(t.absoluteX - touchStartX.value);
+      const dy = Math.abs(t.absoluteY - touchStartY.value);
+      if (dy > VERTICAL_FAIL_PX && dy > dx) {
+        runOnJS(logScrubJS)(
+          `vertical move (${dy.toFixed(0)}px) — gesture failed, no seek`,
+        );
+        s.fail();
+        return;
+      }
+      if (dx > HORIZONTAL_ACTIVATE_PX && dx >= dy) {
+        const width = trackWidthSV.value;
+        if (width <= 0) {
+          s.fail();
+          return;
+        }
+        isDraggingSV.value = true;
+        runOnJS(handleScrubStateJS)(true);
+        // Thumb jumps to the original touch point and follows the finger
+        const startX = Math.max(0, Math.min(width, touchDownX.value));
+        panStartX.value = startX;
+        thumbX.value = startX;
+        thumbScale.value = withSpring(THUMB_SIZE_ACTIVE / THUMB_SIZE, {
+          damping: 14,
+          stiffness: 350,
+        });
+        runOnJS(updateScrubTextJS)(startX / width);
+        runOnJS(logScrubJS)(`scrub activated (${dx.toFixed(0)}px horizontal)`);
+        s.activate();
+      }
     })
     .onUpdate((e) => {
       const width = trackWidthSV.value;
@@ -205,11 +248,17 @@ export function ProgressBar({
       thumbX.value = newX;
       runOnJS(updateScrubTextJS)(newX / width);
     })
-    .onFinalize(() => {
+    .onFinalize((_e, success) => {
+      thumbScale.value = withSpring(1.0, { damping: 14, stiffness: 350 });
+      // Only an ACTIVATED scrub commits a seek. Failed touches (taps,
+      // vertical swipes, system-navigation steals) land here too and must
+      // leave the timeline untouched.
+      if (!success || !isDraggingSV.value) {
+        isDraggingSV.value = false;
+        return;
+      }
       const width = trackWidthSV.value;
       isDraggingSV.value = false;
-      thumbScale.value = withSpring(1.0, { damping: 14, stiffness: 350 });
-
       if (width > 0) {
         runOnJS(handleCommitSeekJS)(thumbX.value / width);
       }
@@ -219,22 +268,25 @@ export function ProgressBar({
   // --- Tap gesture: instant jump to a location on the timeline ---
   const tapGesture = Gesture.Tap()
     .hitSlop({ top: 16, bottom: 16, left: 20, right: 20 })
-    .onBegin((e) => {
-      const width = trackWidthSV.value;
-      if (width <= 0) return;
-      const targetX = Math.max(0, Math.min(width, e.x));
-      thumbX.value = targetX;
-      runOnJS(handleScrubStateJS)(true);
-      runOnJS(updateScrubTextJS)(targetX / width);
+    .onTouchesDown((e) => {
+      const t = e.allTouches[0];
+      if (t) tapStartY.value = t.absoluteY;
     })
     .onEnd((e) => {
       const width = trackWidthSV.value;
       if (width <= 0) return;
-
+      // A fast vertical swipe can complete as a "tap" before the movement
+      // registers — reject any tap whose touch travelled vertically.
+      if (Math.abs(e.absoluteY - tapStartY.value) > VERTICAL_FAIL_PX) {
+        runOnJS(logScrubJS)("tap rejected — vertical travel");
+        return;
+      }
       const targetX = Math.max(0, Math.min(width, e.x));
       thumbX.value = targetX;
       runOnJS(handleCommitSeekJS)(targetX / width);
-      runOnJS(handleScrubStateJS)(false);
+      runOnJS(logScrubJS)(
+        `tap seek to ${((targetX / width) * 100).toFixed(0)}%`,
+      );
     });
 
   const composedGesture = Gesture.Race(panGesture, tapGesture);

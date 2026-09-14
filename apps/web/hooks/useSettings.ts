@@ -11,6 +11,12 @@ import { useState, useCallback, useEffect } from "react";
 export interface AppSettings {
   // Playback
   serverOrder: string[];
+  /** Preferred audio language — ranks direct sources and auto-picks the
+   *  matching audio track inside multi-audio files (mobile parity). */
+  preferredAudioLanguage: "auto" | "multi" | "hindi" | "english";
+  /** First-run language prompt answered (mobile parity: the watch page asks
+   *  once before ranking anything so the preference is deliberate). */
+  hasAnsweredLanguagePrompt: boolean;
 
   // Download
   downloadOverCellular: boolean;
@@ -39,6 +45,8 @@ export type SettingKey = keyof AppSettings;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   serverOrder: [],
+  preferredAudioLanguage: "auto",
+  hasAnsweredLanguagePrompt: false,
   downloadOverCellular: false,
   downloadSpeedLimit: "full",
   customProviderUrls: {},

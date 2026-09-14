@@ -5,10 +5,11 @@
 
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createLocalStorageAdapter } from "@filmsnaps/shared";
 import { useWatchHistory } from "@filmsnaps/shared";
 import { ContinueWatching } from "@/components/ContinueWatching";
+import { prefetchDirectMedia } from "@/lib/directPrefetch";
 import type { WatchProgress } from "@filmsnaps/shared";
 import { useAppMode } from "@/lib/useAppMode";
 
@@ -43,6 +44,32 @@ export function ContinueWatchingWrapper() {
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [refresh]);
+
+  // ── Home-mount prefetch (mobile parity) ──
+  // Once per session, 3s after the rail appears, warm the direct metadata +
+  // top-source probes for the first 3 continue-watching titles (TV entries
+  // use their stored season/episode — the episode the user will resume).
+  const homePrefetchDoneRef = useRef(false);
+  useEffect(() => {
+    if (homePrefetchDoneRef.current) return;
+    if (typeof window === "undefined") return;
+    if ((window as any).electronAPI?.isDesktop !== true) return;
+    if (inProgress.length === 0) return;
+    homePrefetchDoneRef.current = true;
+    const timer = setTimeout(() => {
+      inProgress
+        .slice(0, 3)
+        .forEach((e) =>
+          prefetchDirectMedia(
+            e.mediaType === "tv" ? "tv" : "movie",
+            String(e.tmdbId),
+            e.season ?? undefined,
+            e.episode ?? undefined,
+          ),
+        );
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [inProgress]);
 
   if (loading || inProgress.length === 0) return null;
 

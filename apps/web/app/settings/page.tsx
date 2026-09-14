@@ -32,6 +32,7 @@ import {
   Shield,
   FileText,
   Package,
+  Languages,
 } from "lucide-react";
 import { Header } from "@/components/Header";
 import { PageShell } from "@/components/PageShell";
@@ -56,6 +57,21 @@ const SPEED_LEVELS: Array<{
   { level: "slower", label: "Slower", sub: "32% cap" },
 ];
 
+const AUDIO_LANGUAGES: Array<{
+  value: "auto" | "multi" | "hindi" | "english";
+  label: string;
+  hint: string;
+}> = [
+  {
+    value: "auto",
+    label: "Auto",
+    hint: "Multi audio, then Hindi, then English",
+  },
+  { value: "multi", label: "Multi", hint: "Multi-audio files" },
+  { value: "hindi", label: "Hindi", hint: "Hindi audio when available" },
+  { value: "english", label: "English", hint: "English audio when available" },
+];
+
 const GITHUB_URL = "https://github.com/anonymous260260a-arch/filmsnaps";
 const SITE_URL = "https://filmsnap-pro.netlify.app/";
 
@@ -71,8 +87,17 @@ export default function SettingsPage() {
 
   // ── Provider health (for the default-source picker) ──
   const allProviders = useMemo(() => {
-    // Mobile shows all enabled providers. Desktop hides download-only sources.
-    return getEnabledProviders();
+    // The desktop shell (Electron) shows all enabled providers, like the
+    // watch page does. The website follows the watch page's platform rule:
+    // only providers declared for web (or unrestricted) — this is what hides
+    // direct playback until it has a same-origin byte proxy.
+    const isElectron =
+      typeof window !== "undefined" && window.electronAPI?.isDesktop;
+    return isElectron
+      ? getEnabledProviders()
+      : getEnabledProviders().filter(
+          (p) => !p.platforms || p.platforms.includes("web"),
+        );
   }, []);
 
   // Default server selector state
@@ -137,6 +162,12 @@ export default function SettingsPage() {
 
   const handleSpeed = (level: "full" | "balanced" | "slower") => {
     updateSetting("downloadSpeedLimit", level);
+  };
+
+  const handleAudioLanguage = (
+    value: "auto" | "multi" | "hindi" | "english",
+  ) => {
+    updateSetting("preferredAudioLanguage", value);
   };
 
   // ═════════════════════════════════════════════════════════════════
@@ -303,35 +334,76 @@ export default function SettingsPage() {
             />
           </Section>
 
-          {/* ── 3. Default Source ── */}
+          {/* ── 2b. Playback (desktop) ──
+              Direct playback ranks sources and auto-picks audio tracks to
+              match this preference. Applies to the next video you open. */}
           <Section
-            icon={<Monitor size={16} className="text-[#D4A237]" />}
-            title="Default Source"
-            sub="Preferred streaming source (tried first when available)."
+            icon={<Languages size={16} className="text-[#D4A237]" />}
+            title="Playback"
+            sub="We'll pick sources and audio tracks to match your language."
           >
-            <div className="relative">
-              <button
-                onClick={() => setServerDropdownOpen(true)}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left hover:bg-white/[0.06] transition-colors"
-              >
-                <span className="text-sm text-foreground">
-                  {selectedProvider
-                    ? selectedProvider.displayName || selectedProvider.name
-                    : "Auto (first available)"}
-                </span>
-                <span className="text-xs text-faint">
-                  {selectedProvider ? selectedProvider.id : "auto"}
-                </span>
-              </button>
-              <ServerDropdown
-                isOpen={serverDropdownOpen}
-                onClose={() => setServerDropdownOpen(false)}
-                providers={allProviders}
-                selectedId={settings.defaultServer}
-                onSelect={handleServerSelect}
-              />
+            <div className="grid grid-cols-2 gap-2">
+              {AUDIO_LANGUAGES.map((l) => (
+                <button
+                  key={l.value}
+                  onClick={() => handleAudioLanguage(l.value)}
+                  className={`text-left px-3 py-2.5 rounded-lg border transition-all ${
+                    settings.preferredAudioLanguage === l.value
+                      ? "border-[#D4A237]/60 bg-[#D4A237]/10"
+                      : "border-white/[0.08] hover:border-white/20 hover:bg-white/[0.04]"
+                  }`}
+                >
+                  <span
+                    className={`block text-sm font-semibold ${
+                      settings.preferredAudioLanguage === l.value
+                        ? "text-[#D4A237]"
+                        : "text-foreground"
+                    }`}
+                  >
+                    {l.label}
+                  </span>
+                  <span className="block text-[11px] text-faint mt-0.5">
+                    {l.hint}
+                  </span>
+                </button>
+              ))}
             </div>
           </Section>
+
+          {/* ── 3. Default Source (web only) ──
+              Desktop derives its default from the shared registry's platform
+              table and ignores this preference (a stale persisted value could
+              otherwise override it), so the control would be dead there. */}
+          {!desktop && (
+            <Section
+              icon={<Monitor size={16} className="text-[#D4A237]" />}
+              title="Default Source"
+              sub="Preferred streaming source (tried first when available)."
+            >
+              <div className="relative">
+                <button
+                  onClick={() => setServerDropdownOpen(true)}
+                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left hover:bg-white/[0.06] transition-colors"
+                >
+                  <span className="text-sm text-foreground">
+                    {selectedProvider
+                      ? selectedProvider.displayName || selectedProvider.name
+                      : "Auto (first available)"}
+                  </span>
+                  <span className="text-xs text-faint">
+                    {selectedProvider ? selectedProvider.id : "auto"}
+                  </span>
+                </button>
+                <ServerDropdown
+                  isOpen={serverDropdownOpen}
+                  onClose={() => setServerDropdownOpen(false)}
+                  providers={allProviders}
+                  selectedId={settings.defaultServer}
+                  onSelect={handleServerSelect}
+                />
+              </div>
+            </Section>
+          )}
 
           {/* ── 4. Reset library cache ── */}
           <Section

@@ -211,6 +211,134 @@ function computePriority(
   return 40;
 }
 
+// ── Falix fallback ─────────────────────────────────────────────────
+
+const FALIX_API_BASE = "https://dl.falixmovies.com";
+
+interface FalixTelegramFile {
+  quality: string;
+  id: string;
+  name: string;
+  size: string;
+}
+
+interface FalixTVData {
+  tmdb_id: number;
+  title: string;
+  media_type: "tv";
+  seasons: Array<{
+    season_number: number;
+    episodes: Array<{
+      episode_number: number;
+      telegram: FalixTelegramFile[];
+    }>;
+  }>;
+}
+
+interface FalixMovieData {
+  tmdb_id: number;
+  title: string;
+  media_type: "movie";
+  telegram: FalixTelegramFile[];
+}
+
+function parseFalixSize(sizeStr: string): number {
+  if (!sizeStr) return 0;
+  const m = sizeStr.match(/([\d.]+)\s*(GB|MB|KB)/i);
+  if (!m) return 0;
+  const n = parseFloat(m[1]);
+  const unit = m[2].toUpperCase();
+  if (unit === "GB") return Math.round(n * 1024 * 1024 * 1024);
+  if (unit === "MB") return Math.round(n * 1024 * 1024);
+  return Math.round(n * 1024);
+}
+
+function parseFalixCodec(name: string): string {
+  if (/x265|HEVC|H\.265|x266/i.test(name)) return "hevc";
+  if (/AV1|av01/i.test(name)) return "av1";
+  if (/x264|H\.264|AVC/i.test(name)) return "h264";
+  return "h264";
+}
+
+function parseFalixAudio(name: string): string {
+  if (/DTS-HD/i.test(name)) return "DTS-HD";
+  if (/DTS/i.test(name)) return "DTS";
+  if (/DDP|E-?AC-?3|Dolby Digital Plus/i.test(name)) return "Dolby Digital 5.1";
+  if (/DD\b|AC-?3/i.test(name)) return "Dolby Digital 5.1";
+  if (/AAC/i.test(name)) return "AAC";
+  return "Unknown";
+}
+
+interface DirectLink {
+  quality: string;
+  name: string;
+  id: string;
+  size: string | undefined;
+  url: string;
+  type: string;
+  _meta: {
+    codec: string;
+    audio: string;
+    source: string;
+    isDownloadOnly: boolean;
+    isWebReady: boolean;
+    sizeBytes: number | undefined;
+  };
+}
+
+async function fetchFalixLinks(
+  tmdbId: string,
+  mediaType: "movie" | "tv",
+  season?: number,
+  episode?: number,
+): Promise<DirectLink[]> {
+  const res = await fetch(`${FALIX_API_BASE}/api/id/${tmdbId}`, {
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) return [];
+  const data = (await res.json()) as FalixTVData | FalixMovieData;
+
+  let files: FalixTelegramFile[] = [];
+  if (
+    mediaType === "tv" &&
+    "seasons" in data &&
+    season != null &&
+    episode != null
+  ) {
+    const s = data.seasons.find((s) => s.season_number === season);
+    const ep = s?.episodes.find((e) => e.episode_number === episode);
+    files = ep?.telegram ?? [];
+  } else if ("telegram" in data) {
+    files = data.telegram ?? [];
+  }
+  if (files.length === 0) return [];
+
+  return files
+    .filter((f) => !!f.id && !!f.name)
+    .map((f, i) => {
+      const sizeBytes = parseFalixSize(f.size);
+      const ext = f.name.split(".").pop()?.toLowerCase() ?? "mp4";
+      const encodedName = encodeURIComponent(f.name);
+      const codec = parseFalixCodec(f.name);
+      return {
+        quality: f.quality || "Unknown",
+        name: `[Falix] ${data.title} — ${f.name}`,
+        id: `falix-${i}`,
+        size: f.size || undefined,
+        url: `${FALIX_API_BASE}/dl/${f.id}/${encodedName}`,
+        type: ext === "mkv" ? "mkv" : "mp4",
+        _meta: {
+          codec,
+          audio: parseFalixAudio(f.name),
+          source: "Falix",
+          isDownloadOnly: false,
+          isWebReady: false,
+          sizeBytes,
+        },
+      };
+    });
+}
+
 export async function GET(request: NextRequest) {
   const skip = desktopSkip();
   if (skip) return skip;
@@ -292,17 +420,14 @@ export async function GET(request: NextRequest) {
 
     // Map to our internal format
     const links = parsed.map((s, idx) => {
-      const isHevc = s.parsed.codec === "hevc";
       const desc = s.raw.description || "";
 
       return {
-        // Quality label for the dropdown
         quality: s.parsed.isDownloadOnly
           ? `${s.parsed.quality} [Download Only]`
           : s.parsed.isWebReady
             ? `${s.parsed.quality} [Web]`
             : s.parsed.quality,
-        // Entry name (used for codec detection by DirectVideoPlayer)
         name: desc,
         id: idx.toString(),
         size: s.raw.behaviorHints?.videoSize
@@ -314,7 +439,6 @@ export async function GET(request: NextRequest) {
           : desc.includes(".mp4")
             ? "mp4"
             : "mp4",
-        // Extra metadata for the dropdown UI
         _meta: {
           codec: s.parsed.codec,
           audio: s.parsed.audio,
@@ -325,6 +449,24 @@ export async function GET(request: NextRequest) {
         },
       };
     });
+
+    // ── Falix fallback: when HDHub gives ≤3 playable links, supplement from falix ──
+    const playableCount = links.filter((l) => !l._meta?.isDownloadOnly).length;
+    if (playableCount <= 3) {
+      try {
+        const falixLinks = await fetchFalixLinks(
+          tmdbId,
+          isTv ? "tv" : "movie",
+          isTv ? parseInt(season!, 10) : undefined,
+          isTv ? parseInt(episode!, 10) : undefined,
+        );
+        if (falixLinks.length > 0) {
+          links.push(...falixLinks);
+        }
+      } catch {
+        // Falix failure is non-fatal — HDHub links are still returned
+      }
+    }
 
     const data = isTv
       ? {

@@ -52,7 +52,7 @@ export default function TVDetailScreen() {
   const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = useWindowDimensions();
-  const { settings } = useSettings();
+  const { settings, loaded: settingsLoaded } = useSettings();
   const { data, isLoading } = useTVDetails(id!);
 
   const BACKDROP_HEIGHT = Math.min(SCREEN_HEIGHT * 0.42, 350);
@@ -76,20 +76,24 @@ export default function TVDetailScreen() {
       isBookmarked(id!).then(setBookmarked);
       getResumePoint(id!, "tv").then((p) => {
         if (p) setResumeState(p);
-        // Pre-warm stream links for the resume episode (or first episode)
+        // Pre-warm stream links for the resume episode (or first episode).
+        // NOT before settings hydrate — ranking with default settings would
+        // cache a wrong-language chain that the real settings must re-rank.
+        if (!settingsLoaded) return;
         const season = p?.season ?? 1;
         const episode = p?.episode ?? 1;
         prefetchStreams(parseInt(id), "tv", season, episode, {
           cellularMaxMB: settings.cellularMaxMB,
           maxQuality: settings.maxQuality,
           preferredAudioLanguage: settings.preferredAudioLanguage,
+          trigger: "details",
         }).catch((err) => {
           console.log(`[TVDetail] Prefetch failed:`, err?.message);
         });
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, settings]);
+  }, [id, settings, settingsLoaded]);
 
   const toggleBookmark = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

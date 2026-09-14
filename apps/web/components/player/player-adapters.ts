@@ -277,6 +277,195 @@ export class VideoJSPlayerAdapter implements PlayerAdapter {
   }
 }
 
+// ─── movi-player adapter ─────────────────────────────────────────────
+
+/**
+ * Structural shape of the <movi-player> element we rely on. The element
+ * (movi-player/element/slim) mirrors the HTMLMediaElement API — play/pause,
+ * currentTime, buffered, volume, playbackRate — plus its own audioTracks /
+ * textTracks lists and fullscreen implementation, so this adapter drives it
+ * exactly like NativePlayerAdapter drives <video>.
+ */
+export interface MoviElementLike extends HTMLElement {
+  src: string | null;
+  play(): Promise<void>;
+  pause(): void;
+  autoplay: boolean;
+  preload: "none" | "metadata" | "auto";
+  muted: boolean;
+  volume: number;
+  playbackRate: number;
+  currentTime: number;
+  readonly duration: number;
+  readonly paused: boolean;
+  readonly ended: boolean;
+  readonly buffered: TimeRanges;
+  readonly error: { code: number; message: string } | null;
+  requestFullscreen(options?: FullscreenOptions): Promise<void>;
+  /** AudioTrackList-shaped list; writing `enabled` switches the track. */
+  readonly audioTracks: Array<{
+    id: string;
+    label: string;
+    language: string;
+    enabled: boolean;
+  }>;
+  /** Real TextTrackList — `mode` writes route into the player's selection. */
+  readonly textTracks: TextTrackList;
+}
+
+export class MoviPlayerAdapter implements PlayerAdapter {
+  constructor(public readonly element: MoviElementLike) {}
+
+  private listen(types: string[], cb: () => void): () => void {
+    for (const t of types) this.element.addEventListener(t, cb);
+    return () => {
+      for (const t of types) this.element.removeEventListener(t, cb);
+    };
+  }
+
+  play() {
+    const p = this.element.play?.();
+    if (p && typeof p.catch === "function") p.catch(() => {});
+  }
+  pause() {
+    this.element.pause();
+  }
+  seek(time: number) {
+    // Never forward NaN/Infinity — setting currentTime to a non-finite value
+    // throws on the native path and desyncs the canvas pipeline here.
+    if (!Number.isFinite(time)) return;
+    this.element.currentTime = Math.max(0, time);
+  }
+  setVolume(volume: number) {
+    this.element.volume = Math.min(1, Math.max(0, volume));
+  }
+  setMuted(muted: boolean) {
+    this.element.muted = muted;
+  }
+  setPlaybackRate(rate: number) {
+    this.element.playbackRate = rate;
+  }
+  requestFullscreen() {
+    // Movi's own fullscreen — canvas-aware, fires fullscreenchange, which the
+    // page-level listeners (PlayerProvider, ControlBar) already track.
+    const p = this.element.requestFullscreen?.();
+    if (p && typeof p.catch === "function") p.catch(() => {});
+  }
+  getCurrentTime() {
+    return this.element.currentTime || 0;
+  }
+  getDuration() {
+    return this.element.duration || 0;
+  }
+  getBuffered() {
+    const ranges: TimeRange[] = [];
+    const b = this.element.buffered;
+    for (let i = 0; i < b.length; i++) {
+      ranges.push({ start: b.start(i), end: b.end(i) });
+    }
+    return ranges;
+  }
+  isPaused() {
+    return this.element.paused;
+  }
+  isMuted() {
+    return this.element.muted;
+  }
+  getVolume() {
+    return this.element.volume;
+  }
+  getPlaybackRate() {
+    return this.element.playbackRate;
+  }
+
+  onTimeUpdate(cb: () => void) {
+    return this.listen(["timeupdate"], cb);
+  }
+  onPlayPause(cb: () => void) {
+    return this.listen(["play", "pause"], cb);
+  }
+  onWaiting(cb: () => void) {
+    return this.listen(["waiting"], cb);
+  }
+  onPlaying(cb: () => void) {
+    return this.listen(["playing", "canplay", "loadeddata"], cb);
+  }
+  /** Playback failure — the element's `error` event with its mediaError. */
+  onError(cb: (msg: string) => void) {
+    return this.listen(["error"], () =>
+      cb(this.element.error?.message || "playback error"),
+    );
+  }
+  /** Track list changed (container tracks enumerated / selection moved). */
+  onTracks(cb: () => void) {
+    return this.listen(
+      ["audiotrackchange", "subtitletrackchange", "trackschange", "addtrack"],
+      cb,
+    );
+  }
+
+  getAudioTracks(): AudioTrack[] {
+    const list = this.element.audioTracks;
+    if (!list || typeof list.length !== "number") return [];
+    const result: AudioTrack[] = [];
+    for (let i = 0; i < list.length; i++) {
+      const t = list[i];
+      result.push({
+        id: String(t.id ?? i),
+        label: t.label || t.language || `Audio ${i + 1}`,
+        language: t.language || undefined,
+        active: !!t.enabled,
+      });
+    }
+    return result;
+  }
+  setAudioTrack(trackId: string) {
+    const list = this.element.audioTracks;
+    if (!list || typeof list.length !== "number") return;
+    for (let i = 0; i < list.length; i++) {
+      list[i].enabled = String(list[i].id ?? i) === trackId;
+    }
+  }
+  getCurrentAudioTrackId(): string | null {
+    const active = this.getAudioTracks().find((t) => t.active);
+    return active ? active.id : null;
+  }
+
+  getSubtitleTracks(): SubtitleTrack[] {
+    const list = this.element.textTracks;
+    if (!list || typeof list.length !== "number") return [];
+    const result: SubtitleTrack[] = [];
+    for (let i = 0; i < list.length; i++) {
+      const t = list[i];
+      result.push({
+        id: String(i),
+        label: t.label || t.language || `Subtitle ${i + 1}`,
+        language: t.language || undefined,
+        active: t.mode === "showing",
+      });
+    }
+    return result;
+  }
+  setSubtitleTrack(trackId: string | null) {
+    const list = this.element.textTracks;
+    if (!list || typeof list.length !== "number") return;
+    for (let i = 0; i < list.length; i++) {
+      list[i].mode =
+        trackId !== null && String(i) === trackId ? "showing" : "disabled";
+    }
+  }
+  getCurrentSubtitleTrackId(): string | null {
+    const active = this.getSubtitleTracks().find((t) => t.active);
+    return active ? active.id : null;
+  }
+
+  /**
+   * Listeners live on the element itself, so they die with it — destroy only
+   * drops our handle (called by the player when the element is replaced).
+   */
+  destroy() {}
+}
+
 // ─── WebCodecs adapter ────────────────────────────────────────────────
 
 export class WebCodecsPlayerAdapter implements PlayerAdapter {

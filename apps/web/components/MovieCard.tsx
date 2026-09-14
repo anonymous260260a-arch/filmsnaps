@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Play, Star, X } from "lucide-react";
 import { getImageUrl, tmdbApi } from "@/lib/tmdb";
+import { prefetchDirectMedia } from "@/lib/directPrefetch";
 import { SaveButton } from "@/components/SaveButton";
 import { GlassButton } from "@/components/ui/glass-button";
 import { Movie } from "@filmsnaps/shared";
@@ -53,6 +54,9 @@ export function MovieCard({
 
     if (!isDesktop) return;
     router.prefetch(`/watch?type=${type}&id=${item.id}`);
+    // Desktop: speculatively resolve the Direct provider's metadata so the
+    // watch page can start mpv the moment it mounts (hover → click lead time).
+    prefetchDirectMedia(type as "movie" | "tv", String(item.id));
     const backdropUrl = getImageUrl(item.backdrop_path, "w1280");
     if (backdropUrl && backdropUrl !== "/placeholder.jpg") {
       const link = document.createElement("link");

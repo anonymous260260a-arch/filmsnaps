@@ -27,6 +27,7 @@ import "swiper/css";
 import "swiper/css/navigation";
 import { ChevronLeft, ChevronRight, Play } from "lucide-react";
 import { getImageUrl, tmdbApi } from "@/lib/tmdb";
+import { prefetchDirectMedia } from "@/lib/directPrefetch";
 import type { WatchProgress } from "@filmsnaps/shared";
 
 interface ContinueWatchingProps {
@@ -126,13 +127,21 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
               <Link
                 prefetch
                 href={href}
-                onMouseEnter={() =>
+                onMouseEnter={() => {
                   router.prefetch(
                     entry.mediaType === "tv"
                       ? `/watch?type=tv&id=${entry.tmdbId}`
                       : `/watch?type=movie&id=${entry.tmdbId}`,
-                  )
-                }
+                  );
+                  // Warm the direct pipeline too — by the time the watch page
+                  // mounts, metadata + top-source probes are already cached.
+                  prefetchDirectMedia(
+                    entry.mediaType === "tv" ? "tv" : "movie",
+                    String(entry.tmdbId),
+                    entry.season ?? undefined,
+                    entry.episode ?? undefined,
+                  );
+                }}
                 className="block"
               >
                 <div className="relative aspect-video rounded-xl overflow-hidden bg-secondary border border-white/[0.06] shadow-lg transition-all duration-300 group-hover:shadow-xl group-hover:shadow-primary/10 group-hover:border-white/[0.12]">

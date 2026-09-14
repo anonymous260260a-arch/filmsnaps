@@ -29,7 +29,7 @@ import {
 } from "electron";
 import { join } from "path";
 import { pathToFileURL } from "url";
-import { existsSync } from "fs";
+import { existsSync, statSync } from "fs";
 import {
   loadWindowState,
   shouldStartMaximized,
@@ -67,7 +67,6 @@ import {
   auditPreloadObserverBookkeeping,
 } from "./security/structural-warnings";
 import { startCdnDiagnostic } from "./security/cdn-diagnostic";
-import { startNxshaPlayer } from "./experimental/nxsha-player";
 import {
   main as logMain,
   net,
@@ -264,19 +263,13 @@ function createMainWindow(): void {
   logMain.log("Provider session pre-created with R0-R8 filters");
 
   // ── Network request logging (FILMSNAPS_LOG includes 'net') ──
-  if (process.env.FILMSNAPS_LOG) {
-    const providerSess = session.fromPartition("persist:filmsnaps-provider");
-    providerSess.webRequest.onBeforeRequest((details, callback) => {
-      const method = details.method || "GET";
-      net.log(`${method} ${details.url.slice(0, 150)}`);
-      callback({ cancel: false });
-    });
-    providerSess.webRequest.onHeadersReceived((details, callback) => {
-      const status = details.statusLine || "";
-      net.log(`← ${details.url.slice(0, 120)} [${status}]`);
-      callback({ responseHeaders: details.responseHeaders });
-    });
-  }
+  // NOTE: do NOT register webRequest listeners here. Electron keeps ONE
+  // listener per webRequest event per session — a second registration
+  // silently REPLACES the R0-R8 cascade's onBeforeRequest on the provider
+  // partition. That is exactly how every FILMSNAPS_LOG run lost all
+  // ad-blocking: requests were logged, then force-allowed. The [NET]
+  // request/response lines are emitted inside the cascade and the
+  // security-header listener themselves (security/request-filter.ts).
 
   // ── [EXPERIMENTAL] CDN Diagnostic Logger ──
   // Set FILMSNAPS_CDN_DIAG=1 to capture what Chromium sends to CDN domains.
@@ -287,15 +280,7 @@ function createMainWindow(): void {
     logCdn.log("CDN diagnostic logger active (FILMSNAPS_CDN_DIAG=1)");
   }
 
-  // ── [EXPERIMENTAL] Nxsha Stream Player (Electron-native proxy) ──
-  // Uses net.fetch() with Chromium's TLS stack — no fingerprint mismatch.
-  // Rollback: remove import + this block, delete experimental/nxsha-player.ts
-  if (process.env.FILMSNAPS_NXSHA_PLAYER) {
-    startNxshaPlayer();
-    logCdn.log(
-      "Nxsha player active (FILMSNAPS_NXSHA_PLAYER=1) — http://localhost:9482/",
-    );
-  }
+  // ── [EXPERIMENTAL] Nxsha Stream Player — REMOVED (module deleted) ──
 
   // Structural warnings (Phase 2e) — surface likely security-drift without
   // changing behavior. Gated to FILMSNAPS_AUDIT=1 so production stays quiet
@@ -1445,6 +1430,60 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(async () => {
+    // ── Desktop shell CORS ────────────────────────────────────────────────
+    // The app:// shell (and the dev localhost UI) fetch APIs and probe CDN
+    // links cross-origin. Almost no API/CDN server sends Access-Control-
+    // Allow-Origin for the app:// scheme, so fetch() from the shell dies to
+    // CORS in non-dev mode. Inject ACAO at the session level for requests
+    // originating from our own windows. Provider webviews use separate
+    // partitions, so this never touches their security model.
+    //
+    // onHeadersReceived details expose neither request headers nor a usable
+    // referrer (always ""), so the Origin is captured per-request-id in
+    // onBeforeSendHeaders and consumed here. (Electron allows one listener
+    // per webRequest event per session — these two slots are ours.)
+    const corsOriginByRequestId = new Map<number, string>();
+    const isShellOrigin = (origin: string) =>
+      /^app:\/\//.test(origin) || origin.startsWith("http://localhost");
+
+    session.defaultSession.webRequest.onBeforeSendHeaders(
+      (details, callback) => {
+        const headers = details.requestHeaders as Record<string, string>;
+        const originKey =
+          Object.keys(headers).find((k) => k.toLowerCase() === "origin") ?? "";
+        const origin = originKey ? headers[originKey] : "";
+        if (origin && isShellOrigin(origin)) {
+          corsOriginByRequestId.set(details.id, origin);
+          if (corsOriginByRequestId.size > 500) {
+            // Trim the oldest half — network-failed requests never reach
+            // onHeadersReceived, so entries can linger.
+            for (const k of Array.from(corsOriginByRequestId.keys()).slice(
+              0,
+              250,
+            )) {
+              corsOriginByRequestId.delete(k);
+            }
+          }
+        }
+        callback({ requestHeaders: details.requestHeaders });
+      },
+    );
+
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      const origin = corsOriginByRequestId.get(details.id);
+      corsOriginByRequestId.delete(details.id);
+      if (origin && isShellOrigin(origin) && details.responseHeaders) {
+        details.responseHeaders["Access-Control-Allow-Origin"] = [origin];
+        details.responseHeaders["Access-Control-Allow-Methods"] = [
+          "GET,POST,PUT,DELETE,OPTIONS",
+        ];
+        details.responseHeaders["Access-Control-Allow-Headers"] = [
+          "Content-Type,Authorization",
+        ];
+      }
+      callback({ responseHeaders: details.responseHeaders });
+    });
+
     // ── Serve static export via app:// protocol ──────────────────────────
     if (!IS_DEV) {
       // When packaged, files are in resourcesPath/web. When running unpackaged
@@ -1458,17 +1497,24 @@ if (!gotTheLock) {
 
         // Static export files: / → index.html, /saved → saved.html,
         // /download/falix → download/falix/index.html
+        // NOTE: must check isFile, not just existsSync — Next's export emits
+        // BOTH `movie.html` and a `movie/` directory for every route, and
+        // net.fetch of a directory fails with ERR_FILE_NOT_FOUND (which used
+        // to spam the log and break RSC prefetches / client navigation).
         const candidates = [
           join(webDir, pathname === "/" ? "index.html" : pathname),
           join(webDir, pathname === "/" ? "index.html" : pathname + ".html"),
           join(webDir, pathname, "index.html"),
         ];
-
         for (const candidate of candidates) {
-          if (existsSync(candidate)) {
-            return require("electron").net.fetch(
-              pathToFileURL(candidate).toString(),
-            );
+          try {
+            if (statSync(candidate).isFile()) {
+              return require("electron").net.fetch(
+                pathToFileURL(candidate).toString(),
+              );
+            }
+          } catch {
+            // stat failed — try the next candidate
           }
         }
 

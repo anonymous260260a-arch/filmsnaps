@@ -74,7 +74,7 @@ export default function MovieDetailScreen() {
   const [trailerOpen, setTrailerOpen] = useState(false);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
   const [resumeState, setResumeState] = useState<WatchProgress | null>(null);
-  const { settings } = useSettings();
+  const { settings, loaded: settingsLoaded } = useSettings();
   const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
 
   useEffect(() => {
@@ -85,17 +85,21 @@ export default function MovieDetailScreen() {
           if (p && p.percent > 0) setResumeState(p);
         },
       );
-      // Prefetch and validate stream links in background — cached for 5min
+      // Prefetch stream links in background — but NOT before settings
+      // hydrate: ranking with default settings would cache a wrong-language
+      // chain that the real settings must re-rank.
+      if (!settingsLoaded) return;
       prefetchStreams(parseInt(id), "movie", undefined, undefined, {
         cellularMaxMB: settings.cellularMaxMB,
         maxQuality: settings.maxQuality,
         preferredAudioLanguage: settings.preferredAudioLanguage,
+        trigger: "details",
       }).catch((err) => {
         console.log(`[MovieDetail] Prefetch failed:`, err?.message);
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, animeHit, settings]);
+  }, [id, animeHit, settings, settingsLoaded]);
 
   const toggleBookmark = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

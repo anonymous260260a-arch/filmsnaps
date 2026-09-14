@@ -26,6 +26,10 @@ export {
   filterAnimeProviders,
   getNonAnimeProviders,
   getProvidersForMode,
+  getDefaultProviderId,
+  PLATFORM_DEFAULT_PROVIDER_IDS,
+  ANIME_DEFAULT_PROVIDER_ID,
+  type ProviderPlatform,
   type AppMode,
 } from "./providers/registry";
 export {

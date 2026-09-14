@@ -73,6 +73,13 @@ export function DesktopAppShell({ children }: { children: React.ReactNode }) {
   const isElectron =
     typeof window !== "undefined" && window.electronAPI?.isDesktop === true;
 
+  // mpv video window: the /mpv-overlay route renders INSIDE the transparent
+  // overlay window that hosts the mpv video HWND. It must render bare — the
+  // app chrome (top bar, background) would paint over the video.
+  if (isElectron && pathname === "/mpv-overlay") {
+    return <>{children}</>;
+  }
+
   // Web browser + SSR: render pages untouched (website keeps its own Header).
   if (!mounted || !isElectron) {
     return (
