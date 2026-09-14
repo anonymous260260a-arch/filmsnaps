@@ -40,7 +40,14 @@ async function resolveImdbId(
   try {
     // Use the internal TMDB proxy route — avoids exposing API key to client
     // and uses the same base the rest of the app uses.
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+    // Use relative path when running server-side (worker/Vercel) so the
+    // request stays same-origin. NEXT_PUBLIC_SITE_URL is only needed for
+    // client-side calls; on the server, relative paths resolve to the same
+    // host. Falls back to localhost for local dev.
+    const baseUrl =
+      typeof window === "undefined"
+        ? process.env.NEXT_PUBLIC_SITE_URL || ""
+        : process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
     const res = await fetch(
       `${baseUrl}/api/tmdb/${mediaType}/${tmdbId}/external_ids`,
       {

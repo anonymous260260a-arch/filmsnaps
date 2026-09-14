@@ -35,7 +35,7 @@ function resolveOverlayUrl(): string {
   if (process.argv.includes("--dev")) {
     return "http://localhost:3000/mpv-overlay";
   }
-  return "app://./mpv-overlay";
+  return "app:///mpv-overlay";
 }
 
 let mpvManager: MpvManager | null = null;

@@ -1473,13 +1473,22 @@ if (!gotTheLock) {
       const origin = corsOriginByRequestId.get(details.id);
       corsOriginByRequestId.delete(details.id);
       if (origin && isShellOrigin(origin) && details.responseHeaders) {
-        details.responseHeaders["Access-Control-Allow-Origin"] = [origin];
-        details.responseHeaders["Access-Control-Allow-Methods"] = [
-          "GET,POST,PUT,DELETE,OPTIONS",
-        ];
-        details.responseHeaders["Access-Control-Allow-Headers"] = [
-          "Content-Type,Authorization",
-        ];
+        // The worker may send its own ACAO (e.g. "app://index.html") which
+        // won't match other app:// origins like "app://mpv-overlay". Always
+        // replace with the actual requesting origin so every BrowserWindow
+        // in the app passes CORS.
+        delete details.responseHeaders["access-control-allow-origin"];
+        details.responseHeaders["access-control-allow-origin"] = [origin];
+        if (!details.responseHeaders["access-control-allow-methods"]) {
+          details.responseHeaders["access-control-allow-methods"] = [
+            "GET,POST,PUT,DELETE,OPTIONS",
+          ];
+        }
+        if (!details.responseHeaders["access-control-allow-headers"]) {
+          details.responseHeaders["access-control-allow-headers"] = [
+            "Content-Type,Authorization",
+          ];
+        }
       }
       callback({ responseHeaders: details.responseHeaders });
     });

@@ -47,35 +47,8 @@ jobs:
           path: apps/web/.open-next/
           retention-days: 1
 
-  build-desktop:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.10.0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: 'pnpm'
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Build shared package
-        run: cd packages/shared && pnpm build
-
-      - name: Build web for desktop
-        run: cd apps/web && BUILD_FOR_DESKTOP=true pnpm build
-
-      - name: Build desktop app
-        run: cd apps/desktop && pnpm build
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-
   create-release:
-    needs: [build-web, build-desktop]
+    needs: [build-web]
     runs-on: ubuntu-latest
     permissions:
       contents: write
