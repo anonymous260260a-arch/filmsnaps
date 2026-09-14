@@ -17,7 +17,7 @@
 'use strict';
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -81,3 +81,32 @@ if (!existsSync(staticExport)) {
 }
 
 console.log(`[build-web] Web static export verified: ${staticExport}`);
+
+// 4. Strip the stray `<script src="…css">` tags Next 15 emits alongside the
+//    real <link rel="stylesheet"> in exported HTML. A stylesheet executed as
+//    JavaScript throws "Uncaught SyntaxError: Invalid or unexpected token"
+//    in every window that loads the page.
+const CSS_SCRIPT_TAG = /<script[^>]*\ssrc="[^"]*\.css"[^>]*>\s*<\/script>/g;
+function collectHtmlFiles(dir, acc = []) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) collectHtmlFiles(full, acc);
+    else if (entry.name.endsWith('.html')) acc.push(full);
+  }
+  return acc;
+}
+const htmlFiles = collectHtmlFiles(join(webRoot, 'out'));
+let strippedCount = 0;
+let touchedFiles = 0;
+for (const file of htmlFiles) {
+  const html = readFileSync(file, 'utf8');
+  const stripped = html.replace(CSS_SCRIPT_TAG, '');
+  if (stripped !== html) {
+    writeFileSync(file, stripped);
+    strippedCount += (html.match(CSS_SCRIPT_TAG) || []).length;
+    touchedFiles += 1;
+  }
+}
+console.log(
+  `[build-web] Stripped ${strippedCount} stray CSS <script> tag(s) from ${touchedFiles} HTML file(s)`,
+);
