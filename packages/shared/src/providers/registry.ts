@@ -14,7 +14,8 @@ export type AppMode = MediaType; // 'movie_tv' | 'anime'
  * To reorder: adjust `order` (lower = higher in list, defaults to 999).
  * To hide the real provider name: set `displayName` (shown in UI instead of `name').
  *
- * Enabled servers in order: 1, 2, 3, 4, 5, 6, 14, 18, 19, 20, StreamGuide
+ * Enabled servers: nxsha, peachify, screenscape, zxcstream, cinemaos,
+ * falix (download-only), direct, videasy, vidnest, megaplay (anime-only).
  */
 export const PROVIDERS: ProviderDefinition[] = [
   // ── Server 1 (DISABLED — behind Cloudflare, proxy unreliable) ──
@@ -224,14 +225,23 @@ export const PROVIDERS: ProviderDefinition[] = [
   // ── Direct-Play (universal format) ───────────────────────────────
   // TBS: The URL source format is not yet wired — this provider serves raw
   // video file URLs (MP4, HLS, DASH, MKV, WebM, AV1, HEVC, etc.) and is routed
-  // to DirectVideoPlayer (format-agnostic) instead of SecureIframe.
-  // Enable when the video URL endpoint is specified.
+  // to DirectVideoPlayer (format-agnostic; movi-player engine on web, mpv on
+  // desktop) instead of SecureIframe.
+  //
+  // HIDDEN ON WEB for now: the stream CDNs send no Access-Control-Allow-Origin,
+  // and browser playback engines that read bytes via fetch (movi's WASM
+  // demuxer, hls.js) are CORS-blocked — a same-origin byte proxy (signed URLs,
+  // like moviplayer.com's /proxy?url=…&exp=…&sig=…) is a prerequisite. The
+  // desktop app is unaffected (Electron ignores `platforms`; mpv fetches
+  // bytes natively). `["mobile"]` = visible on mobile, hidden on every web
+  // surface that filters by platform (watch picker, server sheet, settings).
   {
     id: "direct",
     name: "Direct",
     displayName: "Direct-Play",
     note: "Universal format · Direct streaming",
     order: 8,
+    platforms: ["mobile"],
     baseUrl: "",
     // URL is built at runtime from the resolved video source — not a static
     // embed path. The embed functions are placeholders; the actual URL comes
@@ -240,9 +250,8 @@ export const PROVIDERS: ProviderDefinition[] = [
       movie: (id) => `/api/id/${id}`,
       tv: (id) => `/api/id/${id}`,
     },
-    // No platforms restriction — visible on all platforms once enabled.
-    // No sandbox needed — the player renders a direct <video> / WebCodecs
-    // canvas, NOT an iframe.
+    // No sandbox needed — the player renders a real playback pipeline
+    // (movi-player / mpv), NOT an iframe.
   },
   // ── Server 22 (disabled — was Server 5) ──────────────────────
   {
@@ -590,6 +599,45 @@ export const PROVIDERS: ProviderDefinition[] = [
     // attempt and silently degrades if the nested player ignores it.
   },
 ];
+
+/**
+ * Per-platform default provider — the single source of truth for "which server
+ * plays when the user has not chosen one". Every watch surface (web, desktop,
+ * mobile) MUST derive its default from here; hardcoding ids in pages is what
+ * made desktop/web/mobile defaults drift apart.
+ *
+ * Precedence in the watch page:
+ *   1. `?provider=` URL param (explicit link/share)
+ *   2. `getDefaultProviderId(platform)` — this table
+ * The settings "default server" preference applies on WEB only (desktop ignores
+ * it so a stale localStorage value can never override the registry default).
+ */
+export const PLATFORM_DEFAULT_PROVIDER_IDS = {
+  desktop: "direct",
+  // Web defaults to an embed until direct playback gets a same-origin byte
+  // proxy (the stream CDNs send no CORS headers, which blocks byte-fetching
+  // engines in the browser). Direct remains available on desktop + mobile.
+  web: "screenscape",
+  mobile: "nxsha",
+} as const;
+
+export type ProviderPlatform = keyof typeof PLATFORM_DEFAULT_PROVIDER_IDS;
+
+/** Anime sessions always default to the dedicated anime-only source. */
+export const ANIME_DEFAULT_PROVIDER_ID = "megaplay";
+
+/**
+ * Resolve the default provider for a platform.
+ * @param opts.anime — anime-profiled session (MAL/AniList identity in play).
+ */
+export function getDefaultProviderId(
+  platform: ProviderPlatform,
+  opts: { anime?: boolean } = {},
+): string {
+  return opts.anime
+    ? ANIME_DEFAULT_PROVIDER_ID
+    : PLATFORM_DEFAULT_PROVIDER_IDS[platform];
+}
 
 /**
  * Look up a provider by its id
