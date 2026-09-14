@@ -25,6 +25,9 @@ interface SettingsPanelProps {
   onSubtitleChange?: (trackId: string | null) => void;
   onRateChange?: (rate: number) => void;
   onClose: () => void;
+  /** In-flow rendering (mpv strip mode): the panel grows the control strip
+   *  instead of floating over the native video window. */
+  inline?: boolean;
 }
 
 type Tab = "quality" | "audio" | "subtitles" | "speed";
@@ -48,6 +51,7 @@ export function SettingsPanel({
   onSubtitleChange,
   onRateChange,
   onClose,
+  inline = false,
 }: SettingsPanelProps) {
   const hasQuality = Boolean(qualities && qualities.length > 0);
   const hasAudio = Boolean(audioTracks && audioTracks.length > 1);
@@ -68,7 +72,13 @@ export function SettingsPanel({
   const activeSubtitleId = subtitleTracks?.find((t) => t.active)?.id ?? null;
 
   return (
-    <div className="absolute bottom-full right-0 mb-2 w-[280px] max-h-[420px] bg-[#1C1C1E] border border-white/[0.08] rounded-lg shadow-xl overflow-hidden z-50">
+    <div
+      className={
+        inline
+          ? "w-full max-w-[420px] bg-[#1C1C1E] border border-white/[0.08] rounded-lg shadow-xl overflow-hidden"
+          : "absolute bottom-full right-0 mb-2 w-[280px] max-h-[420px] bg-[#1C1C1E] border border-white/[0.08] rounded-lg shadow-xl overflow-hidden z-50"
+      }
+    >
       <div className="flex border-b border-white/[0.08]">
         {availableTabs.map((tab) => (
           <button

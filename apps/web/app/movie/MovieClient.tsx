@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SaveButton } from "@/components/SaveButton";
 import { useResumeTarget } from "@/hooks/useResumeTarget";
+import { prefetchDirectMedia } from "@/lib/directPrefetch";
 import { useQueryClient } from "@tanstack/react-query";
 import { Suspense } from "react";
 import { SkeletonPlayer } from "@/components/SkeletonLoader";
@@ -68,7 +69,18 @@ export default function MovieClient({ movie }: { movie: any }) {
         import("@/lib/tmdb").then((m) => m.tmdbApi.getMovieDetails(movie.id)),
       staleTime: 1000 * 60 * 60 * 24 * 7,
     });
+    prefetchDirectMedia("movie", String(movie.id));
   };
+
+  // ── Detail-page prefetch (mobile parity) ──
+  // The user is deciding whether to watch — metadata + top-source probes
+  // resolve while they read the description, so Watch Now starts instantly.
+  const directPrefetchedRef = useRef(false);
+  useEffect(() => {
+    if (directPrefetchedRef.current) return;
+    directPrefetchedRef.current = true;
+    prefetchDirectMedia("movie", String(movie.id));
+  }, [movie.id]);
   const runtime = movie.runtime
     ? `${Math.floor(movie.runtime / 60)}h ${movie.runtime % 60}m`
     : null;

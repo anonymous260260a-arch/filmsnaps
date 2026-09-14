@@ -242,158 +242,176 @@ export function DesktopWatchLayout({
       <div className="fixed inset-0 pointer-events-none opacity-[0.03] bg-[url('/noise.svg')] mix-blend-overlay z-0" />
 
       {/* Main Container — pt-6 breathing room from the GlobalTopBar (the CSS
-          reset that was zeroing nested mains is scoped to the shell's own main) */}
+          reset that was zeroing nested mains is scoped to the shell's own main).
+          Fullscreen = player-only: the OS window IS the screen, so the page
+          hands its whole viewport to the player (top bar / panel hide below;
+          the native mpv window re-measures its rect and grows to cover the
+          screen). Class toggles + sibling conditionals ONLY — VideoZone keeps
+          its tree position, so the player never remounts (an unmount would
+          tear down mpv / the embed webview mid-playback). */}
       <main
-        className={`h-[calc(100vh-48px)] overflow-hidden pt-6 pb-3 px-4 lg:px-6 max-w-[1900px] mx-auto flex flex-col ${isDragging ? "select-none" : ""}`}
+        className={`overflow-hidden flex flex-col ${isDragging ? "select-none" : ""} ${
+          isFullscreen
+            ? "h-screen"
+            : "h-[calc(100vh-48px)] pt-6 pb-3 px-4 lg:px-6 max-w-[1900px] mx-auto"
+        }`}
       >
         {/* ── Top Controls Bar ── */}
-        <div className="shrink-0 mb-2 flex items-center justify-between gap-3">
-          {/* ── LEFT: Menu + Source Picker (or Title on web) ── */}
-          <div className="flex items-center gap-2 min-w-0">
-            {/* Hamburger menu button (opens YouTube-style nav overlay) */}
-            {isElectron && (
-              <button
-                onClick={() => toggleWatchNavDrawer()}
-                className="flex items-center justify-center w-8 h-8 rounded-xl bg-white/[0.04] border border-white/[0.08] text-zinc-400 hover:text-white hover:bg-white/[0.08] transition-all active:scale-95 shrink-0"
-                title="Open navigation menu"
-                aria-label="Open menu"
-              >
-                <Menu size={16} />
-              </button>
-            )}
+        {!isFullscreen && (
+          <div className="shrink-0 mb-2 flex items-center justify-between gap-3">
+            {/* ── LEFT: Menu + Source Picker (or Title on web) ── */}
+            <div className="flex items-center gap-2 min-w-0">
+              {/* Hamburger menu button (opens YouTube-style nav overlay) */}
+              {isElectron && (
+                <button
+                  onClick={() => toggleWatchNavDrawer()}
+                  className="flex items-center justify-center w-8 h-8 rounded-xl bg-white/[0.04] border border-white/[0.08] text-zinc-400 hover:text-white hover:bg-white/[0.08] transition-all active:scale-95 shrink-0"
+                  title="Open navigation menu"
+                  aria-label="Open menu"
+                >
+                  <Menu size={16} />
+                </button>
+              )}
 
-            {/* Source server pill — always on left */}
-            <div className="relative">
-              <button
-                onClick={toggleServer}
-                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border transition-all active:scale-[0.97] text-left ${
-                  isServerOpen
-                    ? "bg-[#D4A237]/15 border-[#D4A237]/40"
-                    : "bg-white/[0.04] border-white/[0.08] hover:border-white/20 hover:bg-white/[0.06]"
-                }`}
-                aria-label="Select source server"
-                title="Select server (S)"
-              >
-                <div className="min-w-0">
-                  <p className="text-[8px] font-black uppercase tracking-wider text-zinc-500 leading-none">
-                    Server
-                  </p>
-                  <p className="text-xs font-bold text-zinc-200 truncate leading-tight mt-0.5 max-w-[110px]">
-                    {currentProvider?.displayName ||
-                      currentProvider?.name ||
-                      "Auto"}
-                  </p>
-                </div>
-                <ChevronRight
-                  size={13}
-                  className={`text-zinc-400 shrink-0 transition-transform ${isServerOpen ? "rotate-90 text-white" : ""}`}
+              {/* Source server pill — always on left */}
+              <div className="relative">
+                <button
+                  onClick={toggleServer}
+                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border transition-all active:scale-[0.97] text-left ${
+                    isServerOpen
+                      ? "bg-[#D4A237]/15 border-[#D4A237]/40"
+                      : "bg-white/[0.04] border-white/[0.08] hover:border-white/20 hover:bg-white/[0.06]"
+                  }`}
+                  aria-label="Select source server"
+                  title="Select server (S)"
+                >
+                  <div className="min-w-0">
+                    <p className="text-[8px] font-black uppercase tracking-wider text-zinc-500 leading-none">
+                      Server
+                    </p>
+                    <p className="text-xs font-bold text-zinc-200 truncate leading-tight mt-0.5 max-w-[110px]">
+                      {currentProvider?.displayName ||
+                        currentProvider?.name ||
+                        "Auto"}
+                    </p>
+                  </div>
+                  <ChevronRight
+                    size={13}
+                    className={`text-zinc-400 shrink-0 transition-transform ${isServerOpen ? "rotate-90 text-white" : ""}`}
+                  />
+                </button>
+
+                {/* Server dropdown anchored here in the top bar */}
+                <ServerDropdown
+                  providers={providers}
+                  selectedId={selectedProviderId}
+                  onSelect={onProviderSelect}
+                  isOpen={isServerOpen}
+                  onClose={closeServer}
                 />
-              </button>
+              </div>
 
-              {/* Server dropdown anchored here in the top bar */}
-              <ServerDropdown
-                providers={providers}
-                selectedId={selectedProviderId}
-                onSelect={onProviderSelect}
-                isOpen={isServerOpen}
-                onClose={closeServer}
-              />
+              {/* Title — only on web (not electron, since GlobalTopBar shows it) */}
+              {!isElectron && (
+                <div className="min-w-0 ml-1">
+                  <h1
+                    className="text-base sm:text-lg font-bold text-foreground truncate leading-tight"
+                    style={{ fontFamily: "var(--font-display)" }}
+                  >
+                    {watchTitle}
+                  </h1>
+                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mt-0.5">
+                    <span className="text-[#D4A237]">
+                      {plat === "tv" ? "Series" : "Film"}
+                    </span>
+                    <span className="w-1 h-1 rounded-full bg-zinc-700" />
+                    <span>{watchYear}</span>
+                    {plat === "tv" && (
+                      <>
+                        <span className="w-1 h-1 rounded-full bg-zinc-700" />
+                        <span className="text-zinc-400">
+                          S
+                          {selectedSeason < 10
+                            ? `0${selectedSeason}`
+                            : selectedSeason}
+                          :E
+                          {activeEpisode < 10
+                            ? `0${activeEpisode}`
+                            : activeEpisode}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Title — only on web (not electron, since GlobalTopBar shows it) */}
-            {!isElectron && (
-              <div className="min-w-0 ml-1">
-                <h1
-                  className="text-base sm:text-lg font-bold text-foreground truncate leading-tight"
-                  style={{ fontFamily: "var(--font-display)" }}
-                >
-                  {watchTitle}
-                </h1>
-                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mt-0.5">
-                  <span className="text-[#D4A237]">
-                    {plat === "tv" ? "Series" : "Film"}
+            {/* ── RIGHT: Episode controls + Theater toggle ── */}
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Prev / Next quick controls (theater mode or always for TV) */}
+              {plat === "tv" && (
+                <div className="flex items-center gap-1 bg-[#0E0E12] border border-white/[0.08] rounded-xl p-1 shadow-sm">
+                  <button
+                    onClick={goToPrevEpisode}
+                    disabled={isFirstEpisode}
+                    title="Previous Episode (P)"
+                    className="flex items-center justify-center w-7 h-7 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.08] disabled:opacity-30 disabled:pointer-events-none transition-all active:scale-95"
+                  >
+                    <ChevronLeft size={15} />
+                  </button>
+                  <span className="text-[11px] font-bold text-[#D4A237] px-1 font-mono whitespace-nowrap">
+                    E{activeEpisode < 10 ? `0${activeEpisode}` : activeEpisode}
+                    <span className="text-zinc-600">
+                      {" "}
+                      / {totalEpisodes || "?"}
+                    </span>
                   </span>
-                  <span className="w-1 h-1 rounded-full bg-zinc-700" />
-                  <span>{watchYear}</span>
-                  {plat === "tv" && (
-                    <>
-                      <span className="w-1 h-1 rounded-full bg-zinc-700" />
-                      <span className="text-zinc-400">
-                        S
-                        {selectedSeason < 10
-                          ? `0${selectedSeason}`
-                          : selectedSeason}
-                        :E
-                        {activeEpisode < 10
-                          ? `0${activeEpisode}`
-                          : activeEpisode}
-                      </span>
-                    </>
+                  <button
+                    onClick={goToNextEpisode}
+                    disabled={isLastEpisode}
+                    title="Next Episode (N)"
+                    className="flex items-center justify-center w-7 h-7 rounded-lg bg-[#D4A237] text-[#070708] font-bold hover:bg-[#B88B2A] disabled:opacity-30 disabled:pointer-events-none transition-all active:scale-95 shadow-sm shadow-[#D4A237]/20"
+                  >
+                    <ChevronRight size={15} />
+                  </button>
+                  {/* Dub/Sub — MegaPlay-style anime providers only */}
+                  {currentProvider?.animeOnly && (
+                    <AudioToggle
+                      audio={audio}
+                      onAudioChange={setAudio}
+                      className="ml-0.5"
+                    />
                   )}
                 </div>
-              </div>
-            )}
-          </div>
+              )}
 
-          {/* ── RIGHT: Episode controls + Theater toggle ── */}
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Prev / Next quick controls (theater mode or always for TV) */}
-            {plat === "tv" && (
-              <div className="flex items-center gap-1 bg-[#0E0E12] border border-white/[0.08] rounded-xl p-1 shadow-sm">
-                <button
-                  onClick={goToPrevEpisode}
-                  disabled={isFirstEpisode}
-                  title="Previous Episode (P)"
-                  className="flex items-center justify-center w-7 h-7 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.08] disabled:opacity-30 disabled:pointer-events-none transition-all active:scale-95"
-                >
-                  <ChevronLeft size={15} />
-                </button>
-                <span className="text-[11px] font-bold text-[#D4A237] px-1 font-mono whitespace-nowrap">
-                  E{activeEpisode < 10 ? `0${activeEpisode}` : activeEpisode}
-                  <span className="text-zinc-600">
-                    {" "}
-                    / {totalEpisodes || "?"}
-                  </span>
-                </span>
-                <button
-                  onClick={goToNextEpisode}
-                  disabled={isLastEpisode}
-                  title="Next Episode (N)"
-                  className="flex items-center justify-center w-7 h-7 rounded-lg bg-[#D4A237] text-[#070708] font-bold hover:bg-[#B88B2A] disabled:opacity-30 disabled:pointer-events-none transition-all active:scale-95 shadow-sm shadow-[#D4A237]/20"
-                >
-                  <ChevronRight size={15} />
-                </button>
-                {/* Dub/Sub — MegaPlay-style anime providers only */}
-                {currentProvider?.animeOnly && (
-                  <AudioToggle
-                    audio={audio}
-                    onAudioChange={setAudio}
-                    className="ml-0.5"
-                  />
-                )}
-              </div>
-            )}
-
-            {/* Theater toggle — TV shows episodes / movies show Overview */}
-            <button
-              onClick={toggleSidebar}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all active:scale-95 ${
-                isSidebarCollapsed
-                  ? "bg-[#D4A237]/10 border-[#D4A237]/40 text-[#D4A237] hover:bg-[#D4A237]/20"
-                  : "bg-white/[0.04] border-white/[0.08] text-zinc-300 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              title={isSidebarCollapsed ? "Show Panel (E)" : "Theater Mode (E)"}
-            >
-              <ListVideo size={14} />
-              <span>{isSidebarCollapsed ? "Panel" : "Theater"}</span>
-            </button>
+              {/* Theater toggle — TV shows episodes / movies show Overview */}
+              <button
+                onClick={toggleSidebar}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all active:scale-95 ${
+                  isSidebarCollapsed
+                    ? "bg-[#D4A237]/10 border-[#D4A237]/40 text-[#D4A237] hover:bg-[#D4A237]/20"
+                    : "bg-white/[0.04] border-white/[0.08] text-zinc-300 hover:bg-white/[0.08] hover:text-white"
+                }`}
+                title={
+                  isSidebarCollapsed ? "Show Panel (E)" : "Theater Mode (E)"
+                }
+              >
+                <ListVideo size={14} />
+                <span>{isSidebarCollapsed ? "Panel" : "Theater"}</span>
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* ── Flex row: Video Zone + Draggable Divider + Sidebar ── */}
         <div className="flex-1 min-h-0 flex items-stretch gap-0 overflow-hidden relative">
           {/* ── Video Area ── */}
-          <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-black/40 rounded-2xl">
+          <div
+            className={`flex-1 min-w-0 flex flex-col h-full overflow-hidden ${
+              isFullscreen ? "bg-black" : "bg-black/40 rounded-2xl"
+            }`}
+          >
             <VideoZone
               embedUrl={embedUrl}
               playerKey={playerKey}
@@ -420,7 +438,7 @@ export function DesktopWatchLayout({
           </div>
 
           {/* ── Draggable Resize Divider (when sidebar is open) ── */}
-          {plat === "tv" && !isSidebarCollapsed && (
+          {plat === "tv" && !isSidebarCollapsed && !isFullscreen && (
             <div
               onPointerDown={handleResizeStart}
               className={`group/divider relative w-3 shrink-0 flex items-center justify-center cursor-col-resize z-20 select-none transition-colors ${
@@ -441,7 +459,8 @@ export function DesktopWatchLayout({
           {/* ── Right Column: Episode Sidebar (TV) or Overview (Movie) ──
               Gated by the theater toggle — collapsed = theater (no panel). */}
           {plat === "tv"
-            ? !isSidebarCollapsed && (
+            ? !isSidebarCollapsed &&
+              !isFullscreen && (
                 <div
                   style={{ width: `${sidebarWidth}px` }}
                   className="shrink-0 flex flex-col h-full min-h-0 transition-[width] duration-75"
@@ -455,7 +474,8 @@ export function DesktopWatchLayout({
                   />
                 </div>
               )
-            : !isSidebarCollapsed && (
+            : !isSidebarCollapsed &&
+              !isFullscreen && (
                 <div className="w-96 shrink-0 ml-4 flex flex-col h-full min-h-0 overflow-y-auto bg-[#0E0E12] rounded-2xl border border-white/[0.08] p-4 shadow-2xl">
                   <MetadataPanel initialMeta={initialMeta} plat={plat} />
                   <div className="mt-4 pt-4 border-t border-white/[0.06]">

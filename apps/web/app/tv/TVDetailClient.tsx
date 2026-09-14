@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SaveButton } from "@/components/SaveButton";
 import { useResumeTarget } from "@/hooks/useResumeTarget";
+import { prefetchDirectMedia } from "@/lib/directPrefetch";
 import { useQueryClient } from "@tanstack/react-query";
 import { Suspense } from "react";
 import { SkeletonPlayer } from "@/components/SkeletonLoader";
@@ -69,7 +70,32 @@ export default function TVDetailClient({ show }: { show: any }) {
         import("@/lib/tmdb").then((m) => m.tmdbApi.getTVDetails(show.id)),
       staleTime: 1000 * 60 * 60 * 24 * 7,
     });
+    prefetchDirectMedia(
+      "tv",
+      String(show.id),
+      resume.point?.season ?? 1,
+      resume.point?.episode ?? 1,
+    );
   };
+
+  // ── Detail-page prefetch (mobile parity) ──
+  // Prewarms the RESUME episode (that's what the user will actually play).
+  // The resume point resolves async from history — wait briefly for it so TV
+  // prefetches the right episode, falling back to S1E1 when there's none.
+  const directPrefetchedRef = useRef(false);
+  useEffect(() => {
+    if (directPrefetchedRef.current) return;
+    const timer = setTimeout(() => {
+      directPrefetchedRef.current = true;
+      prefetchDirectMedia(
+        "tv",
+        String(show.id),
+        resume.point?.season ?? 1,
+        resume.point?.episode ?? 1,
+      );
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [show.id, resume.point?.season, resume.point?.episode]);
 
   return (
     <div className="min-h-screen bg-background">

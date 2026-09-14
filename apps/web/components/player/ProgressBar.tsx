@@ -71,16 +71,20 @@ export function ProgressBar({
     };
   }, [player, onFrame]);
 
-  const progressPercent = duration > 0 ? (displayTime / duration) * 100 : 0;
+  const durationOk = Number.isFinite(duration) && duration > 0;
+  const progressPercent = durationOk ? (displayTime / duration) * 100 : 0;
 
   const getTimeFromPosition = useCallback(
     (clientX: number): number => {
-      if (!barRef.current || duration <= 0) return 0;
+      if (!barRef.current || !durationOk) return 0;
       const rect = barRef.current.getBoundingClientRect();
+      // A collapsed (zero-width) track would make x/width = 0/0 = NaN, which
+      // JSON-serializes to null and mpv rejects with "invalid parameter".
+      if (rect.width <= 0) return 0;
       const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
       return (x / rect.width) * duration;
     },
-    [duration],
+    [duration, durationOk],
   );
 
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -160,7 +164,7 @@ export function ProgressBar({
   return (
     <div
       ref={barRef}
-      className="relative h-1.5 bg-white/20 rounded-full cursor-pointer group hover:h-2 transition-[height] duration-150"
+      className="relative h-2 w-full min-w-0 flex-1 bg-white/20 rounded-full cursor-pointer group hover:h-3 transition-[height] duration-150"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -194,10 +198,8 @@ export function ProgressBar({
       />
 
       <div
-        className={`absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-[#D4A237] rounded-full shadow-lg transition-opacity duration-150 will-change-[left] ${
-          isDragging || hoverTime !== null
-            ? "opacity-100 scale-125"
-            : "opacity-0 group-hover:opacity-100"
+        className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-[#D4A237] rounded-full shadow-lg transition-transform duration-150 will-change-[left] ${
+          isDragging || hoverTime !== null ? "scale-125" : "scale-100"
         }`}
         style={{ left: `${Math.min(progressPercent, 100)}%` }}
         aria-hidden="true"

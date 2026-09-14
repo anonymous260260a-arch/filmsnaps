@@ -37,17 +37,24 @@ export function useSpeedBoost({
   const spaceHeldRef = useRef(false);
   const longPressHeldRef = useRef(false);
   const normalRateRef = useRef(normalRate);
-  normalRateRef.current = normalRate;
+  // Mirror of isBoosted usable inside stable callbacks — the restore rate must
+  // be snapshotted BEFORE applying the boost (reading getPlaybackRate after
+  // setPlaybackRate would return the boosted rate and "restore" into 2x).
+  const isBoostedRef = useRef(false);
+  if (!isBoostedRef.current) normalRateRef.current = normalRate;
 
   const applyBoost = useCallback(() => {
-    if (!isBoosted) {
-      setIsBoosted(true);
-      player.setPlaybackRate(boostRate);
-    }
-  }, [isBoosted, player, boostRate]);
+    if (isBoostedRef.current) return;
+    isBoostedRef.current = true;
+    normalRateRef.current = player.getPlaybackRate();
+    player.setPlaybackRate(boostRate);
+    setIsBoosted(true);
+  }, [player, boostRate]);
 
   const releaseBoost = useCallback(() => {
     if (spaceHeldRef.current || longPressHeldRef.current) return;
+    if (!isBoostedRef.current) return;
+    isBoostedRef.current = false;
     setIsBoosted(false);
     player.setPlaybackRate(normalRateRef.current);
   }, [player]);
@@ -149,6 +156,15 @@ export function useSpeedBoost({
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", handleBlur);
       if (spaceTimerRef.current) clearTimeout(spaceTimerRef.current);
+      // If we unmount (or `enabled` flips) mid-boost, restore the rate —
+      // otherwise playback would stay stuck at the boosted speed.
+      spaceHeldRef.current = false;
+      longPressHeldRef.current = false;
+      if (isBoostedRef.current) {
+        isBoostedRef.current = false;
+        setIsBoosted(false);
+        player.setPlaybackRate(normalRateRef.current);
+      }
     };
   }, [enabled, applyBoost, releaseBoost, player]);
 

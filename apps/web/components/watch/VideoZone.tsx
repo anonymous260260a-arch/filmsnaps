@@ -28,6 +28,9 @@ import { buildIframeCSP } from "@/lib/movieProviders/cspBuilder";
 import { PlayerErrorState } from "./PlayerErrorState";
 import { ServerDropdown } from "./ServerDropdown";
 import { AudioToggle } from "@/components/player/AudioToggle";
+import { getSettings, setSettings } from "@/hooks/useSettings";
+import { LanguagePromptSheet } from "@/components/player/LanguagePromptSheet";
+import type { PreferredLanguage } from "@/lib/streamSelector";
 import type { AnimeChainState } from "./DesktopWatchLayout";
 
 const DIRECT_VIDEO_PROVIDERS = new Set<string>(["falix", "direct"]);
@@ -93,7 +96,24 @@ export function VideoZone({
     setOverlayActive,
     audio,
     setAudio,
+    isFullscreen,
   } = usePlayer();
+
+  // ── First-run language prompt (mobile parity) ──
+  // The direct player doesn't mount until the user has answered once — the
+  // answer feeds the very first source ranking. Local state drives the swap
+  // (hook updateSetting closures would clobber each other on a two-key save).
+  const [langAnswered, setLangAnswered] = useState(
+    () => getSettings().hasAnsweredLanguagePrompt,
+  );
+  const handleLanguageSelect = useCallback((value: PreferredLanguage) => {
+    setSettings({
+      ...getSettings(),
+      preferredAudioLanguage: value,
+      hasAnsweredLanguagePrompt: true,
+    });
+    setLangAnswered(true);
+  }, []);
 
   // ── Handle error overlay "Try next" → switch to alternative ──
   const handleErrorSwitch = useCallback(
@@ -103,6 +123,61 @@ export function VideoZone({
     },
     [onSelectProvider, setIframeLoadError],
   );
+
+  // ── Next available embed provider (fallback target for direct) ──
+  const findNextEmbedProvider = useCallback(
+    (currentId: string): ProviderDefinition | undefined =>
+      providers.find(
+        (p) =>
+          p.id !== currentId &&
+          p.id !== "direct" &&
+          p.id !== "falix" &&
+          !p.animeOnly,
+      ),
+    [providers],
+  );
+
+  // ── Direct exhausted all links → hand off to the next embed provider ──
+  // Mobile's onExhausted → tryNextProvider: "all direct links dead" should
+  // land the user in a working embed instead of a dead-end card. User-driven
+  // (DirectVideoPlayer only calls this when genuinely nothing is left), so no
+  // once-per-mount gate is needed — returning to direct manually and
+  // exhausting again correctly switches again.
+  const handleDirectExhausted = useCallback(() => {
+    if (!currentProvider) return;
+    const isDirect =
+      currentProvider.id === "direct" || currentProvider.id === "falix";
+    if (!isDirect) return;
+    const next = findNextEmbedProvider(currentProvider.id);
+    if (!next) return; // no embed provider — the exhausted card stays
+    console.log(`[VideoZone] direct exhausted → switching to ${next.id}`);
+    setTimeout(() => handleErrorSwitch(next), 600);
+  }, [currentProvider, findNextEmbedProvider, handleErrorSwitch]);
+
+  // ── Auto-fallback: when direct/falix exhausts all links, try next provider ──
+  React.useEffect(() => {
+    if (!iframeLoadError) return;
+    if (!currentProvider) return;
+    const isDirect =
+      currentProvider.id === "direct" || currentProvider.id === "falix";
+    if (!isDirect) return;
+
+    const next = findNextEmbedProvider(currentProvider.id);
+    if (!next) return;
+
+    console.log(
+      `[VideoZone] auto-fallback: direct exhausted → trying ${next.id}`,
+    );
+    const timer = setTimeout(() => {
+      handleErrorSwitch(next);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [
+    iframeLoadError,
+    currentProvider,
+    findNextEmbedProvider,
+    handleErrorSwitch,
+  ]);
 
   // ── Loading subtext ──
   const loadingSubtext = !currentProvider
@@ -186,7 +261,13 @@ export function VideoZone({
         <div
           className={
             fit === "grid"
-              ? "relative w-full aspect-video max-h-full max-w-full bg-[#0E0E11] rounded-2xl overflow-hidden shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08]"
+              ? isFullscreen
+                ? // Fullscreen: full-bleed surface — mpv letterboxes internally
+                  // and the embed's native view fills the same area, so the
+                  // box must not hold 16:9 / rounded corners / ring at the
+                  // screen edges.
+                  "relative w-full h-full bg-black overflow-hidden"
+                : "relative w-full aspect-video max-h-full max-w-full bg-[#0E0E11] rounded-2xl overflow-hidden shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08]"
               : "relative w-full aspect-video mx-auto bg-[#0E0E11] rounded-xl sm:rounded-2xl overflow-hidden shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08]"
           }
           style={
@@ -263,7 +344,8 @@ export function VideoZone({
           {/* Direct-video player (universal — any format) */}
           {!cpuWarning &&
             currentProvider &&
-            currentProvider.id === "direct" && (
+            currentProvider.id === "direct" &&
+            (langAnswered ? (
               <DirectVideoPlayer
                 tmdbId={contentid}
                 mediaType={plat}
@@ -271,8 +353,15 @@ export function VideoZone({
                 activeEpisode={activeEpisode}
                 onLoad={onIframeLoad}
                 onError={onIframeError}
+                onExhausted={handleDirectExhausted}
+                preferredLanguage={
+                  (getSettings().preferredAudioLanguage as PreferredLanguage) ||
+                  "auto"
+                }
               />
-            )}
+            ) : (
+              <LanguagePromptSheet onSelect={handleLanguageSelect} />
+            ))}
 
           {/* Desktop: native WebContentsView (Phase 3 hybrid). Kept MOUNTED for
              the whole session — even across error/CPU-warning states — because

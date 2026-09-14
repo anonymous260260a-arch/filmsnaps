@@ -39,6 +39,7 @@ import { tmdbApi } from "@/lib/tmdb";
 import {
   filterAnimeProviders,
   getEnabledProviders,
+  getProvider,
   getResumeMode,
 } from "@filmsnaps/shared";
 import {
@@ -48,6 +49,7 @@ import {
 } from "@/lib/anime/client";
 import { getImageUrl } from "@/lib/tmdb";
 import { PlayerProvider, usePlayer } from "@/components/player/PlayerProvider";
+import { isElectronNow } from "@/lib/platform";
 import { SecureIframe } from "@/components/player/SecureIframe";
 import { DesktopSecureWebview } from "@/components/player/DesktopSecureWebview";
 import { FalixPlayer } from "@/components/player/FalixPlayer";
@@ -60,7 +62,9 @@ import { PlayerControlOverlay } from "@/components/player/PlayerControlOverlay";
 import { buildIframeCSP } from "@/lib/movieProviders/cspBuilder";
 import { useIsDesktop } from "@/hooks/useIsDesktop";
 import { useWatchKeyboardShortcuts } from "@/hooks/useWatchKeyboardShortcuts";
-import { getSettings } from "@/hooks/useSettings";
+import { getSettings, setSettings } from "@/hooks/useSettings";
+import { LanguagePromptSheet } from "@/components/player/LanguagePromptSheet";
+import type { PreferredLanguage } from "@/lib/streamSelector";
 import { usePlaybackRecorder } from "@/hooks/usePlaybackRecorder";
 import { DesktopWatchLayout } from "@/components/watch/DesktopWatchLayout";
 import { WebLegalGate } from "@/components/legal/WebLegalGate";
@@ -115,6 +119,10 @@ function buildEmbedUrl(
   mega?: { idSpace: "mal" | "ani"; id: number; episode: number } | null,
   audio: "sub" | "dub" = "sub",
 ): string {
+  // Direct-video providers resolve their media URL at runtime through their
+  // own API (/api/player/direct, falix) — there is no embed URL to build.
+  if (DIRECT_PROVIDER_IDS.has(provider.id)) return "";
+
   // Providers that natively honor a resume param are strictly better than a
   // post-load JS seek — thread the saved position into the embed URL when the
   // provider exposes that capability (expert verdict §3 / action item 3).
@@ -197,6 +205,9 @@ function useKeyboardShortcuts() {
 
 // ── Desktop session management hook ──────────────────────────────
 
+/** Providers that resolve a real media file at runtime (no embed webview). */
+const DIRECT_PROVIDER_IDS = new Set<string>(["direct", "falix"]);
+
 /**
  * Manages the Electron provider session lifecycle.
  * On mount and provider change, initialises the isolated session
@@ -240,6 +251,17 @@ function useHeldProviderSession(
       return;
     }
     if (!window.electronAPI) return;
+
+    // Direct-video providers (direct/falix) never mount an embed webview, so
+    // the R0-R8 session rules are pure overhead for them — skip the main-
+    // process round-trip entirely. Switching to an embed provider later still
+    // initializes its session (providerId changes → init runs below).
+    if (DIRECT_PROVIDER_IDS.has(providerId)) {
+      setSessionReady(true);
+      setAppliedEmbedUrl(embedUrl);
+      return;
+    }
+
     // Anime chain pre-resolution: no URL yet (identity still resolving or
     // exhausted) — hold the session instead of initializing with "".
     if (!embedUrl) return;
@@ -304,6 +326,22 @@ function WatchClientContent({
   const [isPending, startTransition] = useTransition();
   const [seasonData, setSeasonData] = useState(initialSeasonData);
   const [playerReady, setPlayerReady] = useState(false);
+
+  // ── First-run language prompt (mobile parity) ──
+  // The direct player doesn't mount until the user has answered once — the
+  // answer feeds the very first source ranking. Module-level setSettings
+  // (single combined write) + local state drives the swap.
+  const [langAnswered, setLangAnswered] = useState(
+    () => getSettings().hasAnsweredLanguagePrompt,
+  );
+  const handleLanguageSelect = useCallback((value: PreferredLanguage) => {
+    setSettings({
+      ...getSettings(),
+      preferredAudioLanguage: value,
+      hasAnsweredLanguagePrompt: true,
+    });
+    setLangAnswered(true);
+  }, []);
 
   // Sync seasonData when the non-suspending query resolves
   useEffect(() => {
@@ -617,23 +655,36 @@ function WatchClientContent({
     setPlayerReady(true);
     setIframeLoadError(false);
 
-    // Perf baseline: watch-page mount → webview did-finish-load
-    performance.mark("watch:webview-loaded");
-    performance.measure(
-      "watch:mount-to-src",
-      "watch:client-mount",
-      "watch:webview-src-set",
-    );
-    performance.measure(
-      "watch:src-to-loaded",
-      "watch:webview-src-set",
-      "watch:webview-loaded",
-    );
-    performance.measure(
-      "watch:total",
-      "watch:client-mount",
-      "watch:webview-loaded",
-    );
+    // Perf baseline: watch-page mount → webview did-finish-load.
+    // Wrapped in try/catch: for direct-video providers there is no webview,
+    // so the "webview-src-set" mark may not exist — performance.measure
+    // throws a DOMException that would otherwise bubble into the caller's
+    // promise chain and be mistaken for a PLAYBACK failure (it churned the
+    // source-fallback loop). Metrics are best-effort, always.
+    try {
+      performance.mark("watch:webview-loaded");
+      const hasSrcMark =
+        performance.getEntriesByName("watch:webview-src-set").length > 0;
+      if (hasSrcMark) {
+        performance.measure(
+          "watch:mount-to-src",
+          "watch:client-mount",
+          "watch:webview-src-set",
+        );
+        performance.measure(
+          "watch:src-to-loaded",
+          "watch:webview-src-set",
+          "watch:webview-loaded",
+        );
+      }
+      performance.measure(
+        "watch:total",
+        "watch:client-mount",
+        "watch:webview-loaded",
+      );
+    } catch {
+      // Measurement is best-effort — never throw on perf logging
+    }
     try {
       const entries = performance.getEntriesByName("watch:total");
       if (entries.length > 0) {
@@ -689,6 +740,29 @@ function WatchClientContent({
     },
     [setSelectedProvider],
   );
+
+  // ── Direct exhausted all links → hand off to the next embed provider ──
+  // Mirrors VideoZone's auto-fallback: "all direct links dead" lands the user
+  // in a working embed instead of a dead-end card.
+  const handleDirectExhausted = useCallback(() => {
+    if (!currentProvider) return;
+    const isDirect =
+      currentProvider.id === "direct" || currentProvider.id === "falix";
+    if (!isDirect) return;
+    const next = providers.find(
+      (p) =>
+        p.id !== currentProvider.id &&
+        p.id !== "direct" &&
+        p.id !== "falix" &&
+        !p.animeOnly,
+    );
+    if (!next) return;
+    console.log(`[WatchClient] direct exhausted → switching to ${next.id}`);
+    setTimeout(() => {
+      handleProviderSelect(next);
+      setIframeLoadError(false);
+    }, 600);
+  }, [currentProvider, providers, handleProviderSelect, setIframeLoadError]);
 
   const displayTitle = initialMeta?.name || initialMeta?.title || "";
   const year = (
@@ -866,7 +940,8 @@ function WatchClientContent({
               {/* Direct-video player (universal format) */}
               {!cpuWarning &&
                 currentProvider &&
-                currentProvider.id === "direct" && (
+                currentProvider.id === "direct" &&
+                (langAnswered ? (
                   <DirectVideoPlayer
                     tmdbId={contentid}
                     mediaType={plat}
@@ -874,8 +949,15 @@ function WatchClientContent({
                     activeEpisode={activeEpisode}
                     onLoad={handleIframeLoad}
                     onError={handleIframeError}
+                    onExhausted={handleDirectExhausted}
+                    preferredLanguage={
+                      (getSettings()
+                        .preferredAudioLanguage as PreferredLanguage) || "auto"
+                    }
                   />
-                )}
+                ) : (
+                  <LanguagePromptSheet onSelect={handleLanguageSelect} />
+                ))}
 
               {/* Desktop: native WebContentsView (Phase 3 hybrid). Kept MOUNTED
                   for the whole session; keyed on refreshKey only.
@@ -1054,6 +1136,21 @@ function PlayerErrorState({
 
 // ── Wrapper — wraps content in PlayerProvider ────────────────────
 
+/**
+ * The settings "default server" saved on web, validated against the same
+ * platform rule the watch/server pickers apply: enabled, and either
+ * unrestricted or declared for web. Returns null when unset, hidden (e.g.
+ * direct until it gets a same-origin byte proxy), or unknown — a stale
+ * localStorage value must never re-seed a hidden provider.
+ */
+function webVisibleSavedServer(): string | null {
+  const saved = getSettings().defaultServer;
+  if (!saved) return null;
+  const p = getProvider(saved);
+  if (!p) return null;
+  return !p.platforms || p.platforms.includes("web") ? p.id : null;
+}
+
 interface WatchClientProps {
   contentid: string;
   plat: "movie" | "tv";
@@ -1100,7 +1197,15 @@ export default function WatchClient({
         contentId={contentid}
         initialProviderId={
           routeProvider ||
-          getSettings().defaultServer ||
+          // The settings "default server" preference applies on WEB only. On
+          // desktop it is deliberately ignored: the persisted value survives
+          // app updates (and is per-origin, so dev and non-dev can hold
+          // different stale ids) and silently overriding the registry's
+          // platform default made desktop defaults unpredictable.
+          // A saved server that is no longer visible on web (platforms filter,
+          // e.g. direct until it has a byte proxy) is ignored too — otherwise
+          // a stale localStorage value would re-seed a hidden provider.
+          (!isElectronNow() && webVisibleSavedServer()) ||
           defaultProvider ||
           undefined
         }

@@ -1,11 +1,16 @@
 "use client";
 
-import React, { useEffect, useState, useMemo, Suspense } from "react";
+import React, { useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import WatchClient from "./WatchClient";
 import { tmdbApi } from "@/lib/tmdb";
-import { getProvider, getResumeMode } from "@filmsnaps/shared";
+import {
+  getProvider,
+  getResumeMode,
+  getDefaultProviderId,
+} from "@filmsnaps/shared";
+import { useIsElectron } from "@/lib/platform";
 
 /**
  * Compute embed URL synchronously from URL params + provider registry.
@@ -14,6 +19,9 @@ import { getProvider, getResumeMode } from "@filmsnaps/shared";
 function computeInitialEmbedUrl(contentid, plat, providerId, searchParams) {
   const provider = getProvider(providerId);
   if (!provider) return null;
+  // Direct-video providers resolve their media URL at runtime through their
+  // own API — there is no embed URL to precompute.
+  if (providerId === "direct" || providerId === "falix") return null;
 
   const resumeT = searchParams.get("t")
     ? parseInt(searchParams.get("t"), 10)
@@ -36,15 +44,28 @@ function computeInitialEmbedUrl(contentid, plat, providerId, searchParams) {
   return `${provider.baseUrl}${embedPath}`;
 }
 
+/**
+ * Default provider — single code path for movie & TV. Derives from the
+ * shared registry's platform table (desktop → direct, web → screenscape —
+ * direct needs a same-origin byte proxy on web first; anime → megaplay);
+ * never hardcode provider ids here.
+ */
+function pickDefaultProvider({ isDesktop, animeOrigin, meta }) {
+  const isAnime = animeOrigin || meta?.genres?.some?.((g) => g.id === 16);
+  return getDefaultProviderId(isDesktop ? "desktop" : "web", {
+    anime: isAnime,
+  });
+}
+
 function WatchContent() {
   const searchParams = useSearchParams();
   const plat = searchParams.get("type") || "movie";
   const contentid = searchParams.get("id");
 
-  const [isDesktop, setIsDesktop] = useState(false);
-  useEffect(() => {
-    setIsDesktop(Boolean(window.electronAPI?.isDesktop));
-  }, []);
+  // Synchronous — true from the FIRST client render inside the Electron shell.
+  // (The old useState(false)+effect pattern rendered the first pass as web and
+  // seeded PlayerProvider with the wrong provider, which never re-seeded.)
+  const isDesktop = useIsElectron();
 
   const animeOrigin = Boolean(
     searchParams.get("mid") || searchParams.get("aid"),
@@ -88,12 +109,11 @@ function MovieWatchContent({
     staleTime: 1000 * 60 * 60 * 24 * 7,
   });
 
-  const defaultProvider =
-    animeOrigin || meta?.genres?.some?.((g) => g.id === 16)
-      ? "megaplay"
-      : isDesktop
-        ? "nxsha"
-        : "screenscape";
+  const defaultProvider = pickDefaultProvider({
+    isDesktop,
+    animeOrigin,
+    meta,
+  });
   const routeProvider = searchParams.get("provider") || null;
   const effectiveProvider = routeProvider || defaultProvider;
 
@@ -158,12 +178,11 @@ function TVWatchContent({ contentid, searchParams, isDesktop, animeOrigin }) {
     enabled: !!effectiveSeason,
   });
 
-  const defaultProvider =
-    animeOrigin || meta?.genres?.some?.((g) => g.id === 16)
-      ? "megaplay"
-      : isDesktop
-        ? "nxsha"
-        : "screenscape";
+  const defaultProvider = pickDefaultProvider({
+    isDesktop,
+    animeOrigin,
+    meta,
+  });
   const routeProvider = searchParams.get("provider") || null;
   const effectiveProvider = routeProvider || defaultProvider;
 
