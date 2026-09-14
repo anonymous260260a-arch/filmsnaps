@@ -22,6 +22,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCorsHeaders, handleOptions } from "@/lib/cors";
 import { desktopSkip } from "../desktop-skip";
+// revalidate=1: satisfies output:'export' (static 410 via desktopSkip) while
+// keeping web builds live — matches player/direct + player/falix pattern.
+export const revalidate = 1;
 
 const SUBDL_API_URL = "https://api.subdl.com/api/v1/subtitles";
 const SUBDL_DL_BASE = "https://dl.subdl.com";

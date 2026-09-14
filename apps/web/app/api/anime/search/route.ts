@@ -20,7 +20,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCorsHeaders, handleOptions } from "@/lib/cors";
 import { desktopSkip } from "../../desktop-skip";
 
-// force-static removed — same fix as tmdb route (was caching search at build time)
+// revalidate=1: satisfies output:'export' (static 410 via desktopSkip) while
+// keeping web builds live — matches player/direct + player/falix pattern.
+export const revalidate = 1;
 import { lookupMal } from "@/lib/anime/resolve";
 import {
   ANILIST_GRAPHQL,
