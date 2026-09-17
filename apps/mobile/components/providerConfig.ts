@@ -242,7 +242,13 @@ export function generateProviderSnippet(config?: ProviderConfig): string {
       `(function(){var sels=${sels};var kws=${kws};function sweep(root){if(!root)root=document;` +
         `if(sels.length){sels.forEach(function(sel){try{var nodes=root.querySelectorAll(sel);` +
         `for(var i=0;i<nodes.length;i++){nodes[i].style.display='none';}}catch(e){}});}` +
-        `if(kws.length){try{var el=root.querySelectorAll('button,a,span[role="button"],div');` +
+        // Keyword scan must NEVER include bare <div>s: a div's textContent
+        // includes every descendant's text, so a wrapper around screenscape's
+        // end-of-episode "Up Next" toast matches too — hiding the wrapper
+        // (which also wraps/overlays the video) blanks the screen to grey
+        // while audio keeps playing. Buttons/links still die by keyword, so
+        // the toast itself is still hidden.
+        `if(kws.length){try{var el=root.querySelectorAll('button,a,span[role="button"]');` +
         `for(var i=0;i<el.length;i++){var t=(el[i].textContent||'').toLowerCase().trim();` +
         `if(!t)continue;for(var j=0;j<kws.length;j++){if(t.indexOf(kws[j])!==-1){` +
         `el[i].style.display='none';break;}}}}catch(e){}}}` +
