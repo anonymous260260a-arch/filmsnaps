@@ -22,6 +22,15 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiBaseUrl, tmdbApi } from "./api";
+import {
+  buildStreamSourceUrl,
+  createHdHubAdapter,
+  extractEpisodeFiles,
+  getProvider,
+  mapFalixFiles,
+  resolveStreams,
+} from "@filmsnaps/shared";
+import type { FalixFile } from "@filmsnaps/shared";
 import type { StreamLink } from "../components/player/streamTypes";
 
 // ── Native MKV extractor detection ──────────────────────────────────────
@@ -38,6 +47,15 @@ const HAS_CUSTOM_MKV_EXTRACTOR = (() => {
     return false;
   }
 })();
+
+/**
+ * Shared HDHub adapter instance. Parsing lives in
+ * packages/shared/src/providers/sources/hdhub.ts — the MKV-extractor flag is
+ * the only platform-specific input (native patch presence on this device).
+ */
+const hdhubAdapter = createHdHubAdapter({
+  hasCustomMkvExtractor: HAS_CUSTOM_MKV_EXTRACTOR,
+});
 
 // ── Provider registry (remote-updatable) ──
 
@@ -164,9 +182,6 @@ async function loadProvidersConfig(): Promise<StreamProvidersConfig> {
             CONFIG_CACHE_KEY,
             JSON.stringify(configCache),
           ).catch(() => {});
-          console.log(
-            `[DirectStreams] provider config v${parsed.version} from remote (${parsed.providers.length} providers)`,
-          );
           return parsed;
         }
       }
@@ -181,9 +196,7 @@ async function loadProvidersConfig(): Promise<StreamProvidersConfig> {
         if (parsed) return parsed;
       }
     } catch {}
-    console.log(
-      "[DirectStreams] provider config unavailable — using bundled defaults",
-    );
+
     return BUNDLED_CONFIG;
   })();
 
@@ -265,149 +278,7 @@ async function resolveImdbId(
   }
 }
 
-// ── HDHub response parsing (ported from apps/web/app/api/player/direct) ──
-
-/** Files ≥ 20GB (or "10Gbps"/"Download Only" entries) are download-only. */
-const DOWNLOAD_ONLY_SIZE_THRESHOLD = 20_000_000_000;
-
-interface HdHubStream {
-  name?: string;
-  description?: string;
-  url?: string;
-  externalUrl?: string;
-  behaviorHints?: { notWebReady?: boolean; videoSize?: number };
-}
-
-/**
- * Strip params that force download instead of inline playback. Presigned
- * S3/R2 URLs are left untouched — deleting any query param breaks the SigV4
- * signature (HTTP 403 SignatureDoesNotMatch).
- */
-function cleanStreamUrl(url: string): string {
-  try {
-    if (url.includes("X-Amz-Algorithm") || url.includes("X-Amz-Signature"))
-      return url;
-    const urlObj = new URL(url);
-    urlObj.searchParams.delete("response-content-disposition");
-    urlObj.searchParams.delete("response-content-type");
-    return urlObj.toString();
-  } catch {
-    return url;
-  }
-}
-
-/** Extract source name from the stream name (e.g. "HdHub 1080p" → "HdHub"). */
-function extractSource(name: string): string {
-  const firstLine = name.split("\n")[0] || "";
-  const match = firstLine.match(/^(HdHub|4KHDHub|HdHub VM|VS Sunny)/i);
-  return match ? match[1] : "Unknown";
-}
-
-function parseStreamEntry(stream: HdHubStream) {
-  const name = stream.name || "";
-  const desc = stream.description || "";
-
-  let quality = "Unknown";
-  if (/2160[pP]|4K|UHD/i.test(desc + name)) quality = "2160p";
-  else if (/1080[pP]/i.test(desc + name)) quality = "1080p";
-  else if (/720[pP]/i.test(desc + name)) quality = "720p";
-  else if (/480[pP]/i.test(desc + name)) quality = "480p";
-  else if (/360[pP]/i.test(desc + name)) quality = "360p";
-
-  let codec = "x264"; // default
-  if (/HEVC|x265|H\.265/i.test(desc)) codec = "hevc";
-  else if (/AV1|av01/i.test(desc)) codec = "av1";
-  else if (/VP9|vp09/i.test(desc)) codec = "vp9";
-  else if (/H\.264|avc1|x264/i.test(desc)) codec = "h264";
-
-  let audio = "Unknown";
-  if (/DTS-HD/i.test(desc)) audio = "DTS-HD";
-  else if (/DTS/i.test(desc)) audio = "DTS";
-  else if (/DDP5\.1|DDP 5\.1|AAC5\.1/i.test(desc)) audio = "Dolby Digital 5.1";
-  else if (/AAC/i.test(desc)) audio = "AAC";
-
-  const isDownloadOnly =
-    /10Gbps|Download Only/i.test(name) ||
-    (stream.behaviorHints?.videoSize ?? 0) >= DOWNLOAD_ONLY_SIZE_THRESHOLD;
-
-  // Direct MP4s without download/redirect params stream inline; PixelDrain
-  // URLs with ?download= and huge remuxes do not.
-  const isWebReady =
-    !!stream.url &&
-    !isDownloadOnly &&
-    /\.mp4(\?.*)?$/i.test(stream.url) &&
-    !/[?&]download=/.test(stream.url);
-
-  return {
-    quality,
-    codec,
-    audio,
-    isDownloadOnly,
-    isWebReady,
-    size: stream.behaviorHints?.videoSize,
-    source: extractSource(name),
-  };
-}
-
-/**
- * Playback priority (lower = tried first). Unlike the web proxy there is no
- * Windows penalty — Android hardware-decodes HEVC and HevcPlayer exists for it.
- * When the native MKV extractor is absent (v2.1.0), MKV files that need the
- * secondary-SeekHead get a heavy penalty so MP4/WebM alternatives are tried first.
- */
-function computePriority(
-  p: ReturnType<typeof parseStreamEntry>,
-  rawDesc: string,
-): number {
-  if (p.isDownloadOnly) return 100 + (p.size ?? 0) / 1_000_000_000;
-  if (p.isWebReady && p.codec === "h264") return 0;
-  if (p.codec === "h264") return 10;
-  if (p.codec === "hevc") return 20;
-  if (p.codec === "av1" || p.codec === "vp9") return 30;
-  // MKV without the native extractor: files with complex seek patterns will
-  // fail to seek. Push below download-only so MP4/WebM alternatives win.
-  if (!HAS_CUSTOM_MKV_EXTRACTOR && /\.mkv\b/i.test(rawDesc)) return 200;
-  return 40;
-}
-
-function mapHdhubStreams(streams: HdHubStream[]): StreamLink[] {
-  const parsed = streams
-    // Drop donation/discord entries (externalUrl-only)
-    .filter((s) => !!s.url)
-    .map((s) => ({ raw: s, parsed: parseStreamEntry(s) }));
-
-  parsed.sort(
-    (a, b) =>
-      computePriority(a.parsed, a.raw.description || "") -
-      computePriority(b.parsed, b.raw.description || ""),
-  );
-
-  return parsed.map((s, idx) => {
-    const desc = s.raw.description || "";
-    return {
-      quality: s.parsed.isDownloadOnly
-        ? `${s.parsed.quality} [Download Only]`
-        : s.parsed.isWebReady
-          ? `${s.parsed.quality} [Web]`
-          : s.parsed.quality,
-      name: desc,
-      id: idx.toString(),
-      size: s.raw.behaviorHints?.videoSize
-        ? `${(s.raw.behaviorHints.videoSize / 1_000_000_000).toFixed(2)}GB`
-        : undefined,
-      url: cleanStreamUrl(s.raw.url || ""),
-      type: desc.includes(".mkv") ? "mkv" : "mp4",
-      _meta: {
-        codec: s.parsed.codec,
-        audio: s.parsed.audio,
-        source: s.parsed.source,
-        isDownloadOnly: s.parsed.isDownloadOnly,
-        isWebReady: s.parsed.isWebReady,
-        sizeBytes: s.raw.behaviorHints?.videoSize,
-      },
-    };
-  });
-}
+// ── HDHub response parsing — moved to packages/shared/src/providers/sources/hdhub.ts ──
 
 // ── Public API ──
 
@@ -419,91 +290,6 @@ export interface DirectStreamBundle {
 }
 
 // ── Falix (second provider, fetched for every title) ───────────────────
-
-interface FalixTelegramFile {
-  quality: string;
-  id: string;
-  name: string;
-  size: string;
-}
-
-interface FalixTVData {
-  tmdb_id: number;
-  title: string;
-  media_type: "tv";
-  seasons: Array<{
-    season_number: number;
-    episodes: Array<{
-      episode_number: number;
-      telegram: FalixTelegramFile[];
-    }>;
-  }>;
-}
-
-interface FalixMovieData {
-  tmdb_id: number;
-  title: string;
-  media_type: "movie";
-  telegram: FalixTelegramFile[];
-}
-
-function parseFalixSize(sizeStr: string): number {
-  if (!sizeStr) return 0;
-  const m = sizeStr.match(/([\d.]+)\s*(GB|MB|KB)/i);
-  if (!m) return 0;
-  const n = parseFloat(m[1]);
-  const unit = m[2].toUpperCase();
-  if (unit === "GB") return Math.round(n * 1024 * 1024 * 1024);
-  if (unit === "MB") return Math.round(n * 1024 * 1024);
-  return Math.round(n * 1024);
-}
-
-function parseFalixCodec(name: string): string {
-  if (/x265|HEVC|H\.265|x266/i.test(name)) return "hevc";
-  if (/AV1|av01/i.test(name)) return "av1";
-  if (/x264|H\.264|AVC/i.test(name)) return "h264";
-  return "h264";
-}
-
-function parseFalixAudio(name: string): string {
-  if (/DTS-HD/i.test(name)) return "DTS-HD";
-  if (/DTS/i.test(name)) return "DTS";
-  if (/DDP|E-?AC-?3|Dolby Digital Plus/i.test(name)) return "Dolby Digital 5.1";
-  if (/DD\b|AC-?3/i.test(name)) return "Dolby Digital 5.1";
-  if (/AAC/i.test(name)) return "AAC";
-  return "Unknown";
-}
-
-function mapFalixFiles(
-  files: FalixTelegramFile[],
-  title: string,
-  dlBase: string,
-): StreamLink[] {
-  return files
-    .filter((f) => !!f.id && !!f.name)
-    .map((f, i) => {
-      const sizeBytes = parseFalixSize(f.size);
-      const ext = f.name.split(".").pop()?.toLowerCase() ?? "mp4";
-      return {
-        quality: f.quality || "Unknown",
-        name: `[Falix] ${title} — ${f.name}`,
-        id: `falix-${i}`,
-        size: f.size || undefined,
-        // dlBase is either the falix host itself or the worker stream proxy
-        // (see fetchFalixLinks) — both end in /dl.
-        url: `${dlBase}/${f.id}/${encodeURIComponent(f.name)}`,
-        type: ext === "mkv" ? "mkv" : "mp4",
-        _meta: {
-          codec: parseFalixCodec(f.name),
-          audio: parseFalixAudio(f.name),
-          source: "Falix",
-          isDownloadOnly: false,
-          isWebReady: false,
-          sizeBytes,
-        },
-      };
-    });
-}
 
 /**
  * fetch() with a hard timeout. RN's AbortSignal polyfill (abort-controller)
@@ -552,16 +338,13 @@ async function fetchFalixLinks(
   try {
     apiBase = await getProviderApiBase("falix");
   } catch (err: any) {
-    console.log(
-      `[Flow] fetch falix ⚠ provider unavailable: ${err?.message ?? err}`,
-    );
     return [];
   }
 
   const workerBase = getApiBaseUrl().replace(/\/$/, "");
   let directReachable = true;
   let useProxy = false;
-  let data: FalixTVData | FalixMovieData | null = null;
+  let data: Record<string, unknown> | null = null;
 
   const imdbNum = imdbId.replace(/^tt0*/, "");
   for (const id of [imdbNum, String(tmdbId)]) {
@@ -574,26 +357,16 @@ async function fetchFalixLinks(
         const res = await fetchWithTimeout(`${apiBase}/api/id/${id}`, 4_000);
         if (res.ok) {
           try {
-            data = (await res.json()) as FalixTVData | FalixMovieData;
+            data = (await res.json()) as Record<string, unknown>;
           } catch (err: any) {
             // Non-JSON body — e.g. an ISP hijack/challenge page returned as 200.
-            console.log(
-              `[Flow] fetch falix lookup ${id}: HTTP 200 but body is not JSON — ${err?.message ?? err}`,
-            );
             continue;
           }
-          console.log(`[Flow] fetch falix lookup ${id}: OK (direct)`);
           break;
         }
-        // 404 etc. — the server answered, so this id simply isn't in the
-        // catalog; try the next id directly.
-        console.log(`[Flow] fetch falix lookup ${id}: HTTP ${res.status}`);
         continue;
       } catch (err: any) {
         directReachable = false;
-        console.log(
-          `[Flow] fetch falix direct unreachable (${err?.name ?? "Error"}: ${err?.message ?? err}) — switching to worker proxy`,
-        );
       }
     }
     try {
@@ -603,61 +376,39 @@ async function fetchFalixLinks(
       );
       if (res.ok) {
         try {
-          data = (await res.json()) as FalixTVData | FalixMovieData;
+          data = (await res.json()) as Record<string, unknown>;
         } catch (err: any) {
-          console.log(
-            `[Flow] fetch falix proxy ${id}: HTTP 200 but body is not JSON — ${err?.message ?? err}`,
-          );
           continue;
         }
         useProxy = true;
-        console.log(`[Flow] fetch falix lookup ${id}: OK (worker proxy)`);
         break;
       }
-      console.log(`[Flow] fetch falix proxy ${id}: HTTP ${res.status}`);
-    } catch (err: any) {
-      console.log(
-        `[Flow] fetch falix proxy ${id}: ${err?.name ?? "Error"}: ${err?.message ?? err}`,
-      );
-    }
+    } catch (err: any) {}
   }
 
   if (!data) {
-    console.log(
-      `[Flow] fetch falix: no entry for tmdbId=${tmdbId} (imdb ${imdbId}, base ${apiBase})`,
-    );
     return [];
   }
 
-  let files: FalixTelegramFile[] = [];
-  if (
-    mediaType === "tv" &&
-    "seasons" in data &&
-    season != null &&
-    episode != null
-  ) {
-    const s = data.seasons.find((s) => s.season_number === season);
-    const ep = s?.episodes.find((e) => e.episode_number === episode);
-    files = ep?.telegram ?? [];
-    if (files.length === 0) {
-      console.log(
-        `[Flow] fetch falix: S${season}E${episode} EMPTY (seasons=${data.seasons?.length ?? 0}, foundSeason=${!!s})`,
-      );
-    }
-  } else if ("telegram" in data) {
-    files = data.telegram ?? [];
+  const files: FalixFile[] = extractEpisodeFiles(
+    data,
+    mediaType,
+    season,
+    episode,
+  );
+  if (mediaType === "tv" && files.length === 0) {
+    const seasons = (data as { seasons?: unknown[] }).seasons?.length ?? 0;
   }
 
   if (files.length === 0) return [];
 
+  const title = (data as { title?: string }).title || "Unknown";
   const links = mapFalixFiles(
     files,
-    data.title,
+    title,
     useProxy ? `${workerBase}/api/player/falix/stream/dl` : `${apiBase}/dl`,
   );
-  console.log(
-    `[Flow] fetch falix: ${links.length} files for tmdbId=${tmdbId}${useProxy ? " (via worker proxy)" : ""}`,
-  );
+
   return links;
 }
 
@@ -670,11 +421,84 @@ async function fetchFalixLinks(
  * Throws only when both providers come up empty-and-broken, so callers can
  * surface their own error state.
  */
+/** Track whether the legacy hdhub+falix pipeline warned about a provider. */
+const warnedProviders = new Set<string>();
+
+/**
+ * Fetch links for a registry-driven direct provider (streamSources[] on its
+ * ProviderDefinition — e.g. spacedom). Resolution is tiered: sources sharing
+ * a `priority` fetch in parallel, higher tiers only run when lower ones come
+ * up short. Returns null when the provider isn't registry-driven (no
+ * streamSources) so the caller can fall back to the legacy pipeline.
+ */
+async function fetchRegistryProviderLinks(
+  providerId: string,
+  tmdbId: number,
+  imdbId: string,
+  mediaType: "movie" | "tv",
+  season?: number,
+  episode?: number,
+): Promise<StreamLink[] | null> {
+  const def = getProvider(providerId);
+  if (!def?.streamSources || def.streamSources.length === 0) return null;
+
+  const result = await resolveStreams(
+    {
+      streamSources: def.streamSources,
+      imdbId,
+      tmdbId,
+      mediaType,
+      season,
+      episode,
+    },
+    async (source, ctx) => {
+      const url = buildStreamSourceUrl(source, ctx);
+      if (!url) throw new Error(`source ${source.id} has no urlTemplate`);
+      const res = await fetchWithTimeout(url, source.timeoutMs ?? 8_000, {
+        headers: { Accept: "application/json", ...(source.headers ?? {}) },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+  );
+  for (const f of result.failedSources) {
+    console.log(`[Flow] fetch ${sourceLogName(providerId, f.id)}: ${f.error}`);
+  }
+  console.log(
+    `[Flow] fetch ${providerId}: ${result.links.length} links from [${result.fetchedSources.join(", ") || "none"}]`,
+  );
+  // Tag every link with its provider so the player can detect cross-provider fallbacks.
+  return result.links.map((l) => {
+    const m = l._meta;
+    return {
+      ...l,
+      _meta: m
+        ? { ...m, providerId }
+        : {
+            codec: "unknown",
+            audio: "unknown",
+            source: "",
+            isDownloadOnly: false,
+            isWebReady: true,
+            providerId,
+          },
+    };
+  });
+}
+
+function sourceLogName(providerId: string, sourceId: string): string {
+  return sourceId.startsWith(`${providerId}-`)
+    ? sourceId.slice(providerId.length + 1)
+    : sourceId;
+}
+
 export async function fetchDirectStreams(
   tmdbId: number,
   mediaType: "movie" | "tv",
   season?: number,
   episode?: number,
+  /** Registry provider id — set for non-legacy direct providers (spacedom…). */
+  providerId?: string,
 ): Promise<DirectStreamBundle> {
   const fetchStartedAt = Date.now();
   const imdbId = await resolveImdbId(mediaType, tmdbId);
@@ -682,8 +506,30 @@ export async function fetchDirectStreams(
     throw new Error("Couldn't resolve this title's IMDB id.");
   }
   console.log(
-    `[Flow] fetch ${mediaType}:${tmdbId}: imdb=${imdbId} resolved in ${Date.now() - fetchStartedAt}ms — starting hdhub + falix in parallel`,
+    `[Flow] fetch ${mediaType}:${tmdbId}: imdb=${imdbId} resolved in ${Date.now() - fetchStartedAt}ms — provider=${providerId ?? "direct"}`,
   );
+
+  // Registry-driven direct provider (e.g. spacedom): tiered resolution over
+  // its streamSources — the legacy hdhub+falix pipeline doesn't run at all.
+  if (providerId && providerId !== "direct") {
+    const registryLinks = await fetchRegistryProviderLinks(
+      providerId,
+      tmdbId,
+      imdbId,
+      mediaType,
+      season,
+      episode,
+    );
+    if (registryLinks !== null) {
+      return { tmdbId, imdbId, mediaType, links: registryLinks };
+    }
+    if (!warnedProviders.has(providerId)) {
+      warnedProviders.add(providerId);
+      console.warn(
+        `[DirectStreams] provider ${providerId} has no streamSources — falling back to the legacy hdhub+falix pipeline`,
+      );
+    }
+  }
 
   // Falix starts regardless of what the primary provider does — even a
   // disabled/unreachable primary doesn't stop it.
@@ -715,8 +561,13 @@ export async function fetchDirectStreams(
     if (!res.ok) {
       throw new Error(`Stream provider returned HTTP ${res.status}`);
     }
-    const raw = (await res.json()) as { streams?: HdHubStream[] };
-    return mapHdhubStreams(Array.isArray(raw?.streams) ? raw.streams : []);
+    const raw = (await res.json()) as { streams?: unknown[] };
+    return hdhubAdapter.parseResponse(raw, {
+      imdbId,
+      mediaType,
+      season,
+      episode,
+    });
   })();
 
   let links: StreamLink[] = [];
@@ -736,7 +587,6 @@ export async function fetchDirectStreams(
 
   const falixLinks = await falixPromise;
   if (falixLinks.length > 0) {
-    console.log(`[Flow] fetch falix: +${falixLinks.length} links`);
     links.push(...falixLinks);
   }
 

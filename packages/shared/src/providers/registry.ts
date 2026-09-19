@@ -1,4 +1,8 @@
-import type { ProviderDefinition, MediaType } from "../types/provider";
+import type {
+  ProviderDefinition,
+  MediaType,
+  ProviderPlatform,
+} from "../types/provider";
 
 /**
  * App-wide content mode (Hard Mode Split). Mobile drives the whole app off
@@ -150,6 +154,8 @@ export const PROVIDERS: ProviderDefinition[] = [
     displayName: "Source 5",
     note: "Multi-lang · Cold-Startup",
     baseUrl: "https://zxcstream.xyz",
+    enabled: false,
+
     embed: {
       movie: (id) =>
         `/player/movie/${id}?dubLang=hi&autoplay=true&server=1&domainAd=filmsnap-pro.netlify.app&color=FFD700`,
@@ -212,6 +218,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     name: "Falix",
     displayName: "Falix",
     note: "HEVC downloads",
+    type: "direct",
     enabled: true,
     forDownloadOnly: true,
     order: 7,
@@ -238,8 +245,9 @@ export const PROVIDERS: ProviderDefinition[] = [
   {
     id: "direct",
     name: "Direct",
-    displayName: "Direct-Play",
-    note: "Universal format · Direct streaming",
+    displayName: "HDHub",
+    note: "4k · Fast · Multi-lang",
+    type: "direct",
     order: 8,
     platforms: ["mobile"],
     baseUrl: "",
@@ -252,6 +260,270 @@ export const PROVIDERS: ProviderDefinition[] = [
     },
     // No sandbox needed — the player renders a real playback pipeline
     // (movi-player / mpv), NOT an iframe.
+  },
+  // ── SpaceDom — upstream servers behind one API, ALL fetched in parallel ──
+  // Every enabled server is queried together (all priority tier 1) so the
+  // pool always carries every server's result; `selection: "spacedom"` then
+  // orders the chain by server quality (heron's original file first, then
+  // the 720p HLS mirrors). falcon stays disabled: its "ready" response
+  // carries a relative playlistPath that needs the spacedom.live front-end
+  // session — unusable via the raw API.
+  // retries — these upstreams intermittently return "unavailable" on the
+  // first request for a title and succeed on the next; a bounded retry
+  // (800 ms apart) recovers the miss.
+  {
+    id: "spacedom",
+    name: "SpaceDom",
+    displayName: "SpaceDom",
+    note: "Beta · Experimental",
+    type: "direct",
+    order: 10,
+    platforms: ["mobile", "web"],
+    baseUrl: "",
+    selection: "spacedom",
+    embed: {
+      movie: () => "",
+      tv: () => "",
+    },
+    streamSources: [
+      {
+        id: "spacedom-heron",
+        adapter: "spacedom",
+        apiBase: "https://api.spacedom.fun/api/direct/heron",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 15000,
+        retries: 2,
+        urlTemplate: "https://api.spacedom.fun/api/direct/heron/movie/{tmdbId}",
+        urlTemplateTv:
+          "https://api.spacedom.fun/api/direct/heron/tv/{tmdbId}?season={season}&episode={episode}",
+      },
+      ...["condor", "kite"].map((server) => ({
+        id: `spacedom-${server}`,
+        adapter: "spacedom" as const,
+        apiBase: `https://api.spacedom.fun/api/direct/${server}`,
+        kind: "raw" as const,
+        enabled: true,
+        priority: 1,
+        timeoutMs: 8000,
+        retries: 2,
+        urlTemplate: `https://api.spacedom.fun/api/direct/${server}/movie/{tmdbId}`,
+        urlTemplateTv: `https://api.spacedom.fun/api/direct/${server}/tv/{tmdbId}?season={season}&episode={episode}`,
+      })),
+      // Last resort — rarely carry a title, but cheap to ask in parallel.
+      ...["raven", "tern", "skua"].map((server) => ({
+        id: `spacedom-${server}`,
+        adapter: "spacedom" as const,
+        apiBase: `https://api.spacedom.fun/api/direct/${server}`,
+        kind: "raw" as const,
+        enabled: true,
+        priority: 1,
+        timeoutMs: 6000,
+        retries: 1,
+        urlTemplate: `https://api.spacedom.fun/api/direct/${server}/movie/{tmdbId}`,
+        urlTemplateTv: `https://api.spacedom.fun/api/direct/${server}/tv/{tmdbId}?season={season}&episode={episode}`,
+      })),
+      // Osprey answers slowly ("took too long") — one bounded attempt, no retry.
+      {
+        id: "spacedom-osprey",
+        adapter: "spacedom",
+        apiBase: "https://api.spacedom.fun/api/direct/osprey",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 6000,
+        urlTemplate:
+          "https://api.spacedom.fun/api/direct/osprey/movie/{tmdbId}",
+        urlTemplateTv:
+          "https://api.spacedom.fun/api/direct/osprey/tv/{tmdbId}?season={season}&episode={episode}",
+      },
+      // Falcon: different schema (relative playlistPath needs the
+      // spacedom.live front-end session) — unusable via the raw API.
+      {
+        id: "spacedom-falcon",
+        adapter: "spacedom",
+        apiBase: "https://api.spacedom.fun/api/direct/falcon",
+        kind: "raw",
+        enabled: false,
+        timeoutMs: 6000,
+        urlTemplate:
+          "https://api.spacedom.fun/api/direct/falcon/movie/{tmdbId}",
+        urlTemplateTv:
+          "https://api.spacedom.fun/api/direct/falcon/tv/{tmdbId}?season={season}&episode={episode}",
+      },
+    ],
+  },
+  // ── Way2Movies — scraper API, multiple server IDs, one request each ──
+  // Each server ID returns an array of media URLs (HLS/MP4) for one language
+  // group. All enabled servers fire in parallel; the selector orders the
+  // combined pool by language preference, then quality, then CDN diversity.
+  // API headers: Referer + Origin must be https://beta.way2movies.live/
+  // Server 31's hakunaymatata.com CDN additionally requires Referer:
+  // https://netfilm.world/ on the media request — wired via StreamLink.headers.
+  {
+    id: "way2movies",
+    name: "Way2Movies",
+    displayName: "NetMirror",
+    note: "Beta · Experimental",
+    type: "direct",
+    order: 9,
+    platforms: ["mobile", "web"],
+    baseUrl: "",
+    selection: "way2movies",
+    embed: {
+      movie: () => "",
+      tv: () => "",
+    },
+    streamSources: [
+      // 4 servers × 2 languages = 8 sources, all priority 1 (parallel).
+      // Server priority lives in the selector (39 > 33 > 31 > 42).
+      // Each source fetches one language from one server.
+      {
+        id: "w2m-s31-hindi",
+        adapter: "way2movies",
+        apiBase: "https://scraper.way2movies.fun/server/31",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 12000,
+        retries: 2,
+        headers: {
+          Referer: "https://beta.way2movies.live/",
+          Origin: "https://beta.way2movies.live",
+        },
+        urlTemplate:
+          "https://scraper.way2movies.fun/server/31/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=Hindi",
+        urlTemplateTv:
+          "https://scraper.way2movies.fun/server/31/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=Hindi",
+      },
+      {
+        id: "w2m-s31-english",
+        adapter: "way2movies",
+        apiBase: "https://scraper.way2movies.fun/server/31",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 12000,
+        retries: 2,
+        headers: {
+          Referer: "https://beta.way2movies.live/",
+          Origin: "https://beta.way2movies.live",
+        },
+        urlTemplate:
+          "https://scraper.way2movies.fun/server/31/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=English",
+        urlTemplateTv:
+          "https://scraper.way2movies.fun/server/31/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=English",
+      },
+      {
+        id: "w2m-s33-hindi",
+        adapter: "way2movies",
+        apiBase: "https://scraper.way2movies.fun/server/33",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 12000,
+        retries: 2,
+        headers: {
+          Referer: "https://beta.way2movies.live/",
+          Origin: "https://beta.way2movies.live",
+        },
+        urlTemplate:
+          "https://scraper.way2movies.fun/server/33/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=Hindi",
+        urlTemplateTv:
+          "https://scraper.way2movies.fun/server/33/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=Hindi",
+      },
+      {
+        id: "w2m-s33-english",
+        adapter: "way2movies",
+        apiBase: "https://scraper.way2movies.fun/server/33",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 12000,
+        retries: 2,
+        headers: {
+          Referer: "https://beta.way2movies.live/",
+          Origin: "https://beta.way2movies.live",
+        },
+        urlTemplate:
+          "https://scraper.way2movies.fun/server/33/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=English",
+        urlTemplateTv:
+          "https://scraper.way2movies.fun/server/33/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=English",
+      },
+      {
+        id: "w2m-s39-hindi",
+        adapter: "way2movies",
+        apiBase: "https://scraper.way2movies.fun/server/39",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 12000,
+        retries: 2,
+        headers: {
+          Referer: "https://beta.way2movies.live/",
+          Origin: "https://beta.way2movies.live",
+        },
+        urlTemplate:
+          "https://scraper.way2movies.fun/server/39/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=Hindi",
+        urlTemplateTv:
+          "https://scraper.way2movies.fun/server/39/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=Hindi",
+      },
+      {
+        id: "w2m-s39-english",
+        adapter: "way2movies",
+        apiBase: "https://scraper.way2movies.fun/server/39",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 12000,
+        retries: 2,
+        headers: {
+          Referer: "https://beta.way2movies.live/",
+          Origin: "https://beta.way2movies.live",
+        },
+        urlTemplate:
+          "https://scraper.way2movies.fun/server/39/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=English",
+        urlTemplateTv:
+          "https://scraper.way2movies.fun/server/39/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=English",
+      },
+      {
+        id: "w2m-s42-hindi",
+        adapter: "way2movies",
+        apiBase: "https://scraper.way2movies.fun/server/42",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 12000,
+        retries: 2,
+        headers: {
+          Referer: "https://beta.way2movies.live/",
+          Origin: "https://beta.way2movies.live",
+        },
+        urlTemplate:
+          "https://scraper.way2movies.fun/server/42/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=Hindi",
+        urlTemplateTv:
+          "https://scraper.way2movies.fun/server/42/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=Hindi",
+      },
+      {
+        id: "w2m-s42-english",
+        adapter: "way2movies",
+        apiBase: "https://scraper.way2movies.fun/server/42",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 12000,
+        retries: 2,
+        headers: {
+          Referer: "https://beta.way2movies.live/",
+          Origin: "https://beta.way2movies.live",
+        },
+        urlTemplate:
+          "https://scraper.way2movies.fun/server/42/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=English",
+        urlTemplateTv:
+          "https://scraper.way2movies.fun/server/42/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=English",
+      },
+    ],
   },
   // ── Server 22 (disabled — was Server 5) ──────────────────────
   {
@@ -456,6 +728,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     id: "videasy",
     name: "videasy",
     displayName: "Server 20",
+    enabled: false,
     note: "Limited-Multi-lang · Best for Original lang",
     // enabled: false,
     baseUrl: "https://player.videasy.net",
@@ -618,10 +891,13 @@ export const PLATFORM_DEFAULT_PROVIDER_IDS = {
   // proxy (the stream CDNs send no CORS headers, which blocks byte-fetching
   // engines in the browser). Direct remains available on desktop + mobile.
   web: "screenscape",
-  mobile: "nxsha",
+  // Mobile kept the legacy behavior of the old watch page: no explicit choice
+  // means the direct pipeline (first available = "direct"), which ranks and
+  // probes hdhub/falix links before falling back to embeds via the picker.
+  mobile: "direct",
 } as const;
 
-export type ProviderPlatform = keyof typeof PLATFORM_DEFAULT_PROVIDER_IDS;
+export type { ProviderPlatform };
 
 /** Anime sessions always default to the dedicated anime-only source. */
 export const ANIME_DEFAULT_PROVIDER_ID = "megaplay";
@@ -637,6 +913,88 @@ export function getDefaultProviderId(
   return opts.anime
     ? ANIME_DEFAULT_PROVIDER_ID
     : PLATFORM_DEFAULT_PROVIDER_IDS[platform];
+}
+
+/**
+ * Playback architecture of a provider. Every watch surface must branch on
+ * this (or `isDirectProvider`) instead of matching provider-id strings —
+ * hardcoded `Set(["falix", "direct"])` checks are what made adding a new
+ * direct provider require edits in 6+ files.
+ */
+export function getProviderType(p: ProviderDefinition): "embed" | "direct" {
+  return p.type ?? "embed";
+}
+
+export function isDirectProvider(p: ProviderDefinition): boolean {
+  return getProviderType(p) === "direct";
+}
+
+/**
+ * The ONE provider-list query every surface should use. Filters, in order:
+ *   1. `enabled !== false`
+ *   2. `forDownloadOnly` (excluded unless opted in)
+ *   3. platform visibility via `platforms` (desktop currently shows all —
+ *      Electron WebContentsView rendering ignores the filter, matching the
+ *      pre-centralization behavior)
+ *   4. Hard Mode Split via `mediaTypes` (defaults to `['movie_tv']`)
+ * Sorted by `order` (lower = higher in the picker).
+ */
+export function getProvidersForPlatform(
+  platform: ProviderPlatform,
+  opts: {
+    mode?: MediaType;
+    includeDownloadOnly?: boolean;
+  } = {},
+): ProviderDefinition[] {
+  const mode = opts.mode ?? "movie_tv";
+  return getEnabledProviders(opts.includeDownloadOnly)
+    .filter(
+      (p) =>
+        platform === "desktop" ||
+        !p.platforms ||
+        p.platforms.includes(platform),
+    )
+    .filter((p) => (p.mediaTypes ?? ["movie_tv"]).includes(mode));
+}
+
+/**
+ * Canonical "which provider opens this watch session" resolution. Every
+ * platform's watch page should call this instead of re-implementing the
+ * precedence chain (that's how defaults drifted across web/desktop/mobile):
+ *
+ *   1. `routeProvider`   — explicit ?provider= link/share
+ *   2. `savedServer`     — the user's "default server" setting
+ *   3. registry default  — getDefaultProviderId(platform, { anime })
+ *
+ * Validation of the first two candidates:
+ *   - unknown/disabled ids are skipped (a stale value can never re-seed a
+ *     removed provider)
+ *   - WEB additionally enforces the `platforms` visibility filter (a saved
+ *     server hidden from the web picker, e.g. a mobile-only source, is
+ *     ignored). Mobile shows every enabled provider in its pickers, so it
+ *     does not platform-validate; desktop ignores the setting entirely
+ *     (its persisted value survives app updates and is per-origin).
+ */
+export function resolveInitialProviderId(opts: {
+  platform: ProviderPlatform;
+  routeProvider?: string | null;
+  savedServer?: string | null;
+  anime?: boolean;
+}): string {
+  for (const id of [opts.routeProvider, opts.savedServer]) {
+    if (!id) continue;
+    const p = getProvider(id);
+    if (!p) continue;
+    if (
+      opts.platform === "web" &&
+      p.platforms &&
+      !p.platforms.includes("web")
+    ) {
+      continue;
+    }
+    return p.id;
+  }
+  return getDefaultProviderId(opts.platform, { anime: opts.anime });
 }
 
 /**

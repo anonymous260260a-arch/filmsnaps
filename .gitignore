@@ -48,6 +48,7 @@ apps/desktop/release/
 .claude/
 .agents/
 .qwen/
+.zcode/
 
 # AI audit scratch output (file dumps, phase notes — not app source)
 .audit/

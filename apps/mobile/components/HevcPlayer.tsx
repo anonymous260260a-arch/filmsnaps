@@ -974,14 +974,14 @@ export function HevcPlayer({
     };
   }, [hasStarted, links, recheckToken, setLinkOutcome, forgetIfRemembered]);
 
-  // Construct VideoSource with per-host headers (lib/playerConfig) so file
-  // hosts don't throttle ExoPlayer or drop Range requests
+  // Construct VideoSource with per-host headers (lib/playerConfig) and
+  // per-link headers (adapter-set, e.g. hakunaymatata Referer).
   const videoSource = useMemo(
     () => ({
       uri: toPlayableUri(activeUrl),
-      headers: headersForUrl(activeUrl),
+      headers: { ...headersForUrl(activeUrl), ...(currentLink?.headers ?? {}) },
     }),
-    [activeUrl],
+    [activeUrl, currentLink?.headers],
   );
 
   // Detect container & codec from current link for buffer tuning + badges

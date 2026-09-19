@@ -39,6 +39,7 @@ import { getProgress } from "../../lib/watchHistory";
 import { downloadToast } from "../../lib/download";
 import { prefetchArtwork } from "../../lib/prefetchArtwork";
 import { prefetchStreams } from "../../lib/streamPrefetch";
+import { resolvePrefetchProviderId } from "../../lib/resolvePrefetchProvider";
 import { useSettings } from "../../lib/settings";
 import type { WatchProgress } from "../../lib/watchHistory";
 import { resolveMovie } from "../../lib/anime/resolve";
@@ -88,15 +89,28 @@ export default function MovieDetailScreen() {
       // Prefetch stream links in background — but NOT before settings
       // hydrate: ranking with default settings would cache a wrong-language
       // chain that the real settings must re-rank.
+      // The prefetch targets what watch will actually open: the title's
+      // last-used direct provider (CW restore), else the saved default
+      // server, else the platform default (hdhub). Embed defaults → nothing.
       if (!settingsLoaded) return;
-      prefetchStreams(parseInt(id), "movie", undefined, undefined, {
-        cellularMaxMB: settings.cellularMaxMB,
-        maxQuality: settings.maxQuality,
-        preferredAudioLanguage: settings.preferredAudioLanguage,
-        trigger: "details",
-      }).catch((err) => {
-        console.log(`[MovieDetail] Prefetch failed:`, err?.message);
-      });
+      let prefetchCancelled = false;
+      resolvePrefetchProviderId("movie", parseInt(id), settings.defaultServer)
+        .then((providerId) => {
+          if (prefetchCancelled || !providerId) return;
+          return prefetchStreams(parseInt(id), "movie", undefined, undefined, {
+            cellularMaxMB: settings.cellularMaxMB,
+            maxQuality: settings.maxQuality,
+            preferredAudioLanguage: settings.preferredAudioLanguage,
+            providerId,
+            trigger: "details",
+          }).catch((err) => {
+            console.log(`[MovieDetail] Prefetch failed:`, err?.message);
+          });
+        })
+        .catch(() => {});
+      return () => {
+        prefetchCancelled = true;
+      };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, animeHit, settings, settingsLoaded]);

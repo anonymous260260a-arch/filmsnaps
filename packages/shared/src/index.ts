@@ -11,6 +11,10 @@ export type {
   ProviderProtection,
   ProviderCapabilities,
   MediaType,
+  ProviderType,
+  ProviderPlatform,
+  StreamSourceConfig,
+  EmbedOptions,
 } from "./types/provider";
 
 // ── Providers ──
@@ -18,6 +22,7 @@ export {
   PROVIDERS,
   getProvider,
   getEnabledProviders,
+  getProvidersForPlatform,
   isProtectionEnabled,
   isSkipIntroEnabled,
   isUiEnabled,
@@ -27,9 +32,11 @@ export {
   getNonAnimeProviders,
   getProvidersForMode,
   getDefaultProviderId,
+  resolveInitialProviderId,
+  getProviderType,
+  isDirectProvider,
   PLATFORM_DEFAULT_PROVIDER_IDS,
   ANIME_DEFAULT_PROVIDER_ID,
-  type ProviderPlatform,
   type AppMode,
 } from "./providers/registry";
 export {
@@ -38,6 +45,88 @@ export {
   checkAllProviders,
 } from "./providers/health";
 export type { HealthResult, HealthCache } from "./providers/health";
+
+// ── Stream selection / resolution pipeline (canonical) ──
+export {
+  rankStreams,
+  selectBestStream,
+  effectiveQuality,
+  sizeOf,
+  parseLinkLanguages,
+  parseLanguages,
+  extractCDN,
+  isDownloadOnlyLink,
+  isCamPrint,
+  isDemotedHost,
+  linkContainerLabel,
+  getLanguageSection,
+  QUALITY_ORDER,
+  CDN_RANK,
+  SEEK_HEADROOM,
+  CDN_SUSTAIN_FACTOR,
+  DEFAULT_SPEED_MBPS,
+  DEFAULT_RUNTIME_MINUTES,
+  TV_RUNTIME_MINUTES,
+} from "./providers/streamSelector";
+export type {
+  SelectOptions,
+  StreamSelection,
+  LinkLanguage,
+  PreferredLanguage,
+} from "./providers/streamSelector";
+export {
+  resolveStreams,
+  buildStreamSourceUrl,
+} from "./providers/resolveStreams";
+export type {
+  ResolveStreamsParams,
+  ResolveStreamsResult,
+} from "./providers/resolveStreams";
+export {
+  getStreamSelector,
+  registerStreamSelector,
+  defaultSelector,
+} from "./providers/selectors";
+export type { DirectStreamSelector } from "./providers/selectors";
+export {
+  getStreamSourceAdapter,
+  registerStreamSourceAdapter,
+  hasStreamSourceAdapter,
+  hdhubAdapter,
+  falixAdapter,
+} from "./providers/sources";
+export type {
+  StreamLink,
+  StreamBundle,
+  StreamSourceAdapter,
+  StreamSelectionSettings,
+} from "./providers/sources/types";
+export type { FalixFile, FalixData } from "./providers/sources/falix";
+export {
+  cleanStreamUrl,
+  extractSource,
+  parseStreamEntry,
+  computePriority,
+  createHdHubAdapter,
+} from "./providers/sources/hdhub";
+export {
+  mapFalixFiles,
+  extractEpisodeFiles,
+  parseFalixSize,
+  parseFalixCodec,
+  parseFalixAudio,
+  createFalixAdapter,
+} from "./providers/sources/falix";
+export {
+  FALIX_API_BASE,
+  buildFalixDownloadUrl,
+  sortByQuality,
+  parseSizeToBytes,
+  extractLanguages,
+  getFileByTier,
+  TIER_LABELS,
+  TIER_DESCRIPTIONS,
+} from "./utils/falix";
 
 // ── API ──
 export { createTmdbApi } from "./api/tmdb";

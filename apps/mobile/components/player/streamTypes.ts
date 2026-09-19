@@ -17,6 +17,8 @@ export interface StreamLink {
   url: string;
   /** "mp4" | "mkv" | "webm" */
   type: string;
+  /** Headers the upstream requires for playback (e.g. Referer). */
+  headers?: Record<string, string>;
   _meta?: {
     codec: string;
     audio: string;
@@ -24,6 +26,7 @@ export interface StreamLink {
     isDownloadOnly: boolean;
     isWebReady: boolean;
     sizeBytes?: number;
+    providerId?: string;
   };
 }
 

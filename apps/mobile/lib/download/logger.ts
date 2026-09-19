@@ -5,7 +5,7 @@
  * JS-thread starvation. In production builds every call here is a true no-op (not even a
  * string template gets evaluated, since we short-circuit before touching args).
  */
-const ENABLED = __DEV__;
+const ENABLED = false; // set true to debug download manager
 
 export const logger = {
   debug: (...args: unknown[]) => {

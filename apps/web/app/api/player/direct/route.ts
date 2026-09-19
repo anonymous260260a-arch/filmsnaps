@@ -1,5 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { desktopSkip } from "../../desktop-skip";
+import {
+  buildStreamSourceUrl,
+  cleanStreamUrl,
+  extractSource,
+  getProvider,
+  parseStreamEntry,
+  extractEpisodeFiles,
+  mapFalixFiles,
+  resolveStreams,
+  getStreamSelector,
+  FALIX_API_BASE,
+} from "@filmsnaps/shared";
+import type { StreamLink } from "@filmsnaps/shared";
 
 export const revalidate = 1;
 
@@ -20,6 +33,11 @@ export const revalidate = 1;
  * 2. Accepts a TMDB ID and converts to IMDB ID via TMDB API (client sends tmdbId)
  * 3. Sorts/weights streams for web playback (smaller files, H.264 preferred)
  * 4. Filters out donation/Discord entries (externalUrl) and download-only entries
+ *
+ * Parsing lives in the shared HDHub/Falix adapters
+ * (packages/shared/src/providers/sources/) — this route only adds the
+ * platform-specific bits: TMDB→IMDB resolution, CORS-free fetching, and the
+ * Windows HEVC penalty (browsers can't hardware-decode x265).
  */
 
 const HDHUB_API_BASE = "https://hdhub.thevolecitor.qzz.io";
@@ -65,131 +83,10 @@ async function resolveImdbId(
   }
 }
 
-// File size threshold (bytes) above which we consider a stream "download-only"
-// 4K remux files (60GB, 34GB) and 10Gbps-only entries are too large for streaming
-const DOWNLOAD_ONLY_SIZE_THRESHOLD = 20_000_000_000; // 20GB
-
-interface ApiStream {
-  name: string;
-  description: string;
-  url?: string;
-  externalUrl?: string;
-  behaviorHints?: {
-    notWebReady?: boolean;
-    videoSize?: number;
-  };
-}
-
-interface ApiStreamsResponse {
-  streams: ApiStream[];
-  cacheMaxAge: number;
-}
-
 /**
- * Strip parameters that force download instead of inline playback.
- * R2 signed URLs include `response-content-disposition=attachment` which
- * prevents the browser from streaming the video inline.
- */
-function cleanStreamUrl(url: string): string {
-  try {
-    // Presigned S3/R2 URLs (containing X-Amz-Algorithm or X-Amz-Signature) include
-    // query parameters in their SigV4 signature hash. Deleting any parameter breaks
-    // signature verification and causes HTTP 403 SignatureDoesNotMatch.
-    if (url.includes("X-Amz-Algorithm") || url.includes("X-Amz-Signature")) {
-      return url;
-    }
-    const urlObj = new URL(url);
-    urlObj.searchParams.delete("response-content-disposition");
-    urlObj.searchParams.delete("response-content-type");
-    return urlObj.toString();
-  } catch {
-    return url;
-  }
-}
-
-/** Extract quality + codec info from the stream's name/description. */
-function parseStreamEntry(stream: ApiStream) {
-  const name = stream.name || "";
-  const desc = stream.description || "";
-
-  // Extract quality from name (e.g., "HdHub 1080p", "4KHDHub 4K", "VS Sunny 360p")
-  let quality = "Unknown";
-  const q1080 = /1080[pP]/i.test(desc + name);
-  const q720 = /720[pP]/i.test(desc + name);
-  const q480 = /480[pP]/i.test(desc + name);
-  const q360 = /360[pP]/i.test(desc + name);
-  const q2160 = /2160[pP]|4K|UHD/i.test(desc + name);
-
-  if (q2160) quality = "2160p";
-  else if (q1080) quality = "1080p";
-  else if (q720) quality = "720p";
-  else if (q480) quality = "480p";
-  else if (q360) quality = "360p";
-
-  // Extract codec from description
-  // Patterns: x264, HEVC, x265, H.264, H.265, AV1, VP9
-  let codec = "x264"; // default
-  if (/HEVC|x265|H\.265/i.test(desc)) codec = "hevc";
-  else if (/AV1|av01/i.test(desc)) codec = "av1";
-  else if (/VP9|vp09/i.test(desc)) codec = "vp9";
-  else if (/H\.264|avc1|x264/i.test(desc)) codec = "h264";
-
-  // Extract audio info
-  let audio = "Unknown";
-  if (/DTS-HD/i.test(desc)) audio = "DTS-HD";
-  else if (/DTS/i.test(desc)) audio = "DTS";
-  else if (/DDP5\.1|DDP 5\.1|AAC5\.1/i.test(desc)) audio = "Dolby Digital 5.1";
-  else if (/AAC/i.test(desc)) audio = "AAC";
-
-  // Check if download-only (10Gbps, huge files, or explicitly marked)
-  const isDownloadOnly =
-    /10Gbps|Download Only/i.test(name) ||
-    (stream.behaviorHints?.videoSize ?? 0) >= DOWNLOAD_ONLY_SIZE_THRESHOLD;
-
-  // Check if web-ready (streamable in browser)
-  // The API marks all entries notWebReady, but the `VS Sunny` entries are
-  // direct MP4s without download/redirect params — these are web-ready.
-  // PixelDrain URLs with ?download= are not.
-  const isWebReady =
-    !!stream.url &&
-    !isDownloadOnly &&
-    /\.mp4(\?.*)?$/i.test(stream.url) &&
-    !/[?&]download=/.test(stream.url);
-
-  // Check if it's a playable video URL (not a donation/discord link)
-  const isPlayable = !!stream.url;
-
-  return {
-    quality,
-    codec,
-    audio,
-    isDownloadOnly,
-    isWebReady: isWebReady || false,
-    isPlayable,
-    size: stream.behaviorHints?.videoSize,
-    source: extractSource(name),
-  };
-}
-
-/** Extract source name from stream name (e.g., "HdHub 1080p" → "HdHub"). */
-function extractSource(name: string): string {
-  const parts = name.split(/\n| /);
-  if (parts.length === 0) return "Unknown";
-  // First line / first word is the source
-  const firstLine = name.split("\n")[0] || "";
-  const sourceMatch = firstLine.match(/^(HdHub|4KHDHub|HdHub VM|VS Sunny)/i);
-  return sourceMatch ? sourceMatch[1] : "Unknown";
-}
-
-/**
- * Compute streaming priority for a parsed stream entry.
- * Lower number = higher priority (played first).
- *
- * Priority rules (from user requirements):
- * 1. Web-ready files (.mp4 without notWebReady) — highest
- * 2. Streamable MKV in H.264 — high
- * 3. HEVC content — lower on Windows (browser can't play x265 natively)
- * 4. Download-only (huge files, 10Gbps) — lowest
+ * Compute streaming priority for a parsed stream entry (lower = first).
+ * Uses the shared parser's metadata; the Windows HEVC penalty is web-only —
+ * mobile/desktop decode HEVC in hardware, browsers don't.
  */
 function computePriority(
   parsed: ReturnType<typeof parseStreamEntry>,
@@ -198,7 +95,6 @@ function computePriority(
   // Download-only entries are last priority
   if (parsed.isDownloadOnly) return 100 + (parsed.size ?? 0) / 1_000_000_000;
 
-  // Non-playable entries filtered out before this
   // Web-ready MP4 = highest priority
   if (parsed.isWebReady && parsed.codec === "h264") return 0;
 
@@ -220,130 +116,23 @@ function computePriority(
 
 // ── Falix fallback ─────────────────────────────────────────────────
 
-const FALIX_API_BASE = "https://dl.falixmovies.com";
-
-interface FalixTelegramFile {
-  quality: string;
-  id: string;
-  name: string;
-  size: string;
-}
-
-interface FalixTVData {
-  tmdb_id: number;
-  title: string;
-  media_type: "tv";
-  seasons: Array<{
-    season_number: number;
-    episodes: Array<{
-      episode_number: number;
-      telegram: FalixTelegramFile[];
-    }>;
-  }>;
-}
-
-interface FalixMovieData {
-  tmdb_id: number;
-  title: string;
-  media_type: "movie";
-  telegram: FalixTelegramFile[];
-}
-
-function parseFalixSize(sizeStr: string): number {
-  if (!sizeStr) return 0;
-  const m = sizeStr.match(/([\d.]+)\s*(GB|MB|KB)/i);
-  if (!m) return 0;
-  const n = parseFloat(m[1]);
-  const unit = m[2].toUpperCase();
-  if (unit === "GB") return Math.round(n * 1024 * 1024 * 1024);
-  if (unit === "MB") return Math.round(n * 1024 * 1024);
-  return Math.round(n * 1024);
-}
-
-function parseFalixCodec(name: string): string {
-  if (/x265|HEVC|H\.265|x266/i.test(name)) return "hevc";
-  if (/AV1|av01/i.test(name)) return "av1";
-  if (/x264|H\.264|AVC/i.test(name)) return "h264";
-  return "h264";
-}
-
-function parseFalixAudio(name: string): string {
-  if (/DTS-HD/i.test(name)) return "DTS-HD";
-  if (/DTS/i.test(name)) return "DTS";
-  if (/DDP|E-?AC-?3|Dolby Digital Plus/i.test(name)) return "Dolby Digital 5.1";
-  if (/DD\b|AC-?3/i.test(name)) return "Dolby Digital 5.1";
-  if (/AAC/i.test(name)) return "AAC";
-  return "Unknown";
-}
-
-interface DirectLink {
-  quality: string;
-  name: string;
-  id: string;
-  size: string | undefined;
-  url: string;
-  type: string;
-  _meta: {
-    codec: string;
-    audio: string;
-    source: string;
-    isDownloadOnly: boolean;
-    isWebReady: boolean;
-    sizeBytes: number | undefined;
-  };
-}
-
 async function fetchFalixLinks(
   tmdbId: string,
   mediaType: "movie" | "tv",
   season?: number,
   episode?: number,
-): Promise<DirectLink[]> {
+): Promise<StreamLink[]> {
   const res = await fetch(`${FALIX_API_BASE}/api/id/${tmdbId}`, {
     signal: AbortSignal.timeout(10000),
   });
   if (!res.ok) return [];
-  const data = (await res.json()) as FalixTVData | FalixMovieData;
+  const data = await res.json();
 
-  let files: FalixTelegramFile[] = [];
-  if (
-    mediaType === "tv" &&
-    "seasons" in data &&
-    season != null &&
-    episode != null
-  ) {
-    const s = data.seasons.find((s) => s.season_number === season);
-    const ep = s?.episodes.find((e) => e.episode_number === episode);
-    files = ep?.telegram ?? [];
-  } else if ("telegram" in data) {
-    files = data.telegram ?? [];
-  }
+  const files = extractEpisodeFiles(data, mediaType, season, episode);
   if (files.length === 0) return [];
 
-  return files
-    .filter((f) => !!f.id && !!f.name)
-    .map((f, i) => {
-      const sizeBytes = parseFalixSize(f.size);
-      const ext = f.name.split(".").pop()?.toLowerCase() ?? "mp4";
-      const encodedName = encodeURIComponent(f.name);
-      const codec = parseFalixCodec(f.name);
-      return {
-        quality: f.quality || "Unknown",
-        name: `[Falix] ${data.title} — ${f.name}`,
-        id: `falix-${i}`,
-        size: f.size || undefined,
-        url: `${FALIX_API_BASE}/dl/${f.id}/${encodedName}`,
-        type: ext === "mkv" ? "mkv" : "mp4",
-        _meta: {
-          codec,
-          audio: parseFalixAudio(f.name),
-          source: "Falix",
-          isDownloadOnly: false,
-          isWebReady: false,
-          sizeBytes,
-        },
-      };
-    });
+  const title = (data as { title?: string }).title || "Unknown";
+  return mapFalixFiles(files, title, `${FALIX_API_BASE}/dl`);
 }
 
 export async function GET(request: NextRequest) {
@@ -364,6 +153,61 @@ export async function GET(request: NextRequest) {
   const season = searchParams.get("season");
   const episode = searchParams.get("episode");
   const isTv = season && episode;
+
+  // ── Registry-driven direct providers (e.g. spacedom) ────────────────
+  // Any provider whose registry entry declares streamSources[] resolves
+  // through the shared tiered pipeline — no IMDB conversion needed when the
+  // upstream keys titles by TMDB id (spacedom does).
+  const providerId = searchParams.get("provider");
+  if (providerId && providerId !== "direct") {
+    const def = getProvider(providerId);
+    if (def?.streamSources && def.streamSources.length > 0) {
+      const result = await resolveStreams(
+        {
+          streamSources: def.streamSources,
+          imdbId: "",
+          tmdbId: Number(tmdbId),
+          mediaType: isTv ? "tv" : "movie",
+          season: isTv ? Number(season) : undefined,
+          episode: isTv ? Number(episode) : undefined,
+          // Browsers cannot attach custom headers (Referer…) to media
+          // requests — header-gated links (e.g. heron's file CDN) would
+          // 403, so they don't count as playable and are dropped.
+          linkFilter: (link) => !link.headers,
+        },
+        async (source, ctx) => {
+          const url = buildStreamSourceUrl(source, ctx);
+          if (!url) throw new Error(`source ${source.id} has no urlTemplate`);
+          const res = await fetch(url, {
+            headers: { Accept: "application/json", ...(source.headers ?? {}) },
+            signal: AbortSignal.timeout(source.timeoutMs ?? 8000),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        },
+      );
+      let orderedLinks = result.links;
+      try {
+        // Provider-specific ordering (e.g. spacedom: heron first). Falls
+        // back to pool order when the selector can't rank.
+        const sel = await getStreamSelector(def.selection).select(
+          result.links,
+          { cellularMaxMB: 0, maxQuality: null, preferredLanguage: "auto" },
+        );
+        orderedLinks = sel.sortedLinks;
+      } catch {}
+      return NextResponse.json({
+        tmdb_id: Number(tmdbId),
+        imdb_id: "",
+        media_type: isTv ? "tv" : "movie",
+        links: orderedLinks.map((l, idx) => ({
+          ...l,
+          id: String(idx),
+          headers: undefined,
+        })),
+      });
+    }
+  }
 
   // HDHub API requires IMDB IDs (tt format), so resolve from TMDB ID
   const imdbId = await resolveImdbId(isTv ? "tv" : "movie", tmdbId);
@@ -404,16 +248,23 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const rawData: ApiStreamsResponse = await response.json();
+    const rawData: {
+      streams: Array<{
+        name: string;
+        description: string;
+        url?: string;
+        externalUrl?: string;
+        behaviorHints?: { notWebReady?: boolean; videoSize?: number };
+      }>;
+      cacheMaxAge: number;
+    } = await response.json();
 
-    // Filter + parse streams
+    // Filter + parse streams via the shared HDHub parser
     const parsed = rawData.streams
       .filter((stream) => stream.url || stream.externalUrl) // has SOMETHING
       .map((stream) => ({ raw: stream, parsed: parseStreamEntry(stream) }))
       // Filter: exclude external links (donation/discord)
-      .filter((s) => s.parsed.isPlayable)
-      // Filter: exclude empty
-      .filter((s) => s.raw.url);
+      .filter((s) => !!s.raw.url);
 
     // Sort by priority — but keep both streaming-friendly and download-only
     // The client will show all in a dropdown, but auto-select the highest-priority
@@ -426,7 +277,7 @@ export async function GET(request: NextRequest) {
     });
 
     // Map to our internal format
-    const links = parsed.map((s, idx) => {
+    const links: StreamLink[] = parsed.map((s, idx) => {
       const desc = s.raw.description || "";
 
       return {
@@ -441,15 +292,11 @@ export async function GET(request: NextRequest) {
           ? `${(s.raw.behaviorHints.videoSize / 1_000_000_000).toFixed(2)}GB`
           : undefined,
         url: cleanStreamUrl(s.raw.url || ""),
-        type: desc.includes(".mkv")
-          ? "mkv"
-          : desc.includes(".mp4")
-            ? "mp4"
-            : "mp4",
+        type: desc.includes(".mkv") ? "mkv" : "mp4",
         _meta: {
           codec: s.parsed.codec,
           audio: s.parsed.audio,
-          source: s.parsed.source,
+          source: extractSource(desc),
           isDownloadOnly: s.parsed.isDownloadOnly,
           isWebReady: s.parsed.isWebReady,
           sizeBytes: s.raw.behaviorHints?.videoSize,

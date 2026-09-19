@@ -709,16 +709,6 @@ export default function SettingsScreen() {
                     >
                       {p.displayName || p.name}
                     </Text>
-                    <Text
-                      style={{
-                        fontSize: 10,
-                        fontFamily: "Inter_400Regular",
-                        color: colors.textTertiary,
-                        marginTop: 1,
-                      }}
-                    >
-                      Provider ID: {p.id}
-                    </Text>
                   </View>
                 </TouchableOpacity>
               </View>

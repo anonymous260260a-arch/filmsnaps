@@ -120,6 +120,12 @@ interface DirectVideoPlayerProps {
   tmdbId: string;
   /** Media type: movie or tv */
   mediaType: "movie" | "tv";
+  /**
+   * Registry direct-provider id this player instance serves ("direct" =
+   * the legacy HDHub+Falix pipeline; e.g. "spacedom" for tiered providers).
+   * Forwarded to /api/player/direct as the `provider` param.
+   */
+  providerId?: string;
   /** Current season (TV only) */
   selectedSeason?: number;
   /** Current episode (TV only) */
@@ -192,6 +198,7 @@ function PlayerToast({
 export function DirectVideoPlayer({
   tmdbId,
   mediaType,
+  providerId,
   selectedSeason = 1,
   activeEpisode = 1,
   onLoad,
@@ -366,6 +373,9 @@ export function DirectVideoPlayer({
     );
 
     const params = new URLSearchParams({ id: tmdbId });
+    if (providerId && providerId !== "direct") {
+      params.set("provider", providerId);
+    }
     if (mediaType === "tv") {
       params.set("season", String(selectedSeason));
       params.set("episode", String(activeEpisode));
@@ -380,12 +390,17 @@ export function DirectVideoPlayer({
     // Reuse a hover-prefetched request when one is fresh — the metadata fetch
     // is the first blocking step of startup, and on desktop it usually
     // resolved while the user was still hovering the title card.
-    const prefetched = getPrefetchedDirectMedia(
-      mediaType === "tv" ? "tv" : "movie",
-      String(tmdbId),
-      mediaType === "tv" ? selectedSeason : undefined,
-      mediaType === "tv" ? activeEpisode : undefined,
-    ) as Promise<DirectApiData> | undefined;
+    // Hover-prefetch results are keyed without the provider — only reuse
+    // them for the legacy "direct" pipeline.
+    const prefetched =
+      providerId && providerId !== "direct"
+        ? undefined
+        : (getPrefetchedDirectMedia(
+            mediaType === "tv" ? "tv" : "movie",
+            String(tmdbId),
+            mediaType === "tv" ? selectedSeason : undefined,
+            mediaType === "tv" ? activeEpisode : undefined,
+          ) as Promise<DirectApiData> | undefined);
 
     (prefetched ?? fetchMeta())
       .then((data) => {
@@ -411,7 +426,14 @@ export function DirectVideoPlayer({
     return () => {
       cancelled = true;
     };
-  }, [tmdbId, mediaType, selectedSeason, activeEpisode, reloadNonce]);
+  }, [
+    tmdbId,
+    mediaType,
+    providerId,
+    selectedSeason,
+    activeEpisode,
+    reloadNonce,
+  ]);
 
   // ── 2. Resolve video entries for current media/episode ──
   const videoEntries: DirectVideoEntry[] = useMemo(() => {

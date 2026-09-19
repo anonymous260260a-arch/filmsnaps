@@ -31,9 +31,8 @@ import { AudioToggle } from "@/components/player/AudioToggle";
 import { getSettings, setSettings } from "@/hooks/useSettings";
 import { LanguagePromptSheet } from "@/components/player/LanguagePromptSheet";
 import type { PreferredLanguage } from "@/lib/streamSelector";
+import { isDirectProvider } from "@filmsnaps/shared";
 import type { AnimeChainState } from "./DesktopWatchLayout";
-
-const DIRECT_VIDEO_PROVIDERS = new Set<string>(["falix", "direct"]);
 
 interface VideoZoneProps {
   embedUrl: string;
@@ -128,11 +127,7 @@ export function VideoZone({
   const findNextEmbedProvider = useCallback(
     (currentId: string): ProviderDefinition | undefined =>
       providers.find(
-        (p) =>
-          p.id !== currentId &&
-          p.id !== "direct" &&
-          p.id !== "falix" &&
-          !p.animeOnly,
+        (p) => p.id !== currentId && !isDirectProvider(p) && !p.animeOnly,
       ),
     [providers],
   );
@@ -145,9 +140,7 @@ export function VideoZone({
   // exhausting again correctly switches again.
   const handleDirectExhausted = useCallback(() => {
     if (!currentProvider) return;
-    const isDirect =
-      currentProvider.id === "direct" || currentProvider.id === "falix";
-    if (!isDirect) return;
+    if (!isDirectProvider(currentProvider)) return;
     const next = findNextEmbedProvider(currentProvider.id);
     if (!next) return; // no embed provider — the exhausted card stays
     console.log(`[VideoZone] direct exhausted → switching to ${next.id}`);
@@ -158,9 +151,7 @@ export function VideoZone({
   React.useEffect(() => {
     if (!iframeLoadError) return;
     if (!currentProvider) return;
-    const isDirect =
-      currentProvider.id === "direct" || currentProvider.id === "falix";
-    if (!isDirect) return;
+    if (!isDirectProvider(currentProvider)) return;
 
     const next = findNextEmbedProvider(currentProvider.id);
     if (!next) return;
@@ -331,24 +322,30 @@ export function VideoZone({
             )}
 
           {/* Direct-video player (Falix) */}
-          {!cpuWarning && currentProvider && currentProvider.id === "falix" && (
-            <FalixPlayer
-              tmdbId={contentid}
-              mediaType={plat}
-              selectedSeason={selectedSeason}
-              activeEpisode={activeEpisode}
-              onLoad={onIframeLoad}
-            />
-          )}
-
-          {/* Direct-video player (universal — any format) */}
           {!cpuWarning &&
             currentProvider &&
-            currentProvider.id === "direct" &&
+            isDirectProvider(currentProvider) &&
+            currentProvider.id === "falix" && (
+              <FalixPlayer
+                tmdbId={contentid}
+                mediaType={plat}
+                selectedSeason={selectedSeason}
+                activeEpisode={activeEpisode}
+                onLoad={onIframeLoad}
+              />
+            )}
+
+          {/* Direct-video players (registry type:"direct" — the legacy
+              "direct" pipeline AND tiered providers like spacedom) */}
+          {!cpuWarning &&
+            currentProvider &&
+            isDirectProvider(currentProvider) &&
+            currentProvider.id !== "falix" &&
             (langAnswered ? (
               <DirectVideoPlayer
                 tmdbId={contentid}
                 mediaType={plat}
+                providerId={currentProvider.id}
                 selectedSeason={selectedSeason}
                 activeEpisode={activeEpisode}
                 onLoad={onIframeLoad}
@@ -374,7 +371,7 @@ export function VideoZone({
             sessionReady &&
             embedUrl &&
             currentProvider &&
-            !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
+            !isDirectProvider(currentProvider) && (
               <div className="absolute inset-0 z-10">
                 {/* key on refreshKey ONLY (NOT the provider/episode/season):
                   a keyed remount is safe here (unlike the old <webview> —
@@ -400,7 +397,7 @@ export function VideoZone({
             !iframeLoadError &&
             embedUrl &&
             currentProvider &&
-            !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
+            !isDirectProvider(currentProvider) && (
               <SecureIframe
                 key={playerKey}
                 src={embedUrl}

@@ -38,7 +38,15 @@ export interface ValidationResult {
   contentType?: string;
   supportsRange?: boolean;
   error?: string;
-  containerType?: "mp4" | "mkv" | "webm" | "mp3" | "aac" | "mpegts" | "unknown";
+  containerType?:
+    | "mp4"
+    | "mkv"
+    | "webm"
+    | "mp3"
+    | "aac"
+    | "mpegts"
+    | "hls"
+    | "unknown";
   /** MKV audio risk from EBML sniff: dts/eac3 tracks often fail on device. */
   audioRisk?: "safe" | "risky" | "unknown";
   /** Measured round-trip to first probe bytes (ms) — hints which hosts start fast. */
@@ -134,9 +142,17 @@ interface ProbeMeta {
  * Shared classification for both transports. `body` holds the first bytes of
  * the response (may be empty — treated like any other undersized payload).
  */
+/** "#EXT" magic of an m3u8 playlist (checked as bytes — Hermes-safe). */
+function looksLikeM3u8(buffer: ArrayBuffer | null): boolean {
+  if (!buffer || buffer.byteLength < 4) return false;
+  const b = new Uint8Array(buffer, 0, 4);
+  return b[0] === 0x23 && b[1] === 0x45 && b[2] === 0x58 && b[3] === 0x54;
+}
+
 function classifyProbe(
   meta: ProbeMeta,
   body: ArrayBuffer | null,
+  url?: string,
 ): Omit<ValidationResult, "timestamp" | "probeMs"> {
   const isHttpSuccess = meta.statusCode === 200 || meta.statusCode === 206;
   const base = {
@@ -153,6 +169,25 @@ function classifyProbe(
       outcome: dead ? "dead" : "unknown",
       valid: false,
       error: `HTTP ${meta.statusCode}`,
+      ...base,
+    };
+  }
+
+  // HLS manifests are small plain-text playlists — the file-size and
+  // container-signature heuristics below would wrongly condemn them ("File
+  // too small: 245473 bytes" on a working stream). A successful fetch that
+  // answers with a playlist (or declares the mpegurl type) is valid; an
+  // inconclusive body is unknown, never dead.
+  const isHls =
+    /\.m3u8(\?|$)/i.test(url ?? "") || /mpegurl/i.test(meta.contentType ?? "");
+  if (isHls && isHttpSuccess) {
+    if (looksLikeM3u8(body)) {
+      return { outcome: "valid", valid: true, containerType: "hls", ...base };
+    }
+    return {
+      outcome: "unknown",
+      valid: false,
+      error: "HLS playlist unverified",
       ...base,
     };
   }
@@ -270,6 +305,7 @@ async function probeAttempt(
             acceptRanges: r?.acceptRanges ?? undefined,
           },
           buffer,
+          url,
         ),
         probeMs:
           typeof r?.probeMs === "number" ? r.probeMs : Date.now() - startedAt,
@@ -337,6 +373,7 @@ async function probeAttempt(
             : undefined,
         },
         body,
+        url,
       ),
     );
   } catch (error) {
@@ -362,6 +399,12 @@ async function probeAttempt(
 
 export async function validateStreamUrl(
   url: string,
+  /**
+   * Headers the upstream requires for this link (e.g. a Referer from
+   * StreamLink.headers). Merged over the per-host defaults in BOTH probe
+   * attempts — without them a Referer-gated CDN is wrongly condemned dead.
+   */
+  requiredHeaders?: Record<string, string>,
 ): Promise<ValidationResult> {
   // Server-driven per-host rules (lib/playerConfig) — checked before any
   // network traffic so a bad host costs nothing.
@@ -399,7 +442,10 @@ export async function validateStreamUrl(
 
   const attempt = (async () => {
     // Attempt 1 — headers identical to what playback sends.
-    const first = await probeAttempt(url, headersForUrl(url));
+    const first = await probeAttempt(url, {
+      ...headersForUrl(url),
+      ...requiredHeaders,
+    });
     if (first.outcome !== "dead") {
       if (first.outcome !== "unknown") validationCache.set(url, first);
       return first;
@@ -408,9 +454,12 @@ export async function validateStreamUrl(
     // Attempt 2 — a single failure never condemns a link. Confirm with a
     // minimal header set on a fresh request: some CDNs / edge rules 403 the
     // full browser-fingerprint header pair (Referer, Accept-Encoding) while
-    // the player's plain request plays fine. Only two agreeing failures count.
+    // the player's plain request plays fine. Upstream-required headers stay
+    // — a server that NEEDS them would otherwise be wrongly condemned.
+    // Only two agreeing failures count.
     const second = await probeAttempt(url, {
       "User-Agent": headersForUrl(url)["User-Agent"],
+      ...requiredHeaders,
     });
     if (second.outcome !== "dead") {
       if (__DEV__)

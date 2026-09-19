@@ -27,6 +27,8 @@ import {
   getEnabledProviders,
   filterAnimeProviders,
   getProvidersForMode,
+  getProvider,
+  isDirectProvider,
   getImageUrl,
   isSkipIntroEnabled,
   isUiEnabled,
@@ -589,7 +591,7 @@ interface VideoWebViewProps {
    *  "direct" server is selected. */
   directStream?: DirectStreamState;
   /** Fired when the user switches to the direct server (load links if needed). */
-  onDirectSelected?: () => void;
+  onDirectSelected?: (providerId: string) => void;
   /** Fired on "Retry" inside the direct player area. */
   onDirectRetry?: () => void;
   /** Fired when the user changes season/episode while the direct server is
@@ -810,7 +812,8 @@ export function VideoWebView({
         ? filterAnimeProviders(getEnabledProviders())
         : getNonAnimeProviders()
     ).filter((p) => p.id !== "direct");
-    return [DIRECT_PROVIDER, ...embeds];
+    // HDHub direct only for movie/TV — anime uses its own direct sources.
+    return isAnime ? embeds : [DIRECT_PROVIDER, ...embeds];
   }, [isAnime]);
 
   // Initial provider: explicit route param wins; otherwise fall back to the
@@ -831,7 +834,25 @@ export function VideoWebView({
 
   const [providerId, setProviderId] = useState<string>(initialProviderId);
 
-  const isDirect = providerId === "direct";
+  // Sync providerId when the parent updates initialProvider (e.g. CW
+  // promoted a way2movies link or HDHub failed and fallback picked
+  // another provider). Skip if the user manually selected a provider.
+  const userSwitchedRef = useRef(false);
+  useEffect(() => {
+    if (
+      initialProvider &&
+      initialProvider !== providerId &&
+      !userSwitchedRef.current
+    ) {
+      setProviderId(initialProvider);
+    }
+  }, [initialProvider]);
+
+  const isDirect =
+    providerId === "direct" ||
+    (getProvider(providerId)
+      ? isDirectProvider(getProvider(providerId)!)
+      : false);
 
   // ── MegaPlay sub/dub preference (persisted, per-title) ──
   // MegaPlay's embed honors opts.audio (/stream/<space>/<id>/<ep>/<sub|dub>).
@@ -1736,6 +1757,7 @@ export function VideoWebView({
   const switchProvider = async (newId: string) => {
     if (switchInFlightRef.current) return;
     switchInFlightRef.current = true;
+    userSwitchedRef.current = true;
     setShowPicker(false);
 
     if (isFullscreen || directFullscreen) {
@@ -1744,9 +1766,10 @@ export function VideoWebView({
 
     // Direct provider: no WebView, no security waterfall — just tell the
     // host page to load links and swap the player area.
-    if (newId === "direct") {
-      setProviderId("direct");
-      onDirectSelected?.();
+    const newDef = getProvider(newId);
+    if (newDef && isDirectProvider(newDef)) {
+      setProviderId(newId);
+      onDirectSelected?.(newId);
       setTimeout(() => {
         switchInFlightRef.current = false;
       }, 500);

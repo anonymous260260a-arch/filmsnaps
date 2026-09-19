@@ -34,6 +34,67 @@ export interface EmbedOptions {
 }
 
 /**
+ * Playback architecture of a provider. The single discriminator every watch
+ * surface should branch on — never provider-id string matching.
+ *
+ * - `'embed'` — URL from `embed.*` loads in SecureIframe (web), VideoWebView
+ *   (mobile) or WebContentsView (desktop). Stream URLs come from inside the
+ *   iframe via postMessage.
+ * - `'direct'` — native video player (DirectVideoPlayer / HevcPlayer / mpv).
+ *   Stream URLs are resolved externally via the provider's `streamSources`.
+ */
+export type ProviderType = "embed" | "direct";
+
+/**
+ * Declarative config for one upstream API backing a direct provider.
+ * Data only — the parsing behavior lives in the matching StreamSourceAdapter
+ * (registered in packages/shared/src/providers/sources/index.ts), keyed by
+ * `id`. Adding an upstream API = one adapter file + one entry here.
+ */
+export interface StreamSourceConfig {
+  /** Unique source id, e.g. "hdhub", "falix" — must match a registered adapter. */
+  id: string;
+  /** Base URL of the upstream API, no trailing slash. */
+  apiBase: string;
+  /** What this API serves. */
+  kind: "streams" | "downloads" | "m3u8" | "raw";
+  /** Master toggle — false disables this source. */
+  enabled: boolean;
+  /**
+   * Adapter registry key (sources/index.ts). Defaults to the source id —
+   * set it when several sources share one adapter (e.g. five spacedom
+   * servers with one response shape).
+   */
+  adapter?: string;
+  /** Priority tier — lower is better. Sources sharing a tier are fetched in parallel. */
+  priority?: number;
+  /** Per-source fetch timeout in ms (the tier escalates after it expires). */
+  timeoutMs?: number;
+  /** Playable-link count this tier must produce before later tiers are skipped. */
+  minPlayable?: number;
+  /** URL template for APIs keyed by path. Placeholders: {tmdbId} {imdbId} {type} {season} {episode}. */
+  urlTemplate?: string;
+  /** URL template for TV episodes. */
+  urlTemplateTv?: string;
+  /** Optional custom headers for API requests. */
+  headers?: Record<string, string>;
+  /**
+   * Extra attempts when a source comes up empty or errors. Some upstreams
+   * (spacedom) intermittently return "unavailable" on the first request.
+   */
+  retries?: number;
+  /** Delay between retry attempts in ms. Defaults to 800. */
+  retryDelayMs?: number;
+}
+
+/**
+ * App surfaces a provider can be shown on / defaulted for. Used by the
+ * `platforms` visibility filter and the platform-defaults table in the
+ * registry — the single source of truth for per-platform availability.
+ */
+export type ProviderPlatform = "web" | "mobile" | "desktop";
+
+/**
  * Single provider definition — the source of truth
  */
 export interface ProviderDefinition {
@@ -41,6 +102,11 @@ export interface ProviderDefinition {
   id: string;
   /** Internal code name (used for identification in code, not shown to users) */
   name: string;
+  /**
+   * Playback architecture. Default `'embed'` — only direct-play providers
+   * (falix, direct) need to set this explicitly.
+   */
+  type?: ProviderType;
   /** Friendly name shown in the UI dropdown. Falls back to `name` if not set */
   displayName?: string;
   /**
@@ -89,8 +155,10 @@ export interface ProviderDefinition {
    * Which platforms this provider should be available on.
    * Omit or set to all platforms (default) to show everywhere.
    * Example: ['web'] to only show on web, ['mobile'] for mobile only.
+   * Desktop consumers that render providers inside Electron WebContentsViews
+   * may ignore this filter (all enabled providers are shown there today).
    */
-  platforms?: ("web" | "mobile")[];
+  platforms?: ProviderPlatform[];
 
   /**
    * Custom sandbox attributes for the iframe embedding this provider.
@@ -201,6 +269,29 @@ export interface ProviderDefinition {
    * don't have to touch every provider at once.
    */
   capabilities?: ProviderCapabilities;
+
+  /**
+   * Upstream APIs backing a `type: 'direct'` provider. The resolution
+   * pipeline (shared/providers/resolveStreams.ts) fetches each enabled
+   * source through its adapter and merges all streams into one pool that
+   * the shared stream selector ranks. Ignored by embed providers.
+   */
+  streamSources?: StreamSourceConfig[];
+
+  /**
+   * Stream selector id (selectors/index.ts) that orders this provider's
+   * resolved link pool into the playback chain. Absent = the generic
+   * quality/size/language ranker ("default"). Set when a provider's links
+   * need provider-specific ordering — e.g. spacedom always leads with
+   * heron's original-quality file regardless of size metadata.
+   */
+  selection?: string;
+
+  /**
+   * How streams from multiple `streamSources` are merged before ranking.
+   * Default `'concat'`. `'interleave'` round-robins one stream per source.
+   */
+  mergeStrategy?: "concat" | "interleave";
 }
 
 /**

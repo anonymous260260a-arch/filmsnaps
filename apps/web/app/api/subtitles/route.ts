@@ -224,6 +224,35 @@ async function fetchFromWyzie(
   return dedupe(entries);
 }
 
+/**
+ * Filter subtitles to only those matching the requested episode.
+ * Episode numbers appear in release names as:
+ *   S01E01, s01e01, 1x01, 1X01, or bare "01" after season context.
+ * Pack entries (multiple episodes in one file) are kept if they contain
+ * the target episode. Entries with no detectable episode number are kept
+ * (likely correct — the provider already filtered).
+ */
+function filterByEpisode(
+  subs: SubtitleEntry[],
+  season: number,
+  episode: number,
+): SubtitleEntry[] {
+  const ePadded = String(episode).padStart(2, "0");
+  const hasEpisode =
+    /s\d+[.eE]\d+|\d+[xX]\d+|ep?\s*\d+|[. _]E\d{1,2}[. _]|^E?\d{1,2}[. _]/i;
+  const matchesTarget = new RegExp(
+    `S${season}[.eE]${ePadded}\\b|${season}[xX]${ePadded}\\b|ep?\\s*${ePadded}\\b|[. _]E${ePadded}[. _]|^E?${ePadded}[. _]`,
+    "i",
+  );
+
+  return subs.filter((s) => {
+    if (hasEpisode.test(s.releaseName)) {
+      return matchesTarget.test(s.releaseName);
+    }
+    return true;
+  });
+}
+
 export async function GET(req: NextRequest) {
   const skip = desktopSkip();
   if (skip) return skip;
@@ -271,7 +300,13 @@ export async function GET(req: NextRequest) {
   let sawRateLimit = false;
   for (const provider of providers) {
     try {
-      const subtitles = await provider.fetch(tmdbId, type, season, episode);
+      let subtitles = await provider.fetch(tmdbId, type, season, episode);
+      // For TV: filter to only subtitles matching the requested episode.
+      // Subdl returns full-season packs — episode numbers hide in release names
+      // as S01E01, 1x01, or bare 01 after season context.
+      if (type === "tv" && season && episode && subtitles.length > 0) {
+        subtitles = filterByEpisode(subtitles, Number(season), Number(episode));
+      }
       if (subtitles.length > 0) {
         return corsResponse({ provider: provider.name, subtitles }, origin);
       }

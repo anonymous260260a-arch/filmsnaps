@@ -8,9 +8,11 @@ import { tmdbApi } from "@/lib/tmdb";
 import {
   getProvider,
   getResumeMode,
-  getDefaultProviderId,
+  resolveInitialProviderId,
+  isDirectProvider,
 } from "@filmsnaps/shared";
 import { useIsElectron } from "@/lib/platform";
+import { getSettings } from "@/hooks/useSettings";
 
 /**
  * Compute embed URL synchronously from URL params + provider registry.
@@ -21,7 +23,7 @@ function computeInitialEmbedUrl(contentid, plat, providerId, searchParams) {
   if (!provider) return null;
   // Direct-video providers resolve their media URL at runtime through their
   // own API — there is no embed URL to precompute.
-  if (providerId === "direct" || providerId === "falix") return null;
+  if (isDirectProvider(provider)) return null;
 
   const resumeT = searchParams.get("t")
     ? parseInt(searchParams.get("t"), 10)
@@ -45,14 +47,17 @@ function computeInitialEmbedUrl(contentid, plat, providerId, searchParams) {
 }
 
 /**
- * Default provider — single code path for movie & TV. Derives from the
- * shared registry's platform table (desktop → direct, web → screenscape —
- * direct needs a same-origin byte proxy on web first; anime → megaplay);
- * never hardcode provider ids here.
+ * Default provider — single code path for movie & TV. Delegates to the
+ * shared registry's canonical resolver (route param → saved "default server"
+ * setting → platform default; desktop → direct, web → screenscape, anime →
+ * megaplay). Never hardcode provider ids or precedence here.
  */
-function pickDefaultProvider({ isDesktop, animeOrigin, meta }) {
+function pickDefaultProvider({ isDesktop, animeOrigin, meta, routeProvider }) {
   const isAnime = animeOrigin || meta?.genres?.some?.((g) => g.id === 16);
-  return getDefaultProviderId(isDesktop ? "desktop" : "web", {
+  return resolveInitialProviderId({
+    platform: isDesktop ? "desktop" : "web",
+    routeProvider,
+    savedServer: getSettings().defaultServer || null,
     anime: isAnime,
   });
 }
@@ -109,12 +114,13 @@ function MovieWatchContent({
     staleTime: 1000 * 60 * 60 * 24 * 7,
   });
 
+  const routeProvider = searchParams.get("provider") || null;
   const defaultProvider = pickDefaultProvider({
     isDesktop,
     animeOrigin,
     meta,
+    routeProvider,
   });
-  const routeProvider = searchParams.get("provider") || null;
   const effectiveProvider = routeProvider || defaultProvider;
 
   // Compute embed URL synchronously from URL params — no TMDB wait
@@ -178,12 +184,13 @@ function TVWatchContent({ contentid, searchParams, isDesktop, animeOrigin }) {
     enabled: !!effectiveSeason,
   });
 
+  const routeProvider = searchParams.get("provider") || null;
   const defaultProvider = pickDefaultProvider({
     isDesktop,
     animeOrigin,
     meta,
+    routeProvider,
   });
-  const routeProvider = searchParams.get("provider") || null;
   const effectiveProvider = routeProvider || defaultProvider;
 
   // Compute embed URL synchronously from URL params — no TMDB wait

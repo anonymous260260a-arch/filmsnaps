@@ -30,14 +30,17 @@
 import type { StreamLink } from "../components/player/streamTypes";
 import type { ValidationResult } from "./streamValidator";
 import { validateStreamUrl } from "./streamValidator";
-import {
-  selectBestStream,
-  effectiveQuality,
-  type PreferredLanguage,
-} from "./streamSelector";
+import { effectiveQuality, type PreferredLanguage } from "./streamSelector";
+import { getProvider, getStreamSelector } from "@filmsnaps/shared";
 import { fetchDirectStreams } from "./directStreams";
 
 export interface StreamCacheOptions {
+  /**
+   * Registry direct-provider id the links belong to (e.g. "direct",
+   * "spacedom"). Different providers produce different link pools, so the
+   * cache is keyed per provider — sharing an entry would rank mixed pools.
+   */
+  providerId?: string;
   cellularMaxMB?: number;
   maxQuality?: string | null;
   preferredAudioLanguage?: PreferredLanguage;
@@ -67,6 +70,7 @@ interface CacheEntry extends StreamCacheResult {
   expiresAt: number;
   /** Options the entry was ranked with — a change invalidates the ranking. */
   rankOptions: {
+    providerId: string;
     cellularMaxMB: number;
     maxQuality: string | null;
     preferredAudioLanguage: PreferredLanguage;
@@ -91,8 +95,9 @@ function getCacheKey(
   mediaType: "movie" | "tv",
   season?: number,
   episode?: number,
+  providerId?: string,
 ): string {
-  return `${mediaType}:${tmdbId}:s${season ?? 0}:e${episode ?? 0}`;
+  return `${mediaType}:${tmdbId}:s${season ?? 0}:e${episode ?? 0}:${providerId ?? "direct"}`;
 }
 
 function purgeExpired(): void {
@@ -116,6 +121,7 @@ function purgeExpired(): void {
 
 function normalizeOptions(options: StreamCacheOptions) {
   return {
+    providerId: options.providerId ?? "direct",
     cellularMaxMB: options.cellularMaxMB ?? 3000,
     maxQuality: options.maxQuality ?? null,
     preferredAudioLanguage: options.preferredAudioLanguage ?? "auto",
@@ -134,7 +140,13 @@ export async function prefetchStreams(
   episode?: number,
   options: StreamCacheOptions = {},
 ): Promise<StreamCacheResult | null> {
-  const cacheKey = getCacheKey(tmdbId, mediaType, season, episode);
+  const cacheKey = getCacheKey(
+    tmdbId,
+    mediaType,
+    season,
+    episode,
+    options.providerId,
+  );
   const rankOptions = normalizeOptions(options);
 
   purgeExpired();
@@ -142,6 +154,7 @@ export async function prefetchStreams(
   if (
     cached &&
     Date.now() < cached.expiresAt &&
+    cached.rankOptions.providerId === rankOptions.providerId &&
     cached.rankOptions.cellularMaxMB === rankOptions.cellularMaxMB &&
     cached.rankOptions.maxQuality === rankOptions.maxQuality &&
     cached.rankOptions.preferredAudioLanguage ===
@@ -203,6 +216,7 @@ async function runPipeline(
         mediaType,
         season,
         episode,
+        rankOptions.providerId,
       );
       rawLinks = bundle.links;
     } catch (err) {
@@ -217,12 +231,21 @@ async function runPipeline(
     }
 
     // ── 2. Rank (the array is frozen from here on) ──
-    const selection = await selectBestStream(rawLinks, {
-      cellularMaxMB: rankOptions.cellularMaxMB,
-      maxQuality: rankOptions.maxQuality,
-      preferredLanguage: rankOptions.preferredAudioLanguage,
-      runtimeMinutes: mediaType === "tv" ? 45 : 120,
-    });
+    // Provider-specific ordering: direct providers can name their own
+    // selector in the registry (e.g. spacedom leads with heron's original
+    // file); everything else falls through to the generic ranker.
+    const providerDef = rankOptions.providerId
+      ? getProvider(rankOptions.providerId)
+      : undefined;
+    const selection = await getStreamSelector(providerDef?.selection).select(
+      rawLinks,
+      {
+        cellularMaxMB: rankOptions.cellularMaxMB,
+        maxQuality: rankOptions.maxQuality,
+        preferredLanguage: rankOptions.preferredAudioLanguage,
+        runtimeMinutes: mediaType === "tv" ? 45 : 120,
+      },
+    );
     const links = selection.sortedLinks;
     const champion = links[0]; // chain head — bestIndex is always 0
     const champGb = (champion?._meta?.sizeBytes ?? 0) / 1e9;
@@ -289,7 +312,7 @@ async function probeHeadWalk(
 
   for (let idx = startIndex; idx < links.length; idx++) {
     const link = links[idx];
-    const probe = validateStreamUrl(link.url);
+    const probe = validateStreamUrl(link.url, link.headers);
     const remaining = deadline - Date.now();
     const settled =
       remaining > 0 ? await Promise.race([probe, sleep(remaining)]) : null;

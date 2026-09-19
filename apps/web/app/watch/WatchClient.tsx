@@ -25,49 +25,33 @@ import React, {
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  AlertCircle,
-  X,
-  Film,
-  ArrowLeft,
-  Clapperboard,
-  RefreshCw,
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { tmdbApi } from "@/lib/tmdb";
 import {
   filterAnimeProviders,
   getEnabledProviders,
   getProvider,
   getResumeMode,
+  isDirectProvider,
+  resolveInitialProviderId,
 } from "@filmsnaps/shared";
-import {
-  resolveAnimeMovie,
-  resolveAnimeShow,
-  type ShowResolutionResult,
-} from "@/lib/anime/client";
 import { getImageUrl } from "@/lib/tmdb";
 import { PlayerProvider, usePlayer } from "@/components/player/PlayerProvider";
 import { isElectronNow } from "@/lib/platform";
-import { SecureIframe } from "@/components/player/SecureIframe";
-import { DesktopSecureWebview } from "@/components/player/DesktopSecureWebview";
-import { FalixPlayer } from "@/components/player/FalixPlayer";
-import { DirectVideoPlayer } from "@/components/player/DirectVideoPlayer";
 import { ServerPickerSheet } from "@/components/player/ServerPickerSheet";
 import { MobileEpisodeSheet } from "@/components/player/MobileEpisodeSheet";
 import { EpisodeSidebar } from "@/components/player/EpisodeSidebar";
 import { AudioToggle } from "@/components/player/AudioToggle";
-import { PlayerControlOverlay } from "@/components/player/PlayerControlOverlay";
-import { buildIframeCSP } from "@/lib/movieProviders/cspBuilder";
 import { useIsDesktop } from "@/hooks/useIsDesktop";
-import { useWatchKeyboardShortcuts } from "@/hooks/useWatchKeyboardShortcuts";
 import { getSettings, setSettings } from "@/hooks/useSettings";
-import { LanguagePromptSheet } from "@/components/player/LanguagePromptSheet";
 import type { PreferredLanguage } from "@/lib/streamSelector";
 import { usePlaybackRecorder } from "@/hooks/usePlaybackRecorder";
 import { DesktopWatchLayout } from "@/components/watch/DesktopWatchLayout";
 import { WebLegalGate } from "@/components/legal/WebLegalGate";
+import { MobilePlayerZone } from "@/components/watch/MobilePlayerZone";
+import { useHeldProviderSession } from "@/hooks/useHeldProviderSession";
+import { useMegaPlayChain } from "@/hooks/useMegaPlayChain";
+import { buildEmbedUrl } from "@/lib/watch/embedUrl";
 import type { ProviderDefinition } from "@filmsnaps/shared";
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -90,212 +74,6 @@ interface WatchClientContentProps {
   initialAnilistId?: number;
   /** Pre-computed embed URL from URL params — enables immediate player mount. */
   initialEmbedUrl?: string | null;
-}
-
-// ── Embed URL builder — direct ──────────────────────────────────
-
-/**
- * Providers that serve direct video file URLs (not iframe embeds).
- * These are rendered with a custom video.js player (FalixPlayer)
- * instead of SecureIframe/DesktopSecureWebview.
- */
-const DIRECT_VIDEO_PROVIDERS = new Set<string>(["falix", "direct"]);
-
-/** Resolved MegaPlay identity for this (title, season, episode). */
-interface MegaContext {
-  malId: number | null;
-  aniId: number | null;
-  /** Episode number in MegaPlay's ID space (offset-adjusted when mapped). */
-  episode: number;
-}
-
-function buildEmbedUrl(
-  provider: ProviderDefinition,
-  contentid: string,
-  plat: "movie" | "tv",
-  selectedSeason: number,
-  activeEpisode: number,
-  resumeT?: number,
-  mega?: { idSpace: "mal" | "ani"; id: number; episode: number } | null,
-  audio: "sub" | "dub" = "sub",
-): string {
-  // Direct-video providers resolve their media URL at runtime through their
-  // own API (/api/player/direct, falix) — there is no embed URL to build.
-  if (DIRECT_PROVIDER_IDS.has(provider.id)) return "";
-
-  // Providers that natively honor a resume param are strictly better than a
-  // post-load JS seek — thread the saved position into the embed URL when the
-  // provider exposes that capability (expert verdict §3 / action item 3).
-  const startAt =
-    resumeT && resumeT > 0 && getResumeMode(provider) === "url"
-      ? Math.floor(resumeT)
-      : undefined;
-
-  // Anime-only providers NEVER take the TMDB contentid — without a resolved
-  // identity there is no URL at all (caller shows the loading/exhausted state).
-  if (provider.animeOnly) {
-    if (!mega) return "";
-    return `${provider.baseUrl}${
-      plat === "tv"
-        ? provider.embed.tv(
-            String(mega.id),
-            selectedSeason,
-            mega.episode,
-            startAt,
-            {
-              idSpace: mega.idSpace,
-              audio,
-            },
-          )
-        : provider.embed.movie(String(mega.id), startAt, {
-            idSpace: mega.idSpace,
-            audio,
-          })
-    }`;
-  }
-
-  const embedPath =
-    plat === "tv"
-      ? provider.embed.tv(contentid, selectedSeason, activeEpisode, startAt)
-      : provider.embed.movie(contentid, startAt);
-
-  return `${provider.baseUrl}${embedPath}`;
-}
-
-function absUrl(path: string): string {
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  return `${window.location.origin}${path}`;
-}
-
-// ── Keyboard shortcuts hook ─────────────────────────────────────
-
-function useKeyboardShortcuts() {
-  const { toggleFullscreen, goToNextEpisode, goToPrevEpisode } = usePlayer();
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement;
-      if (
-        t.tagName === "INPUT" ||
-        t.tagName === "TEXTAREA" ||
-        t.isContentEditable
-      )
-        return;
-
-      switch (e.key.toLowerCase()) {
-        case "f":
-          e.preventDefault();
-          toggleFullscreen();
-          break;
-        case "n":
-          e.preventDefault();
-          goToNextEpisode();
-          break;
-        case "p":
-          e.preventDefault();
-          goToPrevEpisode();
-          break;
-      }
-    };
-
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [toggleFullscreen, goToNextEpisode, goToPrevEpisode]);
-}
-
-// ── Desktop session management hook ──────────────────────────────
-
-/** Providers that resolve a real media file at runtime (no embed webview). */
-const DIRECT_PROVIDER_IDS = new Set<string>(["direct", "falix"]);
-
-/**
- * Manages the Electron provider session lifecycle.
- * On mount and provider change, initialises the isolated session
- * partition with full R0-R8 filtering via the main process IPC.
- *
- * Returns `sessionReady` (the webview may mount) AND `appliedEmbedUrl` — the
- * URL the webview should actually show.
- *
- * On the FIRST provider the webview stays gated (hidden) until the main
- * process has configured that provider's rules, closing the startup race.
- *
- * On a provider SWITCH we keep `sessionReady` HIGH and hold `appliedEmbedUrl`
- * at the CURRENT provider until the NEW provider's session has been installed.
- * This is deliberate: dropping `sessionReady` to false would UNMOUNT the
- * singleton <webview> (React gate), tearing down the old guest mid-navigation
- * and emitting `ERR_FAILED (-2)` (the teardown race that broke server
- * switching). And navigating to the new provider before its per-provider
- * rules are installed would feed R3.5 the OLD provider's profile and block the
- * new provider's own scripts. Holding the URL until init resolves avoids both.
- */
-function useHeldProviderSession(
-  providerId: string,
-  embedUrl: string,
-): { sessionReady: boolean; appliedEmbedUrl: string } {
-  const isDesktop =
-    typeof window !== "undefined" && window.electronAPI?.isDesktop === true;
-  const initRef = useRef<string | null>(null);
-  const latestRequestRef = useRef<string>("");
-  const [appliedEmbedUrl, setAppliedEmbedUrl] = useState(embedUrl);
-  const [sessionReady, setSessionReady] = useState(false);
-
-  useEffect(() => {
-    // Mark the newest requested provider synchronously so a stale async init
-    // (user switched A→B→A before B's IPC resolved) can detect it's outdated.
-    latestRequestRef.current = providerId;
-
-    if (!isDesktop) {
-      // Web path — no session to gate on.
-      setSessionReady(true);
-      setAppliedEmbedUrl(embedUrl);
-      return;
-    }
-    if (!window.electronAPI) return;
-
-    // Direct-video providers (direct/falix) never mount an embed webview, so
-    // the R0-R8 session rules are pure overhead for them — skip the main-
-    // process round-trip entirely. Switching to an embed provider later still
-    // initializes its session (providerId changes → init runs below).
-    if (DIRECT_PROVIDER_IDS.has(providerId)) {
-      setSessionReady(true);
-      setAppliedEmbedUrl(embedUrl);
-      return;
-    }
-
-    // Anime chain pre-resolution: no URL yet (identity still resolving or
-    // exhausted) — hold the session instead of initializing with "".
-    if (!embedUrl) return;
-
-    // Same provider as the currently-initialised one (episode/season/refresh
-    // change): rules already installed — apply the new URL immediately.
-    if (initRef.current === providerId) {
-      setAppliedEmbedUrl(embedUrl);
-      setSessionReady(true);
-      return;
-    }
-
-    // First mount OR provider switch. Keep the webview mounted (sessionReady
-    // stays as-is); only swap the applied URL once the new provider's session
-    // is installed in main.
-    window.electronAPI
-      .initProviderSession({ providerId, embedUrl })
-      .then(() => {
-        // Ignore the resolution if the user already asked for another provider.
-        if (latestRequestRef.current !== providerId) return;
-        initRef.current = providerId;
-        setAppliedEmbedUrl(embedUrl);
-        setSessionReady(true);
-      })
-      .catch((err) => {
-        console.warn("[DesktopSession] Failed to init provider session:", err);
-        if (latestRequestRef.current !== providerId) return;
-        initRef.current = providerId;
-        setAppliedEmbedUrl(embedUrl);
-        setSessionReady(true); // fail-open for non-security errors
-      });
-  }, [isDesktop, providerId, embedUrl]);
-
-  return { sessionReady, appliedEmbedUrl };
 }
 
 // ── Content (inner) — lives inside PlayerProvider ─────────────────
@@ -424,97 +202,18 @@ function WatchClientContent({
   );
 
   // ── MegaPlay identity + fallback chain (consultation §3.2 / verdict Q7) ──
-  // Resolved once per (title, season, episode); cached for revisits within
-  // the session. Map result WINS over URL ids (cour math is more correct);
-  // URL mid/aid are the explicit-human-choice fallback when the mapper misses.
-  const [megaCtx, setMegaCtx] = useState<MegaContext | null>(null);
-  /** Mapper miss reason — set only when NO identity could be produced. */
-  const [megaMissReason, setMegaMissReason] = useState<string | null>(null);
-  /** Fallback-chain position inside MegaPlay: MAL first, AniList second. */
-  const [chainSpace, setChainSpace] = useState<"mal" | "ani">("mal");
-  /** Terminal state: every ID space tried and failed (verdict Q10). */
-  const [chainExhausted, setChainExhausted] = useState(false);
-  const megaCacheRef = useRef<Map<string, MegaContext | { miss: string }>>(
-    new Map(),
-  );
-
-  useEffect(() => {
-    if (!isAnimeSession) {
-      setMegaCtx(null);
-      setMegaMissReason(null);
-      return;
-    }
-    let cancelled = false;
-    const key = `${contentid}|${plat}|${selectedSeason}|${activeEpisode}`;
-
-    const apply = (r: MegaContext | { miss: string }) => {
-      if (cancelled) return;
-      setChainSpace("mal");
-      setChainExhausted(false);
-      if ("miss" in r) {
-        setMegaCtx(null);
-        setMegaMissReason(r.miss);
-      } else {
-        setMegaCtx(r);
-        setMegaMissReason(null);
-      }
-    };
-
-    const cached = megaCacheRef.current.get(key);
-    if (cached) {
-      apply(cached);
-      return;
-    }
-
-    // Explicit human choice beats refusing: when the user arrived from anime
-    // search with ?mid=, respect their picked entry even if the season mapper
-    // can't align this TMDB season (episode passes through raw).
-    const urlFallback = (): MegaContext | { miss: string } =>
-      initialMalId != null || initialAnilistId != null
-        ? {
-            malId: initialMalId ?? null,
-            aniId: initialAnilistId ?? null,
-            episode: activeEpisode,
-          }
-        : { miss: "no-candidates" };
-
-    (async () => {
-      try {
-        let result: MegaContext | { miss: string };
-        if (plat === "movie") {
-          const r = await resolveAnimeMovie(contentid);
-          result = r.ok
-            ? {
-                malId: r.malId,
-                aniId: r.anilistId ?? initialAnilistId ?? null,
-                episode: 1,
-              }
-            : urlFallback();
-        } else {
-          const r = await resolveAnimeShow(
-            contentid,
-            selectedSeason,
-            activeEpisode,
-          );
-          result = r.ok
-            ? {
-                malId: r.malId,
-                aniId: r.anilistId ?? initialAnilistId ?? null,
-                episode: r.episode,
-              }
-            : urlFallback();
-        }
-        megaCacheRef.current.set(key, result);
-        apply(result);
-      } catch {
-        apply(urlFallback());
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
+  // Resolution, caching and the MAL→AniList fallback chain live in the
+  // useMegaPlayChain hook; this component only wires it to the player state.
+  const {
+    megaCtx,
+    megaMissReason,
+    megaBuild,
+    chainSpace,
+    advanceSource,
+    animeTriedList,
+    showAnimeExhausted: animeChainExhausted,
+    retryChain,
+  } = useMegaPlayChain({
     isAnimeSession,
     contentid,
     plat,
@@ -522,37 +221,13 @@ function WatchClientContent({
     activeEpisode,
     initialMalId,
     initialAnilistId,
-  ]);
-
-  const onMegaplay = currentProvider?.animeOnly === true;
-
-  /** The identity the embed builder should use at the current chain step. */
-  const megaBuild = useMemo<{
-    idSpace: "mal" | "ani";
-    id: number;
-    episode: number;
-  } | null>(() => {
-    if (!megaCtx) return null;
-    const useAni = chainSpace === "ani";
-    const id = useAni ? megaCtx.aniId : megaCtx.malId;
-    if (id == null) return null;
-    return { idSpace: useAni ? "ani" : "mal", id, episode: megaCtx.episode };
-  }, [megaCtx, chainSpace]);
-
-  /**
-   * Advance the fallback chain one step (verdict §9 Q5):
-   * web = manual button only; desktop additionally auto-advances on the
-   * deterministic "Error Code: 410" IPC. No soft-signal auto-advance anywhere.
-   */
-  const advanceSource = useCallback(() => {
-    if (chainSpace === "mal" && megaCtx?.aniId != null) {
+    onAdvanceReset: useCallback(() => {
       setPlayerReady(false);
       setIframeLoadError(false);
-      setChainSpace("ani");
-    } else {
-      setChainExhausted(true);
-    }
-  }, [chainSpace, megaCtx, setIframeLoadError]);
+    }, [setIframeLoadError]),
+  });
+
+  const onMegaplay = currentProvider?.animeOnly === true;
 
   // Desktop-only deterministic detection: main scans the settled guest frame
   // for MegaPlay's "Error Code: 410" and emits player:source-missing → we
@@ -565,18 +240,7 @@ function WatchClientContent({
     return () => unsubscribe?.();
   }, [isElectronEnv, onMegaplay, advanceSource]);
 
-  /** Debug line for the exhausted overlay (Q10 telemetry). */
-  const animeTriedList = useMemo(() => {
-    const out: string[] = [];
-    if (megaCtx?.malId != null) out.push(`MAL #${megaCtx.malId}`);
-    else if (initialMalId != null) out.push(`MAL #${initialMalId}`);
-    if (megaCtx?.aniId != null) out.push(`AniList #${megaCtx.aniId}`);
-    else if (initialAnilistId != null) out.push(`AniList #${initialAnilistId}`);
-    return out;
-  }, [megaCtx, initialMalId, initialAnilistId]);
-
-  const showAnimeExhausted =
-    onMegaplay && (chainExhausted || (!megaBuild && megaMissReason != null));
+  const showAnimeExhausted = onMegaplay && animeChainExhausted;
 
   const megaplayAvailable = providers.some((p) => p.id === "megaplay");
 
@@ -714,12 +378,7 @@ function WatchClientContent({
   }, [setIframeLoadError, refreshIframe]);
 
   /** Retry from the exhausted-anime overlay: restart the chain at MAL. */
-  const handleAnimeRetry = useCallback(() => {
-    setPlayerReady(false);
-    setIframeLoadError(false);
-    setChainSpace("mal");
-    setChainExhausted(false);
-  }, [setIframeLoadError]);
+  const handleAnimeRetry = retryChain;
 
   const handleSeasonChange = useCallback(
     (seasonNum: number) => {
@@ -746,15 +405,10 @@ function WatchClientContent({
   // in a working embed instead of a dead-end card.
   const handleDirectExhausted = useCallback(() => {
     if (!currentProvider) return;
-    const isDirect =
-      currentProvider.id === "direct" || currentProvider.id === "falix";
-    if (!isDirect) return;
+    if (!isDirectProvider(currentProvider)) return;
     const next = providers.find(
       (p) =>
-        p.id !== currentProvider.id &&
-        p.id !== "direct" &&
-        p.id !== "falix" &&
-        !p.animeOnly,
+        p.id !== currentProvider.id && !isDirectProvider(p) && !p.animeOnly,
     );
     if (!next) return;
     console.log(`[WatchClient] direct exhausted → switching to ${next.id}`);
@@ -882,149 +536,28 @@ function WatchClientContent({
         {/* ── Video cell (generous height on phone; framed on tablet/desktop) ── */}
         <section className="shrink-0 w-full [@media(orientation:landscape)]:sm:col-span-7 lg:col-span-8 [@media(orientation:landscape)]:sm:shrink [@media(orientation:landscape)]:sm:h-full flex flex-col justify-center">
           <div className="w-full px-0 sm:px-3 [@media(orientation:landscape)]:sm:px-0">
-            {/* Phone: generous cinematic height (38vh / min 250px) so video is large and prominent */}
-            <div className="relative w-full h-[38vh] min-h-[245px] max-h-[46vh] sm:h-auto sm:aspect-video bg-[#070708] sm:bg-[#0E0E11] sm:rounded-2xl overflow-hidden shadow-[0_12px_50px_rgba(0,0,0,0.9)] sm:ring-1 sm:ring-white/[0.08] group/player flex items-center justify-center">
-              {/* Ambient glow */}
-              <div className="absolute -inset-10 bg-gradient-radial from-[#D4A237]/10 via-transparent to-transparent opacity-40 pointer-events-none z-0 transition-opacity duration-700 group-hover/player:opacity-70" />
-
-              {/* CPU Warning */}
-              {cpuWarning && currentProvider && (
-                <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#070708]/85 backdrop-blur-md p-4">
-                  <div className="flex items-start gap-3 text-xs sm:text-sm text-[#E05252] bg-red-500/10 p-4 rounded-xl border border-red-500/20 max-w-md shadow-2xl">
-                    <AlertCircle
-                      size={18}
-                      className="text-[#E05252] shrink-0 mt-0.5"
-                    />
-                    <div className="flex-1">
-                      <span className="font-bold block text-foreground mb-0.5">
-                        Server Overloaded
-                      </span>
-                      This server is using too much CPU — it has been stopped.
-                      <span className="block mt-1 text-muted-foreground">
-                        Switch to a different server above to continue watching.
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => {}}
-                      className="text-faint hover:text-foreground transition-colors p-1 flex-shrink-0"
-                      aria-label="Dismiss"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Error State */}
-              {(iframeLoadError || showAnimeExhausted) && !cpuWarning && (
-                <PlayerErrorState
-                  onRetry={showAnimeExhausted ? handleAnimeRetry : handleRetry}
-                  variant={showAnimeExhausted ? "anime-exhausted" : "standard"}
-                  tried={showAnimeExhausted ? animeTriedList : undefined}
-                />
-              )}
-
-              {/* Direct-video player (Falix) */}
-              {!cpuWarning &&
-                currentProvider &&
-                currentProvider.id === "falix" && (
-                  <FalixPlayer
-                    tmdbId={contentid}
-                    mediaType={plat}
-                    selectedSeason={selectedSeason}
-                    activeEpisode={activeEpisode}
-                    onLoad={handleIframeLoad}
-                  />
-                )}
-
-              {/* Direct-video player (universal format) */}
-              {!cpuWarning &&
-                currentProvider &&
-                currentProvider.id === "direct" &&
-                (langAnswered ? (
-                  <DirectVideoPlayer
-                    tmdbId={contentid}
-                    mediaType={plat}
-                    selectedSeason={selectedSeason}
-                    activeEpisode={activeEpisode}
-                    onLoad={handleIframeLoad}
-                    onError={handleIframeError}
-                    onExhausted={handleDirectExhausted}
-                    preferredLanguage={
-                      (getSettings()
-                        .preferredAudioLanguage as PreferredLanguage) || "auto"
-                    }
-                  />
-                ) : (
-                  <LanguagePromptSheet onSelect={handleLanguageSelect} />
-                ))}
-
-              {/* Desktop: native WebContentsView (Phase 3 hybrid). Kept MOUNTED
-                  for the whole session; keyed on refreshKey only.
-                  On first load, initialEmbedUrl bypasses the session gate
-                  so the webview mounts immediately while IPC runs in parallel. */}
-              {isElectronEnv &&
-                (sessionReady || initialEmbedUrl) &&
-                (appliedEmbedUrl || initialEmbedUrl) &&
-                currentProvider &&
-                !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
-                  <div className="absolute inset-0 z-10">
-                    <DesktopSecureWebview
-                      key={`${refreshKey}-electron`}
-                      src={appliedEmbedUrl || initialEmbedUrl || ""}
-                      onLoad={handleIframeLoad}
-                      onError={handleIframeError}
-                    />
-                  </div>
-                )}
-
-              {/* Web: SecureIframe with JS-level guards.
-                  On first load, initialEmbedUrl bypasses the TMDB-dependent
-                  embedUrl so the iframe mounts immediately. */}
-              {!isElectronEnv &&
-                !cpuWarning &&
-                !iframeLoadError &&
-                (embedUrl || initialEmbedUrl) &&
-                currentProvider &&
-                !DIRECT_VIDEO_PROVIDERS.has(currentProvider.id) && (
-                  <SecureIframe
-                    key={playerKey}
-                    src={embedUrl || initialEmbedUrl || ""}
-                    sandbox={currentProvider?.sandbox}
-                    csp={
-                      currentProvider
-                        ? buildIframeCSP(currentProvider)
-                        : undefined
-                    }
-                    onLoad={handleIframeLoad}
-                    onError={handleIframeError}
-                  />
-                )}
-
-              {/* Cover overlays */}
-              {currentProvider?.coverOverlays?.map((o, i) => (
-                <div
-                  key={`cover-${i}`}
-                  className="absolute z-20 pointer-events-none"
-                  style={{
-                    top: o.top,
-                    left: o.left,
-                    width: o.width,
-                    height: o.height,
-                    borderRadius: "20px",
-                    background: "rgba(14, 14, 17, 0.9)",
-                  }}
-                />
-              ))}
-
-              {/* Loading / controls overlay */}
-              <PlayerControlOverlay
-                isPending={
-                  (!playerReady || isPending) &&
-                  !DIRECT_VIDEO_PROVIDERS.has(currentProvider?.id)
-                }
-              />
-            </div>
+            <MobilePlayerZone
+              contentid={contentid}
+              plat={plat}
+              currentProvider={currentProvider}
+              selectedSeason={selectedSeason}
+              activeEpisode={activeEpisode}
+              embedUrl={embedUrl}
+              initialEmbedUrl={initialEmbedUrl}
+              playerKey={playerKey}
+              sessionReady={sessionReady}
+              isElectron={isElectronEnv}
+              isPending={isPending}
+              langAnswered={langAnswered}
+              onLanguageSelect={handleLanguageSelect}
+              onRetry={showAnimeExhausted ? handleAnimeRetry : handleRetry}
+              onIframeLoad={handleIframeLoad}
+              onIframeError={handleIframeError}
+              onDirectExhausted={handleDirectExhausted}
+              showAnimeExhausted={showAnimeExhausted}
+              animeTriedList={animeTriedList}
+              onAnimeRetry={handleAnimeRetry}
+            />
           </div>
         </section>
 
@@ -1086,70 +619,7 @@ function WatchClientContent({
   );
 }
 
-// ── Error State Component ───────────────────────────────────────
-
-function PlayerErrorState({
-  onRetry,
-  variant = "standard",
-  tried,
-}: {
-  onRetry: () => void;
-  /** Anime chain exhausted — terminal copy + debug list (verdict Q10). */
-  variant?: "standard" | "anime-exhausted";
-  tried?: string[];
-}) {
-  const animeExhausted = variant === "anime-exhausted";
-  return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070708] z-40 gap-4 px-6">
-      <Clapperboard className="text-[#D4A237]" size={48} strokeWidth={1.5} />
-      <p
-        className="text-xl text-foreground font-bold text-center"
-        style={{ fontFamily: "var(--font-display)" }}
-      >
-        {animeExhausted ? "No anime sources found" : "Projection Reel Snapped"}
-      </p>
-      <p className="text-sm text-muted-foreground text-center max-w-xs">
-        {animeExhausted ? (
-          <>No playable source for this title on MegaPlay.</>
-        ) : (
-          <>
-            We couldn&apos;t load this stream. The source server might be
-            offline.
-          </>
-        )}
-      </p>
-      {tried && tried.length > 0 && (
-        <p className="font-mono text-[11px] text-zinc-600 tracking-tight">
-          Tried: {tried.join(", ")}
-        </p>
-      )}
-      <button
-        onClick={onRetry}
-        className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#D4A237] text-[#070708] text-sm font-bold hover:bg-[#B88B2A] transition-colors active:scale-95"
-      >
-        <RefreshCw size={14} />
-        {animeExhausted ? "Try Again" : "Reload Source"}
-      </button>
-    </div>
-  );
-}
-
 // ── Wrapper — wraps content in PlayerProvider ────────────────────
-
-/**
- * The settings "default server" saved on web, validated against the same
- * platform rule the watch/server pickers apply: enabled, and either
- * unrestricted or declared for web. Returns null when unset, hidden (e.g.
- * direct until it gets a same-origin byte proxy), or unknown — a stale
- * localStorage value must never re-seed a hidden provider.
- */
-function webVisibleSavedServer(): string | null {
-  const saved = getSettings().defaultServer;
-  if (!saved) return null;
-  const p = getProvider(saved);
-  if (!p) return null;
-  return !p.platforms || p.platforms.includes("web") ? p.id : null;
-}
 
 interface WatchClientProps {
   contentid: string;
@@ -1186,6 +656,14 @@ export default function WatchClient({
   initialAnilistId,
   initialEmbedUrl,
 }: WatchClientProps) {
+  // Anime detection mirrors WatchClientContent (URL ids or genre heuristic).
+  const isAnimeSession =
+    initialMalId != null ||
+    initialAnilistId != null ||
+    Boolean(
+      initialMeta?.genres?.some?.((g: any) => g.id === 16) &&
+      initialMeta?.original_language === "ja",
+    );
   return (
     <>
       {/* First-time Legal & DMCA acceptance (browser only — the desktop app
@@ -1196,18 +674,15 @@ export default function WatchClient({
         mediaType={plat}
         contentId={contentid}
         initialProviderId={
-          routeProvider ||
-          // The settings "default server" preference applies on WEB only. On
-          // desktop it is deliberately ignored: the persisted value survives
-          // app updates (and is per-origin, so dev and non-dev can hold
-          // different stale ids) and silently overriding the registry's
-          // platform default made desktop defaults unpredictable.
-          // A saved server that is no longer visible on web (platforms filter,
-          // e.g. direct until it has a byte proxy) is ignored too — otherwise
-          // a stale localStorage value would re-seed a hidden provider.
-          (!isElectronNow() && webVisibleSavedServer()) ||
-          defaultProvider ||
-          undefined
+          // Canonical precedence (route → saved "default server" → platform
+          // default) lives in the shared registry's resolveInitialProviderId;
+          // this page only decides which platform's rules apply.
+          resolveInitialProviderId({
+            platform: isElectronNow() ? "desktop" : "web",
+            routeProvider,
+            savedServer: defaultProvider,
+            anime: isAnimeSession,
+          })
         }
         initialSeason={initialSeason}
         initialEpisode={initialEpisode}

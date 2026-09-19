@@ -39,6 +39,7 @@ import { getResumePoint } from "../../lib/watchHistory";
 import { downloadToast } from "../../lib/download";
 import { prefetchArtwork } from "../../lib/prefetchArtwork";
 import { prefetchStreams } from "../../lib/streamPrefetch";
+import { resolvePrefetchProviderId } from "../../lib/resolvePrefetchProvider";
 import { useSettings } from "../../lib/settings";
 import type { WatchProgress } from "../../lib/watchHistory";
 import * as Haptics from "expo-haptics";
@@ -82,14 +83,22 @@ export default function TVDetailScreen() {
         if (!settingsLoaded) return;
         const season = p?.season ?? 1;
         const episode = p?.episode ?? 1;
-        prefetchStreams(parseInt(id), "tv", season, episode, {
-          cellularMaxMB: settings.cellularMaxMB,
-          maxQuality: settings.maxQuality,
-          preferredAudioLanguage: settings.preferredAudioLanguage,
-          trigger: "details",
-        }).catch((err) => {
-          console.log(`[TVDetail] Prefetch failed:`, err?.message);
-        });
+        // Prefetch what watch will actually open: last-used direct provider
+        // for this title, else saved default server, else platform default.
+        resolvePrefetchProviderId("tv", parseInt(id), settings.defaultServer)
+          .then((providerId) => {
+            if (!providerId) return;
+            return prefetchStreams(parseInt(id), "tv", season, episode, {
+              cellularMaxMB: settings.cellularMaxMB,
+              maxQuality: settings.maxQuality,
+              preferredAudioLanguage: settings.preferredAudioLanguage,
+              providerId,
+              trigger: "details",
+            }).catch((err) => {
+              console.log(`[TVDetail] Prefetch failed:`, err?.message);
+            });
+          })
+          .catch(() => {});
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

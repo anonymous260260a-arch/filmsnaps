@@ -14,6 +14,7 @@
 
 import React from "react";
 import { Clapperboard, RefreshCw } from "lucide-react";
+import { isDirectProvider } from "@filmsnaps/shared";
 import type { ProviderDefinition } from "@filmsnaps/shared";
 
 interface PlayerErrorStateProps {
@@ -46,7 +47,7 @@ export function PlayerErrorState({
 
   // Find alternative providers (not the current one)
   const alternatives = providers.filter(
-    (p) => p.id !== selectedId && p.id !== "falix" && !p.animeOnly,
+    (p) => p.id !== selectedId && !isDirectProvider(p) && !p.animeOnly,
   );
 
   // Pick a couple of good alternatives for quick-switch buttons
