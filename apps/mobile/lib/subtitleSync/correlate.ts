@@ -6,8 +6,12 @@
 import type { Cue, SpeechSignal } from "./types";
 
 const MAX_OFF = 90; // seconds - BLURAY subs vs web streams differ by up to ~90s (recaps, cold opens, logos)
-const STEP = 0.05; // half-bin steps on the 100Hz grid - finer peaks, same cost order
 const MIN_CUES = 8;
+/** Local refine around an FFT coarse peak: ±0.5s at 0.01s (101 contrastAt calls). */
+const REFINE_HALF_SEC = 0.5;
+const REFINE_STEP = 0.01;
+/** Distinct FFT peaks scored with contrastAt before stopping (winner + rivals). */
+const FFT_PEAKS_SCORED = 6;
 /**
  * An offset is eligible only when it leaves at least this share of the cue
  * set's time inside the scanned span. Below it the score would come from a
@@ -61,6 +65,8 @@ export type OffsetCandidate = { offset: number; score: number; keep: number };
 
 export type OffsetResult = {
   offset: number;
+  /** FFT cross-correlation peak (seconds), before local contrast refine. */
+  coarse: number;
   score: number;
   runnerUp: number;
   baseline: number;
@@ -181,36 +187,232 @@ export function contrastScore(
 }
 
 /**
+ * In-place radix-2 FFT (no dependencies). `inverse` divides by n.
+ * re/im must be length a power of two.
+ */
+function fft(re: Float64Array, im: Float64Array, inverse: boolean): void {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      const tr = re[i];
+      re[i] = re[j];
+      re[j] = tr;
+      const ti = im[i];
+      im[i] = im[j];
+      im[j] = ti;
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = ((inverse ? 2 : -2) * Math.PI) / len;
+    const wRe = Math.cos(ang);
+    const wIm = Math.sin(ang);
+    const half = len >> 1;
+    for (let i = 0; i < n; i += len) {
+      let curRe = 1;
+      let curIm = 0;
+      for (let j = 0; j < half; j++) {
+        const a = i + j;
+        const b = a + half;
+        const xr = re[b] * curRe - im[b] * curIm;
+        const xi = re[b] * curIm + im[b] * curRe;
+        re[b] = re[a] - xr;
+        im[b] = im[a] - xi;
+        re[a] += xr;
+        im[a] += xi;
+        const nRe = curRe * wRe - curIm * wIm;
+        curIm = curRe * wIm + curIm * wRe;
+        curRe = nRe;
+      }
+    }
+  }
+  if (inverse) {
+    for (let i = 0; i < n; i++) {
+      re[i] /= n;
+      im[i] /= n;
+    }
+  }
+}
+
+function nextPow2(n: number): number {
+  let p = 1;
+  while (p < n) p <<= 1;
+  return p;
+}
+
+/**
+ * Bipolar cue/gap mask on the signal-relative axis (index 0 = sig.startSec,
+ * offset 0). +1 under cues, -1 in inter-cue gaps (first cue start .. last cue
+ * end), 0 outside. Cross-correlating speech against this approximates the
+ * paired contrast so the FFT peak lands near the true offset.
+ */
+function buildBipolarMask(cues: Cue[], sig: SpeechSignal): Float64Array {
+  const N = sig.data.length;
+  const rate = sig.rate;
+  const mask = new Float64Array(N);
+  if (cues.length === 0) return mask;
+  let first = Number.POSITIVE_INFINITY;
+  let last = Number.NEGATIVE_INFINITY;
+  for (const c of cues) {
+    if (c.start < first) first = c.start;
+    if (c.end > last) last = c.end;
+  }
+  const gapA = Math.max(0, Math.round((first - sig.startSec) * rate));
+  const gapB = Math.min(N, Math.round((last - sig.startSec) * rate));
+  for (let i = gapA; i < gapB; i++) mask[i] = -1;
+  for (const c of cues) {
+    const a = Math.max(0, Math.round((c.start - sig.startSec) * rate));
+    const b = Math.min(N, Math.round((c.end - sig.startSec) * rate));
+    for (let i = a; i < b; i++) mask[i] = 1;
+  }
+  return mask;
+}
+
+/**
+ * FFT cross-correlation peak search over ±MAX_OFF.
+ * Returns coarse offsets (seconds), strongest first, ≥1s apart.
+ */
+function fftCoarsePeaks(cues: Cue[], sig: SpeechSignal): number[] {
+  const N = sig.data.length;
+  const rate = sig.rate;
+  if (N === 0 || cues.length === 0) return [];
+  const maxLag = Math.round(MAX_OFF * rate);
+  const mask = buildBipolarMask(cues, sig);
+  let cueMass = 0;
+  for (let i = 0; i < N; i++) cueMass += mask[i] !== 0 ? 1 : 0;
+  if (cueMass === 0) return [];
+
+  // Pad so r[k] = sum speech[i]*mask[i-k] is linear (not circular) for |k|<=maxLag.
+  const m = nextPow2(N + 2 * maxLag);
+  const xRe = new Float64Array(m);
+  const xIm = new Float64Array(m);
+  const yRe = new Float64Array(m);
+  const yIm = new Float64Array(m);
+  // Shift by maxLag so negative lags index cleanly: both share the same origin.
+  for (let i = 0; i < N; i++) {
+    xRe[maxLag + i] = sig.data[i];
+    yRe[maxLag + i] = mask[i];
+  }
+  fft(xRe, xIm, false);
+  fft(yRe, yIm, false);
+  // corr = IFFT(X * conj(Y)) => r[k] = sum_i x[i] * y[i-k]
+  // with both arrays origin-shifted by maxLag: peak for lag L (bins) sits at
+  // circular index L>=0 ? L : m+L, and equals offset L/rate seconds.
+  for (let i = 0; i < m; i++) {
+    const a = xRe[i];
+    const b = xIm[i];
+    const c = yRe[i];
+    const d = -yIm[i];
+    xRe[i] = a * c - b * d;
+    xIm[i] = a * d + b * c;
+  }
+  fft(xRe, xIm, true);
+
+  // Flatten ±maxLag into a linear array so local-max scans do not wrap.
+  const span = 2 * maxLag + 1;
+  const mags = new Float64Array(span);
+  for (let L = -maxLag; L <= maxLag; L++) {
+    const src = L >= 0 ? L : m + L;
+    mags[L + maxLag] = xRe[src];
+  }
+
+  const peaks: { off: number; mag: number }[] = [];
+  for (let i = 1; i < span - 1; i++) {
+    const prev = mags[i - 1];
+    const cur = mags[i];
+    const next = mags[i + 1];
+    if (cur >= prev && cur > next) {
+      peaks.push({ off: (i - maxLag) / rate, mag: cur });
+    }
+  }
+  peaks.sort((a, b) => b.mag - a.mag);
+
+  const out: number[] = [];
+  for (const p of peaks) {
+    if (out.some((o) => Math.abs(o - p.off) <= PEAK_SHOULDER_SEC)) continue;
+    out.push(p.off);
+    if (out.length >= FFT_PEAKS_SCORED) break;
+  }
+  // Periodic/degenerate masks can yield no strict local max: fall back to lag 0.
+  if (out.length === 0) out.push(0);
+  return out;
+}
+
+type RefinedPeak = {
+  coarse: number;
+  offset: number;
+  score: number;
+  keep: number;
+  valid: boolean;
+};
+
+/** Score one coarse peak: contrastAt scan in ±REFINE_HALF_SEC at REFINE_STEP. */
+function refinePeak(
+  cues: Cue[],
+  sig: SpeechSignal,
+  P: Float64Array,
+  totalBins: number,
+  coarse: number,
+): RefinedPeak {
+  const from = Math.max(-MAX_OFF, coarse - REFINE_HALF_SEC);
+  const to = Math.min(MAX_OFF, coarse + REFINE_HALF_SEC);
+  let bestOff = coarse;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  let bestKeep = 0;
+  let bestValid = false;
+  for (let t = from; t <= to + 1e-9; t += REFINE_STEP) {
+    const off = Math.round(t * 1000) / 1000;
+    const ct = contrastAt(cues, sig, P, off);
+    if (!ct.valid) continue;
+    const keep = Math.min(1, ct.cueBins / totalBins);
+    if (!bestValid || ct.score > bestScore) {
+      bestValid = true;
+      bestScore = ct.score;
+      bestOff = off;
+      bestKeep = keep;
+    }
+  }
+  if (!bestValid) {
+    return {
+      coarse,
+      offset: coarse,
+      score: Number.NEGATIVE_INFINITY,
+      keep: 0,
+      valid: false,
+    };
+  }
+  return {
+    coarse,
+    offset: bestOff,
+    score: bestScore,
+    keep: bestKeep,
+    valid: true,
+  };
+}
+
+/**
  * Find the offset (seconds) that maximizes the cue-vs-gap contrast.
  * Offset o means: cue time + o lands on speech. Positive = subs were early.
- * Bounds everywhere: sig.data.length is the canonical bin count.
  *
- * Three scorers have been tried on real streams; the first two each lost a file
- * that a human could see was simply shifted:
- *   - raw speech / insideBins let large offsets win by discarding most cues and
- *     scoring a lucky handful (+88.65s at 0.583 vs the true -1.5s).
- *   - raw speech / totalBins made the winner depend on how much cue time the
- *     window happened to contain, so a true-but-clipped offset lost to an
- *     all-inside wrong one (Blacklist +54s -> -6.25s, Lanterns +85.25s ->
- *     -10.45s).
- *   - baseline-relative excess (coverage - window baseline) fixed the geometry
- *     bias in the arithmetic but still used the whole window as the null
- *     sample, so a large offset dragged its own uncovered lead-in into the
- *     baseline and diluted itself.
- * The paired contrast above uses the inter-cue gaps - the only sample that
- * means "no subtitle is being displayed here" - and is geometry-free.
+ * Search strategy (P3-2): an FFT cross-correlation of speech against a
+ * bipolar cue/gap mask proposes coarse peaks over ±90s; each is refined with
+ * the existing contrastAt scorer at ±0.5s / 0.01s. runnerUp is the next
+ * distinct FFT peak scored on the contrast scale (confidence reads it as a
+ * rival, never as a raw FFT magnitude). Wall time is logged — the old
+ * ±90s@0.05s brute grid was ~50-200ms; this path should stay under ~10ms.
  *
- * runnerUp is the best score OUTSIDE the winner's +-1s shoulder (adjacent grid
- * steps always score nearly the same and would make every peak look flat).
- * `top` lists the strongest distinct candidates: the orchestrator logs them so a
- * wrong pick names its rivals in the field instead of needing a rebuilt APK.
+ * Three scorers have been tried on real streams; contrastAt (paired cue vs
+ * inter-cue-gap density) is the one that survived — see contrastAt.
+ * MIN_KEEP still gates eligibility: a coarse peak that would discard most of
+ * the cue set is skipped for the next peak, then anyBest fallback.
  */
 export function findOffset(cues: Cue[], sig: SpeechSignal): OffsetResult {
+  const t0 =
+    typeof performance !== "undefined" ? performance.now() : Date.now();
   const P = makePrefix(sig);
   const N = sig.data.length;
-  const steps = Math.round((2 * MAX_OFF) / STEP);
-  const scores = new Float64Array(steps + 1).fill(Number.NEGATIVE_INFINITY);
-  const keeps = new Float64Array(steps + 1);
 
   // Speech baseline: the fraction of the scanned span the VAD marks as speech.
   // Reported for diagnostics only - the score no longer depends on it.
@@ -219,75 +421,64 @@ export function findOffset(cues: Cue[], sig: SpeechSignal): OffsetResult {
   const baseline = N > 0 ? speechBins / N : 0;
 
   const totalBins = Math.max(1, totalCueBins(cues, sig.rate));
-  const shoulder = Math.round(PEAK_SHOULDER_SEC / STEP);
+  const coarsePeaks = fftCoarsePeaks(cues, sig);
 
-  let best = 0;
-  let bestScore = Number.NEGATIVE_INFINITY;
-  let bestIdx = -1;
-  let bestKeep = 0;
-  // Best candidate ignoring MIN_KEEP - used only when no offset is eligible
-  // (degenerate geometry: a cue set much wider than the scanned span).
-  let anyBest = 0;
-  let anyBestScore = Number.NEGATIVE_INFINITY;
-
-  for (let i = 0; i <= steps; i++) {
-    const offSec = -MAX_OFF + i * STEP;
-    const ct = contrastAt(cues, sig, P, offSec);
-    if (!ct.valid) continue;
-    if (ct.score > anyBestScore) {
-      anyBestScore = ct.score;
-      anyBest = offSec;
-    }
-    const keep = Math.min(1, ct.cueBins / totalBins);
-    if (keep < MIN_KEEP) continue;
-    keeps[i] = keep;
-    scores[i] = ct.score;
-    if (ct.score > bestScore) {
-      bestScore = ct.score;
-      best = offSec;
-      bestIdx = i;
-      bestKeep = keep;
-    }
+  const refined: RefinedPeak[] = [];
+  for (const coarse of coarsePeaks) {
+    refined.push(refinePeak(cues, sig, P, totalBins, coarse));
   }
 
-  if (bestIdx < 0) {
-    best = anyBest;
-    bestScore = Number.isFinite(anyBestScore) ? anyBestScore : 0;
+  let winner: RefinedPeak | null = null;
+  let anyBest: RefinedPeak | null = null;
+  for (const r of refined) {
+    if (!r.valid) continue;
+    if (!anyBest || r.score > anyBest.score) anyBest = r;
+    if (r.keep < MIN_KEEP) continue;
+    if (!winner || r.score > winner.score) winner = r;
   }
+  if (!winner) winner = anyBest;
 
-  // Runner-up = best score outside the winner's shoulder.
+  const bestScore = winner && winner.valid ? winner.score : 0;
+  const best = winner ? winner.offset : 0;
+  const bestKeep = winner ? winner.keep : 0;
+  const coarse = winner ? winner.coarse : 0;
+
+  // Runner-up = best keep-eligible peak outside the winner's shoulder,
+  // scored on the contrast scale (same units confidence expects).
   let runnerUp = bestScore;
   let runnerUpFound = false;
-  if (bestIdx >= 0) {
-    for (let i = 0; i <= steps; i++) {
-      if (scores[i] === Number.NEGATIVE_INFINITY) continue;
-      if (Math.abs(i - bestIdx) <= shoulder) continue;
-      if (!runnerUpFound || scores[i] > runnerUp) {
-        runnerUp = scores[i];
+  if (winner) {
+    for (const r of refined) {
+      if (!r.valid || r.keep < MIN_KEEP) continue;
+      if (Math.abs(r.offset - winner.offset) <= PEAK_SHOULDER_SEC) continue;
+      if (!runnerUpFound || r.score > runnerUp) {
+        runnerUp = r.score;
         runnerUpFound = true;
       }
     }
   }
 
+  const ranked = refined
+    .filter((r) => r.valid && r.keep >= MIN_KEEP)
+    .sort((a, b) => b.score - a.score);
   const top: OffsetCandidate[] = [];
-  if (bestIdx >= 0) {
-    const ranked: number[] = [];
-    for (let i = 0; i <= steps; i++) {
-      if (scores[i] === Number.NEGATIVE_INFINITY) continue;
-      ranked.push(i);
-    }
-    ranked.sort((a, b) => scores[b] - scores[a]);
-    for (const i of ranked) {
-      const offSec = -MAX_OFF + i * STEP;
-      if (top.some((t) => Math.abs(t.offset - offSec) <= PEAK_SHOULDER_SEC))
-        continue;
-      top.push({ offset: offSec, score: scores[i], keep: keeps[i] });
-      if (top.length >= TOP_CANDIDATES) break;
-    }
+  for (const r of ranked) {
+    if (top.some((t) => Math.abs(t.offset - r.offset) <= PEAK_SHOULDER_SEC))
+      continue;
+    top.push({ offset: r.offset, score: r.score, keep: r.keep });
+    if (top.length >= TOP_CANDIDATES) break;
   }
+
+  const t1 =
+    typeof performance !== "undefined" ? performance.now() : Date.now();
+  console.log(
+    `[SubSync] findOffset: ${(t1 - t0).toFixed(1)}ms ` +
+      `(fft peaks=${coarsePeaks.length} refine=${refined.length})`,
+  );
 
   return {
     offset: best,
+    coarse,
     score: bestScore,
     runnerUp,
     baseline,
