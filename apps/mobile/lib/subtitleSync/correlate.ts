@@ -243,6 +243,59 @@ function nextPow2(n: number): number {
 }
 
 /**
+ * F4: forward FFT of the padded speech signal, cached per SpeechSignal so the
+ * main / SDH re-rank / any other findOffset on the same signal share one
+ * transform. The bipolar mask FFT stays per-call (mask depends on cues).
+ * Callers must COPY the returned arrays before the conjugate-multiply step.
+ */
+type SpeechFft = { m: number; re: Float64Array; im: Float64Array };
+const speechFftCache = new WeakMap<SpeechSignal, SpeechFft>();
+
+function speechFft(sig: SpeechSignal): SpeechFft {
+  const hit = speechFftCache.get(sig);
+  if (hit) return hit;
+  const N = sig.data.length;
+  const maxLag = Math.round(MAX_OFF * sig.rate);
+  const m = nextPow2(N + 2 * maxLag);
+  const re = new Float64Array(m);
+  const im = new Float64Array(m);
+  for (let i = 0; i < N; i++) re[maxLag + i] = sig.data[i];
+  fft(re, im, false);
+  const entry: SpeechFft = { m, re, im };
+  speechFftCache.set(sig, entry);
+  return entry;
+}
+
+/**
+ * F2 helper: local contrast refine around `center` only — no FFT, no anyBest.
+ * Returns the best valid contrast offset inside ±halfSec @ stepSec, or null
+ * when no sample in the window is judgeable.
+ */
+export function refineNear(
+  cues: Cue[],
+  sig: SpeechSignal,
+  center: number,
+  halfSec = 2,
+  stepSec = 0.05,
+): number | null {
+  const P = makePrefix(sig);
+  let bestOff: number | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  const from = center - halfSec;
+  const to = center + halfSec;
+  for (let t = from; t <= to + 1e-9; t += stepSec) {
+    const off = Math.round(t * 1000) / 1000;
+    const ct = contrastAt(cues, sig, P, off);
+    if (!ct.valid) continue;
+    if (ct.score > bestScore) {
+      bestScore = ct.score;
+      bestOff = off;
+    }
+  }
+  return bestOff;
+}
+
+/**
  * Bipolar cue/gap mask on the signal-relative axis (index 0 = sig.startSec,
  * offset 0). +1 under cues, -1 in inter-cue gaps (first cue start .. last cue
  * end), 0 outside. Cross-correlating speech against this approximates the
@@ -285,17 +338,17 @@ function fftCoarsePeaks(cues: Cue[], sig: SpeechSignal): number[] {
   if (cueMass === 0) return [];
 
   // Pad so r[k] = sum speech[i]*mask[i-k] is linear (not circular) for |k|<=maxLag.
-  const m = nextPow2(N + 2 * maxLag);
-  const xRe = new Float64Array(m);
-  const xIm = new Float64Array(m);
+  const sf = speechFft(sig);
+  const m = sf.m;
+  // Copy the cached speech FFT — the multiply/IFFT below overwrites in place.
+  const xRe = Float64Array.from(sf.re);
+  const xIm = Float64Array.from(sf.im);
   const yRe = new Float64Array(m);
   const yIm = new Float64Array(m);
   // Shift by maxLag so negative lags index cleanly: both share the same origin.
   for (let i = 0; i < N; i++) {
-    xRe[maxLag + i] = sig.data[i];
     yRe[maxLag + i] = mask[i];
   }
-  fft(xRe, xIm, false);
   fft(yRe, yIm, false);
   // corr = IFFT(X * conj(Y)) => r[k] = sum_i x[i] * y[i-k]
   // with both arrays origin-shifted by maxLag: peak for lag L (bins) sits at

@@ -9,7 +9,15 @@ import kotlinx.coroutines.launch
 
 class SubtitleSyncModule : Module() {
     private var job: AudioExtractJob? = null
-    private var scanJob: ScanJob? = null
+    private var scanJob: FastScanJob? = null
+    /**
+     * F3: snapshot of the last completed scan's status. onResult nulls scanJob
+     * BEFORE the promise settles, so a JS flush after await scanAsync() would
+     * otherwise read an empty idle map and drop the final trace lines
+     * (DONE / hls prefetch stats) that landed after the last 500ms poll.
+     */
+    @Volatile private var lastScanStatus: Map<String, Any?> =
+        mapOf("phase" to "idle", "progress" to 0, "trace" to "", "lineCount" to 0L, "traceLines" to emptyList<String>())
 
     /**
      * Wait until a cancelled/dying job clears its slot via onResult.
@@ -126,6 +134,9 @@ class SubtitleSyncModule : Module() {
                 },
                 vadDebug = vadDebug,
                 onResult = { r ->
+                    // Capture final status BEFORE nulling the slot so a
+                    // post-await JS flush can still print trailing lines (F3).
+                    theJob?.status()?.let { lastScanStatus = it }
                     scanJob = null
                     // Attach the full pipeline trace to the outcome: errors carry
                     // it in the message tail so it reaches the JS console even if
@@ -177,9 +188,11 @@ class SubtitleSyncModule : Module() {
         }
 
         // Pollable status (phase + progress + live trace) - the UI can poll
-        // this if event delivery is unavailable.
+        // this if event delivery is unavailable. After the job finishes (slot
+        // already null) fall back to lastScanStatus so the JS flush can still
+        // read trailing lines (F3).
         Function("scanStatus") {
-            (scanJob as? FastScanJob)?.status() ?: mapOf("phase" to "idle", "progress" to 0, "trace" to "")
+            (scanJob as? FastScanJob)?.status() ?: lastScanStatus
         }
 
         Function("cancel") {

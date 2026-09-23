@@ -309,6 +309,13 @@ function SubtitleSheetInner({
   /** Serializes clear+re-add so a burst of presses cannot interleave races. */
   const sidecarOpChain = useRef<Promise<unknown>>(Promise.resolve());
 
+  // F5: stepper buttons must read the latest offset from the ref, not React
+  // state — a press that lands before the re-render would otherwise apply
+  // syncSeconds + step from the previous render (stale state) and drop a step.
+  const bumpSync = (delta: number) => {
+    applySync(syncSecondsRef.current + delta);
+  };
+
   const enqueueSidecarOp = <T,>(fn: () => Promise<T>): Promise<T> => {
     const run = sidecarOpChain.current.then(fn, fn);
     sidecarOpChain.current = run.then(
@@ -475,6 +482,9 @@ function SubtitleSheetInner({
     if (sidecarTarget()) {
       if (sidecarRewriteTimer.current)
         clearTimeout(sidecarRewriteTimer.current);
+      // F5: presses within 600ms coalesce into one rewrite of the final value
+      // (device log +0.5,+0.5,+1.0,+1.0 is two solo steps then two double-tap
+      // windows — correct debounce, not a dropped press).
       sidecarRewriteTimer.current = setTimeout(() => {
         void rewriteSidecarForOffset();
       }, 600);
@@ -594,7 +604,7 @@ function SubtitleSheetInner({
                   </View>
                   <TouchableOpacity
                     style={styles.syncBtn}
-                    onPress={() => applySync(syncSeconds - SYNC_STEP_S)}
+                    onPress={() => bumpSync(-SYNC_STEP_S)}
                     activeOpacity={0.7}
                     accessibilityRole="button"
                     accessibilityLabel="Subtitles 0.5 seconds earlier"
@@ -610,7 +620,7 @@ function SubtitleSheetInner({
                   </Text>
                   <TouchableOpacity
                     style={styles.syncBtn}
-                    onPress={() => applySync(syncSeconds + SYNC_STEP_S)}
+                    onPress={() => bumpSync(SYNC_STEP_S)}
                     activeOpacity={0.7}
                     accessibilityRole="button"
                     accessibilityLabel="Subtitles 0.5 seconds later"

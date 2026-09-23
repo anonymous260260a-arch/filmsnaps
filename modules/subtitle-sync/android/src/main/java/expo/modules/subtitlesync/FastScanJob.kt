@@ -777,8 +777,9 @@ class FastScanJob(
             val decodeAvg = decodeTotalMs / segs
             val overlapSaved = (fetchTotalMs + decodeTotalMs) - wallMs
             log(
-                "hls prefetch: $segs segs, fetch avg/total ${fetchAvg}/${fetchTotalMs}ms, " +
-                    "decode-avg ${decodeAvg}ms, overlap saved ~${overlapSaved}ms" +
+                "hls prefetch: $segs segs, wall=${wallMs}ms fetch-sum=${fetchTotalMs}ms " +
+                    "(avg ${fetchAvg}ms), decode-sum=${decodeTotalMs}ms " +
+                    "(avg ${decodeAvg}ms), overlap saved ~${overlapSaved}ms" +
                     if (sequential) " (sequential fallback)" else ""
             )
         }

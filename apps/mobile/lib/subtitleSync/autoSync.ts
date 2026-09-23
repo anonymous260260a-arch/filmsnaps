@@ -29,6 +29,7 @@ import { canAutoSync, windowPlan } from "./source";
 import { parseSubtitles } from "./parseSubtitles";
 import {
   findOffset,
+  refineNear,
   confidence,
   keptFraction,
   contrastScore,
@@ -49,15 +50,20 @@ export const SUBTITLE_SYNC_SILERO = true;
 
 /**
  * P2-1 kill-switch: set false to skip early checkpoint apply (JS rebundle only).
- * When true, an early window with conf >= 0.75, sharp lead >= 25% over the
- * runner-up, and keep >= 0.9 applies immediately; the late window continues as
+ * When true, an early window with conf >= 0.70, sharp lead >= 15% over the
+ * runner-up, and keep >= 0.70 applies immediately; the late window continues as
  * silent verification (agree → silent confirm; decisive late win → re-apply +
  * toast; inconclusive → keep the provisional apply).
+ *
+ * 2026-09 rework: bars dropped from 0.75/0.25/0.9 — the old pair missed every
+ * clean hit outside the perfect Luther/DEMAND class and let high-keep near-
+ * misses through on sharp alone. The outcome counter is the feedback loop;
+ * revisit after ~2 weeks of weekKeys.
  */
 export const CHECKPOINT_EARLY_APPLY = true;
-const CHECKPOINT_CONF = 0.75;
-const CHECKPOINT_SHARP = 0.25;
-const CHECKPOINT_KEEP = 0.9;
+const CHECKPOINT_CONF = 0.7;
+const CHECKPOINT_SHARP = 0.15;
+const CHECKPOINT_KEEP = 0.7;
 
 /** R8-3: known-good Silero asset identity for the verdict record. */
 const SILERO_MODEL_SHA =
@@ -175,6 +181,7 @@ async function extractWithRetry(
       if (onProgress) {
         unsub = onExtractProgress(onProgress);
       }
+      let finalFlush: () => void = () => {};
       if (source.kind !== "local") {
         // R5-5: the native side keeps a MONOTONIC line counter plus the last N
         // lines, so the poller prints lines by INDEX. Slicing the text by length
@@ -183,7 +190,7 @@ async function extractWithRetry(
         // more than a ring's worth of lines arrived between two polls). Now a
         // gap is reported instead of hidden.
         let printedLines = 0;
-        poller = setInterval(() => {
+        const flushTrace = () => {
           try {
             const st = scanStatus();
             if (st.progress > 0) onProgress?.(st.progress);
@@ -203,9 +210,14 @@ async function extractWithRetry(
             }
             printedLines = total;
           } catch {
-            // poller is best-effort
+            // flush is best-effort
           }
-        }, 500);
+        };
+        poller = setInterval(flushTrace, 500);
+        // Final flush: DONE / hls prefetch stats land in the ring after the
+        // last 500ms tick and before onResult nulls scanJob — without this
+        // they never reach Metro (F3).
+        finalFlush = flushTrace;
       }
       const r =
         source.kind === "local"
@@ -220,6 +232,7 @@ async function extractWithRetry(
               audioLang,
               vadDebug: vadDebugEnabled,
             });
+      finalFlush();
       if (r.ok || source.kind === "local" || attempt >= 1) return r;
       // Remote: expired token or transient -> fresh URL, one retry
       if (r.code === "expired-url" || r.code === "network") {
@@ -304,10 +317,15 @@ function keepAtOffsetInSpan(
 }
 
 /**
- * Part B LOG-ONLY: onset-weighted score over cue starts only (first 300ms).
- * Does NOT affect the applied offset — we compare against `raw` on regression
- * data (Spider-Man / Blacklist / Lioness) before adopting.
- * Verdict (device): DO NOT adopt — onset overshoots on CAM audio; diagnostic only.
+ * Part B LOG-ONLY: onset diagnostic over cue starts only (first 300ms).
+ * Does NOT affect the applied offset — DO NOT adopt (device: overshoots on CAM).
+ *
+ * 2026-09 repair: the old path ran a full findOffset (FFT + anyBest) over the
+ * truncated cue set, which locked onto garbage when the onset contrast was
+ * flat (−138s/−117s deltas on clean audio). Now: local refine ONLY, ±2s around
+ * the main offset at 0.05s, contrastAt on the truncated cues — no FFT, no
+ * anyBest. Delta = onsetRefined − mainOffset restores the murkiness detector
+ * (clean audio |delta| ~0.1–0.7s; CAM +0.5 signature).
  */
 function logOnsetWeighted(
   label: string,
@@ -321,14 +339,19 @@ function logOnsetWeighted(
     text: c.text,
   }));
   try {
-    const o = findOffset(onsetCues, sig);
-    const oc = confidence(onsetCues, sig, o.offset, o.runnerUp, o.score);
-    const delta = o.offset - rawOffset;
+    const o = refineNear(onsetCues, sig, rawOffset, 2, 0.05);
+    if (o == null) {
+      console.log(
+        `[SubSync] ${label} onset-weighted: n/a (no valid contrast near main)`,
+      );
+      return null;
+    }
+    const delta = o - rawOffset;
     console.log(
-      `[SubSync] ${label} onset-weighted: offset=${o.offset.toFixed(2)}s conf=${oc.toFixed(3)} ` +
-        `(delta=${delta >= 0 ? "+" : ""}${delta.toFixed(2)}s)`,
+      `[SubSync] ${label} onset-weighted: offset=${o.toFixed(2)}s ` +
+        `(delta=${delta >= 0 ? "+" : ""}${delta.toFixed(2)}s, refine ±2s @0.05s)`,
     );
-    return o.offset;
+    return o;
   } catch {
     console.log(`[SubSync] ${label} onset-weighted: n/a`);
     return null;
@@ -935,7 +958,8 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
         const offsetMs = Math.round(earlyOff.offset * 1000);
         console.log(
           `[SubSync] early checkpoint: applied ${offsetMs >= 0 ? "+" : ""}${(offsetMs / 1000).toFixed(2)}s ` +
-            `(conf=${earlyConf.toFixed(3)} sharp=${sharp.toFixed(2)} keep=${earlyKeep.toFixed(2)}) - ` +
+            `(conf=${earlyConf.toFixed(3)}/${CHECKPOINT_CONF} sharp=${sharp.toFixed(2)}/${CHECKPOINT_SHARP} ` +
+            `keep=${earlyKeep.toFixed(2)}/${CHECKPOINT_KEEP}) - ` +
             `late window continues as silent verification`,
         );
         const out = await makeOffsetOutcome(offsetMs, earlyConf);
