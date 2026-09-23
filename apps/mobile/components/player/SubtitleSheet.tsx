@@ -208,6 +208,7 @@ function SubtitleSheetInner({
       setAutoOffsetMs(0);
     }
     setSelectedId(player.getSelectedSubtitleTrackId?.() ?? null);
+    setSyncError(null);
     return () => {
       cancelled = true;
     };
@@ -304,6 +305,20 @@ function SubtitleSheetInner({
   const sidecarRewriteTimer = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const [syncError, setSyncError] = useState<string | null>(null);
+  /** Serializes clear+re-add so a burst of presses cannot interleave races. */
+  const sidecarOpChain = useRef<Promise<unknown>>(Promise.resolve());
+
+  const enqueueSidecarOp = <T,>(fn: () => Promise<T>): Promise<T> => {
+    const run = sidecarOpChain.current.then(fn, fn);
+    sidecarOpChain.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   /** R5-2: the stepper must actually move an EXTERNAL sidecar, which the native
    *  setSubtitleOffset path cannot (it only shifts embedded MKV/WebM text
@@ -314,6 +329,93 @@ function SubtitleSheetInner({
     (selectedId ? externalFileRef.current.get(selectedId) : undefined) ??
     autoSync?.getDefaultSubtitleUri?.() ??
     null;
+
+  const describeSidecar = (uri: string) => ({
+    uri,
+    mimeType: mimeTypeForFormat(formatFromUri(uri)),
+    language: selectedTrackLanguage,
+    label: uri.split("/").pop(),
+  });
+
+  /**
+   * Swap the live sidecar to `next`. The expo-video patch has no in-place
+   * replace (only clear-all + add), so this clear+adds with retries and — if
+   * every attempt fails — re-adds `prev` so the player never ends with zero
+   * subtitles.
+   */
+  const readdSidecar = async (
+    next: { uri: string; mimeType: string; language?: string; label?: string },
+    prev: {
+      uri: string;
+      mimeType: string;
+      language?: string;
+      label?: string;
+    } | null,
+    context: string,
+  ): Promise<string | null> => {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      if (attempt > 1) await sleep(250);
+      try {
+        player.clearExternalSubtitles?.();
+        const trackId = await player.addExternalSubtitle?.(
+          next.uri,
+          next.mimeType,
+          next.language,
+          next.label,
+        );
+        if (trackId) {
+          if (attempt > 1) {
+            console.log(
+              `[SubSync] ${context}: re-add ok on attempt ${attempt}/3 (track ${trackId})`,
+            );
+          }
+          externalFileRef.current.set(trackId, next.uri);
+          player.setSubtitleTrack?.(trackId);
+          setSelectedId(trackId);
+          setTrackVersion((v) => v + 1);
+          setSyncError(null);
+          return trackId;
+        }
+        console.log(
+          `[SubSync] ${context}: re-add attempt ${attempt}/3 returned no track id`,
+        );
+      } catch (e) {
+        console.log(
+          `[SubSync] ${context}: re-add attempt ${attempt}/3 failed: ${(e as Error)?.message ?? e}`,
+        );
+      }
+    }
+    if (prev) {
+      try {
+        player.clearExternalSubtitles?.();
+        const prevId = await player.addExternalSubtitle?.(
+          prev.uri,
+          prev.mimeType,
+          prev.language,
+          prev.label,
+        );
+        if (prevId) {
+          externalFileRef.current.set(prevId, prev.uri);
+          player.setSubtitleTrack?.(prevId);
+          setSelectedId(prevId);
+          setTrackVersion((v) => v + 1);
+          console.log(
+            `[SubSync] ${context}: rolled back to previous sidecar (track ${prevId}): ${prev.uri}`,
+          );
+        } else {
+          console.log(
+            `[SubSync] ${context}: rollback also failed - no track id`,
+          );
+        }
+      } catch (e) {
+        console.log(
+          `[SubSync] ${context}: rollback failed: ${(e as Error)?.message ?? e}`,
+        );
+      }
+    }
+    setSyncError("Couldn't adjust — try again");
+    return null;
+  };
 
   const rewriteSidecarForOffset = async () => {
     const target = sidecarTarget();
@@ -337,28 +439,31 @@ function SubtitleSheetInner({
       pristine.uri,
     );
     if (!uri) return;
+    console.log(
+      `[SubSync] stepper: rewriting sidecar total=${totalSec.toFixed(2)}s ` +
+        `(auto=${autoOffsetMs}ms manual=${syncSecondsRef.current}s) from ${target} -> ${uri}`,
+    );
     try {
-      await player.clearExternalSubtitles?.();
-      const trackId = await player.addExternalSubtitle?.(
-        uri,
-        mimeTypeForFormat(format),
-        selectedTrackLanguage,
-        uri.split("/").pop(),
+      await enqueueSidecarOp(() =>
+        readdSidecar(
+          {
+            uri,
+            mimeType: mimeTypeForFormat(format),
+            language: selectedTrackLanguage,
+            label: uri.split("/").pop(),
+          },
+          describeSidecar(target),
+          "stepper",
+        ),
       );
-      if (trackId) {
-        externalFileRef.current.set(trackId, uri);
-        player.setSubtitleTrack?.(trackId);
-        setSelectedId(trackId);
-        console.log(
-          `[SubSync] stepper applied ${totalSec.toFixed(2)}s to the sidecar file (track ${trackId}): ${uri}`,
-        );
-      } else {
-        console.log("[SubSync] stepper: re-add returned no track id");
-      }
+      console.log(
+        `[SubSync] stepper applied ${totalSec.toFixed(2)}s to the sidecar file: ${uri}`,
+      );
     } catch (e) {
       console.log(
         `[SubSync] stepper re-add failed: ${(e as Error)?.message ?? e}`,
       );
+      setSyncError("Couldn't adjust — try again");
     }
   };
 
@@ -394,20 +499,16 @@ function SubtitleSheetInner({
     if (rewritten) {
       // Sidecar subtitle: native setSubtitleOffset only shifts embedded MKV
       // text tracks, so re-add the offset-shifted copy of the file instead.
+      const prevTarget = sidecarTarget();
       try {
-        await player.clearExternalSubtitles?.();
-        const trackId = await player.addExternalSubtitle?.(
-          rewritten.uri,
-          rewritten.mimeType,
-          rewritten.language,
-          rewritten.label,
+        const trackId = await enqueueSidecarOp(() =>
+          readdSidecar(
+            rewritten,
+            prevTarget ? describeSidecar(prevTarget) : null,
+            "auto-sync",
+          ),
         );
         if (trackId) {
-          externalFileRef.current.set(trackId, rewritten.uri);
-          // Explicitly select it: the re-add re-prepares the source and the
-          // track would otherwise sit unselected (subtitles appear "off").
-          player.setSubtitleTrack?.(trackId);
-          setSelectedId(trackId);
           console.log(
             `[SubSync] applied shifted subtitle (track ${trackId}): ${rewritten.uri}`,
           );
@@ -428,6 +529,7 @@ function SubtitleSheetInner({
         console.log(
           `[SubSync] re-add shifted subtitle failed: ${(e as Error)?.message ?? e}`,
         );
+        setSyncError("Couldn't adjust — try again");
       }
     } else {
       player.setSubtitleOffset?.(offsetMs + syncSeconds * 1000);
@@ -531,6 +633,7 @@ function SubtitleSheetInner({
                     </TouchableOpacity>
                   )}
                 </View>
+                {syncError && <Text style={styles.syncError}>{syncError}</Text>}
 
                 {/* Auto Sync â€” listens to the stream's audio and aligns the subtitle */}
                 {autoSync && (
@@ -839,6 +942,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
+  },
+  syncError: {
+    color: colors.error,
+    fontSize: 12,
+    paddingHorizontal: 20,
+    paddingBottom: 6,
   },
   separator: {
     height: 1,

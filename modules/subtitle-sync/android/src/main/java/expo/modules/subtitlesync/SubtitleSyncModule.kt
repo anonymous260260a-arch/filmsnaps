@@ -11,20 +11,42 @@ class SubtitleSyncModule : Module() {
     private var job: AudioExtractJob? = null
     private var scanJob: ScanJob? = null
 
+    /**
+     * Wait until a cancelled/dying job clears its slot via onResult.
+     * cancel() must NOT null the slot immediately — a restart during that
+     * window would pass the BUSY check and start a second scan (double
+     * bandwidth + interleaved trace lines).
+     */
+    private fun awaitIdle(timeoutMs: Long = 2000): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while ((job != null || scanJob != null) && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(50)
+            } catch (_: InterruptedException) {
+                break
+            }
+        }
+        return job == null && scanJob == null
+    }
+
+    private fun busyResult(message: String) = mapOf(
+        "ok" to false,
+        "code" to "busy",
+        "message" to message,
+    )
+
     override fun definition() = ModuleDefinition {
         Name("SubtitleSync")
         Events("onProgress", "onDebug")
 
         // Local files: framework MediaExtractor + MediaCodec (fast, seek works).
         AsyncFunction("extractAsync") { uri: String, options: Map<String, Any?>, promise: expo.modules.kotlin.Promise ->
+            if ((job != null || scanJob != null) && !awaitIdle(2000)) {
+                promise.resolve(busyResult("another extraction is already running"))
+                return@AsyncFunction
+            }
             if (job != null || scanJob != null) {
-                promise.resolve(
-                    mapOf(
-                        "ok" to false,
-                        "code" to "busy",
-                        "message" to "another extraction is already running",
-                    )
-                )
+                promise.resolve(busyResult("another extraction is already running"))
                 return@AsyncFunction
             }
             val from = (options["fromSec"] as? Number)?.toDouble() ?: 0.0
@@ -63,16 +85,14 @@ class SubtitleSyncModule : Module() {
         //    tap, no wall-clock anchors.
         // The old RemoteScanJob/HlsScanJob player pipeline is retired.
         AsyncFunction("scanAsync") { uri: String, options: Map<String, Any?>, promise: expo.modules.kotlin.Promise ->
+            if ((job != null || scanJob != null) && !awaitIdle(2000)) {
+                promise.resolve(busyResult("another scan is already running"))
+                return@AsyncFunction
+            }
             if (job != null || scanJob != null) {
                 // Clean error result (not a rejection): a raw rejection used to
                 // surface as an unhandled exception in the UI.
-                promise.resolve(
-                    mapOf(
-                        "ok" to false,
-                        "code" to "busy",
-                        "message" to "another scan is already running",
-                    )
-                )
+                promise.resolve(busyResult("another scan is already running"))
                 return@AsyncFunction
             }
             val from = (options["fromSec"] as? Number)?.toDouble() ?: 0.0
@@ -163,10 +183,11 @@ class SubtitleSyncModule : Module() {
         }
 
         Function("cancel") {
+            // Mark cancelled only — the slot is cleared in onResult when the
+            // worker thread actually exits, so a restart during teardown waits
+            // (awaitIdle) instead of racing a second scan against the dying one.
             job?.cancel()
-            job = null
             scanJob?.cancel()
-            scanJob = null
         }
 
         OnDestroy {

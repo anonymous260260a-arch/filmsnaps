@@ -161,7 +161,10 @@ class FastScanJob(
                         "FAILED in ${SystemClock.elapsedRealtime() - t0}ms: ${r.code} - ${r.message}"
                 }
             )
-            if (!cancelled.get()) onResult(r)
+            // Always settle the JS promise — even on cancel. Suppressing
+            // onResult left scanAsync hanging, so extractWithRetry's poller
+            // never stopped and a restart printed interleaved trace lines.
+            onResult(r)
         }.also { it.isDaemon = false }.start()
     }
 

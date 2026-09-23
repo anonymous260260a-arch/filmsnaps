@@ -156,43 +156,57 @@ async function extractWithRetry(
   for (let attempt = 0; ; attempt++) {
     // Subscribe to progress events during extraction
     let unsub: (() => void) | undefined;
-    if (onProgress) {
-      unsub = onExtractProgress(onProgress);
-    }
     // Poll the native scan status while the scan runs: events may not be
     // delivered on some RN setups, so progress/trace ride the poll instead.
+    // Declared per-attempt and ALWAYS torn down in this attempt's finally —
+    // a previous design only cleared the poller on scanAsync settlement, so
+    // a cancelled scan (native never resolves the promise) left the interval
+    // running and a restart produced interleaved [SubSyncFast] lines.
     let poller: ReturnType<typeof setInterval> | undefined;
-    if (source.kind !== "local") {
-      // R5-5: the native side keeps a MONOTONIC line counter plus the last N
-      // lines, so the poller prints lines by INDEX. Slicing the text by length
-      // desynced whenever the trace ring trimmed (that produced the malformed
-      // "0 size=8192" line, and silently dropped "signal summary:"/"DONE" when
-      // more than a ring's worth of lines arrived between two polls). Now a
-      // gap is reported instead of hidden.
-      let printedLines = 0;
-      poller = setInterval(() => {
-        try {
-          const st = scanStatus();
-          if (st.progress > 0) onProgress?.(st.progress);
-          const total = typeof st.lineCount === "number" ? st.lineCount : 0;
-          const tail = Array.isArray(st.traceLines) ? st.traceLines : [];
-          if (total <= printedLines) return;
-          const newCount = total - printedLines;
-          if (newCount > tail.length) {
-            console.log(
-              `[SubSyncFast] (${newCount - tail.length} earlier trace lines not retained by the native ring)`,
-            );
-          }
-          for (const line of tail.slice(Math.max(0, tail.length - newCount))) {
-            if (line.trim()) console.log(`[SubSyncFast] ${line}`);
-          }
-          printedLines = total;
-        } catch {
-          // poller is best-effort
-        }
-      }, 500);
-    }
+    const stopAttempt = () => {
+      unsub?.();
+      unsub = undefined;
+      if (poller) {
+        clearInterval(poller);
+        poller = undefined;
+      }
+    };
     try {
+      if (onProgress) {
+        unsub = onExtractProgress(onProgress);
+      }
+      if (source.kind !== "local") {
+        // R5-5: the native side keeps a MONOTONIC line counter plus the last N
+        // lines, so the poller prints lines by INDEX. Slicing the text by length
+        // desynced whenever the trace ring trimmed (that produced the malformed
+        // "0 size=8192" line, and silently dropped "signal summary:"/"DONE" when
+        // more than a ring's worth of lines arrived between two polls). Now a
+        // gap is reported instead of hidden.
+        let printedLines = 0;
+        poller = setInterval(() => {
+          try {
+            const st = scanStatus();
+            if (st.progress > 0) onProgress?.(st.progress);
+            const total = typeof st.lineCount === "number" ? st.lineCount : 0;
+            const tail = Array.isArray(st.traceLines) ? st.traceLines : [];
+            if (total <= printedLines) return;
+            const newCount = total - printedLines;
+            if (newCount > tail.length) {
+              console.log(
+                `[SubSyncFast] (${newCount - tail.length} earlier trace lines not retained by the native ring)`,
+              );
+            }
+            for (const line of tail.slice(
+              Math.max(0, tail.length - newCount),
+            )) {
+              if (line.trim()) console.log(`[SubSyncFast] ${line}`);
+            }
+            printedLines = total;
+          } catch {
+            // poller is best-effort
+          }
+        }, 500);
+      }
       const r =
         source.kind === "local"
           ? await extractAsync(uri, { fromSec, toSec, useSilero, headers })
@@ -205,10 +219,7 @@ async function extractWithRetry(
               container: source.kind === "hls" ? "hls" : "progressive",
               audioLang,
               vadDebug: vadDebugEnabled,
-            }).finally(() => {
-              if (poller) clearInterval(poller);
             });
-      if (source.kind === "local" && poller) clearInterval(poller);
       if (r.ok || source.kind === "local" || attempt >= 1) return r;
       // Remote: expired token or transient -> fresh URL, one retry
       if (r.code === "expired-url" || r.code === "network") {
@@ -220,7 +231,7 @@ async function extractWithRetry(
       }
       return r;
     } finally {
-      unsub?.();
+      stopAttempt();
     }
   }
 }
