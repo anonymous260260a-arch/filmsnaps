@@ -215,11 +215,25 @@ class SubtitleSyncModule : Module() {
             FastScanJob.playerStruggling = struggling
         }
 
+        // A5: isolation probe for the playback PCM tap (Stage A). Reads the
+        // static PlayerAudioTap counters — no watch session required. Reset
+        // with tapProbeReset so a rate measurement starts from zero.
+        Function("tapProbe") {
+            expo.modules.video.utils.PlayerAudioTap.snapshot()
+        }
+        Function("tapProbeReset") {
+            expo.modules.video.utils.PlayerAudioTap.resetCounters()
+            true
+        }
+
         OnDestroy {
             job?.cancel()
             job = null
             scanJob?.cancel()
             scanJob = null
+            // Stage B owns PlayerAudioTap.listener — clear on teardown so a
+            // dead module never keeps feeding a stale collector.
+            expo.modules.video.utils.PlayerAudioTap.listener = null
         }
     }
 

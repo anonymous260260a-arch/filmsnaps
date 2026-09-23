@@ -161,6 +161,33 @@ export function setPlayerStruggling(struggling: boolean): void {
   SubtitleSyncModule.setPlayerStruggling(struggling);
 }
 
+/**
+ * A5: isolation probe for the playback PCM tap (Stage A). Snapshot of the
+ * static PlayerAudioTap counters — bytes/rate independent of any watch session.
+ */
+export type TapProbeSnapshot = {
+  totalBytes: number;
+  lastPcmWallMs: number;
+  /** ms since last PCM, or -1 if none yet. */
+  ageMs: number;
+  sampleRate: number;
+  channelCount: number;
+  encoding: number;
+  flushes: number;
+  segmentResets: number;
+  listening: boolean;
+  monotonicMs: number;
+};
+
+export function tapProbe(): TapProbeSnapshot {
+  return SubtitleSyncModule.tapProbe();
+}
+
+/** Zero the tap counters so a rate measurement starts clean. */
+export function tapProbeReset(): void {
+  SubtitleSyncModule.tapProbeReset();
+}
+
 export type ProbeResult =
   | { ok: true; live: boolean; drmProtected: boolean; muxedOnly: boolean }
   | { ok: false; code: ExtractErrorCode; message: string };
