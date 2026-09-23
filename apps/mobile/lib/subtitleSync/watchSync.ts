@@ -415,7 +415,7 @@ export async function startWatchSession(
     const activated = await activateWatchSync({
       fromSec: Math.max(0, opts.fromSec),
       windowSec: 90,
-      useSilero: false,
+      useSilero: true,
       vadMarkOn: MARK_ON,
       vadMarkOff: MARK_OFF,
     });

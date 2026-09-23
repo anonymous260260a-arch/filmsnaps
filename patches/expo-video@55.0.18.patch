@@ -1,4 +1,4 @@
-﻿diff --git a/android/build.gradle b/android/build.gradle
+diff --git a/android/build.gradle b/android/build.gradle
 index 2c0b7df769e37d7b7a139e7795ea6256aa8a1550..ec6b78bc32f05ef3ad238c2d7ea3e6b2f8a3ac35 100644
 --- a/android/build.gradle
 +++ b/android/build.gradle
@@ -1174,16 +1174,17 @@ index 0000000000000000000000000000000000000000..cc410143e6688189eb8ed81a7ff8110c
 +// END legacy-text-decoding (expo-video patch)
 diff --git a/android/src/main/java/expo/modules/video/utils/PlayerAudioTap.kt b/android/src/main/java/expo/modules/video/utils/PlayerAudioTap.kt
 new file mode 100644
-index 0000000000000000000000000000000000000000..ec099b8209be8322791bc381ecc7c8907494cac4
+index 0000000000000000000000000000000000000000..7cd59ae3f9072838bcee84ecfb82675e3a6abb88
 --- /dev/null
 +++ b/android/src/main/java/expo/modules/video/utils/PlayerAudioTap.kt
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,123 @@
 +package expo.modules.video.utils
 +
 +import android.os.SystemClock
 +import androidx.media3.common.util.UnstableApi
 +import java.nio.ByteBuffer
 +import java.util.concurrent.atomic.AtomicLong
++import java.util.concurrent.atomic.AtomicReference
 +
 +/**
 + * Static PCM-tap seam for playback watch-sync (subtitle-sync Stage A).
@@ -1192,8 +1193,12 @@ index 0000000000000000000000000000000000000000..ec099b8209be8322791bc381ecc7c890
 + * audio sink — always attached, pass-through when [listener] is null so normal
 + * playback never pays more than one array copy.
 + *
-+ * Samples are PRE-sonic content-rate PCM (user processors run before the
++ * Samples are PRE-sonIC content-rate PCM (user processors run before the
 + * silence-skipping/sonic stage), so bin math needs no /speed adjustment.
++ *
++ * Claim gate: only the most-recently-CONFIGURED processor forwards. Two sinks
++ * can be alive during source switches; without this gate both feed the one
++ * listener and mix streams.
 + *
 + * Thread-safety: onPcm runs on the audio-sink thread; tapProbe reads from the
 + * JS/module thread — counters are AtomicLong / @Volatile.
@@ -1210,6 +1215,7 @@ index 0000000000000000000000000000000000000000..ec099b8209be8322791bc381ecc7c890
 +        /**
 +         * One content-rate PCM buffer. Buffer is a DUPLICATE — the listener may
 +         * read it freely; it is not reused by the processor after return.
++         * Audio-thread call: copy only — no locks, no heavy work.
 +         */
 +        fun onPcm(buffer: ByteBuffer)
 +        /** Sink flush (seek / discontinuity) — suspend feeding until next onPcm. */
@@ -1222,7 +1228,7 @@ index 0000000000000000000000000000000000000000..ec099b8209be8322791bc381ecc7c890
 +    @Volatile
 +    var listener: Listener? = null
 +
-+    // tapProbe counters (always updated, even with no listener).
++    // tapProbe counters (always updated, even with no listener / claim gate).
 +    private val totalBytes = AtomicLong(0)
 +    @JvmStatic @Volatile private var lastPcmWallMs = 0L
 +    @JvmStatic @Volatile private var sampleRate = 0
@@ -1230,6 +1236,9 @@ index 0000000000000000000000000000000000000000..ec099b8209be8322791bc381ecc7c890
 +    @JvmStatic @Volatile private var encoding = 0
 +    private val flushCount = AtomicLong(0)
 +    private val segmentResetCount = AtomicLong(0)
++
++    // Active-claim: only the most-recently-CONFIGURED processor forwards.
++    private val activeProcessor = AtomicReference<Any?>()
 +
 +    /** Snapshot for tapProbe — bytes since last [resetCounters]. */
 +    @JvmStatic
@@ -1260,41 +1269,48 @@ index 0000000000000000000000000000000000000000..ec099b8209be8322791bc381ecc7c890
 +
 +    // --- called from TapAudioProcessor (audio-sink thread) ---
 +
-+    @JvmStatic
-+    fun onFormat(sr: Int, ch: Int, enc: Int) {
++    internal fun onFormat(p: Any, sr: Int, ch: Int, enc: Int) {
++        activeProcessor.set(p)
 +        sampleRate = sr
 +        channelCount = ch
 +        encoding = enc
 +        listener?.onFormat(sr, ch, enc)
 +    }
 +
-+    @JvmStatic
-+    fun onPcm(buffer: ByteBuffer) {
++    internal fun onPcm(p: Any, buffer: ByteBuffer) {
++        // Counters always advance (rate measurement is claim-independent).
 +        totalBytes.addAndGet(buffer.remaining().toLong())
 +        lastPcmWallMs = System.currentTimeMillis()
++        if (activeProcessor.get() !== p) return
 +        listener?.onPcm(buffer)
 +    }
 +
-+    @JvmStatic
-+    fun onFlush() {
++    internal fun onFlush(p: Any) {
 +        flushCount.incrementAndGet()
++        if (activeProcessor.get() !== p) return
 +        listener?.onFlush()
 +    }
 +
-+    @JvmStatic
-+    fun onSegmentReset(gapMs: Long) {
++    internal fun onSegmentReset(p: Any, gapMs: Long) {
 +        segmentResetCount.incrementAndGet()
++        if (activeProcessor.get() !== p) return
 +        listener?.onSegmentReset(gapMs)
 +    }
++
++    internal fun onRelease(p: Any) {
++        activeProcessor.compareAndSet(p, null)
++    }
 +}
+
 diff --git a/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt b/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt
 new file mode 100644
-index 0000000000000000000000000000000000000000..f128fdca3ce1eb31715662131535f49bc382e05d
+index 0000000000000000000000000000000000000000..e467a4b1c28a05308b5bc33f9822157ea04050d5
 --- /dev/null
 +++ b/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,88 @@
 +package expo.modules.video.utils
 +
++import android.os.SystemClock
 +import androidx.media3.common.audio.AudioProcessor
 +import androidx.media3.common.audio.BaseAudioProcessor
 +import androidx.media3.common.util.UnstableApi
@@ -1308,14 +1324,13 @@ index 0000000000000000000000000000000000000000..f128fdca3ce1eb31715662131535f49b
 + * output so the AudioTrack path is bit-identical whether or not a watch
 + * listener is attached.
 + *
-+ * flush ⇒ suspend (no onPcm until the next queueInput); a >1s wall gap across
-+ * that boundary ⇒ PlayerAudioTap.onSegmentReset so the collector restarts its
-+ * content-time segment after a seek/stall.
++ * queueInput MUST consume the input buffer (advance position to limit):
++ * media3's sink measures consumption by position. A non-consuming copy
++ * loops the same AudioTrack chunk (audible beep).
 + *
 + * queueInput copies through an intermediate byte array: media3's buffer pool
 + * can hand us the SAME buffer as output, and a ByteBuffer put(ByteBuffer) into
-+ * itself throws "The source buffer is this buffer" (CaptureAudioProcessor /
-+ * moto g stylus 5G observation).
++ * itself throws "The source buffer is this buffer".
 + *
 + * Pre-sonic: user processors run before silence-skipping/sonic in
 + * DefaultAudioProcessorChain, so handleBuffer sees original content-rate PCM
@@ -1325,49 +1340,54 @@ index 0000000000000000000000000000000000000000..f128fdca3ce1eb31715662131535f49b
 +class TapAudioProcessor : BaseAudioProcessor() {
 +    private var copyBuf = ByteArray(0)
 +    private var lastBufferWallMs = 0L
-+    private var suspended = false
 +
-+    override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
++    override fun onConfigure(
++        inputAudioFormat: AudioProcessor.AudioFormat,
++    ): AudioProcessor.AudioFormat {
++        // Claim: this sink is now the active one (most-recently-configured).
 +        PlayerAudioTap.onFormat(
++            this,
 +            inputAudioFormat.sampleRate,
 +            inputAudioFormat.channelCount,
 +            inputAudioFormat.encoding,
 +        )
-+        // Format renegotiation is a soft discontinuity — re-enable feeding.
-+        suspended = false
-+        return inputAudioFormat
++        return inputAudioFormat // pass-through: output format == input format
 +    }
 +
-+    // media3 BaseAudioProcessor.flush() is final — the overridable hook is onFlush().
++    // BaseAudioProcessor.flush() is final and invokes onFlush().
 +    override fun onFlush() {
-+        super.onFlush()
-+        // flush ⇒ suspend: no onPcm until the next queueInput.
-+        suspended = true
-+        PlayerAudioTap.onFlush()
++        // Seek/discontinuity. Suspension is the collector's job.
++        PlayerAudioTap.onFlush(this)
++    }
++
++    override fun onReset() {
++        PlayerAudioTap.onRelease(this)
 +    }
 +
 +    override fun queueInput(inputBuffer: ByteBuffer) {
 +        val remaining = inputBuffer.remaining()
 +        if (remaining == 0) {
-+            replaceOutputBuffer(0).flip()
 +            return
 +        }
-+        val now = System.currentTimeMillis()
++        val now = SystemClock.elapsedRealtime()
 +        if (lastBufferWallMs != 0L && now - lastBufferWallMs > SEGMENT_GAP_MS) {
-+            PlayerAudioTap.onSegmentReset(now - lastBufferWallMs)
++            PlayerAudioTap.onSegmentReset(this, now - lastBufferWallMs)
 +        }
 +        lastBufferWallMs = now
 +
-+        if (suspended) {
-+            // First buffer after flush: gap check already ran above.
-+            suspended = false
-+        }
-+        // Duplicate so the listener can read without consuming the input we copy.
-+        PlayerAudioTap.onPcm(inputBuffer.duplicate())
++        // Tee: read-only duplicate — the listener may read but the original
++        // position must remain untouched for OUR consuming read below.
++        PlayerAudioTap.onPcm(this, inputBuffer.duplicate())
 +
-+        // Pass-through copy (pool aliasing — never put buffer into itself).
++        // Consume + pass through. The consuming read MUST advance
++        // inputBuffer.position to its limit: media3's sink measures
++        // consumption by position. A processor that never consumes makes the
++        // sink loop the same input — heard on device as a repeating beep.
++        // The array copy (not a direct put(inputBuffer)) exists because (a)
++        // the output buffer may alias the input (self-put throws) and (b)
++        // the input may be read-only.
 +        if (copyBuf.size < remaining) copyBuf = ByteArray(remaining)
-+        inputBuffer.duplicate().get(copyBuf, 0, remaining)
++        inputBuffer.get(copyBuf, 0, remaining) // advances position to limit
 +        replaceOutputBuffer(remaining).put(copyBuf, 0, remaining).flip()
 +    }
 +
@@ -1376,6 +1396,7 @@ index 0000000000000000000000000000000000000000..f128fdca3ce1eb31715662131535f49b
 +        private const val SEGMENT_GAP_MS = 1_000L
 +    }
 +}
+
 diff --git a/android/src/main/java/expo/modules/video/utils/SecondarySeekHeadMatroskaExtractor.java b/android/src/main/java/expo/modules/video/utils/SecondarySeekHeadMatroskaExtractor.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..8fa7c41176ec2411d79f0b5a26d4f60101a1e124

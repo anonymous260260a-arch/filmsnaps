@@ -69,9 +69,9 @@ import {
 import { PerfSessionTracker } from "../lib/perfMetrics";
 import { setPlayerStruggling } from "expo-subtitle-sync";
 import {
-  startWatchSession,
   stopWatchSession,
   anchorWatchSession,
+  watchSessionStatus,
   WATCH_SYNC_ENABLED,
 } from "../lib/subtitleSync/watchSync";
 import {
@@ -1435,46 +1435,34 @@ export function HevcPlayer({
     };
   }, [countdownActive, goNextEpisode]);
 
-  // ── Stage C: watch-sync session ownership ──
-  // Starts on first frames (when a subtitle may attach), re-anchors after
-  // seeks resolve, and stops on source change / unmount / natural end /
-  // 30-min cap (cap enforced inside watchSync).
-  const watchStartedRef = useRef(false);
+  // ── Stage C: watch-sync session teardown ──
+  // Activation is tap-only (Auto-Sync / watch-sync alternative) — never
+  // auto-started here. HevcPlayer only stops on source change / unmount /
+  // natural end and re-anchors after seeks resolve while a session is active.
   useEffect(() => {
     if (!WATCH_SYNC_ENABLED) return;
     if (!hasStarted || !subtitleKey) {
-      if (watchStartedRef.current) {
-        watchStartedRef.current = false;
+      if (watchSessionStatus().active) {
         stopWatchSession("source-or-unmounted");
       }
       return;
     }
-    if (watchStartedRef.current) return;
-    watchStartedRef.current = true;
-    const fromSec = Math.max(0, adapter.getCurrentTime());
-    void startWatchSession({
-      contentId: subtitleKey,
-      subtitleCacheKey: subtitleKey,
-      fromSec,
-      durationSec: adapter.getDuration(),
-      getSubtitleUri: () => autoAttachedSubtitleRef.current,
-      getPosition: () => adapterRef.current?.getCurrentTime() ?? 0,
-    });
     return () => {
-      if (watchStartedRef.current) {
-        watchStartedRef.current = false;
-        stopWatchSession("effect-cleanup");
+      // Source identity changed (episode/link) or unmount — drop the session.
+      if (watchSessionStatus().active) {
+        stopWatchSession("source-change");
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasStarted, subtitleKey, adapter]);
+  }, [hasStarted, subtitleKey]);
 
-  // Immediate anchor after a user seek resolves (isSeeking true → false).
+  // Immediate anchor after a user seek resolves (isSeeking true → false),
+  // only while a watch session is active (tap-only activation).
   const wasSeekingRef = useRef(false);
   useEffect(() => {
     const iv = setInterval(() => {
       const seeking = adapter.isSeeking?.() ?? false;
-      if (wasSeekingRef.current && !seeking && watchStartedRef.current) {
+      if (wasSeekingRef.current && !seeking && watchSessionStatus().active) {
         const pos = adapterRef.current?.getCurrentTime() ?? 0;
         if (pos > 0) anchorWatchSession(pos);
       }

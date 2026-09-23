@@ -48,7 +48,10 @@ import {
   clearSubtitleChoice,
 } from "../../lib/subtitleCache";
 import { AutoSyncButton, type AutoSyncSourceInfo } from "./AutoSyncButton";
-import { registerWatchApplyHandler } from "../../lib/subtitleSync/watchSync";
+import {
+  registerWatchApplyHandler,
+  startWatchSession,
+} from "../../lib/subtitleSync/watchSync";
 import { File } from "expo-file-system";
 import { parseSubtitles } from "../../lib/subtitleSync/parseSubtitles";
 import {
@@ -569,6 +572,21 @@ function SubtitleSheetInner({
     autoSync?.getDefaultSubtitleUri?.() ??
     null;
 
+  /** Tap-only watch-sync activation (Auto Sync button / cellular alternative). */
+  const startWatchSessionFromTap = async (): Promise<boolean> => {
+    if (!autoSync) return false;
+    const subUri =
+      autoSyncSubtitleUri ?? autoSync.getDefaultSubtitleUri?.() ?? null;
+    return startWatchSession({
+      contentId: autoSync.contentId,
+      subtitleCacheKey: autoSync.contentId,
+      fromSec: Math.max(0, player.getCurrentTime()),
+      durationSec: player.getDuration(),
+      getSubtitleUri: () => subUri,
+      getPosition: () => player.getCurrentTime(),
+    });
+  };
+
   return (
     <Modal
       visible={visible}
@@ -657,7 +675,7 @@ function SubtitleSheetInner({
                 </View>
                 {syncError && <Text style={styles.syncError}>{syncError}</Text>}
 
-                {/* Auto Sync â€” listens to the stream's audio and aligns the subtitle */}
+                {/* Auto Sync — listens to the stream's audio and aligns the subtitle */}
                 {autoSync && (
                   <AutoSyncButton
                     sourceInfo={autoSync.sourceInfo}
@@ -665,6 +683,7 @@ function SubtitleSheetInner({
                     subtitleUri={autoSyncSubtitleUri}
                     subtitleLanguage={selectedTrackLanguage}
                     onSynced={handleAutoSynced}
+                    startWatch={startWatchSessionFromTap}
                   />
                 )}
                 <View style={styles.separator} />

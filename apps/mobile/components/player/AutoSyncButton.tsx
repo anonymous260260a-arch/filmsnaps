@@ -53,9 +53,9 @@ const GATE_REASONS: Record<string, string> = {
 type Props = {
   /** Latest stream info, read at press time (avoids stale closures). */
   sourceInfo: () => AutoSyncSourceInfo;
-  /** Stable identity for caching (series/release level â€” never the URL). */
+  /** Stable identity for caching (series/release level — never the URL). */
   contentId: string;
-  /** file:// URI of the selected external subtitle â€” null = nothing to sync. */
+  /** file:// URI of the selected external subtitle — null = nothing to sync. */
   subtitleUri: string | null;
   /** Language of the selected subtitle (from the sheet track list). */
   subtitleLanguage?: string;
@@ -70,6 +70,12 @@ type Props = {
       label?: string;
     },
   ) => void;
+  /**
+   * Tap-only watch-sync activation (reviewer directive). Invoked on Auto Sync
+   * press and on the cellular "Watch-sync instead" path — never auto-started
+   * from playback. Returns true when a session was (re)started.
+   */
+  startWatch?: () => boolean | Promise<boolean>;
 };
 
 type State = "idle" | "extracting" | "analyzing" | "applied" | "failed";
@@ -183,6 +189,7 @@ export function AutoSyncButton({
   subtitleUri,
   subtitleLanguage,
   onSynced,
+  startWatch,
 }: Props) {
   const [state, setState] = useState<State>("idle");
   const [progress, setProgress] = useState(0);
@@ -190,6 +197,20 @@ export function AutoSyncButton({
   const mounted = useRef(true);
   /** G3: one-shot flag — set when the user accepts the cellular byte dialog. */
   const allowConfirmBytesRef = useRef(false);
+
+  const beginWatchSession = useCallback(async () => {
+    if (!startWatch) return false;
+    try {
+      const ok = await startWatch();
+      if (ok) {
+        console.log("[SubSync] watch: session started from Auto Sync tap");
+      }
+      return ok;
+    } catch (e: any) {
+      console.log(`[SubSync] watch: start failed: ${e?.message ?? e}`);
+      return false;
+    }
+  }, [startWatch]);
 
   useEffect(() => {
     mounted.current = true;
@@ -210,9 +231,13 @@ export function AutoSyncButton({
       return;
     }
 
+    // Tap-only activation: opening Auto Sync arms the live watch session
+    // (production default). The fetch scan below still runs for its own path.
+    await beginWatchSession();
+
     if (!subtitleUri) {
       setState("failed");
-      setMessage("Load a subtitle (online) first â€” sync needs a file.");
+      setMessage("Load a subtitle (online) first — sync needs a file.");
       return;
     }
 
@@ -326,6 +351,7 @@ export function AutoSyncButton({
                   console.log(
                     "[SubSync] cellular: user chose watch-sync piggyback (skip fetch scan)",
                   );
+                  void beginWatchSession();
                   if (mounted.current) {
                     setState("idle");
                     setMessage(
@@ -351,7 +377,7 @@ export function AutoSyncButton({
       // the next attempt (user is asked again if the next window is large).
       allowConfirmBytesRef.current = false;
     }
-  }, [state, subtitleUri, sourceInfo, contentId, onSynced]);
+  }, [state, subtitleUri, sourceInfo, contentId, onSynced, beginWatchSession]);
 
   const iconName =
     state === "idle"
