@@ -105,18 +105,31 @@ let scanAllowConfirmBytes = false;
 /**
  * G4-3: player-aware budget derivation.
  * scanBudget = link − player − 1.0 (SAFETY), floor 0.5, cap 0.6×link.
- * playerMbps: no actual player-throughput meter exists yet (perfMetrics /
- * NetworkMonitor only track rebuffers + speed tests) → fallback 3 Mbps.
+ * I-4: playerMbps now comes from expo-video's PlayerTraffic meter (rolling
+ * 5s via playerThroughputMbps). This constant is only the cold-start
+ * fallback when the meter has no samples yet (-1). Paused player reports 0
+ * → full budget (link − 0 − 1.0).
  */
 const PLAYER_FALLBACK_MBPS = 3.0;
 const BUDGET_SAFETY_MBPS = 1.0;
 const BUDGET_FLOOR_MBPS = 0.5;
 const BUDGET_LINK_CAP_FRACTION = 0.6;
 
+/** I-4: live player throughput for the governor (null = meter unavailable). */
+function livePlayerMbps(): { mbps: number; fallback: boolean } {
+  try {
+    const raw = playerThroughputMbps();
+    if (raw >= 0) return { mbps: raw, fallback: false };
+    return { mbps: PLAYER_FALLBACK_MBPS, fallback: true };
+  } catch {
+    return { mbps: PLAYER_FALLBACK_MBPS, fallback: true };
+  }
+}
+
 function computeScanBudgetMbps(linkMbps: number, playerMbps?: number): number {
   if (!(linkMbps > 0)) return 0;
   const player =
-    typeof playerMbps === "number" && playerMbps > 0
+    typeof playerMbps === "number" && playerMbps >= 0
       ? playerMbps
       : PLAYER_FALLBACK_MBPS;
   const cap = linkMbps * BUDGET_LINK_CAP_FRACTION;
@@ -142,6 +155,7 @@ import {
   onExtractProgress,
   scanStatus,
   cancel,
+  playerThroughputMbps,
 } from "expo-subtitle-sync";
 import { getCachedSpeed } from "../networkSpeedTest";
 
@@ -644,12 +658,15 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
   try {
     const cached = await getCachedSpeed();
     const linkMbps = cached?.speedMbps ?? 0;
-    scanThrottleMbps = computeScanBudgetMbps(linkMbps);
+    // I-4: real player throughput (rolling 5s) instead of a hardcoded 3.0.
+    const player = livePlayerMbps();
+    scanThrottleMbps = computeScanBudgetMbps(linkMbps, player.mbps);
     if (linkMbps > 0) {
       const cap = linkMbps * BUDGET_LINK_CAP_FRACTION;
+      const playerLabel = player.fallback ? "fallback" : player.mbps.toFixed(2);
       console.log(
         `[SubSync] governor: link=${linkMbps.toFixed(2)} ` +
-          `player=${PLAYER_FALLBACK_MBPS.toFixed(2)} ` +
+          `player=${playerLabel} ` +
           `budget=${scanThrottleMbps.toFixed(2)} ` +
           `(floor ${BUDGET_FLOOR_MBPS}, cap ${cap.toFixed(2)}), ` +
           `cellular=${scanCellular}, allowConfirmBytes=${scanAllowConfirmBytes}`,

@@ -62,7 +62,11 @@ function djb2(str: string): number {
 }
 
 function cacheKey(subtitleCacheKey: string, contentId: string): string {
-  return `${KEY_PREFIX}${subtitleCacheKey}:${djb2(contentId)}:${CACHE_NAMESPACE}`;
+  // W1-d: BOTH cache families carry ENGINE_TOKEN so a mark-threshold change
+  // (0.35→0.42) orphans full-result entries the same way it orphans windows —
+  // no manual namespace bump, no stale replay. Previously only the window
+  // family had it (the trap).
+  return `${KEY_PREFIX}${ENGINE_TOKEN}/${subtitleCacheKey}:${djb2(contentId)}:${CACHE_NAMESPACE}`;
 }
 
 function windowCacheKey(

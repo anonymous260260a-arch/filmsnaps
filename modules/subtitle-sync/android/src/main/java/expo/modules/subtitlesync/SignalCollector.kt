@@ -35,8 +35,24 @@ class SignalCollector(
      */
     private val markOnOverride: Float? = null,
     private val markOffOverride: Float? = null,
+    /**
+     * W1-c: carry the speaking latch across a window-complete rebuild
+     * (continuous audio). A seek / resetAll / resetTimeline starts false —
+     * those are new-stream boundaries.
+     */
+    initialSpeaking: Boolean = false,
 ) {
     private val energy = EnergyVad()
+
+    /** W1-e: resolved once so binChunk and the scan-summary log agree. */
+    private val activeMarkOn: Float = markOnOverride ?: MARK_ON
+    private val activeMarkOff: Float = markOffOverride ?: MARK_OFF
+
+    init {
+        log?.invoke(
+            "vad: marks on=${activeMarkOn} off=${activeMarkOff}",
+        )
+    }
 
     /**
      * Bins are indexed relative to this content time (window start - margin).
@@ -53,7 +69,7 @@ class SignalCollector(
     /** Latched after a Silero runtime throw — energy alone for the rest of the window. */
     private var sileroFailed = false
     /** F6 rising-edge hysteresis latch for the Silero mark path (energy path is flat 0.5). */
-    private var sileroMarkOn = false
+    private var sileroMarkOn = initialSpeaking
 
     // Pending 512-sample (32ms) VAD chunk spanning decoder buffer boundaries.
     private val pending = ArrayList<Float>(512)
@@ -110,7 +126,13 @@ class SignalCollector(
         pending.clear()
         pendingStartUs = -1
         if (srcRate > 0) resampler.reset(srcRate)
+        // W1-c: a seek / segment gap is a new stream — the speaking latch
+        // must not carry across it (only window-complete rebuilds preserve it).
+        sileroMarkOn = false
     }
+
+    /** W1-c: current speaking latch, for carrying into a window-roll rebuild. */
+    fun isSpeaking(): Boolean = sileroMarkOn
 
     /**
      * Full reset for an audio-track retry (and, since B5, for rebasing the window
@@ -197,10 +219,9 @@ class SignalCollector(
                 // Ground truths: Luther (clean) error < ~0.2s; Lioness (music-dense)
                 // +0.46s LATE (engine +0.76 -> user ~+0.30); Spider-WEBRip (CAM)
                 // +1.5s LATE (31.80 vs true 30.30).
-                val on = markOnOverride ?: MARK_ON
-                val off = markOffOverride ?: MARK_OFF
-                if (!sileroMarkOn && prob >= on) sileroMarkOn = true
-                else if (sileroMarkOn && prob < off) sileroMarkOn = false
+                // W1-c: instance-resolved values (override or companion default).
+                if (!sileroMarkOn && prob >= activeMarkOn) sileroMarkOn = true
+                else if (sileroMarkOn && prob < activeMarkOff) sileroMarkOn = false
                 if (sileroMarkOn) {
                     sileroSpeechChunks++
                     maxBinSilero = mark(binsSilero, chunkStartUs, maxBinSilero)

@@ -29,6 +29,7 @@ import type {
 import { detectKind, isHlsOrDash } from "../../lib/subtitleSync/source";
 import { autoSync, cancelAutoSync } from "../../lib/subtitleSync/autoSync";
 import type { SubFormat, SyncOutcome } from "../../lib/subtitleSync/types";
+import { downloadToast } from "../DownloadToast";
 
 export type AutoSyncSourceInfo = {
   uri: string;
@@ -309,6 +310,12 @@ export function AutoSyncButton({
               `Synced ${outcome.offsetMs > 0 ? "+" : "−"}${Math.abs(outcome.offsetMs / 1000).toFixed(2)}s` +
                 (outcome.confidence < 0.6 ? " — low confidence, verify" : ""),
           );
+          // I-2: fetch-path correction (notice present) also surfaces as a toast
+          // so the outcome is visible after the sheet closes. First-apply and
+          // plain offsets stay on the button (sheet is open during fetch).
+          if (outcome.notice) {
+            downloadToast.info(outcome.notice);
+          }
           onSynced(outcome.offsetMs, outcome.confidence, outcome.rewritten);
           break;
         case "rewritten":

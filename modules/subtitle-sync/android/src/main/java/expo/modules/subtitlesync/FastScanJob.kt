@@ -151,6 +151,8 @@ class FastScanJob(
         private var throttledSleepMs = 0L
         private var lastLogAt = 0L
         private var precharged = false
+        /** I-3: wall-clock anchor for the delivered-vs-budget invariant. */
+        private var wallStartMs = 0L
 
         val budgetActive: Boolean get() = budgetBytesPerSec > 0
 
@@ -166,6 +168,7 @@ class FastScanJob(
                 if (precharged) return
                 precharged = true
                 windowStart = SystemClock.elapsedRealtime()
+                wallStartMs = windowStart
                 windowBytes = 0
             }
         }
@@ -176,7 +179,10 @@ class FastScanJob(
                 totalBytes += n
                 windowBytes += n
                 val now = SystemClock.elapsedRealtime()
-                if (windowStart == 0L) windowStart = now
+                if (windowStart == 0L) {
+                    windowStart = now
+                    wallStartMs = now
+                }
                 val elapsed = now - windowStart
                 if (elapsed >= THROTTLE_WINDOW_MS) {
                     closeWindow(elapsed, now)
@@ -189,13 +195,27 @@ class FastScanJob(
             }
         }
 
-        /** G4-2 final summary — call once when the scan thread exits. */
+        /**
+         * G4-2 final summary — call once when the scan thread exits.
+         * I-3: appends the delivered-vs-budget invariant so under-delivery
+         * (ratio < 0.9) is visible in one line without re-deriving from
+         * separate read/slept/wall fields.
+         */
         fun logFinal() {
             if (!budgetActive || totalBytes == 0L) return
             synchronized(this) {
+                val wallMs = if (wallStartMs > 0) SystemClock.elapsedRealtime() - wallStartMs else 0L
+                val budgetMbps = budgetBytesPerSec * 8.0 / 1_000_000.0
+                val deliveredMbps =
+                    if (wallMs > 0) totalBytes * 8.0 / (wallMs / 1000.0) / 1_000_000.0 else 0.0
+                val ratio = if (budgetMbps > 0) deliveredMbps / budgetMbps else 0.0
+                val flag = if (ratio < 0.9) "UNDER" else "OK"
                 d(
                     "throttle: done budget=${mbps(budgetBytesPerSec)} Mbps " +
+                        "delivered=${"%.2f".format(java.util.Locale.US, deliveredMbps)} Mbps " +
+                        "ratio=${"%.2f".format(java.util.Locale.US, ratio)} ($flag @0.9) " +
                         "read=${totalBytes / (1024.0 * 1024.0)}MB " +
+                        "wall=${wallMs}ms " +
                         "throttled=${throttledBytes / (1024.0 * 1024.0)}MB " +
                         "slept=${throttledSleepMs}ms"
                 )
@@ -205,6 +225,8 @@ class FastScanJob(
         /**
          * Close a 1s+ window: ALWAYS enforce overage sleep first (G4-1 — the
          * old path reset without sleeping), then rate-limit the log (G4-2).
+         * I-3: windowStart advances to AFTER the sleep so the slept time is
+         * not double-counted as delivery time in the next window.
          */
         private fun closeWindow(elapsedMs: Long, now: Long) {
             val allowed = budgetBytesPerSec * (elapsedMs / 1000.0)
@@ -226,17 +248,24 @@ class FastScanJob(
                     )
                 }
             }
-            windowStart = now
+            // Re-anchor at the post-sleep clock so slept time doesn't count as
+            // delivery time (I-3: the 250ms ceiling on tiny overages was the
+            // main under-delivery source — 4.58 vs 6.84 budget on device).
+            windowStart = SystemClock.elapsedRealtime()
             windowBytes = 0
         }
 
-        /** Sleep in 250ms steps for [overBytes] of budget debt. */
+        /**
+         * Sleep for [overBytes] of budget debt.
+         * I-3: sleep the EXACT overage (250ms is only the step size for
+         * interruptible sleeps) — the old ceiling rounded every tiny overage
+         * UP to ≥250ms, which chronic-under-delivered the grant.
+         */
         private fun enforceSleep(overBytes: Double) {
             if (overBytes <= 0 || !budgetActive) return
             val overMs = (overBytes / budgetBytesPerSec * 1000.0).toLong()
             if (overMs <= 0) return
-            val sleep = ((overMs + THROTTLE_SLEEP_MS - 1) / THROTTLE_SLEEP_MS) * THROTTLE_SLEEP_MS
-            var remaining = sleep
+            var remaining = overMs
             while (remaining > 0 && !cancelled.get()) {
                 val step = minOf(remaining, THROTTLE_SLEEP_MS)
                 Thread.sleep(step)

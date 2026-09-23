@@ -237,6 +237,13 @@ class SubtitleSyncModule : Module() {
             true
         }
 
+        // I-4: rolling player-throughput (Mbps) from expo-video's
+        // PlayerTraffic meter (fed by every PlayerHttp response body read).
+        // Returns -1 when no samples yet → JS uses PLAYER_FALLBACK_MBPS.
+        Function("playerThroughputMbps") {
+            expo.modules.video.PlayerTraffic.mbpsLast5s()
+        }
+
         // ─── Stage B: watch-sync (third slot — NOT gated by awaitIdle) ───
         // activateWatchSync / watchAnchor / stopWatchSync + onWatchSignal.
         // Lives outside job/scanJob so a concurrent fetch scan is allowed.

@@ -191,6 +191,20 @@ export function tapProbe(): TapProbeSnapshot {
   return SubtitleSyncModule.tapProbe();
 }
 
+/**
+ * I-4: rolling player-throughput in Mbps over the last 5s (from expo-video's
+ * PlayerTraffic meter). Returns -1 when no samples yet (cold start) — callers
+ * should fall back to a fixed estimate. Returns 0 when the player is paused
+ * or idle (no bytes in the window).
+ */
+export function playerThroughputMbps(): number {
+  try {
+    return SubtitleSyncModule.playerThroughputMbps();
+  } catch {
+    return -1;
+  }
+}
+
 /** Zero the tap counters so a rate measurement starts clean. */
 export function tapProbeReset(): void {
   SubtitleSyncModule.tapProbeReset();

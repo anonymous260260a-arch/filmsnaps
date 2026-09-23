@@ -1385,6 +1385,11 @@ export function HevcPlayer({
     console.log(
       `[Flow] player: active source → #${activeLinkIndex} ${currentLink?.quality ?? ""} ${url?.slice(0, 60)}`,
     );
+    // I-1: a real URL/source switch is an allowed stop — but only here (where
+    // urlChanged is proven), never from hasStarted flicker alone.
+    if (watchSessionStatus().active) {
+      stopWatchSession("source-change");
+    }
     setHasStarted(false);
     hasPlayedRef.current = false;
     lastSavedPositionRef.current = 0;
@@ -1439,22 +1444,27 @@ export function HevcPlayer({
   // Activation is tap-only (Auto-Sync / watch-sync alternative) — never
   // auto-started here. HevcPlayer only stops on source change / unmount /
   // natural end and re-anchors after seeks resolve while a session is active.
+  //
+  // I-1: `hasStarted` can flip false transiently (source-select reset at
+  // :541, URL-change effect at :1388) WITHOUT a real content change. The
+  // session is keyed by subtitleKey (media identity) — only stop when that
+  // identity actually changes or the player is going away, never on a
+  // hasStarted flicker (sheet open/close never touches either).
+  const watchContentKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!WATCH_SYNC_ENABLED) return;
-    if (!hasStarted || !subtitleKey) {
-      if (watchSessionStatus().active) {
-        stopWatchSession("source-or-unmounted");
-      }
-      return;
+    const prev = watchContentKeyRef.current;
+    if (prev !== null && prev !== subtitleKey && watchSessionStatus().active) {
+      // Real content change (episode/media) — allowed stop.
+      stopWatchSession("source-change");
     }
-    return () => {
-      // Source identity changed (episode/link) or unmount — drop the session.
-      if (watchSessionStatus().active) {
-        stopWatchSession("source-change");
-      }
-    };
+    watchContentKeyRef.current = subtitleKey;
+    if (!subtitleKey && watchSessionStatus().active) {
+      // Lost the content identity entirely (media unmounted mid-session).
+      stopWatchSession("source-or-unmounted");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasStarted, subtitleKey]);
+  }, [subtitleKey]);
 
   // Immediate anchor after a user seek resolves (isSeeking true → false),
   // only while a watch session is active (tap-only activation).

@@ -230,10 +230,18 @@ class WatchCollector(
             samplesPushed += frames
 
             if (c.windowComplete()) {
+                // W1-c: continuous audio across a window roll — carry the
+                // speaking latch so a mid-utterance boundary does not drop
+                // the first chunk of the next window.
+                val speaking = c.isSpeaking()
                 emitLocked(force = true, reason = "window-complete")
                 if (active) {
                     val nextFromUs = c.lastDecodedUs.coerceAtLeast(anchorUs)
-                    rebuildLocked(nextFromUs / 1_000_000.0, WATCH_WINDOW_SEC)
+                    rebuildLocked(
+                        nextFromUs / 1_000_000.0,
+                        WATCH_WINDOW_SEC,
+                        carrySpeaking = speaking,
+                    )
                     log(
                         "watch: rolled window at ${"%.1f".format(java.util.Locale.US, nextFromUs / 1_000_000.0)}s " +
                             "(emits=$emits)"
@@ -254,7 +262,11 @@ class WatchCollector(
         silero?.reset()
     }
 
-    private fun rebuildLocked(fromSec: Double, windowSec: Double) {
+    private fun rebuildLocked(
+        fromSec: Double,
+        windowSec: Double,
+        carrySpeaking: Boolean = false,
+    ) {
         val fromUs = (fromSec * 1_000_000).toLong()
         val toUs = ((fromSec + windowSec) * 1_000_000).toLong()
         anchorUs = fromUs
@@ -269,6 +281,7 @@ class WatchCollector(
             log = { msg -> log("watch: $msg") },
             markOnOverride = vadMarkOn,
             markOffOverride = vadMarkOff,
+            initialSpeaking = carrySpeaking,
         )
         if (srcRate > 0) {
             collector?.onFormatChanged(srcRate, channels, pcmEncoding)

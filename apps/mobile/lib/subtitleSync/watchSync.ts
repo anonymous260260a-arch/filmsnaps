@@ -38,6 +38,7 @@ import {
   onWatchSignal,
   type WatchSignalEvent,
 } from "expo-subtitle-sync";
+import { downloadToast } from "../../components/DownloadToast";
 
 /**
  * JS kill-switch: set false to disable watch-sync entirely (no native activate,
@@ -362,6 +363,24 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
     }
     s.appliedMs = targetMs;
 
+    // I-2: surface the outcome to the user even with the sheet closed — the
+    // session owner owns the toast (first apply + every correction).
+    try {
+      const signed = `${targetMs >= 0 ? "+" : "−"}${Math.abs(targetMs / 1000).toFixed(2)}s`;
+      if (kind === "first") {
+        downloadToast.success(`Subtitles synced (${signed})`);
+      } else if (priorAppliedMs != null) {
+        const delta = (targetMs - priorAppliedMs) / 1000;
+        downloadToast.info(
+          `Subtitles adjusted by ${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(2)}s`,
+        );
+      } else {
+        downloadToast.info(`Subtitles synced (${signed})`);
+      }
+    } catch {
+      // toast is best-effort
+    }
+
     // Cache so a later fetch-path Auto Sync can short-circuit.
     try {
       const contentKey = `${s.contentId}:${Math.round(s.durationSec)}`;
@@ -409,6 +428,17 @@ export async function startWatchSession(
   if (!WATCH_SYNC_ENABLED) {
     console.log("[SubSync] watch: WATCH_SYNC_ENABLED=false - not starting");
     return false;
+  }
+  // Idempotent restart: an already-active session for the SAME content keeps
+  // its applied offset / refinement budget — only re-anchor to the current
+  // position. A different contentId still gets a full stop+start.
+  const existing = session;
+  if (existing && !existing.stopped && existing.contentId === opts.contentId) {
+    console.log(
+      `[SubSync] watch: session already active for ${opts.contentId} - re-anchoring (idempotent restart)`,
+    );
+    anchorWatchSession(Math.max(0, opts.fromSec));
+    return true;
   }
   stopWatchSession("restart");
   try {

@@ -22,8 +22,11 @@ export const MARK_OFF = 0.25;
 export const ONSET_BINNING = false;
 
 /**
- * Engine identity token embedded in the window-cache key. Derived from the
- * mark thresholds so a threshold change automatically orphans old entries
- * (no second place to remember to bump). Format: m<on*100>-<off*100>.
+ * Engine identity token embedded in BOTH cache keys (window + full-result).
+ * Derived from the mark thresholds so a threshold change automatically orphans
+ * old entries (no second place to remember to bump). Format: m<on*100>-<off*100>.
+ * W1-d: a non-default ONSET_BINNING joins the token (escalation flag).
  */
-export const ENGINE_TOKEN = `m${Math.round(MARK_ON * 100)}-${Math.round(MARK_OFF * 100)}`;
+export const ENGINE_TOKEN = `m${Math.round(MARK_ON * 100)}-${Math.round(MARK_OFF * 100)}${
+  ONSET_BINNING ? "-ob" : ""
+}`;

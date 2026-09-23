@@ -394,10 +394,10 @@ index 0000000000000000000000000000000000000000..d9e10a0056bcbf0360c1fe27f0c9df41
 +  }
 +}
 diff --git a/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt b/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
-index 460fb7bf3d81aa80951f2086de0e31211f9cec0a..b683f6c6ca5764f0131ef8dbbd599165fd29ea25 100644
+index 460fb7bf3d81aa80951f2086de0e31211f9cec0a..f8adf5459dfe81a4faa09a3c94d422d431270cad 100644
 --- a/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
 +++ b/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
-@@ -13,7 +13,163 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+@@ -13,7 +13,217 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
  import androidx.media3.exoplayer.source.MediaSource
  import expo.modules.video.records.VideoSource
  import expo.modules.video.managers.VideoManager
@@ -427,6 +427,59 @@ index 460fb7bf3d81aa80951f2086de0e31211f9cec0a..b683f6c6ca5764f0131ef8dbbd599165
 +private const val TRAFFIC_CHUNK_BYTES = 2L * 1024 * 1024
 +
 +/**
++ * I-4: process-wide rolling player-throughput meter.
++ *
++ * Fed by every CountingBody read (all player HTTP traffic shares
++ * PlayerHttp.client). Exposed to JS via expo-subtitle-sync's
++ * playerThroughputMbps() so the scan governor can use a real player
++ * number instead of the hardcoded 3.0 fallback.
++ *
++ * Returns:
++ *   >= 0  — measured Mbps over the last [WINDOW_NS] (0 when paused/idle)
++ *   -1    — no samples yet (cold start) → caller uses the fallback
++ */
++object PlayerTraffic {
++  private const val WINDOW_NS = 5_000_000_000L
++  private val lock = Any()
++  private val history = ArrayDeque<Pair<Long, Long>>() // (nanoTime, cumulativeBytes)
++  private var totalBytes = 0L
++
++  fun onBytes(n: Long) {
++    synchronized(lock) {
++      val now = System.nanoTime()
++      totalBytes += n
++      history.addLast(now to totalBytes)
++      while (history.size > 1 && now - history.first.first > WINDOW_NS) {
++        history.removeFirst()
++      }
++    }
++  }
++
++  /** Rolling-window Mbps, or -1 when no samples have ever been recorded. */
++  fun mbpsLast5s(): Double {
++    synchronized(lock) {
++      if (totalBytes == 0L || history.size < 2) return -1.0
++      val now = System.nanoTime()
++      while (history.size > 1 && now - history.first.first > WINDOW_NS) {
++        history.removeFirst()
++      }
++      val (t0, b0) = history.first
++      val (t1, b1) = history.last
++      val dtSec = (t1 - t0) / 1e9
++      if (dtSec <= 0.0) return -1.0
++      return (b1 - b0) * 8.0 / dtSec / 1e6
++    }
++  }
++
++  fun reset() {
++    synchronized(lock) {
++      history.clear()
++      totalBytes = 0L
++    }
++  }
++}
++
++/**
 + * Counts bytes delivered through a response body and logs the rate every
 + * ~2MB and on close, tagged with the requested Range offset. Distinguishes a
 + * slow source (low KB/s while buffers run dry) from a slow extract/read loop
@@ -451,6 +504,7 @@ index 460fb7bf3d81aa80951f2086de0e31211f9cec0a..b683f6c6ca5764f0131ef8dbbd599165
 +        val read = super.read(sink, byteCount)
 +        if (read > 0) {
 +          val total = bytesRead.addAndGet(read)
++          PlayerTraffic.onBytes(read)
 +          if (total - chunkStartBytes >= TRAFFIC_CHUNK_BYTES) {
 +            logChunk(total)
 +          }
