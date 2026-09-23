@@ -21,6 +21,12 @@ import androidx.media3.extractor.ts.TsExtractor
 import expo.modules.video.PlayerHttp
 import expo.modules.video.utils.CustomExtractorsFactory
 import java.io.IOException
+import java.util.concurrent.Callable
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -494,7 +500,9 @@ class FastScanJob(
         }
         val collector = SignalCollector(fromUs, toUs, silero, log = { msg -> d(msg) })
         val decoder = AudioDecoder(collector) { d("dec: $it") }
-        val keyCache = HashMap<String, ByteArray>()
+        // ConcurrentHashMap: fetch workers share the AES key cache with the
+        // playlist/key path on the scan thread.
+        val keyCache = ConcurrentHashMap<String, ByteArray>()
 
         try {
             phase = "playlist"
@@ -542,116 +550,132 @@ class FastScanJob(
             for (i in 0 until firstIdx) segStart += pl.segments[i].durationUs
 
             var lastClaim = "-"
-        for (i in firstIdx..lastIdx) {
-                if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
-                if (SystemClock.elapsedRealtime() - t0 > BUDGET_MS) {
-                    d("budget exhausted at seg $i")
-                    break
-                }
-
-                phase = "fetching seg $i"
-                val seg = pl.segments[i]
-                val segT0 = SystemClock.elapsedRealtime()
-                val raw = try {
-                    HlsPlaylistParser.fetchSegment(seg, headers, keyCache)
-                } catch (e: PlaylistProbe.PlaylistError) {
-                    return ExtractResult.Error(e.code, e.message ?: "segment fetch failed")
-                }
-                d("seg[$i] ${seg.url.substringAfterLast('/')} ${raw.size}B in ${SystemClock.elapsedRealtime() - segT0}ms @${segStart / 1000}ms")
-                val data = if (initBytes != null) initBytes + raw else raw
-
-                phase = "decoding seg $i"
-                val tap = AudioTapOutput(decoder)
-                tap.reset()
-                tap.beginSegment(segStart, pinFirst = true)
-                collector.resetTimeline()
-                val output = TapExtractorOutput(
-                    decoder,
-                    tap,
-                    preferredLang = preferredLang,
-                    onTrace = { d(it) },
-                )
-
-                // fMP4 with an init map: the concatenated [init+segment] stream is
-                // always FragmentedMp4. Otherwise sniff the segment itself with a
-                // FRESH extractor battery (extractors are stateful - never reuse
-                // one across segments after END_OF_INPUT).
-                val extractor: Extractor = if (initBytes != null) {
-                    FragmentedMp4Extractor()
-                } else {
-                    val sniffDs = ByteArrayDataSource2(data).apply { open(DataSpec.Builder().setUri(Uri.EMPTY).build()) }
-                    val sniffInput = DefaultExtractorInput(sniffDs, 0, data.size.toLong())
-                    var found: Extractor? = null
-                    for (e in freshBattery()) {
-                        try {
-                            sniffInput.resetPeekPosition()
-                            if (e.sniff(sniffInput)) {
-                                found = e
-                                break
-                            }
-                        } catch (_: IOException) {}
-                    }
-                    found ?: run {
-                        d("seg[$i]: NO extractor matched (first bytes: ${data.take(8).joinToString(" ") { "%02x".format(it) }})")
-                        return ExtractResult.Error(
-                            "unsupported-format",
-                            "no extractor matched HLS segment ${seg.url}",
-                        )
-                    }
-                }
-                extractor.init(output)
-                if (i == firstIdx) d("seg[$i] extractor=${extractor.javaClass.simpleName}")
-
-                // Length UNSET (not data.size): with a known length TsExtractor's
-                // duration reader binary-searches the truncated stream for PCR
-                // timestamps and seek-loops forever. Unknown length -> it skips
-                // duration detection and starts parsing packets immediately.
-                var segInput: ExtractorInput = DefaultExtractorInput(
-                    ByteArrayDataSource2(data).apply { open(DataSpec.Builder().setUri(Uri.EMPTY).build()) },
-                    0, C.LENGTH_UNSET.toLong(),
-                )
-                val holder = PositionHolder()
-                var eof = false
-                var segReads = 0L
-                var segSeeks = 0L
-                while (!eof && !cancelled.get()) {
-                    segReads++
-                    if (segReads > 200_000) {
-                        d("seg[$i]: read-loop cap hit ($segReads reads, $segSeeks seeks) - continuing with what we have")
+            var decodeTotalMs = 0L
+            var segsDecoded = 0
+            val prefetch = HlsSegmentPrefetch(firstIdx, lastIdx, pl.segments, headers, keyCache, cancelled) { msg ->
+                d(msg)
+            }
+            val loopT0 = SystemClock.elapsedRealtime()
+            try {
+                for (i in firstIdx..lastIdx) {
+                    if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
+                    if (SystemClock.elapsedRealtime() - t0 > BUDGET_MS) {
+                        d("budget exhausted at seg $i")
                         break
                     }
-                    when (extractor.read(segInput, holder)) {
-                        Extractor.RESULT_SEEK -> {
-                            segSeeks++
-                            if (segSeeks > 50) {
-                                d("seg[$i]: seek loop detected ($segSeeks seeks to byte ${holder.position}) - continuing with what we have")
-                                break
-                            }
-                            // Extractors don't seek within a fully-buffered segment;
-                            // restart at the requested byte offset.
-                            val ds2 = ByteArrayDataSource2(data).apply { open(DataSpec.Builder().setUri(Uri.EMPTY).build()) }
-                            segInput = DefaultExtractorInput(ds2, holder.position, C.LENGTH_UNSET.toLong())
-                        }
-                        Extractor.RESULT_END_OF_INPUT -> eof = true
-                    }
-                    if (decoder.drain(8)) break
-                    if (decoder.error != null) return decoder.error!!
-                }
-                if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
-                if (decoder.error != null) return decoder.error!!
-                if (i == firstIdx) {
-                    d(
-                        "seg[$i] decoded: tap=${tap.samplesTapped} tracks=${output.trackSummary()} " +
-                            "dec=${decoder.diagnostics()} span=${collector.decodedSpanUs() / 1000}ms"
-                    )
-                }
-                lastClaim = output.claimedSummary()
-                if (collector.windowComplete()) break
 
-                segStart += seg.durationUs
-                val p = ((segStart - fromUs).toFloat() / (toUs - fromUs).toFloat()).coerceIn(0.01f, 1f)
-                if (p > progressHint) progressHint = p
-                onProgress(p)
+                    phase = "fetching seg $i"
+                    val seg = pl.segments[i]
+                    val raw = try {
+                        prefetch.await(i)
+                    } catch (e: PlaylistProbe.PlaylistError) {
+                        if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
+                        return ExtractResult.Error(e.code, e.message ?: "segment fetch failed")
+                    }
+                    val segFetchMs = prefetch.takeFetchMs(i)
+                    d("seg[$i] ${seg.url.substringAfterLast('/')} ${raw.size}B in ${segFetchMs}ms @${segStart / 1000}ms")
+                    val data = if (initBytes != null) initBytes + raw else raw
+
+                    phase = "decoding seg $i"
+                    val decodeT0 = SystemClock.elapsedRealtime()
+                    val tap = AudioTapOutput(decoder)
+                    tap.reset()
+                    tap.beginSegment(segStart, pinFirst = true)
+                    collector.resetTimeline()
+                    val output = TapExtractorOutput(
+                        decoder,
+                        tap,
+                        preferredLang = preferredLang,
+                        onTrace = { d(it) },
+                    )
+
+                    // fMP4 with an init map: the concatenated [init+segment] stream is
+                    // always FragmentedMp4. Otherwise sniff the segment itself with a
+                    // FRESH extractor battery (extractors are stateful - never reuse
+                    // one across segments after END_OF_INPUT).
+                    val extractor: Extractor = if (initBytes != null) {
+                        FragmentedMp4Extractor()
+                    } else {
+                        val sniffDs = ByteArrayDataSource2(data).apply { open(DataSpec.Builder().setUri(Uri.EMPTY).build()) }
+                        val sniffInput = DefaultExtractorInput(sniffDs, 0, data.size.toLong())
+                        var found: Extractor? = null
+                        for (e in freshBattery()) {
+                            try {
+                                sniffInput.resetPeekPosition()
+                                if (e.sniff(sniffInput)) {
+                                    found = e
+                                    break
+                                }
+                            } catch (_: IOException) {}
+                        }
+                        found ?: run {
+                            d("seg[$i]: NO extractor matched (first bytes: ${data.take(8).joinToString(" ") { "%02x".format(it) }})")
+                            return ExtractResult.Error(
+                                "unsupported-format",
+                                "no extractor matched HLS segment ${seg.url}",
+                            )
+                        }
+                    }
+                    extractor.init(output)
+                    if (i == firstIdx) d("seg[$i] extractor=${extractor.javaClass.simpleName}")
+
+                    // Length UNSET (not data.size): with a known length TsExtractor's
+                    // duration reader binary-searches the truncated stream for PCR
+                    // timestamps and seek-loops forever. Unknown length -> it skips
+                    // duration detection and starts parsing packets immediately.
+                    var segInput: ExtractorInput = DefaultExtractorInput(
+                        ByteArrayDataSource2(data).apply { open(DataSpec.Builder().setUri(Uri.EMPTY).build()) },
+                        0, C.LENGTH_UNSET.toLong(),
+                    )
+                    val holder = PositionHolder()
+                    var eof = false
+                    var segReads = 0L
+                    var segSeeks = 0L
+                    while (!eof && !cancelled.get()) {
+                        segReads++
+                        if (segReads > 200_000) {
+                            d("seg[$i]: read-loop cap hit ($segReads reads, $segSeeks seeks) - continuing with what we have")
+                            break
+                        }
+                        when (extractor.read(segInput, holder)) {
+                            Extractor.RESULT_SEEK -> {
+                                segSeeks++
+                                if (segSeeks > 50) {
+                                    d("seg[$i]: seek loop detected ($segSeeks seeks to byte ${holder.position}) - continuing with what we have")
+                                    break
+                                }
+                                // Extractors don't seek within a fully-buffered segment;
+                                // restart at the requested byte offset.
+                                val ds2 = ByteArrayDataSource2(data).apply { open(DataSpec.Builder().setUri(Uri.EMPTY).build()) }
+                                segInput = DefaultExtractorInput(ds2, holder.position, C.LENGTH_UNSET.toLong())
+                            }
+                            Extractor.RESULT_END_OF_INPUT -> eof = true
+                        }
+                        if (decoder.drain(8)) break
+                        if (decoder.error != null) return decoder.error!!
+                    }
+                    decodeTotalMs += SystemClock.elapsedRealtime() - decodeT0
+                    segsDecoded++
+                    if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
+                    if (decoder.error != null) return decoder.error!!
+                    if (i == firstIdx) {
+                        d(
+                            "seg[$i] decoded: tap=${tap.samplesTapped} tracks=${output.trackSummary()} " +
+                                "dec=${decoder.diagnostics()} span=${collector.decodedSpanUs() / 1000}ms"
+                        )
+                    }
+                    lastClaim = output.claimedSummary()
+                    if (collector.windowComplete()) break
+
+                    segStart += seg.durationUs
+                    val p = ((segStart - fromUs).toFloat() / (toUs - fromUs).toFloat()).coerceIn(0.01f, 1f)
+                    if (p > progressHint) progressHint = p
+                    onProgress(p)
+                }
+            } finally {
+                val wallMs = SystemClock.elapsedRealtime() - loopT0
+                prefetch.logStats(wallMs, decodeTotalMs, segsDecoded)
+                prefetch.shutdown()
             }
 
             if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
@@ -674,6 +698,156 @@ class FastScanJob(
             return classifyIo(e)
         } finally {
             decoder.releaseCodec()
+        }
+    }
+
+    // ------------------------------------------------------------------
+
+    /**
+     * Bounded HLS segment prefetch: two worker threads fetch/decrypt up to
+     * [LOOK_AHEAD] segments ahead while the scan thread decodes in index order.
+     * AES-128 decrypt runs inside fetchSegment (worker returns plaintext).
+     *
+     * Failure: a failed fetch is surfaced to await() with the same
+     * PlaylistError codes as the sequential path — never dropped silently.
+     * A "network" failure under parallel fetch is retried once on the consumer
+     * thread after flipping to sequential (some CDNs cap concurrent connections).
+     */
+    private class HlsSegmentPrefetch(
+        private val firstIdx: Int,
+        private val lastIdx: Int,
+        private val segments: List<HlsSegment>,
+        private val headers: Map<String, String>,
+        private val keyCache: MutableMap<String, ByteArray>,
+        private val cancelled: AtomicBoolean,
+        private val log: (String) -> Unit,
+    ) {
+        companion object {
+            /** Segments the consumer may be ahead of decode (ring ≈ 4 slots). */
+            private const val LOOK_AHEAD = 2
+            private const val WORKERS = 2
+        }
+
+        private val pending = ConcurrentHashMap<Int, Future<ByteArray>>()
+        private val fetchMsBySeg = ConcurrentHashMap<Int, Long>()
+        private val executor = Executors.newFixedThreadPool(WORKERS) { r ->
+            Thread(r, "hls-prefetch").also { it.isDaemon = true }
+        }
+        private val lock = Any()
+        private var nextToSubmit = firstIdx
+        @Volatile private var sequential = false
+        private var fetchCount = 0
+        private var fetchTotalMs = 0L
+
+        fun await(i: Int): ByteArray {
+            if (sequential) return fetchSequential(i)
+            submitAhead(i)
+            val fut = pending.remove(i) ?: return fetchSequential(i)
+            try {
+                return fut.get()
+            } catch (e: ExecutionException) {
+                val cause = e.cause
+                if (cause is PlaylistProbe.PlaylistError) {
+                    if (cause.code == "network") {
+                        log("hls prefetch: connection-cap with 2 in-flight - falling back to sequential")
+                        sequential = true
+                        cancelRemaining()
+                        return fetchSequential(i)
+                    }
+                    throw cause
+                }
+                if (cancelled.get()) {
+                    throw PlaylistProbe.PlaylistError("cancelled", "cancelled")
+                }
+                throw PlaylistProbe.PlaylistError(
+                    "network",
+                    cause?.message ?: "segment prefetch failed",
+                )
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw PlaylistProbe.PlaylistError("cancelled", "cancelled")
+            }
+        }
+
+        fun takeFetchMs(i: Int): Long = fetchMsBySeg.remove(i) ?: -1L
+
+        fun logStats(wallMs: Long, decodeTotalMs: Long, segs: Int) {
+            if (segs <= 0) return
+            val fetchAvg = fetchTotalMs / segs
+            val decodeAvg = decodeTotalMs / segs
+            val overlapSaved = (fetchTotalMs + decodeTotalMs) - wallMs
+            log(
+                "hls prefetch: $segs segs, fetch avg/total ${fetchAvg}/${fetchTotalMs}ms, " +
+                    "decode-avg ${decodeAvg}ms, overlap saved ~${overlapSaved}ms" +
+                    if (sequential) " (sequential fallback)" else ""
+            )
+        }
+
+        fun shutdown() {
+            cancelRemaining()
+            executor.shutdownNow()
+            try {
+                executor.awaitTermination(2, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+
+        private fun cancelRemaining() {
+            for ((_, fut) in pending) {
+                fut.cancel(true)
+            }
+            pending.clear()
+        }
+
+        private fun submitAhead(consumerIdx: Int) {
+            synchronized(lock) {
+                val limit = minOf(consumerIdx + LOOK_AHEAD, lastIdx)
+                while (nextToSubmit <= limit) {
+                    val idx = nextToSubmit++
+                    if (cancelled.get()) return
+                    pending[idx] = executor.submit(Callable {
+                        val t0 = SystemClock.elapsedRealtime()
+                        try {
+                            if (cancelled.get()) {
+                                throw PlaylistProbe.PlaylistError("cancelled", "cancelled")
+                            }
+                            // fetchSegment downloads + AES-128 decrypts → plaintext.
+                            val bytes = HlsPlaylistParser.fetchSegment(segments[idx], headers, keyCache)
+                            val ms = SystemClock.elapsedRealtime() - t0
+                            fetchMsBySeg[idx] = ms
+                            synchronized(this) {
+                                fetchCount++
+                                fetchTotalMs += ms
+                            }
+                            bytes
+                        } catch (e: PlaylistProbe.PlaylistError) {
+                            throw e
+                        } catch (e: Exception) {
+                            throw PlaylistProbe.PlaylistError(
+                                "network",
+                                e.message ?: "segment prefetch failed",
+                            )
+                        }
+                    })
+                }
+            }
+        }
+
+        private fun fetchSequential(i: Int): ByteArray {
+            val t0 = SystemClock.elapsedRealtime()
+            val bytes = try {
+                HlsPlaylistParser.fetchSegment(segments[i], headers, keyCache)
+            } catch (e: PlaylistProbe.PlaylistError) {
+                throw e
+            }
+            val ms = SystemClock.elapsedRealtime() - t0
+            fetchMsBySeg[i] = ms
+            synchronized(this) {
+                fetchCount++
+                fetchTotalMs += ms
+            }
+            return bytes
         }
     }
 

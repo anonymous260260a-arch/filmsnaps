@@ -232,21 +232,24 @@ object HlsPlaylistParser {
 
             if (seg.keyMethod == "AES-128") {
                 val keyUrl = seg.keyUrl ?: throw PlaylistProbe.PlaylistError("unsupported-format", "AES-128 without key URI")
-                val key = keyCache.getOrPut(keyUrl) {
-                    val kc = URL(keyUrl).openConnection() as java.net.HttpURLConnection
-                    try {
-                        kc.connectTimeout = 10_000
-                        kc.readTimeout = 10_000
-                        kc.requestMethod = "GET"
-                        headers.forEach(kc::setRequestProperty)
-                        if (kc.responseCode !in 200..299) {
-                            throw PlaylistProbe.PlaylistError("network", "HTTP ${kc.responseCode} fetching key")
+                // synchronized: HLS prefetch workers share this cache with the scan thread.
+                val key = synchronized(keyCache) {
+                    keyCache.getOrPut(keyUrl) {
+                        val kc = URL(keyUrl).openConnection() as java.net.HttpURLConnection
+                        try {
+                            kc.connectTimeout = 10_000
+                            kc.readTimeout = 10_000
+                            kc.requestMethod = "GET"
+                            headers.forEach(kc::setRequestProperty)
+                            if (kc.responseCode !in 200..299) {
+                                throw PlaylistProbe.PlaylistError("network", "HTTP ${kc.responseCode} fetching key")
+                            }
+                            val k = kc.inputStream.use { it.readBytes() }
+                            if (k.size != 16) throw PlaylistProbe.PlaylistError("unsupported-format", "bad HLS key length ${k.size}")
+                            k
+                        } finally {
+                            kc.disconnect()
                         }
-                        val k = kc.inputStream.use { it.readBytes() }
-                        if (k.size != 16) throw PlaylistProbe.PlaylistError("unsupported-format", "bad HLS key length ${k.size}")
-                        k
-                    } finally {
-                        kc.disconnect()
                     }
                 }
                 val iv = seg.keyIvHex?.let { hexToBytes(it) }
