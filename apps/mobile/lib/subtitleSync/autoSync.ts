@@ -1285,9 +1285,18 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
         (loseX < 0 || winX - loseX >= CROSS_LEAD)
       ) {
         const offsetMs = Math.round(winOff * 1000);
+        // Decisive late win over a checkpoint: TRY_CONF (0.3) keeps the
+        // cross-check corroboration as the real gate — lateConf >= 0.75 was
+        // too strict and swallowed correction toasts on sharp late peaks.
+        const decisiveLate =
+          !earlyLeads &&
+          lateConf >= TRY_CONF &&
+          checkpointRef.offsetMs !== null &&
+          Math.abs(checkpointRef.offsetMs - offsetMs) >= 100;
         console.log(
           `[SubSync] windows disagree - ${earlyLeads ? "early" : "late"} candidate ${winOff.toFixed(2)}s ` +
-            `corroborated on the other window's audio (x=${winX.toFixed(3)} vs ${loseLabel}) - applying`,
+            `corroborated on the other window's audio (x=${winX.toFixed(3)} winConf=${winConf.toFixed(3)} ` +
+            `lateConf=${lateConf.toFixed(3)} vs ${loseLabel}) - applying${decisiveLate ? " (decisive correction)" : ""}`,
         );
         await setCachedSync(subtitleCacheKey, `${source.contentId}:${durKey}`, {
           offsetMs,
@@ -1297,12 +1306,6 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
           createdAt: Date.now(),
         });
         onProgress?.(1, "done");
-        // Decisive late win over a checkpoint (lateConf >= 0.75) → correction toast.
-        const decisiveLate =
-          !earlyLeads &&
-          lateConf >= CHECKPOINT_CONF &&
-          checkpointRef.offsetMs !== null &&
-          Math.abs(checkpointRef.offsetMs - offsetMs) >= 100;
         return applyOrConfirm(
           offsetMs,
           winConf,
@@ -1532,9 +1535,15 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
             (loseX2 < 0 || winX2 - loseX2 >= CROSS_LEAD)
           ) {
             const offsetMs = Math.round(winOff2 * 1000);
+            const decisiveLate2 =
+              !earlyLeads2 &&
+              lateConf >= TRY_CONF &&
+              checkpointRef.offsetMs !== null &&
+              Math.abs(checkpointRef.offsetMs - offsetMs) >= 100;
             console.log(
               `[SubSync] windows disagree - ${earlyLeads2 ? "early" : "late"} candidate ${winOff2.toFixed(2)}s ` +
-                `corroborated after gated rescan (x=${winX2.toFixed(3)}) - applying`,
+                `corroborated after gated rescan (x=${winX2.toFixed(3)} winConf=${winConf2.toFixed(3)} ` +
+                `lateConf=${lateConf.toFixed(3)}) - applying${decisiveLate2 ? " (decisive correction)" : ""}`,
             );
             await setCachedSync(
               subtitleCacheKey,
@@ -1548,11 +1557,6 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
               },
             );
             onProgress?.(1, "done");
-            const decisiveLate2 =
-              !earlyLeads2 &&
-              lateConf >= CHECKPOINT_CONF &&
-              checkpointRef.offsetMs !== null &&
-              Math.abs(checkpointRef.offsetMs - offsetMs) >= 100;
             return applyOrConfirm(
               offsetMs,
               winConf2,
