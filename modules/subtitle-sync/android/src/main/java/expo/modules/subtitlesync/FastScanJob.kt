@@ -104,6 +104,10 @@ class FastScanJob(
          * through an ~8 Mbps link, which stalls playback and burns data.
          */
         private const val WINDOW_BYTE_BUDGET_MB = 80.0
+
+        /** Segments the HLS prefetch consumer may be ahead of decode (ring ≈ 4 slots). */
+        private const val LOOK_AHEAD = 2
+        private const val HLS_PREFETCH_WORKERS = 2
     }
 
     /**
@@ -843,15 +847,9 @@ class FastScanJob(
         private val cancelled: AtomicBoolean,
         private val log: (String) -> Unit,
     ) {
-        companion object {
-            /** Segments the consumer may be ahead of decode (ring ≈ 4 slots). */
-            private const val LOOK_AHEAD = 2
-            private const val WORKERS = 2
-        }
-
         private val pending = ConcurrentHashMap<Int, Future<ByteArray>>()
         private val fetchMsBySeg = ConcurrentHashMap<Int, Long>()
-        private val executor = Executors.newFixedThreadPool(WORKERS) { r ->
+        private val executor = Executors.newFixedThreadPool(HLS_PREFETCH_WORKERS) { r ->
             Thread(r, "hls-prefetch").also { it.isDaemon = true }
         }
         private val lock = Any()
