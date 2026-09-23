@@ -1669,7 +1669,6 @@ export function VideoWebView({
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "background" || state === "inactive") {
-        console.log(`[FS-BG][WV] app → ${state} (webview path active)`);
         const prog = progressRef.current;
         if (prog.currentTime > 5) {
           saveProgress({

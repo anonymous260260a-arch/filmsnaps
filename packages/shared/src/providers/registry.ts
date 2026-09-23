@@ -395,7 +395,7 @@ export const PROVIDERS: ProviderDefinition[] = [
         urlTemplate:
           "https://scraper.way2movies.fun/server/31/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=Hindi",
         urlTemplateTv:
-          "https://scraper.way2movies.fun/server/31/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=Hindi",
+          "https://scraper.way2movies.fun/server/31/tv/{tmdbId}/{season}/{episode}?title=&year=&imdb_id={imdbId}&original_language=en&language=Hindi",
       },
       {
         id: "w2m-s31-english",
@@ -413,7 +413,7 @@ export const PROVIDERS: ProviderDefinition[] = [
         urlTemplate:
           "https://scraper.way2movies.fun/server/31/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=English",
         urlTemplateTv:
-          "https://scraper.way2movies.fun/server/31/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=English",
+          "https://scraper.way2movies.fun/server/31/tv/{tmdbId}/{season}/{episode}?title=&year=&imdb_id={imdbId}&original_language=en&language=English",
       },
       {
         id: "w2m-s33-hindi",
@@ -431,7 +431,7 @@ export const PROVIDERS: ProviderDefinition[] = [
         urlTemplate:
           "https://scraper.way2movies.fun/server/33/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=Hindi",
         urlTemplateTv:
-          "https://scraper.way2movies.fun/server/33/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=Hindi",
+          "https://scraper.way2movies.fun/server/33/tv/{tmdbId}/{season}/{episode}?title=&year=&imdb_id={imdbId}&original_language=en&language=Hindi",
       },
       {
         id: "w2m-s33-english",
@@ -449,7 +449,7 @@ export const PROVIDERS: ProviderDefinition[] = [
         urlTemplate:
           "https://scraper.way2movies.fun/server/33/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=English",
         urlTemplateTv:
-          "https://scraper.way2movies.fun/server/33/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=English",
+          "https://scraper.way2movies.fun/server/33/tv/{tmdbId}/{season}/{episode}?title=&year=&imdb_id={imdbId}&original_language=en&language=English",
       },
       {
         id: "w2m-s39-hindi",
@@ -467,7 +467,7 @@ export const PROVIDERS: ProviderDefinition[] = [
         urlTemplate:
           "https://scraper.way2movies.fun/server/39/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=Hindi",
         urlTemplateTv:
-          "https://scraper.way2movies.fun/server/39/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=Hindi",
+          "https://scraper.way2movies.fun/server/39/tv/{tmdbId}/{season}/{episode}?title=&year=&imdb_id={imdbId}&original_language=en&language=Hindi",
       },
       {
         id: "w2m-s39-english",
@@ -485,7 +485,7 @@ export const PROVIDERS: ProviderDefinition[] = [
         urlTemplate:
           "https://scraper.way2movies.fun/server/39/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=English",
         urlTemplateTv:
-          "https://scraper.way2movies.fun/server/39/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=English",
+          "https://scraper.way2movies.fun/server/39/tv/{tmdbId}/{season}/{episode}?title=&year=&imdb_id={imdbId}&original_language=en&language=English",
       },
       {
         id: "w2m-s42-hindi",
@@ -503,7 +503,7 @@ export const PROVIDERS: ProviderDefinition[] = [
         urlTemplate:
           "https://scraper.way2movies.fun/server/42/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=Hindi",
         urlTemplateTv:
-          "https://scraper.way2movies.fun/server/42/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=Hindi",
+          "https://scraper.way2movies.fun/server/42/tv/{tmdbId}/{season}/{episode}?title=&year=&imdb_id={imdbId}&original_language=en&language=Hindi",
       },
       {
         id: "w2m-s42-english",
@@ -521,7 +521,7 @@ export const PROVIDERS: ProviderDefinition[] = [
         urlTemplate:
           "https://scraper.way2movies.fun/server/42/movie/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&language=English",
         urlTemplateTv:
-          "https://scraper.way2movies.fun/server/42/tv/{tmdbId}?title=&year=&imdb_id={imdbId}&original_language=en&season={season}&episode={episode}&language=English",
+          "https://scraper.way2movies.fun/server/42/tv/{tmdbId}/{season}/{episode}?title=&year=&imdb_id={imdbId}&original_language=en&language=English",
       },
     ],
   },

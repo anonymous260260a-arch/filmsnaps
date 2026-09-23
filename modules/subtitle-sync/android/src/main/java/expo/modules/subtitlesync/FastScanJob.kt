@@ -1,0 +1,741 @@
+package expo.modules.subtitlesync
+
+import android.net.Uri
+import android.os.SystemClock
+import android.util.Log
+import androidx.media3.common.C
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.extractor.DefaultExtractorInput
+import androidx.media3.extractor.Extractor
+import androidx.media3.extractor.ExtractorInput
+import androidx.media3.extractor.PositionHolder
+import androidx.media3.extractor.mp4.FragmentedMp4Extractor
+import androidx.media3.extractor.mp4.Mp4Extractor
+import androidx.media3.extractor.mp3.Mp3Extractor
+import androidx.media3.extractor.ts.AdtsExtractor
+import androidx.media3.extractor.ts.TsExtractor
+import expo.modules.video.PlayerHttp
+import expo.modules.video.utils.CustomExtractorsFactory
+import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * Unclocked audio extraction engine.
+ *
+ * Replaces the headless-player scan (RemoteScanJob/HlsScanJob) which was paced
+ * by the AudioTrack at up to 4x realtime and anchored the signal with
+ * wall-clock estimates. This engine demuxes + decodes directly:
+ *
+ *  - progressive: OkHttpDataSource (same client/headers as playback) ->
+ *    CustomExtractorsFactory sniff (incl. SecondarySeekHeadMatroskaExtractor
+ *    for no-seek MKVs) -> SeekMap-based seek to the window -> extractor read
+ *    loop -> MediaCodec -> PTS-anchored bins. Runs as fast as network+CPU
+ *    allow (typically 5-30x realtime).
+ *  - HLS: playlist parsed directly (audio-only rendition preferred), segments
+ *    fetched/decrypted, per-segment extractor (TS / fMP4 / ADTS / MP3), same
+ *    decode pipeline. No AudioTrack, no tap, no player quirks.
+ *
+ * Diagnostics: every milestone goes to logcat (`SubSyncFast`), the JS
+ * `onDebug` event, a pollable [status], AND is attached to the final result
+ * (see [debugTrace]) so the trace reaches the JS console even if event
+ * delivery is broken.
+ */
+@UnstableApi
+class FastScanJob(
+    private val context: android.content.Context,
+    private val uri: String,
+    private val headers: Map<String, String>,
+    private val fromSec: Double,
+    private val toSec: Double,
+    private val useSilero: Boolean,
+    private val container: String, // "hls" | "progressive"
+    private val preferredLang: String?,
+    /** R5-3: Silero diagnostics (tensor metadata + the first 200 probabilities). */
+    private val vadDebug: Boolean = false,
+    private val onProgress: (Float) -> Unit,
+    private val onDebug: (String) -> Unit,
+    private val onResult: (ExtractResult) -> Unit,
+) : ScanJob {
+    companion object {
+        private const val TAG = "SubSyncFast"
+        /** No-seek sources: max sequential preroll we decode to reach a window. */
+        private const val PREROLL_MAX_US = 180_000_000L
+        /** Hard wall-clock budget per window. */
+        private const val BUDGET_MS = 150_000L
+        /** No extractor/decoder progress for this long -> stall. */
+        private const val STALL_MS = 30_000L
+        /** Minimum decoded span for a budget-exhausted window to count as partial success. */
+        private const val PARTIAL_MIN_US = 20_000_000L
+        /** HLS segments before/after the window for extractor continuity. */
+        private const val SEGMENT_MARGIN_US = 2_000_000L
+        private const val TRACE_MAX_CHARS = 4000
+        /** R5-5: how many trace lines the poller can still read back. */
+        private const val TRACE_MAX_LINES = 400
+        /**
+         * B5: projected-download ceiling per window. With the content length and
+         * durationUs from the SeekMap we know the average bytes/sec, so a window
+         * whose projected traffic exceeds this budget is SHRUNK before decoding.
+         * The 4K MKV averaged ~15.4 Mbps: a 240s window projects ~450-600MB
+         * through an ~8 Mbps link, which stalls playback and burns data.
+         */
+        private const val WINDOW_BYTE_BUDGET_MB = 80.0
+    }
+
+    private val cancelled = AtomicBoolean(false)
+    private var currentDataSource: DataSource? = null
+    /** Content length as reported by the data source (input to the B5 clamp). */
+    private var sourceLength = -1L
+
+    // --- polling status + trace (event-delivery-independent) ---
+    @Volatile private var phase: String = "starting"
+    @Volatile private var progressHint: Float = 0f
+    private val trace = StringBuilder()
+    // R5-5: monotonic line counter + bounded tail, so the JS poller prints by
+    // INDEX. Text-length slicing desynced whenever the ring trimmed (the
+    // malformed "0 size=8192" line) and silently dropped lines when more than a
+    // ring's worth arrived between two 500ms polls.
+    private val traceLines = ArrayDeque<String>()
+    @Volatile private var traceLineCount: Long = 0L
+    private val traceLock = Any()
+
+    private fun d(msg: String) {
+        Log.i(TAG, msg)
+        val line = "${SystemClock.elapsedRealtime() / 1000}s $msg"
+        synchronized(traceLock) {
+            trace.append(line).append('\n')
+            traceLines.addLast(line)
+            while (traceLines.size > TRACE_MAX_LINES) traceLines.removeFirst()
+            traceLineCount++
+            if (trace.length > TRACE_MAX_CHARS) {
+                // B4: trim on a LINE boundary. Cutting mid-line left a headless
+                // fragment at the front of the rolling trace, which the JS
+                // poller then printed as a broken line ("0 size=8192" was the
+                // tail of "dec: first decoded PCM: pts=0 size=8192").
+                val cut = trace.length - TRACE_MAX_CHARS
+                val nl = trace.indexOf("\n", cut)
+                trace.delete(0, if (nl >= 0) nl + 1 else trace.length)
+            }
+        }
+        onDebug(msg)
+    }
+
+    fun debugTrace(): String = synchronized(traceLock) { trace.toString() }
+
+    /** Pollable status for the JS progress UI. */
+    fun status(): Map<String, Any?> = mapOf(
+        "phase" to phase,
+        "progress" to progressHint,
+        "trace" to debugTrace(),
+        "lineCount" to traceLineCount,
+        "traceLines" to synchronized(traceLock) { traceLines.toList() },
+    )
+
+    override fun cancel() {
+        cancelled.set(true)
+        try { currentDataSource?.close() } catch (_: Exception) {}
+    }
+
+    fun start() {
+        Thread {
+            val t0 = SystemClock.elapsedRealtime()
+            val r = try {
+                if (container == "hls") scanHls(t0) else scanProgressive(t0)
+            } catch (t: Throwable) {
+                if (cancelled.get()) {
+                    ExtractResult.Error("cancelled", "cancelled")
+                } else {
+                    Log.e(TAG, "scan failed", t)
+                    d("FATAL ${t.javaClass.simpleName}: ${t.message}")
+                    ExtractResult.Error("decode-failed", "${t.javaClass.simpleName}: ${t.message}")
+                }
+            }
+            d(
+                when (r) {
+                    is ExtractResult.Success ->
+                        "DONE in ${SystemClock.elapsedRealtime() - t0}ms: ${r.bins} bins [${r.startSec}..${r.endSec}]s"
+                    is ExtractResult.Error ->
+                        "FAILED in ${SystemClock.elapsedRealtime() - t0}ms: ${r.code} - ${r.message}"
+                }
+            )
+            if (!cancelled.get()) onResult(r)
+        }.also { it.isDaemon = false }.start()
+    }
+
+    // ------------------------------------------------------------------
+    // Progressive path
+    // ------------------------------------------------------------------
+
+    private fun dataSourceFactory(): OkHttpDataSource.Factory =
+        OkHttpDataSource.Factory(PlayerHttp.client).apply {
+            if (headers.isNotEmpty()) setDefaultRequestProperties(headers)
+            setUserAgent(headers["User-Agent"] ?: "filmsnaps")
+        }
+
+    private fun openAt(ds: DataSource, position: Long): ExtractorInput {
+        val spec = DataSpec.Builder()
+            .setUri(Uri.parse(uri))
+            .setPosition(position)
+            .setLength(C.LENGTH_UNSET.toLong())
+            .build()
+        currentDataSource = ds
+        val len = ds.open(spec)
+        if (len > 0) sourceLength = len
+        d("open @byte=$position len=$len")
+        return DefaultExtractorInput(ds, position, len)
+    }
+
+    private fun scanProgressive(t0: Long): ExtractResult {
+        val fromUs = (fromSec * 1_000_000).toLong()
+        // B5: mutable - the bitrate-aware clamp below may shrink the window end.
+        var toUs = (toSec * 1_000_000).toLong()
+        // R8-1: Silero + Energy both run from chunk 1 (collector owns the Energy
+        // instance); the winner is chosen at end-of-window, never mid-scan.
+        val silero = if (useSilero) {
+            SileroVad(context, debug = vadDebug, log = { msg -> d(msg) })
+        } else {
+            null
+        }
+        val collector = SignalCollector(fromUs, toUs, silero, log = { msg -> d(msg) })
+        val decoder = AudioDecoder(collector) { d("dec: $it") }
+        val tap = AudioTapOutput(decoder)
+        val output = TapExtractorOutput(
+            decoder,
+            tap,
+            preferredLang = preferredLang,
+            onTrace = { d(it) },
+        )
+        val holder = PositionHolder()
+        var lastProgressWall = SystemClock.elapsedRealtime()
+        var lastPos = 0L
+        var lastSeekUs = 0L
+        var silentTrackRetries = 0
+        var langUpgradeTried = false
+
+        val ds = dataSourceFactory().createDataSource()
+        var input: ExtractorInput
+        var position = 0L
+        try {
+            phase = "connecting"
+            input = openAt(ds, 0L)
+
+            // Sniff battery (custom Matroska first, then all stock extractors).
+            phase = "sniffing"
+            val extractors = CustomExtractorsFactory().createExtractors()
+            var chosen: Extractor? = null
+            for (e in extractors) {
+                if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
+                try {
+                    input.resetPeekPosition()
+                    if (e.sniff(input)) {
+                        chosen = e
+                        break
+                    }
+                } catch (e: IOException) {
+                    d("sniff ${e.javaClass.simpleName} threw: ${e.message}")
+                }
+            }
+            if (chosen == null) {
+                return ExtractResult.Error("unsupported-format", "no extractor matched container")
+            }
+            d("progressive: extractor=${chosen.javaClass.simpleName} silero=$useSilero")
+            chosen.init(output)
+            tap.beginSegment(0L, pinFirst = false) // container PTS are content time
+
+            retry@ while (true) {
+            var seekApplied = false
+            var eof = false
+            var reads = 0L
+            var passes = 1
+            while (!eof && !cancelled.get()) {
+                if (SystemClock.elapsedRealtime() - t0 > BUDGET_MS) {
+                    d("budget exhausted at inputPos=$lastPos")
+                    break
+                }
+                if (SystemClock.elapsedRealtime() - lastProgressWall > STALL_MS) {
+                    d("STALL: no progress 30s at inputPos=$lastPos")
+                    return ExtractResult.Error("timeout", "no extraction progress for ${STALL_MS / 1000}s")
+                }
+
+                // Apply the time seek once the SeekMap is known.
+                if (!seekApplied && output.seekMap != null) {
+                    seekApplied = true
+                    val sm = output.seekMap!!
+                    d("seekMap: seekable=${sm.isSeekable} durationUs=${sm.durationUs}")
+                    // B5: bitrate-aware window clamp. Never extends, only shrinks.
+                    if (sourceLength > 0 && sm.durationUs > 0 && toUs - fromUs > 0) {
+                        val bytesPerSec =
+                            sourceLength.toDouble() / (sm.durationUs / 1_000_000.0)
+                        val maxSpanUs =
+                            (WINDOW_BYTE_BUDGET_MB * 1024.0 * 1024.0 / bytesPerSec * 1_000_000.0).toLong()
+                        if (toUs - fromUs > maxSpanUs && maxSpanUs > 0) {
+                            val projectedMb =
+                                ((toUs - fromUs) / 1_000_000.0 * bytesPerSec / 1024.0 / 1024.0).toInt()
+                            toUs = fromUs + maxSpanUs
+                            // No PCM has been pushed yet (the seek happens next),
+                            // so rebasing the collector here is free.
+                            collector.resetAll(fromUs, toUs)
+                            d(
+                                "window clamp: len=$sourceLength dur=${sm.durationUs / 1_000_000}s " +
+                                    "projected=${projectedMb}MB -> clamped to ${maxSpanUs / 1_000_000}s " +
+                                    "(budget ${WINDOW_BYTE_BUDGET_MB.toInt()}MB)"
+                            )
+                        }
+                    }
+                    if (fromUs > 2_000_000L) {
+                        if (sm.isSeekable) {
+                            val sp = sm.getSeekPoints(fromUs).first
+                            position = sp.position
+                            lastSeekUs = sp.timeUs
+                            input = reopen(ds, position)
+                            chosen.seek(position, sp.timeUs)
+                            tap.reset()
+                            collector.resetTimeline()
+                            d("seek -> ${sp.timeUs / 1000}ms @ byte $position")
+                            phase = "decoding"
+                        } else if (fromUs > PREROLL_MAX_US) {
+                            return ExtractResult.Error(
+                                "unseekable",
+                                "no seek index; window starts ${(fromUs / 1_000_000).toInt()}s into an unseekable stream",
+                            )
+                        } else {
+                            d("unseekable stream - decoding sequentially from 0 (preroll ${fromUs / 1_000_000}s <= ${PREROLL_MAX_US / 1_000_000}s)")
+                            phase = "decoding"
+                        }
+                    } else {
+                        phase = "decoding"
+                    }
+                }
+
+                val result = chosen.read(input, holder)
+                reads++
+                when (result) {
+                    Extractor.RESULT_SEEK -> {
+                        position = holder.position
+                        d("extractor seek -> byte $position (read #$reads)")
+                        input = reopen(ds, position)
+                    }
+                    Extractor.RESULT_END_OF_INPUT -> {
+                        d("EOF at inputPos=$lastPos after $reads reads (pass $passes, seekApplied=$seekApplied, seekMap=${output.seekMap != null})")
+                        eof = true
+                    }
+                }
+
+                if (input.position != lastPos) {
+                    lastPos = input.position
+                    lastProgressWall = SystemClock.elapsedRealtime()
+                }
+                if (decoder.drain(8)) break
+                if (decoder.error != null) return decoder.error!!
+                if (collector.windowComplete()) break
+                // Early silence bail: if we have decoded a real span that is pure
+                // digital silence (broken/silent mux track), stop wasting time and
+                // let the no-signal handler retry the next audio-track candidate.
+                if (collector.decodedSpanUs() > 20_000_000L &&
+                    collector.totalChunks > 400 && collector.rmsPeak < 0.005f &&
+                    tap.samplesTapped > 0
+                ) {
+                    d("early silence bail: span=${collector.decodedSpanUs() / 1000}ms peak=${collector.rmsPeak} - breaking to retry track")
+                    break
+                }
+
+                val p = collector.progress(fromUs)
+                if (p > progressHint) progressHint = p
+                onProgress(p)
+                if (p > 0f) lastProgressWall = SystemClock.elapsedRealtime()
+            }
+
+            // EOF recovery: if the extractor hit EOF before the time-seek could
+            // be applied (tail-Cues containers: header -> Cues at EOF), do one
+            // more pass starting at the seek point instead of failing.
+            if (eof && (!seekApplied || !collector.hasSignal()) &&
+                output.seekMap != null && output.seekMap!!.isSeekable &&
+                passes == 1 && !cancelled.get()
+            ) {
+                passes = 2
+                eof = false
+                val sp = output.seekMap!!.getSeekPoints(fromUs).first
+                position = sp.position
+                input = reopen(ds, position)
+                chosen.seek(position, sp.timeUs)
+                tap.reset()
+                collector.resetTimeline()
+                d("EOF recovery pass 2: seek -> ${sp.timeUs / 1000}ms @ byte $position")
+                while (!eof && !cancelled.get()) {
+                    if (SystemClock.elapsedRealtime() - t0 > BUDGET_MS) {
+                        d("budget exhausted (pass 2) at inputPos=$lastPos")
+                        break
+                    }
+                    if (SystemClock.elapsedRealtime() - lastProgressWall > STALL_MS) {
+                        return ExtractResult.Error("timeout", "no extraction progress for ${STALL_MS / 1000}s")
+                    }
+                    when (chosen.read(input, holder)) {
+                        Extractor.RESULT_SEEK -> {
+                            position = holder.position
+                            input = reopen(ds, position)
+                        }
+                        Extractor.RESULT_END_OF_INPUT -> eof = true
+                    }
+                    if (input.position != lastPos) {
+                        lastPos = input.position
+                        lastProgressWall = SystemClock.elapsedRealtime()
+                    }
+                    if (decoder.drain(8)) break
+                    if (decoder.error != null) return decoder.error!!
+                    if (collector.windowComplete()) break
+                    // Late language upgrade: some muxers announce the
+                    // language-matched audio track only after the first blocks,
+                    // so re-check once, early, instead of committing to the
+                    // wrong track (a Hindi dub against an English subtitle
+                    // correlates terribly).
+                    if (!langUpgradeTried) {
+                        val want = output.preferredCandidate()
+                        if (want != null && want != output.currentClaimId && tap.samplesTapped < 400) {
+                            langUpgradeTried = true
+                            val f = output.formatOf(want)
+                            d(
+                                "late language match (pref=${preferredLang ?: "-"}) - switching to " +
+                                    "audio track id=$want (lang=${f?.language ?: "-"} ${f?.sampleMimeType})"
+                            )
+                            decoder.releaseCodec()
+                            collector.resetAll(fromUs, toUs)
+                            tap.reset()
+                            output.claim(want)
+                            seekApplied = false
+                            eof = false
+                            continue@retry
+                        }
+                    }
+                    val p = collector.progress(fromUs)
+                    if (p > progressHint) progressHint = p
+                    onProgress(p)
+                    if (p > 0f) lastProgressWall = SystemClock.elapsedRealtime()
+                }
+            }
+
+            if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
+            if (decoder.error != null) return decoder.error!!
+            if (!collector.hasSignal()) {
+                d(
+                    "no signal: seekApplied=$seekApplied eof=$eof reads=$reads inputPos=$lastPos " +
+                        "formatSeen=${decoder.formatSeen != null} tracks=${output.trackSummary()} tap: samples=${tap.samplesTapped} " +
+                        "pts=[${tap.firstTappedPtsUs}..${tap.lastTappedPtsUs}] ${decoder.diagnostics()}"
+                )
+                val candidates = output.audioCandidates()
+                if (tap.samplesTapped > 0 && collector.totalChunks > 500 && collector.rmsPeak < 0.005f &&
+                    candidates.size > silentTrackRetries + 1
+                ) {
+                    // Decoded a real span of pure digital silence: the tapped audio
+                    // track is a silent filler (common in multi-audio MKVs).
+                    // Retry the window with the next audio-track candidate.
+                    silentTrackRetries++
+                    val nextId = candidates[silentTrackRetries]
+                    val nextFmt = output.formatOf(nextId)
+                    d(
+                        "silent track detected - retrying window with audio track id=$nextId " +
+                            "(${nextFmt?.sampleMimeType} lang=${nextFmt?.language}) " +
+                            "[candidates: ${candidates.joinToString()}]"
+                    )
+                    decoder.releaseCodec()
+                    collector.resetAll(fromUs, toUs)
+                    tap.reset()
+                    output.claim(nextId)
+                    // restart the read loop from the seek point
+                    seekApplied = false
+                    eof = false
+                    continue@retry
+                }
+                if (tap.samplesTapped > 0 && collector.rmsPeak < 0.005f) {
+                    return ExtractResult.Error(
+                        "silent-audio-track",
+                        "tapped audio track is silent (${tap.samplesTapped} samples, ${output.trackSummary()})",
+                    )
+                }
+                return ExtractResult.Error("no-audio-track", "no audio decoded in window")
+            }
+            decoder.finish()
+            d("decoded track: ${output.claimedSummary()}")
+            return partialOrSuccess(collector, t0)
+            } // retry@
+        } catch (e: IOException) {
+            if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
+            if (decoder.error != null) return decoder.error!!
+            d("IOException: ${e.message}")
+            return classifyIo(e)
+        } finally {
+            try { ds.close() } catch (_: Exception) {}
+            decoder.releaseCodec()
+        }
+    }
+
+    private fun reopen(ds: DataSource, position: Long): ExtractorInput {
+        try { ds.close() } catch (_: Exception) {}
+        return openAt(ds, position)
+    }
+
+    // ------------------------------------------------------------------
+    // HLS path
+    // ------------------------------------------------------------------
+
+    private fun scanHls(t0: Long): ExtractResult {
+        val fromUs = (fromSec * 1_000_000).toLong()
+        val toUs = (toSec * 1_000_000).toLong()
+        // R8-1: dual-VAD collector (see scanProgressive) — winner chosen at end.
+        val silero = if (useSilero) {
+            SileroVad(context, debug = vadDebug, log = { msg -> d(msg) })
+        } else {
+            null
+        }
+        val collector = SignalCollector(fromUs, toUs, silero, log = { msg -> d(msg) })
+        val decoder = AudioDecoder(collector) { d("dec: $it") }
+        val keyCache = HashMap<String, ByteArray>()
+
+        try {
+            phase = "playlist"
+            d("hls: resolving playlist $uri")
+            val mediaUrl = HlsPlaylistParser.resolveToMedia(uri, headers)
+            val pl = HlsPlaylistParser.parse(mediaUrl, headers)
+            d(
+                "hls parsed: ${pl.segments.size} segs live=${pl.live} total=${(pl.totalDurationUs / 1_000_000).toInt()}s " +
+                    "init=${if (pl.initUrl != null) "yes" else "no"} key=${pl.keyMethod ?: "none"} " +
+                    "segDur=${pl.segments.firstOrNull()?.durationUs?.div(1000)}ms"
+            )
+            if (pl.live) return ExtractResult.Error("live-unsupported", "live stream")
+            if (pl.keyMethod != null && pl.keyMethod != "AES-128" && pl.keyMethod != "NONE") {
+                return ExtractResult.Error("drm-unsupported", "HLS key method ${pl.keyMethod}")
+            }
+
+            // Window -> segment slice.
+            var declared = 0L
+            var firstIdx = -1
+            var lastIdx = pl.segments.size - 1
+            for (i in pl.segments.indices) {
+                val seg = pl.segments[i]
+                val segEnd = declared + seg.durationUs
+                if (firstIdx < 0 && segEnd > fromUs - SEGMENT_MARGIN_US) firstIdx = i
+                if (declared > toUs + SEGMENT_MARGIN_US) {
+                    lastIdx = i - 1
+                    break
+                }
+                declared += seg.durationUs
+            }
+            if (firstIdx < 0) {
+                return ExtractResult.Error("unsupported-format", "window beyond playlist end")
+            }
+            d("hls window: segs $firstIdx..$lastIdx of ${pl.segments.size}")
+
+            val initBytes = pl.initUrl?.let {
+                d("fetching init segment")
+                HlsPlaylistParser.fetchSegment(
+                    HlsSegment(it, 0, pl.initByteOffset, pl.initByteLength, 0, "NONE", null, null, 0),
+                    headers, keyCache,
+                )
+            }
+
+            var segStart = 0L
+            for (i in 0 until firstIdx) segStart += pl.segments[i].durationUs
+
+            var lastClaim = "-"
+        for (i in firstIdx..lastIdx) {
+                if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
+                if (SystemClock.elapsedRealtime() - t0 > BUDGET_MS) {
+                    d("budget exhausted at seg $i")
+                    break
+                }
+
+                phase = "fetching seg $i"
+                val seg = pl.segments[i]
+                val segT0 = SystemClock.elapsedRealtime()
+                val raw = try {
+                    HlsPlaylistParser.fetchSegment(seg, headers, keyCache)
+                } catch (e: PlaylistProbe.PlaylistError) {
+                    return ExtractResult.Error(e.code, e.message ?: "segment fetch failed")
+                }
+                d("seg[$i] ${seg.url.substringAfterLast('/')} ${raw.size}B in ${SystemClock.elapsedRealtime() - segT0}ms @${segStart / 1000}ms")
+                val data = if (initBytes != null) initBytes + raw else raw
+
+                phase = "decoding seg $i"
+                val tap = AudioTapOutput(decoder)
+                tap.reset()
+                tap.beginSegment(segStart, pinFirst = true)
+                collector.resetTimeline()
+                val output = TapExtractorOutput(
+                    decoder,
+                    tap,
+                    preferredLang = preferredLang,
+                    onTrace = { d(it) },
+                )
+
+                // fMP4 with an init map: the concatenated [init+segment] stream is
+                // always FragmentedMp4. Otherwise sniff the segment itself with a
+                // FRESH extractor battery (extractors are stateful - never reuse
+                // one across segments after END_OF_INPUT).
+                val extractor: Extractor = if (initBytes != null) {
+                    FragmentedMp4Extractor()
+                } else {
+                    val sniffDs = ByteArrayDataSource2(data).apply { open(DataSpec.Builder().setUri(Uri.EMPTY).build()) }
+                    val sniffInput = DefaultExtractorInput(sniffDs, 0, data.size.toLong())
+                    var found: Extractor? = null
+                    for (e in freshBattery()) {
+                        try {
+                            sniffInput.resetPeekPosition()
+                            if (e.sniff(sniffInput)) {
+                                found = e
+                                break
+                            }
+                        } catch (_: IOException) {}
+                    }
+                    found ?: run {
+                        d("seg[$i]: NO extractor matched (first bytes: ${data.take(8).joinToString(" ") { "%02x".format(it) }})")
+                        return ExtractResult.Error(
+                            "unsupported-format",
+                            "no extractor matched HLS segment ${seg.url}",
+                        )
+                    }
+                }
+                extractor.init(output)
+                if (i == firstIdx) d("seg[$i] extractor=${extractor.javaClass.simpleName}")
+
+                // Length UNSET (not data.size): with a known length TsExtractor's
+                // duration reader binary-searches the truncated stream for PCR
+                // timestamps and seek-loops forever. Unknown length -> it skips
+                // duration detection and starts parsing packets immediately.
+                var segInput: ExtractorInput = DefaultExtractorInput(
+                    ByteArrayDataSource2(data).apply { open(DataSpec.Builder().setUri(Uri.EMPTY).build()) },
+                    0, C.LENGTH_UNSET.toLong(),
+                )
+                val holder = PositionHolder()
+                var eof = false
+                var segReads = 0L
+                var segSeeks = 0L
+                while (!eof && !cancelled.get()) {
+                    segReads++
+                    if (segReads > 200_000) {
+                        d("seg[$i]: read-loop cap hit ($segReads reads, $segSeeks seeks) - continuing with what we have")
+                        break
+                    }
+                    when (extractor.read(segInput, holder)) {
+                        Extractor.RESULT_SEEK -> {
+                            segSeeks++
+                            if (segSeeks > 50) {
+                                d("seg[$i]: seek loop detected ($segSeeks seeks to byte ${holder.position}) - continuing with what we have")
+                                break
+                            }
+                            // Extractors don't seek within a fully-buffered segment;
+                            // restart at the requested byte offset.
+                            val ds2 = ByteArrayDataSource2(data).apply { open(DataSpec.Builder().setUri(Uri.EMPTY).build()) }
+                            segInput = DefaultExtractorInput(ds2, holder.position, C.LENGTH_UNSET.toLong())
+                        }
+                        Extractor.RESULT_END_OF_INPUT -> eof = true
+                    }
+                    if (decoder.drain(8)) break
+                    if (decoder.error != null) return decoder.error!!
+                }
+                if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
+                if (decoder.error != null) return decoder.error!!
+                if (i == firstIdx) {
+                    d(
+                        "seg[$i] decoded: tap=${tap.samplesTapped} tracks=${output.trackSummary()} " +
+                            "dec=${decoder.diagnostics()} span=${collector.decodedSpanUs() / 1000}ms"
+                    )
+                }
+                lastClaim = output.claimedSummary()
+                if (collector.windowComplete()) break
+
+                segStart += seg.durationUs
+                val p = ((segStart - fromUs).toFloat() / (toUs - fromUs).toFloat()).coerceIn(0.01f, 1f)
+                if (p > progressHint) progressHint = p
+                onProgress(p)
+            }
+
+            if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
+            if (decoder.error != null) return decoder.error!!
+            if (!collector.hasSignal()) {
+                d("hls no signal: ${decoder.diagnostics()}")
+                return ExtractResult.Error("no-audio-track", "no audio decoded in window")
+            }
+            decoder.finish()
+            d("decoded track: $lastClaim")
+            return partialOrSuccess(collector, t0)
+        } catch (e: PlaylistProbe.PlaylistError) {
+            if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
+            d("playlist error: ${e.code} ${e.message}")
+            return ExtractResult.Error(e.code, e.message ?: "playlist error")
+        } catch (e: IOException) {
+            if (cancelled.get()) return ExtractResult.Error("cancelled", "cancelled")
+            if (decoder.error != null) return decoder.error!!
+            d("IOException: ${e.message}")
+            return classifyIo(e)
+        } finally {
+            decoder.releaseCodec()
+        }
+    }
+
+    // ------------------------------------------------------------------
+
+    private fun freshBattery(): List<Extractor> = listOf(
+        TsExtractor(TsExtractor.MODE_SINGLE_PMT),
+        FragmentedMp4Extractor(),
+        Mp4Extractor(),
+        AdtsExtractor(),
+        Mp3Extractor(),
+    )
+
+    private fun partialOrSuccess(collector: SignalCollector, t0: Long): ExtractResult {
+        val overBudget = SystemClock.elapsedRealtime() - t0 > BUDGET_MS
+        if (overBudget && collector.lastDecodedUs < collector.anchorUs + PARTIAL_MIN_US) {
+            return ExtractResult.Error("timeout", "window budget exhausted before enough audio decoded")
+        }
+        d("signal summary: span=${collector.decodedSpanUs() / 1000}ms " +
+            "sileroDuty=${collector.sileroDuty()} energyDuty=${collector.energyDuty()} " +
+            "chunks=${collector.totalChunks}")
+        return collector.buildSuccess()
+            ?: ExtractResult.Error("no-audio-track", "no audio decoded in window")
+    }
+
+    private fun classifyIo(e: IOException): ExtractResult.Error {
+        var cause: Throwable? = e
+        while (cause != null) {
+            if (cause is HttpDataSource.InvalidResponseCodeException) {
+                val code = cause.responseCode
+                return ExtractResult.Error(
+                    if (code == 401 || code == 403 || code == 410) "expired-url" else "network",
+                    "http $code during extraction",
+                )
+            }
+            cause = cause.cause
+        }
+        return ExtractResult.Error("network", "network error: ${e.message}")
+    }
+
+    /** Read-only in-memory DataSource for buffered HLS segments. */
+    private class ByteArrayDataSource2(private val data: ByteArray) :
+        androidx.media3.datasource.BaseDataSource(false) {
+        private var opened = false
+        private var pos = 0
+
+        override fun open(dataSpec: DataSpec): Long {
+            pos = dataSpec.position.toInt().coerceIn(0, data.size)
+            opened = true
+            return (data.size - pos).toLong()
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            if (!opened) throw IOException("not opened")
+            if (pos >= data.size) return -1 // C.RESULT_END_OF_INPUT
+            val n = minOf(length, data.size - pos)
+            System.arraycopy(data, pos, buffer, offset, n)
+            pos += n
+            return n
+        }
+
+        override fun getUri(): Uri = Uri.EMPTY
+
+        override fun close() {
+            opened = false
+        }
+    }
+}

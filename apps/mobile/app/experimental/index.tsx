@@ -294,6 +294,20 @@ export default function ExperimentalPage() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
         >
+          {/* ── Dev Tools Links ── */}
+          <TouchableOpacity
+            onPress={() => nav.push("/experimental/subtitle-sync")}
+            className="mb-4 bg-zinc-900 rounded-xl px-4 py-3 border border-zinc-800"
+            activeOpacity={0.7}
+          >
+            <Text className="text-white text-sm font-medium">
+              🎧 SubtitleSync Test
+            </Text>
+            <Text className="text-zinc-500 text-xs mt-0.5">
+              Test native audio extraction + VAD
+            </Text>
+          </TouchableOpacity>
+
           {/* ── TMDB ID Input ── */}
           <View className="mb-4">
             <Text className="text-zinc-400 text-xs mb-1.5 font-medium">

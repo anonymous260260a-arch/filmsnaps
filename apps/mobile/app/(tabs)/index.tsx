@@ -834,19 +834,12 @@ function AnimeHomeFeed({ nav }: AnimeHomeFeedProps) {
       if (twin?.tmdbShowId != null) {
         if (twin.tmdbShowId != null) params.set("aid", String(item.id));
         const url = `/watch/tv/${twin.tmdbShowId}?${params.toString()}`;
-        console.log(
-          `[FS-WH] openAnime -> tv twin=${twin.tmdbShowId} url=${url}`,
-        );
         nav.push(url);
       } else if (twin?.tmdbMovieId != null) {
         if (twin.tmdbMovieId != null) params.set("aid", String(item.id));
         const url = `/watch/movie/${twin.tmdbMovieId}?${params.toString()}`;
-        console.log(
-          `[FS-WH] openAnime -> movie twin=${twin.tmdbMovieId} url=${url}`,
-        );
         nav.push(url);
       } else {
-        console.log(`[FS-WH] openAnime -> NO twin for malId=${item.malId}`);
       }
     },
     [nav],

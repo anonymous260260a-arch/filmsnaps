@@ -1,5 +1,5 @@
 /**
- * SubtitleSheet — bottom sheet for selecting subtitle tracks.
+ * SubtitleSheet â€” bottom sheet for selecting subtitle tracks.
  * Works with PlayerAdapter interface (not raw expo-video player).
  *
  * Also carries the subtitle sync stepper: shifts embedded-subtitle
@@ -7,9 +7,9 @@
  * per series (lib/subtitlePrefs) so users dial it once per show.
  *
  * The "Load subtitles online" section searches through the web app's
- * /api/subtitles proxy (Subdl → Wyzie chain, keys stay server-side) and
+ * /api/subtitles proxy (Subdl â†’ Wyzie chain, keys stay server-side) and
  * hands the downloaded file to the player as a sidecar track. Embedded
- * tracks are always listed first — online ones are the fallback.
+ * tracks are always listed first â€” online ones are the fallback.
  *
  * Layout: one ScrollView holds everything below the header so the sheet
  * always scrolls (embedded tracks + online results together), with the
@@ -17,7 +17,7 @@
  * card instead of a full-width bottom sheet.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -33,6 +33,8 @@ import { colors } from "../../theme/colors";
 import type { PlayerAdapter } from "./types";
 import {
   getSubtitleOffset,
+  getAutoSyncPrefs,
+  setAutoSyncPrefs,
   setSubtitleOffset as persistSubtitleOffset,
 } from "../../lib/subtitlePrefs";
 import {
@@ -45,6 +47,15 @@ import {
   saveSubtitleChoice,
   clearSubtitleChoice,
 } from "../../lib/subtitleCache";
+import { AutoSyncButton, type AutoSyncSourceInfo } from "./AutoSyncButton";
+import { File } from "expo-file-system";
+import { parseSubtitles } from "../../lib/subtitleSync/parseSubtitles";
+import {
+  ensurePristineSidecar,
+  formatFromUri,
+  mimeTypeForFormat,
+  writeShiftedSubtitleFile,
+} from "../../lib/subtitleSync/applySync";
 
 interface SubtitleSheetProps {
   visible: boolean;
@@ -53,25 +64,24 @@ interface SubtitleSheetProps {
   storageKey?: string;
   /** When present, enables the "Load subtitles online" section. */
   onlineSearch?: SubtitleSearchQuery;
+  /** When present, enables the Auto Sync button. */
+  autoSync?: {
+    contentId: string;
+    /** Latest stream info, read at press time. */
+    sourceInfo: () => AutoSyncSourceInfo;
+    /** file:// URI of the auto-attached online subtitle (fallback for sync). */
+    getDefaultSubtitleUri?: () => string | null;
+  };
   onClose: () => void;
 }
 
 const SYNC_STEP_S = 0.5;
-/** Online results render in chunks — mounting hundreds of rows at once stalls the JS thread. */
+/** Online results render in chunks â€” mounting hundreds of rows at once stalls the JS thread. */
 const RESULTS_STEP = 10;
-
-// ── [SubPerf] open-latency instrumentation ──
-let sheetRequestedAt = 0;
-
-/** Called by PlayerOverlay when the user taps the CC button. */
-export function markSubtitleSheetRequested(): void {
-  sheetRequestedAt = Date.now();
-  console.log("[SubPerf] sheet open requested");
-}
 
 function formatOffset(seconds: number): string {
   if (seconds === 0) return "Off";
-  return `${seconds > 0 ? "+" : "−"}${Math.abs(seconds).toFixed(1)}s`;
+  return `${seconds > 0 ? "+" : "âˆ’"}${Math.abs(seconds).toFixed(1)}s`;
 }
 
 interface TrackRowProps {
@@ -83,7 +93,7 @@ interface TrackRowProps {
   right?: React.ReactNode;
   disabled?: boolean;
   singleLineName?: boolean;
-  /** Sidecar track loaded from an external file — cloud icon + ONLINE pill. */
+  /** Sidecar track loaded from an external file â€” cloud icon + ONLINE pill. */
   external?: boolean;
 }
 
@@ -148,11 +158,12 @@ function SubtitleSheetInner({
   player,
   storageKey,
   onlineSearch,
+  autoSync,
   onClose,
 }: SubtitleSheetProps) {
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
-  // Track list is a native read — refresh it on open, not on every render
+  // Track list is a native read â€” refresh it on open, not on every render
   // (the parent overlay would otherwise re-run this at time-update rate).
   const [trackVersion, setTrackVersion] = useState(0);
   const tracks = React.useMemo(
@@ -162,23 +173,23 @@ function SubtitleSheetInner({
   const embeddedTracks = tracks.filter((t) => !t.isExternal);
   const externalTracks = tracks.filter((t) => t.isExternal);
   const [syncSeconds, setSyncSeconds] = useState(0);
+  const [autoOffsetMs, setAutoOffsetMs] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** Language of the currently selected subtitle track (sheet is the source of truth). */
+  const selectedTrackLanguage =
+    tracks.find((t) => t.id === selectedId)?.language || undefined;
   const [onlineOpen, setOnlineOpen] = useState(false);
   const [searching, setSearching] = useState(false);
   const [onlineResults, setOnlineResults] = useState<OnlineSubtitle[]>([]);
   const [onlineError, setOnlineError] = useState<string | null>(null);
   const [addingId, setAddingId] = useState<string | null>(null);
   const [visibleResults, setVisibleResults] = useState(RESULTS_STEP);
+  /** trackId â†’ downloaded file URI, so Auto Sync knows what to read. */
+  const externalFileRef = React.useRef<Map<string, string>>(new Map());
 
   // Re-read the persisted offset + current selection each time the sheet opens.
   useEffect(() => {
     if (!visible) return;
-    if (sheetRequestedAt) {
-      console.log(
-        `[SubPerf] sheet visible ${Date.now() - sheetRequestedAt}ms after click`,
-      );
-      sheetRequestedAt = 0;
-    }
     let cancelled = false;
     setTrackVersion((v) => v + 1);
     if (storageKey) {
@@ -187,8 +198,14 @@ function SubtitleSheetInner({
           if (!cancelled) setSyncSeconds(v);
         })
         .catch(() => {});
+      getAutoSyncPrefs(storageKey)
+        .then((p) => {
+          if (!cancelled) setAutoOffsetMs(p.autoOffsetMs);
+        })
+        .catch(() => {});
     } else {
       setSyncSeconds(0);
+      setAutoOffsetMs(0);
     }
     setSelectedId(player.getSelectedSubtitleTrackId?.() ?? null);
     return () => {
@@ -202,18 +219,14 @@ function SubtitleSheetInner({
     setSearching(true);
     setOnlineError(null);
     try {
-      const t0 = Date.now();
       const results = await searchSubtitles(onlineSearch);
-      console.log(
-        `[SubPerf] search took ${Date.now() - t0}ms, ${results.length} results`,
-      );
       setOnlineResults(results);
       setVisibleResults(RESULTS_STEP);
       if (results.length === 0)
         setOnlineError("No subtitles found for this title.");
     } catch {
       // Subdl/Wyzie problems are handled server-side (our API proxy holds the
-      // keys) — from here they just look unavailable.
+      // keys) â€” from here they just look unavailable.
       setOnlineError("Subtitles are unavailable right now.");
       setOnlineResults([]);
     } finally {
@@ -229,7 +242,7 @@ function SubtitleSheetInner({
     }
   };
 
-  /** Selections keep the sheet open — the checkmark is the feedback. */
+  /** Selections keep the sheet open â€” the checkmark is the feedback. */
   const selectTrack = (trackId: string) => {
     player.setSubtitleTrack(trackId);
     setSelectedId(trackId === "off" ? null : trackId);
@@ -253,9 +266,9 @@ function SubtitleSheetInner({
         downloaded.label,
       );
       if (trackId) {
-        console.log(`[SubtitleSheet] sidecar selected: ${trackId}`);
+        externalFileRef.current.set(trackId, downloaded.uri);
         setSelectedId(trackId);
-        // Remember the choice — auto-attached next time this title plays.
+        // Remember the choice â€” auto-attached next time this title plays.
         if (onlineSearch) {
           saveSubtitleChoice(onlineSearch, {
             uri: downloaded.uri,
@@ -270,48 +283,167 @@ function SubtitleSheetInner({
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.log(`[SubtitleSheet] online subtitle failed: ${msg}`);
       if (msg.includes("Sidecar subtitles unsupported")) {
         // JS reloaded onto a dev client built before the native sidecar patch.
         setOnlineError(
           "Needs an app rebuild (native sidecar support missing).",
         );
       } else if (msg === "DOWNLOAD_EMPTY" || msg === "DOWNLOAD_NOT_SUBTITLE") {
-        setOnlineError("That file didn't arrive as a subtitle — try another.");
+        setOnlineError(
+          "That file didn't arrive as a subtitle â€” try another.",
+        );
       } else {
-        setOnlineError(`Download failed — ${msg.slice(0, 80)}`);
+        setOnlineError(`Download failed â€” ${msg.slice(0, 80)}`);
       }
     } finally {
       setAddingId(null);
     }
   };
 
-  const applySync = (next: number) => {
-    setSyncSeconds(next);
-    player.setSubtitleOffset?.(next * 1000);
-    if (storageKey) persistSubtitleOffset(storageKey, next);
+  const syncSecondsRef = useRef(0);
+  const sidecarRewriteTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
+  /** R5-2: the stepper must actually move an EXTERNAL sidecar, which the native
+   *  setSubtitleOffset path cannot (it only shifts embedded MKV/WebM text
+   *  tracks). For a sidecar the file is rewritten instead, from its pristine
+   *  copy, with the accumulated auto + manual offset; presses are debounced so
+   *  a burst of taps produces one rewrite. */
+  const sidecarTarget = (): string | null =>
+    (selectedId ? externalFileRef.current.get(selectedId) : undefined) ??
+    autoSync?.getDefaultSubtitleUri?.() ??
+    null;
+
+  const rewriteSidecarForOffset = async () => {
+    const target = sidecarTarget();
+    if (!target) return;
+    const pristine = await ensurePristineSidecar(target);
+    if (!pristine) {
+      console.log(
+        "[SubSync] stepper: no pristine sidecar available - falling back to the native offset",
+      );
+      player.setSubtitleOffset?.(autoOffsetMs + syncSecondsRef.current * 1000);
+      return;
+    }
+    const format = formatFromUri(target);
+    const cues = parseSubtitles(pristine.text, format);
+    const totalSec = (autoOffsetMs + syncSecondsRef.current * 1000) / 1000;
+    if (cues.length === 0) return;
+    const uri = await writeShiftedSubtitleFile(
+      cues,
+      totalSec,
+      format,
+      pristine.uri,
+    );
+    if (!uri) return;
+    try {
+      await player.clearExternalSubtitles?.();
+      const trackId = await player.addExternalSubtitle?.(
+        uri,
+        mimeTypeForFormat(format),
+        selectedTrackLanguage,
+        uri.split("/").pop(),
+      );
+      if (trackId) {
+        externalFileRef.current.set(trackId, uri);
+        player.setSubtitleTrack?.(trackId);
+        setSelectedId(trackId);
+        console.log(
+          `[SubSync] stepper applied ${totalSec.toFixed(2)}s to the sidecar file (track ${trackId}): ${uri}`,
+        );
+      } else {
+        console.log("[SubSync] stepper: re-add returned no track id");
+      }
+    } catch (e) {
+      console.log(
+        `[SubSync] stepper re-add failed: ${(e as Error)?.message ?? e}`,
+      );
+    }
   };
 
-  // ── [SubPerf] render frequency + JS-thread stall probe (visible only) ──
-  const renderCountRef = React.useRef(0);
-  if (visible) {
-    renderCountRef.current += 1;
-    console.log(`[SubPerf] sheet render #${renderCountRef.current}`);
-  }
-  React.useEffect(() => {
-    if (!visible) return;
-    let last = Date.now();
-    const id = setInterval(() => {
-      const now = Date.now();
-      if (now - last > 700) {
-        console.log(`[SubPerf] JS thread stall: ${now - last}ms between ticks`);
+  const applySync = (next: number) => {
+    setSyncSeconds(next);
+    syncSecondsRef.current = next;
+    if (storageKey) persistSubtitleOffset(storageKey, next);
+    // Sidecar selected -> rewrite the file (debounced); embedded -> native offset.
+    if (sidecarTarget()) {
+      if (sidecarRewriteTimer.current)
+        clearTimeout(sidecarRewriteTimer.current);
+      sidecarRewriteTimer.current = setTimeout(() => {
+        void rewriteSidecarForOffset();
+      }, 600);
+      return;
+    }
+    // Native offset is the SUM of auto + manual - auto stays untouched.
+    player.setSubtitleOffset?.(autoOffsetMs + next * 1000);
+  };
+
+  /** Auto Sync result — apply on top of the manual offset + persist for restore. */
+  const handleAutoSynced = async (
+    offsetMs: number,
+    _confidence: number,
+    rewritten?: {
+      uri: string;
+      mimeType: string;
+      language?: string;
+      label?: string;
+    },
+  ) => {
+    setAutoOffsetMs(offsetMs);
+    if (rewritten) {
+      // Sidecar subtitle: native setSubtitleOffset only shifts embedded MKV
+      // text tracks, so re-add the offset-shifted copy of the file instead.
+      try {
+        await player.clearExternalSubtitles?.();
+        const trackId = await player.addExternalSubtitle?.(
+          rewritten.uri,
+          rewritten.mimeType,
+          rewritten.language,
+          rewritten.label,
+        );
+        if (trackId) {
+          externalFileRef.current.set(trackId, rewritten.uri);
+          // Explicitly select it: the re-add re-prepares the source and the
+          // track would otherwise sit unselected (subtitles appear "off").
+          player.setSubtitleTrack?.(trackId);
+          setSelectedId(trackId);
+          console.log(
+            `[SubSync] applied shifted subtitle (track ${trackId}): ${rewritten.uri}`,
+          );
+          // Remember the shifted file so the next playback auto-attaches it
+          // (otherwise the unshifted original would come back).
+          if (onlineSearch) {
+            saveSubtitleChoice(onlineSearch, {
+              uri: rewritten.uri,
+              mimeType: rewritten.mimeType,
+              language: rewritten.language ?? selectedTrackLanguage ?? "",
+              label: rewritten.label ?? "",
+            });
+          }
+        } else {
+          console.log("[SubSync] re-add returned no track id");
+        }
+      } catch (e) {
+        console.log(
+          `[SubSync] re-add shifted subtitle failed: ${(e as Error)?.message ?? e}`,
+        );
       }
-      last = now;
-    }, 300);
-    return () => clearInterval(id);
-  }, [visible]);
+    } else {
+      player.setSubtitleOffset?.(offsetMs + syncSeconds * 1000);
+    }
+    if (storageKey) {
+      setAutoSyncPrefs(storageKey, { autoOffsetMs: offsetMs, autoScale: 1 });
+    }
+  };
 
   const syncSupported = typeof player.setSubtitleOffset === "function";
+
+  /** Which subtitle file should Auto Sync read: selected external track, else the auto-attached one. */
+  const autoSyncSubtitleUri =
+    (selectedId ? externalFileRef.current.get(selectedId) : undefined) ??
+    autoSync?.getDefaultSubtitleUri?.() ??
+    null;
 
   return (
     <Modal
@@ -399,11 +531,22 @@ function SubtitleSheetInner({
                     </TouchableOpacity>
                   )}
                 </View>
+
+                {/* Auto Sync â€” listens to the stream's audio and aligns the subtitle */}
+                {autoSync && (
+                  <AutoSyncButton
+                    sourceInfo={autoSync.sourceInfo}
+                    contentId={autoSync.contentId}
+                    subtitleUri={autoSyncSubtitleUri}
+                    subtitleLanguage={selectedTrackLanguage}
+                    onSynced={handleAutoSynced}
+                  />
+                )}
                 <View style={styles.separator} />
               </>
             )}
 
-            {/* Off — selected when no track is active */}
+            {/* Off â€” selected when no track is active */}
             <TrackRow
               selected={selectedId === null}
               language="Off"
@@ -422,7 +565,7 @@ function SubtitleSheetInner({
               />
             ))}
 
-            {/* Loaded online tracks — visually distinct from in-file ones */}
+            {/* Loaded online tracks â€” visually distinct from in-file ones */}
             {externalTracks.length > 0 && (
               <>
                 <View style={styles.separator} />
@@ -440,7 +583,7 @@ function SubtitleSheetInner({
               </>
             )}
 
-            {/* ── Online subtitles — below embedded, embedded preferred ── */}
+            {/* â”€â”€ Online subtitles â€” below embedded, embedded preferred â”€â”€ */}
             {onlineSearch && (
               <>
                 <View style={styles.separator} />
@@ -471,7 +614,7 @@ function SubtitleSheetInner({
                 </TouchableOpacity>
                 {embeddedTracks.length === 0 && !onlineOpen && (
                   <Text style={styles.onlineHint}>
-                    No embedded subtitles in this file — search online below.
+                    No embedded subtitles in this file â€” search online below.
                   </Text>
                 )}
 
@@ -480,7 +623,9 @@ function SubtitleSheetInner({
                     {searching && (
                       <View style={styles.onlineStatusRow}>
                         <ActivityIndicator size="small" color={colors.gold} />
-                        <Text style={styles.onlineStatusText}>Searching…</Text>
+                        <Text style={styles.onlineStatusText}>
+                          Searchingâ€¦
+                        </Text>
                       </View>
                     )}
 
@@ -495,7 +640,7 @@ function SubtitleSheetInner({
                           <TrackRow
                             key={item.id}
                             selected={selectedId === item.id}
-                            language={`${item.language}${item.hi ? " · CC" : ""}`}
+                            language={`${item.language}${item.hi ? " Â· CC" : ""}`}
                             name={item.releaseName}
                             singleLineName
                             disabled={!!addingId}
@@ -766,6 +911,6 @@ const styles = StyleSheet.create({
   },
 });
 
-// Memoized: the parent overlay re-renders on seek/pause/state changes — the
+// Memoized: the parent overlay re-renders on seek/pause/state changes â€” the
 // sheet should only re-render when its own props (visible, player, key) change.
 export const SubtitleSheet = React.memo(SubtitleSheetInner);

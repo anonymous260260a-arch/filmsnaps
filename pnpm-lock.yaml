@@ -259,6 +259,9 @@ importers:
       expo-status-bar:
         specifier: ~55.0.6
         version: 55.0.6(react-native@0.83.6(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.0))(react@19.2.0)
+      expo-subtitle-sync:
+        specifier: workspace:*
+        version: link:../../modules/subtitle-sync
       expo-updates:
         specifier: ~55.0.25
         version: 55.0.25(expo@55.0.27)(react-native@0.83.6(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.0))(react@19.2.0)
@@ -441,6 +444,8 @@ importers:
       wrangler:
         specifier: ^4.100.0
         version: 4.100.0
+
+  modules/subtitle-sync: {}
 
   packages/adblock-config:
     devDependencies:

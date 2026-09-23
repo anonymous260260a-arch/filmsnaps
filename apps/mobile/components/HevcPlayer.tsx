@@ -49,6 +49,7 @@ import {
 import { toPlayableUri } from "../lib/download/offlineUri";
 import { File } from "expo-file-system";
 import { getSubtitleChoice } from "../lib/subtitleCache";
+import { getAutoSyncPrefs } from "../lib/subtitlePrefs";
 import type { PlayerAdapter, AudioTrackInfo } from "./player/types";
 import type { StreamLink } from "./player/streamTypes";
 import {
@@ -440,6 +441,8 @@ export function HevcPlayer({
   // addExternalSubtitle re-prepares at the current position and selects the
   // track when it appears — so a remembered choice just plays.
   const cachedSubtitleKeyRef = useRef("");
+  /** Auto-attached online subtitle file — Auto Sync reads it when no sidecar is selected. */
+  const autoAttachedSubtitleRef = useRef<string | null>(null);
   useEffect(() => {
     if (!hasStarted || !subtitleOnlineSearch) return;
     const key = `${subtitleOnlineSearch.mediaType}:${subtitleOnlineSearch.tmdbId}:${subtitleOnlineSearch.season ?? ""}:${subtitleOnlineSearch.episode ?? ""}`;
@@ -450,25 +453,16 @@ export function HevcPlayer({
         const choice = await getSubtitleChoice(subtitleOnlineSearch);
         if (!choice) return;
         const file = new File(choice.uri);
-        if (!file.exists) {
-          console.log(
-            `[SidecarSubs] JS: cached subtitle no longer on disk — skipping (${choice.label})`,
-          );
-          return;
-        }
-        console.log(
-          `[SidecarSubs] JS: auto-loading cached subtitle for ${key}`,
-        );
+        if (!file.exists) return;
+        autoAttachedSubtitleRef.current = choice.uri;
         await adapterRef.current?.addExternalSubtitle?.(
           choice.uri,
           choice.mimeType,
           choice.language,
           choice.label,
         );
-      } catch (e) {
-        console.log(
-          `[SidecarSubs] JS: cached subtitle auto-load failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
+      } catch {
+        // Auto-attach is best-effort — the sheet's online section remains.
       }
     })();
   }, [hasStarted, subtitleOnlineSearch]);
@@ -695,9 +689,6 @@ export function HevcPlayer({
           backgroundedRef.current ||
           Date.now() - lastActiveAtRef.current < 1500
         ) {
-          console.log(
-            "[FS-BG] switch timeout deferred — backgrounded or just returned",
-          );
           switchTimeoutRef.current = setTimeout(switchTimeout, 2000);
           return;
         }
@@ -993,6 +984,19 @@ export function HevcPlayer({
   );
   const bufferProfile = getBufferProfile(container, codec);
 
+  // Latest stream facts for subtitle Auto Sync — read at button-press time so
+  // a source switch mid-run resolves to the current URL, never a stale one.
+  const autoSyncSourceRef = useRef({
+    uri: activeUrl,
+    headers: {} as Record<string, string>,
+    container,
+  });
+  autoSyncSourceRef.current = {
+    uri: activeUrl,
+    headers: videoSource.headers,
+    container,
+  };
+
   // Track continuous playback position across source switches and seeking
   const lastPlaybackTimeRef = useRef(startAt);
 
@@ -1019,7 +1023,6 @@ export function HevcPlayer({
     if (initialTime > 0) {
       playerInstance.currentTime = initialTime;
     }
-    console.log("[FS-BG] source (re)created → initial play()");
     playerInstance.play();
   });
 
@@ -1035,16 +1038,10 @@ export function HevcPlayer({
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "background" || state === "inactive") {
-        console.log(
-          `[FS-BG] app → ${state}: pausing (playing=${player.playing}, status=${player.status})`,
-        );
         backgroundedRef.current = true;
         adapterRef.current?.setAppBackgrounded?.(true);
         adapterRef.current?.pause();
       } else if (state === "active") {
-        console.log(
-          `[FS-BG] app → active (playing=${player.playing}, status=${player.status})`,
-        );
         backgroundedRef.current = false;
         lastActiveAtRef.current = Date.now();
         adapterRef.current?.setAppBackgrounded?.(false);
@@ -1143,16 +1140,18 @@ export function HevcPlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adapter, showToast]);
 
-  // ── Restore this series' subtitle sync offset (persisted per series) ──
+  // ── Restore this series' subtitle sync offset (manual + auto, persisted per series) ──
   useEffect(() => {
     if (!subtitleKey) return;
     let cancelled = false;
-    getSubtitleOffset(subtitleKey)
-      .then((seconds) => {
-        if (!cancelled && seconds !== 0) {
-          adapter.setSubtitleOffset(seconds * 1000);
+    Promise.all([getSubtitleOffset(subtitleKey), getAutoSyncPrefs(subtitleKey)])
+      .then(([manualSec, auto]) => {
+        if (cancelled) return;
+        const totalMs = auto.autoOffsetMs + manualSec * 1000;
+        if (totalMs !== 0) {
+          adapter.setSubtitleOffset(totalMs);
           console.log(
-            `[HevcPlayer] Restored subtitle offset ${seconds}s for ${subtitleKey}`,
+            `[SubSync] restored offset for ${subtitleKey}: auto=${(auto.autoOffsetMs / 1000).toFixed(2)}s manual=${manualSec.toFixed(1)}s`,
           );
         }
       })
@@ -1799,6 +1798,33 @@ export function HevcPlayer({
         }}
         subtitleKey={subtitleKey ?? undefined}
         subtitleOnlineSearch={subtitleOnlineSearch}
+        autoSync={
+          subtitleKey
+            ? {
+                contentId: subtitleKey,
+                sourceInfo: () => {
+                  const s = autoSyncSourceRef.current;
+                  const duration = adapter.getDuration?.() ?? 0;
+                  const c = s.container;
+                  const mapped:
+                    | "mp4"
+                    | "mkv"
+                    | "webm"
+                    | "mov"
+                    | "m4v"
+                    | "other" = c === "unknown" || c === "mpegts" ? "other" : c;
+                  return {
+                    uri: s.uri,
+                    headers: s.headers,
+                    container: mapped,
+                    durationSec: duration > 0 ? duration : 0,
+                    kind: s.uri.startsWith("http") ? "remote" : "local",
+                  };
+                },
+                getDefaultSubtitleUri: () => autoAttachedSubtitleRef.current,
+              }
+            : undefined
+        }
         onSourcePicker={
           isMultiLink ? () => setShowStreamPicker(true) : undefined
         }
