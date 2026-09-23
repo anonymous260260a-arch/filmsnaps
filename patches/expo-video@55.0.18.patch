@@ -1289,10 +1289,10 @@ index 0000000000000000000000000000000000000000..ec099b8209be8322791bc381ecc7c890
 +}
 diff --git a/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt b/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt
 new file mode 100644
-index 0000000000000000000000000000000000000000..4a628609e9554b35eb62c2c72d156e4d68ae1b11
+index 0000000000000000000000000000000000000000..f128fdca3ce1eb31715662131535f49bc382e05d
 --- /dev/null
 +++ b/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,83 @@
 +package expo.modules.video.utils
 +
 +import androidx.media3.common.audio.AudioProcessor
@@ -1338,8 +1338,9 @@ index 0000000000000000000000000000000000000000..4a628609e9554b35eb62c2c72d156e4d
 +        return inputAudioFormat
 +    }
 +
-+    override fun flush() {
-+        super.flush()
++    // media3 BaseAudioProcessor.flush() is final — the overridable hook is onFlush().
++    override fun onFlush() {
++        super.onFlush()
 +        // flush ⇒ suspend: no onPcm until the next queueInput.
 +        suspended = true
 +        PlayerAudioTap.onFlush()
