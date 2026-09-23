@@ -9,7 +9,7 @@ import java.util.BitSet
  * BitSet.toByteArray() trims trailing zero bytes (only up to the highest set
  * bit) while `bins` is a sample-count forecast (ceil(totalOut16k/160)), so a
  * window ending in silence ships a short array. Pad out to the declared width —
- * every emitter (AudioExtractJob, RemoteScanJob, HlsScanJob) goes through this.
+ * every emitter (AudioExtractJob, SignalCollector/FastScanJob) goes through this.
  */
 object SignalPacking {
     /** Pad [bits]'s BitSet.toByteArray() representation to ceil(bins/8) bytes. */
