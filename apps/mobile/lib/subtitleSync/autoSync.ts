@@ -31,6 +31,8 @@ import {
   confidence,
   keptFraction,
   contrastScore,
+  solveDrift,
+  meanCueStart,
   APPLY_CONF,
   TRY_CONF,
 } from "./correlate";
@@ -257,6 +259,50 @@ function cuesInWindow(
 
 function windowKeyFor(fromSec: number, toSec: number): string {
   return `${Math.round(fromSec)}-${Math.round(toSec)}`;
+}
+
+/** Fraction of cue time landing in [spanFrom, spanTo] when shifted by offset. */
+function keepAtOffsetInSpan(
+  cues: { start: number; end: number }[],
+  spanFrom: number,
+  spanTo: number,
+  offset: number,
+): number {
+  let total = 0;
+  let kept = 0;
+  for (const c of cues) {
+    total += Math.max(0, c.end - c.start);
+    const a = Math.max(c.start + offset, spanFrom);
+    const b = Math.min(c.end + offset, spanTo);
+    if (b > a) kept += b - a;
+  }
+  return total > 0 ? Math.min(1, kept / total) : 0;
+}
+
+/**
+ * Part B LOG-ONLY: onset-weighted score over cue starts only (first 300ms).
+ * Does NOT affect the applied offset — we compare against `raw` on regression
+ * data (Spider-Man / Blacklist / Lioness) before adopting.
+ */
+function logOnsetWeighted(
+  label: string,
+  cues: { start: number; end: number; text: string }[],
+  sig: SpeechSignal,
+): void {
+  const onsetCues = cues.map((c) => ({
+    start: c.start,
+    end: Math.min(c.end, c.start + 0.3),
+    text: c.text,
+  }));
+  try {
+    const o = findOffset(onsetCues, sig);
+    const oc = confidence(onsetCues, sig, o.offset, o.runnerUp, o.score);
+    console.log(
+      `[SubSync] ${label} onset-weighted: offset=${o.offset.toFixed(2)}s conf=${oc.toFixed(3)}`,
+    );
+  } catch {
+    console.log(`[SubSync] ${label} onset-weighted: n/a`);
+  }
 }
 
 /** Round a duration so equivalent windows always produce the same cache key. */
@@ -585,6 +631,7 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
           `keep=${keptFraction(earlyCues, sig, raw.offset).toFixed(2)} baseline=${raw.baseline.toFixed(3)} ` +
           `top=${formatTop(raw.top)}`,
       );
+      logOnsetWeighted("early", earlyCues, sig);
 
       // R8-4 LOG-ONLY: re-rank the early window without fully-bracketed cues so
       // an SDH-heavy file's offset shift is visible. The applied path below is
@@ -730,21 +777,50 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
     Math.max(earlyTo + 120, durationSec * 0.9),
     durationSec,
   );
-  const lateFrom = Math.max(earlyTo + 60, lateToRaw - lateSec);
-  const lateTo = lateToRaw;
-  if (lateFrom >= lateTo - 30) {
+  // Fixed (historical) late span: cue selection always uses this - the late
+  // cues of the FILE. The AUDIO scan may be re-anchored below (Part A).
+  const lateCueFrom = Math.max(earlyTo + 60, lateToRaw - lateSec);
+  const lateCueTo = lateToRaw;
+  if (lateCueFrom >= lateCueTo - 30) {
     console.log("[SubSync] content too short for a separate late window");
     onProgress?.(1, "done");
     return { type: "failed", reason: "low confidence in both windows" };
   }
-  const lateCues = cuesInWindow(cues, lateFrom, lateTo);
+  const lateCues = cuesInWindow(cues, lateCueFrom, lateCueTo);
   console.log(
-    `[SubSync] late window: ${lateFrom.toFixed(1)}s-${lateTo.toFixed(1)}s (${lateCues.length} cues)`,
+    `[SubSync] late window: ${lateCueFrom.toFixed(1)}s-${lateCueTo.toFixed(1)}s (${lateCues.length} cues)`,
   );
   if (lateCues.length < 8) {
     console.log("[SubSync] late window has <8 cues - skipping scan");
     onProgress?.(1, "done");
     return { type: "failed", reason: "low confidence in both windows" };
+  }
+
+  // Part A: re-anchor the late AUDIO scan on the early candidate so a large
+  // positive offset cannot push the late cue set past the signal end
+  // (keep was ~0.54 at e=+54s on a 120s fixed window; need >= 0.7).
+  // CUE-FIT span = [lateCueFrom + e, lateCueFrom + e + lateSec], clamped.
+  let lateFrom = lateCueFrom;
+  let lateTo = lateCueTo;
+  if (earlyConf >= TRY_CONF) {
+    const e = earlyOff.offset;
+    const reFrom = Math.max(earlyTo + 60, lateCueFrom + e);
+    const reTo = Math.min(durationSec, lateCueFrom + e + lateSec);
+    if (reTo - reFrom >= 30) {
+      const keepRe = keepAtOffsetInSpan(lateCues, reFrom, reTo, e);
+      const keepFix = keepAtOffsetInSpan(lateCues, lateCueFrom, lateCueTo, e);
+      lateFrom = reFrom;
+      lateTo = reTo;
+      console.log(
+        `[SubSync] late window re-anchored by early offset e=${e.toFixed(2)}s: ` +
+          `[${lateFrom.toFixed(1)}..${lateTo.toFixed(1)}]s ` +
+          `(keep at e would be ${keepRe.toFixed(2)} vs ${keepFix.toFixed(2)} fixed)`,
+      );
+    } else {
+      console.log(
+        `[SubSync] late re-anchor e=${e.toFixed(2)}s rejected (span ${(reTo - reFrom).toFixed(1)}s < 30s) - fixed window`,
+      );
+    }
   }
 
   let lateOff = { offset: 0, score: -1, runnerUp: -1 };
@@ -756,15 +832,24 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
    *  the early offset at all (see lateCannotJudge below). */
   let lateSigRef: SpeechSignal | null = null;
 
+  // Both the re-anchored and the fixed window must be cache-findable.
+  const fixedWinKey = windowKeyFor(lateCueFrom, lateCueTo);
   const lateWinKey = windowKeyFor(lateFrom, lateTo);
-  const lateCached = await getCachedWindow(
+  let lateCached = await getCachedWindow(
     subtitleCacheKey,
     source.contentId,
     lateWinKey,
   );
+  if (!lateCached && lateWinKey !== fixedWinKey) {
+    lateCached = await getCachedWindow(
+      subtitleCacheKey,
+      source.contentId,
+      fixedWinKey,
+    );
+  }
   if (lateCached) {
     console.log(
-      `[SubSync] late window cache hit: offset=${(lateCached.offsetMs / 1000).toFixed(2)}s conf=${lateCached.confidence.toFixed(3)}`,
+      `[SubSync] late window cache hit (${lateWinKey === fixedWinKey ? lateWinKey : lateWinKey + " or fixed " + fixedWinKey}): offset=${(lateCached.offsetMs / 1000).toFixed(2)}s conf=${lateCached.confidence.toFixed(3)}`,
     );
     lateOff = { offset: lateCached.offsetMs / 1000, score: -1, runnerUp: -1 };
     lateConf = lateCached.confidence;
@@ -802,6 +887,7 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
             `keep=${keptFraction(lateCues, lateSig, off.offset).toFixed(2)} baseline=${off.baseline.toFixed(3)} ` +
             `top=${formatTop(off.top)}`,
         );
+        logOnsetWeighted("late", lateCues, lateSig);
 
         // Clipped-late rescue: the late window is pinned near the content end,
         // so a positive offset pushes its cue set past the signal end. Re-scan
@@ -815,7 +901,9 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
         // candidate was never re-tested with full coverage.
         if (keep < 0.7 && keep > 0 && off.score > 0 && lateCues.length >= 8) {
           const span = lateSig.endSec - lateSig.startSec;
-          const anchorFrom = Math.max(0, lateFrom + off.offset);
+          // Anchor on the CUE span + candidate offset (full coverage for this
+          // cue set), not on the possibly re-anchored scan start.
+          const anchorFrom = Math.max(0, lateCueFrom + off.offset);
           const anchorTo =
             durationSec > 0
               ? Math.min(durationSec, anchorFrom + span)
@@ -930,6 +1018,24 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
   console.log(
     `[SubSync] late: offset=${lateOff.offset.toFixed(2)}s conf=${lateConf.toFixed(3)}`,
   );
+
+  // Part C LOG-ONLY: both windows confident but far apart → implied scale.
+  // Does NOT act on drift; decision waits on the user's end-of-movie check.
+  if (
+    earlyConf >= TRY_CONF &&
+    lateConf >= TRY_CONF &&
+    lateUsable &&
+    Math.abs(earlyOff.offset - lateOff.offset) >= 10
+  ) {
+    const eMean = meanCueStart(earlyCues);
+    const lMean = meanCueStart(lateCues);
+    const { scale } = solveDrift(earlyOff.offset, eMean, lateOff.offset, lMean);
+    const grow = (scale - 1) * durationSec;
+    console.log(
+      `[SubSync] drift check: early=${earlyOff.offset.toFixed(2)}s late=${lateOff.offset.toFixed(2)}s ` +
+        `-> implied scale=${scale.toFixed(5)} (offset would grow ${grow >= 0 ? "+" : ""}${grow.toFixed(1)}s over ${durationSec}s)`,
+    );
+  }
 
   onProgress?.(0.95, "analyze");
 

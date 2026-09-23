@@ -44,6 +44,8 @@ class SignalCollector(
     private var maxBin = -1
     private val binsSilero = BitSet()  // Silero marks (when silero != null)
     private var maxBinSilero = -1
+    /** Latched after a Silero runtime throw — energy alone for the rest of the window. */
+    private var sileroFailed = false
 
     // Pending 512-sample (32ms) VAD chunk spanning decoder buffer boundaries.
     private val pending = ArrayList<Float>(512)
@@ -117,6 +119,7 @@ class SignalCollector(
         maxBin = -1
         binsSilero.clear()
         maxBinSilero = -1
+        sileroFailed = false
         speechChunks = 0
         sileroSpeechChunks = 0
         totalChunks = 0
@@ -173,9 +176,24 @@ class SignalCollector(
             maxBin = mark(bins, chunkStartUs, maxBin)
         }
         // Silero runs alongside when enabled — independent bit set.
-        if (silero != null && silero.process(chunk) >= 0.5f) {
-            sileroSpeechChunks++
-            maxBinSilero = mark(binsSilero, chunkStartUs, maxBinSilero)
+        // Part B / R8-3 residual: a runtime ONNX throw must not fail the scan.
+        // Zero Silero bins, latch, continue on energy alone.
+        if (silero != null && !sileroFailed) {
+            try {
+                if (silero.process(chunk) >= 0.5f) {
+                    sileroSpeechChunks++
+                    maxBinSilero = mark(binsSilero, chunkStartUs, maxBinSilero)
+                }
+            } catch (t: Throwable) {
+                sileroFailed = true
+                binsSilero.clear()
+                maxBinSilero = -1
+                sileroSpeechChunks = 0
+                log?.invoke(
+                    "vad: Silero THROW (${t.javaClass.simpleName}: ${t.message}) - " +
+                        "zeroed silero bins, continuing on energy alone"
+                )
+            }
         }
     }
 
@@ -205,33 +223,40 @@ class SignalCollector(
     }
 
     /**
-     * R8-1 end-of-window choice. Runs ONCE when the window is done:
-     *   Silero wins iff it was present AND its duty >= 0.05.
+     * Part B end-of-window choice. Runs ONCE when the window is done:
+     *   Silero wins iff present, not failed, sileroDuty >= 0.01 AND maxProb >= 0.5.
      *   Dead-model signature (all probs < 0.05) is logged loudly.
+     *   Every choice logs both duties + maxProb.
      */
     fun buildSuccess(): ExtractResult.Success? {
         if (lastDecodedUs <= firstDecodedUs) return null
         val sDuty = sileroDuty()
         val eDuty = energyDuty()
         val maxProb = silero?.maxProb ?: 0f
-        val choseSilero = silero != null && sDuty >= 0.05f
+        val choseSilero =
+            silero != null && !sileroFailed && sDuty >= 0.01f && maxProb >= 0.5f
 
         if (silero != null) {
+            val latchNote = if (sileroFailed) " [silero-failed-latched]" else ""
             if (choseSilero) {
                 log?.invoke(
-                    "vad: chose silero (duty=${"%.3f".format(java.util.Locale.US, sDuty)})"
+                    "vad: chose silero (sileroDuty=${"%.3f".format(java.util.Locale.US, sDuty)} " +
+                        "energyDuty=${"%.3f".format(java.util.Locale.US, eDuty)} " +
+                        "maxProb=${"%.3f".format(java.util.Locale.US, maxProb)})"
                 )
             } else {
                 log?.invoke(
-                    "vad: chose energy (silero duty=${"%.3f".format(java.util.Locale.US, sDuty)}, " +
-                        "maxProb=${"%.3f".format(java.util.Locale.US, maxProb)})"
+                    "vad: chose energy (sileroDuty=${"%.3f".format(java.util.Locale.US, sDuty)} " +
+                        "energyDuty=${"%.3f".format(java.util.Locale.US, eDuty)} " +
+                        "maxProb=${"%.3f".format(java.util.Locale.US, maxProb)}$latchNote)"
                 )
             }
             if (maxProb < 0.05f) {
                 log?.invoke(
-                    "vad: DEAD-MODEL all probs < 0.05 maxProb=${"%.4f".format(java.util.Locale.US, maxProb)} " +
-                        "chunks=$totalChunks sileroDuty=${"%.3f".format(java.util.Locale.US, sDuty)} " +
-                        "energyDuty=${"%.3f".format(java.util.Locale.US, eDuty)}"
+                    "vad: DEAD-MODEL maxProb=${"%.4f".format(java.util.Locale.US, maxProb)} " +
+                        "< 0.05 (sileroDuty=${"%.3f".format(java.util.Locale.US, sDuty)} " +
+                        "energyDuty=${"%.3f".format(java.util.Locale.US, eDuty)} " +
+                        "chunks=$totalChunks)"
                 )
             }
         }
