@@ -285,6 +285,10 @@ export function AutoSyncButton({
           setState("applied");
           setMessage("Subtitle file rewritten (drift corrected).");
           break;
+        case "kept":
+          setState("failed");
+          setMessage("Couldn't improve on the existing sync — keeping it");
+          break;
         case "failed":
           setState("failed");
           setMessage(GATE_REASONS[outcome.reason] ?? outcome.reason);

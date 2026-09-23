@@ -283,11 +283,13 @@ function keepAtOffsetInSpan(
  * Part B LOG-ONLY: onset-weighted score over cue starts only (first 300ms).
  * Does NOT affect the applied offset — we compare against `raw` on regression
  * data (Spider-Man / Blacklist / Lioness) before adopting.
+ * Verdict (device): DO NOT adopt — onset overshoots on CAM audio; diagnostic only.
  */
 function logOnsetWeighted(
   label: string,
   cues: { start: number; end: number; text: string }[],
   sig: SpeechSignal,
+  rawOffset: number,
 ): void {
   const onsetCues = cues.map((c) => ({
     start: c.start,
@@ -297,12 +299,28 @@ function logOnsetWeighted(
   try {
     const o = findOffset(onsetCues, sig);
     const oc = confidence(onsetCues, sig, o.offset, o.runnerUp, o.score);
+    const delta = o.offset - rawOffset;
     console.log(
-      `[SubSync] ${label} onset-weighted: offset=${o.offset.toFixed(2)}s conf=${oc.toFixed(3)}`,
+      `[SubSync] ${label} onset-weighted: offset=${o.offset.toFixed(2)}s conf=${oc.toFixed(3)} ` +
+        `(delta=${delta >= 0 ? "+" : ""}${delta.toFixed(2)}s)`,
     );
   } catch {
     console.log(`[SubSync] ${label} onset-weighted: n/a`);
   }
+}
+
+/** Content-dead duty: VAD marked almost nothing (credits, silence). */
+function isContentDead(sig: SpeechSignal): boolean {
+  let speech = 0;
+  for (let i = 0; i < sig.data.length; i++) speech += sig.data[i];
+  const duty = sig.data.length > 0 ? speech / sig.data.length : 0;
+  return duty < 0.02;
+}
+
+function dutyOf(sig: SpeechSignal): number {
+  let speech = 0;
+  for (let i = 0; i < sig.data.length; i++) speech += sig.data[i];
+  return sig.data.length > 0 ? speech / sig.data.length : 0;
 }
 
 /** Round a duration so equivalent windows always produce the same cache key. */
@@ -439,7 +457,7 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
     durationSec,
     subtitleText,
     subtitleFormat,
-    subtitleCacheKey,
+    subtitleCacheKey: rawSubtitleCacheKey,
     subtitleUri,
     subtitleLanguage,
     // R8-2: Silero is the production default via the kill-switch constant.
@@ -449,11 +467,35 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
     onProgress,
   } = opts;
 
+  // Re-sync UX: a shifted filename (synced-31800-… / pristine-…) must not
+  // change the cache key — same pristine content, same entry.
+  const subtitleCacheKey = rawSubtitleCacheKey.replace(
+    /^(synced-(-?\d+)-|pristine-)/,
+    "",
+  );
+  if (subtitleCacheKey !== rawSubtitleCacheKey) {
+    console.log(
+      `[SubSync] cache key normalized: ${rawSubtitleCacheKey} -> ${subtitleCacheKey}`,
+    );
+  }
+
+  // Already-shifted input: a failed re-sync keeps the existing file intact.
+  const existingAppliedMs = appliedOffsetMs(subtitleUri);
+  const failOrKeep = (reason: string): SyncOutcome => {
+    if (existingAppliedMs != null) {
+      console.log(
+        `[SubSync] ${reason} - existing sync ${existingAppliedMs}ms kept (not disturbed)`,
+      );
+      return { type: "kept", existingOffsetMs: existingAppliedMs, reason };
+    }
+    return { type: "failed", reason };
+  };
+
   // 0. Gate check (async - HLS probes the playlist first)
   const gate = await canAutoSync(source, platform);
   if (!gate.ok) {
     console.log(`[SubSync] gate: blocked - ${gate.reason}`);
-    return { type: "failed", reason: gate.reason };
+    return failOrKeep(gate.reason);
   }
 
   // R8-3: honor a dead-model verdict from this app version (once-per-bump retry).
@@ -497,7 +539,7 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
   }
   if (cues.length < 8) {
     console.log("[SubSync] too few cues - aborting");
-    return { type: "failed", reason: "too few cues" };
+    return failOrKeep("too few cues");
   }
 
   // Apply helper: rewrite the sidecar subtitle file with the computed offset
@@ -609,7 +651,7 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
       );
       const friendly =
         EXTRACT_MESSAGES[earlyResult.code] ?? earlyResult.message;
-      return { type: "failed", reason: friendly };
+      return failOrKeep(friendly);
     }
 
     logScanSummary("early", earlyResult, sileroEnabled);
@@ -617,53 +659,62 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
 
     try {
       const sig = validateSignal({ rate: 100, ...earlyResult });
-      earlySig = sig;
-      const raw = findOffset(earlyCues, sig);
-      const rawConf = confidence(
-        earlyCues,
-        sig,
-        raw.offset,
-        raw.runnerUp,
-        raw.score,
-      );
-      console.log(
-        `[SubSync] early: offset=${raw.offset.toFixed(2)}s conf=${rawConf.toFixed(3)} ` +
-          `keep=${keptFraction(earlyCues, sig, raw.offset).toFixed(2)} baseline=${raw.baseline.toFixed(3)} ` +
-          `top=${formatTop(raw.top)}`,
-      );
-      logOnsetWeighted("early", earlyCues, sig);
-
-      // R8-4 LOG-ONLY: re-rank the early window without fully-bracketed cues so
-      // an SDH-heavy file's offset shift is visible. The applied path below is
-      // UNCHANGED (still uses `raw` / `rawConf` over all cues).
-      const dialogueCues = earlyCues.filter((c) => !isBracketedCue(c.text));
-      if (dialogueCues.length >= 8 && dialogueCues.length < earlyCues.length) {
-        const rawD = findOffset(dialogueCues, sig);
-        const sdhInWindow = earlyCues.length - dialogueCues.length;
+      if (isContentDead(sig)) {
         console.log(
-          `early: offset=${raw.offset.toFixed(2)}s (all ${earlyCues.length} cues) / ` +
-            `offset=${rawD.offset.toFixed(2)}s (${dialogueCues.length} dialogue cues, ${sdhInWindow} SDH annotations)`,
+          `[SubSync] early window content-dead (duty=${dutyOf(sig).toFixed(3)}, credits?) - skipping`,
         );
-      }
+      } else {
+        earlySig = sig;
+        const raw = findOffset(earlyCues, sig);
+        const rawConf = confidence(
+          earlyCues,
+          sig,
+          raw.offset,
+          raw.runnerUp,
+          raw.score,
+        );
+        console.log(
+          `[SubSync] early: offset=${raw.offset.toFixed(2)}s conf=${rawConf.toFixed(3)} ` +
+            `keep=${keptFraction(earlyCues, sig, raw.offset).toFixed(2)} baseline=${raw.baseline.toFixed(3)} ` +
+            `top=${formatTop(raw.top)}`,
+        );
+        logOnsetWeighted("early", earlyCues, sig, raw.offset);
 
-      await setCachedWindow(subtitleCacheKey, source.contentId, earlyWinKey, {
-        offsetMs: Math.round(raw.offset * 1000),
-        confidence: rawConf,
-        createdAt: Date.now(),
-        // B2: cache the signal so a rerun can cross-validate without a rescan.
-        startSec: earlyResult.startSec,
-        endSec: earlyResult.endSec,
-        bins: earlyResult.bins,
-        signalB64: earlyResult.signalB64,
-      });
-      earlyOff = {
-        offset: raw.offset,
-        score: raw.score,
-        runnerUp: raw.runnerUp,
-      };
-      earlyConf = rawConf;
+        // R8-4 LOG-ONLY: re-rank the early window without fully-bracketed cues so
+        // an SDH-heavy file's offset shift is visible. The applied path below is
+        // UNCHANGED (still uses `raw` / `rawConf` over all cues).
+        const dialogueCues = earlyCues.filter((c) => !isBracketedCue(c.text));
+        if (
+          dialogueCues.length >= 8 &&
+          dialogueCues.length < earlyCues.length
+        ) {
+          const rawD = findOffset(dialogueCues, sig);
+          const sdhInWindow = earlyCues.length - dialogueCues.length;
+          console.log(
+            `early: offset=${raw.offset.toFixed(2)}s (all ${earlyCues.length} cues) / ` +
+              `offset=${rawD.offset.toFixed(2)}s (${dialogueCues.length} dialogue cues, ${sdhInWindow} SDH annotations)`,
+          );
+        }
+
+        await setCachedWindow(subtitleCacheKey, source.contentId, earlyWinKey, {
+          offsetMs: Math.round(raw.offset * 1000),
+          confidence: rawConf,
+          createdAt: Date.now(),
+          // B2: cache the signal so a rerun can cross-validate without a rescan.
+          startSec: earlyResult.startSec,
+          endSec: earlyResult.endSec,
+          bins: earlyResult.bins,
+          signalB64: earlyResult.signalB64,
+        });
+        earlyOff = {
+          offset: raw.offset,
+          score: raw.score,
+          runnerUp: raw.runnerUp,
+        };
+        earlyConf = rawConf;
+      }
     } catch (e: any) {
-      return { type: "failed", reason: `signal validation: ${e.message}` };
+      return failOrKeep(`signal validation: ${e.message}`);
     }
   }
 
@@ -784,7 +835,7 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
   if (lateCueFrom >= lateCueTo - 30) {
     console.log("[SubSync] content too short for a separate late window");
     onProgress?.(1, "done");
-    return { type: "failed", reason: "low confidence in both windows" };
+    return failOrKeep("low confidence in both windows");
   }
   const lateCues = cuesInWindow(cues, lateCueFrom, lateCueTo);
   console.log(
@@ -793,7 +844,7 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
   if (lateCues.length < 8) {
     console.log("[SubSync] late window has <8 cues - skipping scan");
     onProgress?.(1, "done");
-    return { type: "failed", reason: "low confidence in both windows" };
+    return failOrKeep("low confidence in both windows");
   }
 
   // Part A: re-anchor the late AUDIO scan on the early candidate so a large
@@ -809,13 +860,21 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
     if (reTo - reFrom >= 30) {
       const keepRe = keepAtOffsetInSpan(lateCues, reFrom, reTo, e);
       const keepFix = keepAtOffsetInSpan(lateCues, lateCueFrom, lateCueTo, e);
-      lateFrom = reFrom;
-      lateTo = reTo;
-      console.log(
-        `[SubSync] late window re-anchored by early offset e=${e.toFixed(2)}s: ` +
-          `[${lateFrom.toFixed(1)}..${lateTo.toFixed(1)}]s ` +
-          `(keep at e would be ${keepRe.toFixed(2)} vs ${keepFix.toFixed(2)} fixed)`,
-      );
+      // Pick whichever span keeps more of the cue set at e (Spider-Man: fixed
+      // 1.00 beat re-anchored 0.89 — moving unconditionally was wrong).
+      if (keepRe > keepFix) {
+        lateFrom = reFrom;
+        lateTo = reTo;
+        console.log(
+          `[SubSync] late window re-anchored by early offset e=${e.toFixed(2)}s: ` +
+            `[${lateFrom.toFixed(1)}..${lateTo.toFixed(1)}]s ` +
+            `(keep at e: re-anchored ${keepRe.toFixed(2)} > fixed ${keepFix.toFixed(2)})`,
+        );
+      } else {
+        console.log(
+          `[SubSync] late window stays fixed (keep at e: fixed ${keepFix.toFixed(2)} >= re-anchored ${keepRe.toFixed(2)}, e=${e.toFixed(2)}s)`,
+        );
+      }
     } else {
       console.log(
         `[SubSync] late re-anchor e=${e.toFixed(2)}s rejected (span ${(reTo - reFrom).toFixed(1)}s < 30s) - fixed window`,
@@ -873,137 +932,145 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
       await maybePersistVerdict(lateResult, sileroEnabled, sileroPersisted);
       try {
         const lateSig = validateSignal({ rate: 100, ...lateResult });
-        lateSigRef = lateSig;
-        let off = findOffset(lateCues, lateSig);
-        let conf = confidence(
-          lateCues,
-          lateSig,
-          off.offset,
-          off.runnerUp,
-          off.score,
-        );
-        console.log(
-          `[SubSync] late raw: offset=${off.offset.toFixed(2)}s conf=${conf.toFixed(3)} ` +
-            `keep=${keptFraction(lateCues, lateSig, off.offset).toFixed(2)} baseline=${off.baseline.toFixed(3)} ` +
-            `top=${formatTop(off.top)}`,
-        );
-        logOnsetWeighted("late", lateCues, lateSig);
+        if (isContentDead(lateSig)) {
+          // Credits window: duty ~0.003. Skip correlation AND the anchored
+          // rescan so junk conf-0.6 candidates never enter arbitration.
+          console.log(
+            `[SubSync] late window content-dead (duty=${dutyOf(lateSig).toFixed(3)}, credits?) - skipping`,
+          );
+        } else {
+          lateSigRef = lateSig;
+          let off = findOffset(lateCues, lateSig);
+          let conf = confidence(
+            lateCues,
+            lateSig,
+            off.offset,
+            off.runnerUp,
+            off.score,
+          );
+          console.log(
+            `[SubSync] late raw: offset=${off.offset.toFixed(2)}s conf=${conf.toFixed(3)} ` +
+              `keep=${keptFraction(lateCues, lateSig, off.offset).toFixed(2)} baseline=${off.baseline.toFixed(3)} ` +
+              `top=${formatTop(off.top)}`,
+          );
+          logOnsetWeighted("late", lateCues, lateSig, off.offset);
 
-        // Clipped-late rescue: the late window is pinned near the content end,
-        // so a positive offset pushes its cue set past the signal end. Re-scan
-        // anchored at the candidate offset (same as the early rescue), keeping
-        // >= 30s clear of the early window for independence.
-        let keep = keptFraction(lateCues, lateSig, off.offset);
-        // R5-4: the anchored (full-coverage) retest is NOT gated on confidence.
-        // A late window enters the disagreement path precisely because it looks
-        // strong while being judged on a clipped cue set (Lioness: -73.90s at
-        // conf 0.701, keep 0.48) - the old `conf < APPLY_CONF` gate meant such a
-        // candidate was never re-tested with full coverage.
-        if (keep < 0.7 && keep > 0 && off.score > 0 && lateCues.length >= 8) {
-          const span = lateSig.endSec - lateSig.startSec;
-          // Anchor on the CUE span + candidate offset (full coverage for this
-          // cue set), not on the possibly re-anchored scan start.
-          const anchorFrom = Math.max(0, lateCueFrom + off.offset);
-          const anchorTo =
-            durationSec > 0
-              ? Math.min(durationSec, anchorFrom + span)
-              : anchorFrom + span;
-          if (
-            anchorFrom >= earlyTo + 30 &&
-            anchorTo - anchorFrom >= Math.min(span, lateTo - lateFrom) * 0.8
-          ) {
-            console.log(
-              `[SubSync] late keep=${keep.toFixed(2)} - rescanning anchored at ${off.offset.toFixed(2)}s (${anchorFrom.toFixed(0)}s-${anchorTo.toFixed(0)}s)`,
-            );
-            const anchorResult = await extractWithRetry(
-              source,
-              anchorFrom,
-              anchorTo,
-              sileroEnabled,
-              speed,
-              subtitleLanguage,
-              (p) => onProgress?.(0.9 + p * 0.04, "extract"),
-            );
-            if (anchorResult.ok) {
-              logScanSummary("late-anchor", anchorResult, sileroEnabled);
-              await maybePersistVerdict(
-                anchorResult,
-                sileroEnabled,
-                sileroPersisted,
+          // Clipped-late rescue: the late window is pinned near the content end,
+          // so a positive offset pushes its cue set past the signal end. Re-scan
+          // anchored at the candidate offset (same as the early rescue), keeping
+          // >= 30s clear of the early window for independence.
+          let keep = keptFraction(lateCues, lateSig, off.offset);
+          // R5-4: the anchored (full-coverage) retest is NOT gated on confidence.
+          // A late window enters the disagreement path precisely because it looks
+          // strong while being judged on a clipped cue set (Lioness: -73.90s at
+          // conf 0.701, keep 0.48) - the old `conf < APPLY_CONF` gate meant such a
+          // candidate was never re-tested with full coverage.
+          if (keep < 0.7 && keep > 0 && off.score > 0 && lateCues.length >= 8) {
+            const span = lateSig.endSec - lateSig.startSec;
+            // Anchor on the CUE span + candidate offset (full coverage for this
+            // cue set), not on the possibly re-anchored scan start.
+            const anchorFrom = Math.max(0, lateCueFrom + off.offset);
+            const anchorTo =
+              durationSec > 0
+                ? Math.min(durationSec, anchorFrom + span)
+                : anchorFrom + span;
+            if (
+              anchorFrom >= earlyTo + 30 &&
+              anchorTo - anchorFrom >= Math.min(span, lateTo - lateFrom) * 0.8
+            ) {
+              console.log(
+                `[SubSync] late keep=${keep.toFixed(2)} - rescanning anchored at ${off.offset.toFixed(2)}s (${anchorFrom.toFixed(0)}s-${anchorTo.toFixed(0)}s)`,
               );
-              try {
-                const anchorSig = validateSignal({
-                  rate: 100,
-                  ...anchorResult,
-                });
-                const anchorOff = findOffset(lateCues, anchorSig);
-                const anchorConf = confidence(
-                  lateCues,
-                  anchorSig,
-                  anchorOff.offset,
-                  anchorOff.runnerUp,
-                  anchorOff.score,
+              const anchorResult = await extractWithRetry(
+                source,
+                anchorFrom,
+                anchorTo,
+                sileroEnabled,
+                speed,
+                subtitleLanguage,
+                (p) => onProgress?.(0.9 + p * 0.04, "extract"),
+              );
+              if (anchorResult.ok) {
+                logScanSummary("late-anchor", anchorResult, sileroEnabled);
+                await maybePersistVerdict(
+                  anchorResult,
+                  sileroEnabled,
+                  sileroPersisted,
                 );
-                console.log(
-                  `[SubSync] late anchored rescan: offset=${anchorOff.offset.toFixed(2)}s conf=${anchorConf.toFixed(3)}`,
-                );
-                if (anchorConf > conf) {
-                  off = anchorOff;
-                  conf = anchorConf;
-                  keep = keptFraction(lateCues, anchorSig, off.offset);
-                  // Cross-validation must use the signal that produced this offset.
-                  lateSigRef = anchorSig;
-                  const anchorWinKey = windowKeyFor(anchorFrom, anchorTo);
-                  await setCachedWindow(
-                    subtitleCacheKey,
-                    source.contentId,
-                    anchorWinKey,
-                    {
-                      offsetMs: Math.round(anchorOff.offset * 1000),
-                      confidence: anchorConf,
-                      createdAt: Date.now(),
-                      startSec: anchorResult.startSec,
-                      endSec: anchorResult.endSec,
-                      bins: anchorResult.bins,
-                      signalB64: anchorResult.signalB64,
-                    },
+                try {
+                  const anchorSig = validateSignal({
+                    rate: 100,
+                    ...anchorResult,
+                  });
+                  const anchorOff = findOffset(lateCues, anchorSig);
+                  const anchorConf = confidence(
+                    lateCues,
+                    anchorSig,
+                    anchorOff.offset,
+                    anchorOff.runnerUp,
+                    anchorOff.score,
                   );
+                  console.log(
+                    `[SubSync] late anchored rescan: offset=${anchorOff.offset.toFixed(2)}s conf=${anchorConf.toFixed(3)}`,
+                  );
+                  if (anchorConf > conf) {
+                    off = anchorOff;
+                    conf = anchorConf;
+                    keep = keptFraction(lateCues, anchorSig, off.offset);
+                    // Cross-validation must use the signal that produced this offset.
+                    lateSigRef = anchorSig;
+                    const anchorWinKey = windowKeyFor(anchorFrom, anchorTo);
+                    await setCachedWindow(
+                      subtitleCacheKey,
+                      source.contentId,
+                      anchorWinKey,
+                      {
+                        offsetMs: Math.round(anchorOff.offset * 1000),
+                        confidence: anchorConf,
+                        createdAt: Date.now(),
+                        startSec: anchorResult.startSec,
+                        endSec: anchorResult.endSec,
+                        bins: anchorResult.bins,
+                        signalB64: anchorResult.signalB64,
+                      },
+                    );
+                  }
+                } catch {
+                  // invalid anchored signal - keep the direct late result
                 }
-              } catch {
-                // invalid anchored signal - keep the direct late result
               }
             }
           }
-        }
 
-        lateOff = off;
-        lateConf = conf;
-        // A late window that still keeps < 70% of its cue set at the winning
-        // offset is structurally unable to judge it fairly (its tail is pinned
-        // at the content end and cannot widen) - treat as unusable so the
-        // early window can stand alone instead of hard-failing on an unfair
-        // comparison. The DISAGREE refusal still guards the music-peak
-        // incident: that path requires BOTH windows >= AGREE_CONF.
-        if (keep < 0.7) {
-          console.log(
-            `[SubSync] late window clipped (keep=${keep.toFixed(2)}) - treating as unusable, early window may stand alone`,
-          );
-        } else {
-          lateUsable = true;
-          await setCachedWindow(
-            subtitleCacheKey,
-            source.contentId,
-            lateWinKey,
-            {
-              offsetMs: Math.round(off.offset * 1000),
-              confidence: conf,
-              createdAt: Date.now(),
-              startSec: lateResult.startSec,
-              endSec: lateResult.endSec,
-              bins: lateResult.bins,
-              signalB64: lateResult.signalB64,
-            },
-          );
+          lateOff = off;
+          lateConf = conf;
+          // A late window that still keeps < 70% of its cue set at the winning
+          // offset is structurally unable to judge it fairly (its tail is pinned
+          // at the content end and cannot widen) - treat as unusable so the
+          // early window can stand alone instead of hard-failing on an unfair
+          // comparison. The DISAGREE refusal still guards the music-peak
+          // incident: that path requires BOTH windows >= AGREE_CONF.
+          if (keep < 0.7) {
+            console.log(
+              `[SubSync] late window clipped (keep=${keep.toFixed(2)}) - treating as unusable, early window may stand alone`,
+            );
+          } else {
+            lateUsable = true;
+            await setCachedWindow(
+              subtitleCacheKey,
+              source.contentId,
+              lateWinKey,
+              {
+                offsetMs: Math.round(off.offset * 1000),
+                confidence: conf,
+                createdAt: Date.now(),
+                startSec: lateResult.startSec,
+                endSec: lateResult.endSec,
+                bins: lateResult.bins,
+                signalB64: lateResult.signalB64,
+              },
+            );
+          }
         }
       } catch {
         // signal validation failed - fall back to early only
@@ -1191,13 +1258,13 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
         `diff=${Math.abs(earlyOff.offset - lateOff.offset).toFixed(2)}s) - refusing to apply`,
     );
     onProgress?.(1, "done");
-    return { type: "failed", reason: "windows disagree - not applied" };
+    return failOrKeep("windows disagree - not applied");
   }
   console.log(
     `[SubSync] low confidence (early=${earlyConf.toFixed(3)} usable=${lateUsable} late=${lateConf.toFixed(3)}) - manual fallback`,
   );
   onProgress?.(1, "done");
-  return { type: "failed", reason: "low confidence in both windows" };
+  return failOrKeep("low confidence in both windows");
 }
 
 /** Cancel any running extraction. */

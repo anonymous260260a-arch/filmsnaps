@@ -319,6 +319,9 @@ export function confidence(
   // Degenerate signal: something marked (almost) everything as speech (loud
   // music, broken capture). Density cannot discriminate -> no confidence.
   if (baseline > 0.9) return 0;
+  // Sparse twin: content-dead window (credits music under Silero ≈ 0.003).
+  // A junk peak can still clear the dense guard — refuse to score it.
+  if (baseline < 0.02) return 0;
 
   const ct = contrastAt(cues, sig, P, offset);
   if (!ct.valid) return 0;
