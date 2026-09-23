@@ -9,6 +9,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { SpeechSignal } from "./types";
 import { validateSignal } from "./types";
+import { ENGINE_TOKEN } from "./engineConstants";
 
 const KEY_PREFIX = "@subtitles/autosync:";
 
@@ -87,7 +88,10 @@ function windowCacheKey(
   // v9: Silero v5.1.2 asset swap — all pre-Silero window signals (EnergyVad) are stale.
   // v10: F6 Silero mark-threshold hysteresis (MARK_ON 0.35 / MARK_OFF 0.25) — every
   // cached signal still carries old-rule (prob >= 0.5) marks and must not replay.
-  return `${KEY_PREFIX}v10/win/${subtitleCacheKey}:${djb2(contentId)}:${windowKey}:${CACHE_NAMESPACE}`;
+  // Stage D: ENGINE_TOKEN (derived from MARK_ON/MARK_OFF in engineConstants)
+  // replaces the hardcoded v10 token — a threshold change orphans old entries
+  // automatically without a second place to remember to bump.
+  return `${KEY_PREFIX}${ENGINE_TOKEN}/win/${subtitleCacheKey}:${djb2(contentId)}:${windowKey}:${CACHE_NAMESPACE}`;
 }
 
 export async function getCachedSync(

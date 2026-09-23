@@ -29,6 +29,12 @@ class SignalCollector(
     private val toUs: Long,
     private val silero: SileroVad? = null,
     private val log: ((String) -> Unit)? = null,
+    /**
+     * Stage D: mark-threshold hysteresis, overridable from JS (engineConstants).
+     * Null/omitted → F6 companion defaults (MARK_ON 0.35 / MARK_OFF 0.25).
+     */
+    private val markOnOverride: Float? = null,
+    private val markOffOverride: Float? = null,
 ) {
     private val energy = EnergyVad()
 
@@ -191,8 +197,10 @@ class SignalCollector(
                 // Ground truths: Luther (clean) error < ~0.2s; Lioness (music-dense)
                 // +0.46s LATE (engine +0.76 -> user ~+0.30); Spider-WEBRip (CAM)
                 // +1.5s LATE (31.80 vs true 30.30).
-                if (!sileroMarkOn && prob >= MARK_ON) sileroMarkOn = true
-                else if (sileroMarkOn && prob < MARK_OFF) sileroMarkOn = false
+                val on = markOnOverride ?: MARK_ON
+                val off = markOffOverride ?: MARK_OFF
+                if (!sileroMarkOn && prob >= on) sileroMarkOn = true
+                else if (sileroMarkOn && prob < off) sileroMarkOn = false
                 if (sileroMarkOn) {
                     sileroSpeechChunks++
                     maxBinSilero = mark(binsSilero, chunkStartUs, maxBinSilero)

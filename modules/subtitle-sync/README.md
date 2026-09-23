@@ -1,5 +1,33 @@
 # subtitle-sync
 
+## Watch-sync (live playback PCM tap)
+
+While a video plays, an always-attached pass-through processor in the audio
+sink taps pre-sonic PCM at content rate. The `WatchCollector` (native third
+slot, outside the fetch-scan busy gates) bins speech into a rolling 90s
+window and emits correlation-ready signals; `lib/subtitleSync/watchSync.ts`
+owns the JS session (checkpoint first-apply, up to two refinements under
+stricter guards, 30-min cap). HevcPlayer starts/stops/anchors the session;
+SubtitleSheet registers the apply handler (sidecar re-add + prefs).
+
+**Kill-switches** (JS rebundle only — no native rebuild):
+
+- `WATCH_SYNC_ENABLED` in `apps/mobile/lib/subtitleSync/watchSync.ts` —
+  disables the entire path (no native activate, no signal handling).
+- `useSilero: false` on `activateWatchSync` — energy-only VAD for the
+  watch window (fetch scans use `SUBTITLE_SYNC_SILERO` in `autoSync.ts`).
+
+**Isolation probe** (no session required): `tapProbe()` / `tapProbeReset()`
+from `expo-subtitle-sync` read the static `PlayerAudioTap` byte counters —
+use these to verify the tap is receiving PCM (~192 KB/s stereo 48 kHz) before
+debugging correlation.
+
+**Engine thresholds**: `MARK_ON` / `MARK_OFF` live in
+`apps/mobile/lib/subtitleSync/engineConstants.ts` (single JS source of truth)
+and are passed on every `scanAsync` / `activateWatchSync`. The derived
+`ENGINE_TOKEN` is embedded in the window-cache key so a threshold change
+automatically orphans stale entries.
+
 ## Silero VAD asset hash record
 
 Version control for model assets is SHA-256 (no git binary tracking).
@@ -14,10 +42,11 @@ Version control for model assets is SHA-256 (no git binary tracking).
 Source: `https://github.com/snakers4/silero-vad` tag **v5.1.2**, path
 `src/silero_vad/data/silero_vad.onnx` (no release assets — source-tree only).
 
-Rule: any change to the signal engine (VAD, scorer) must bump BOTH cache
-version tokens in `apps/mobile/lib/subtitleSync/cache.ts` (`CACHE_NAMESPACE`
-and the `vN/win/` literal) — cached evidence from a different engine is
-stale by definition.
+Rule: any change to the signal engine (VAD, scorer, mark thresholds) must
+bump `CACHE_NAMESPACE` in `apps/mobile/lib/subtitleSync/cache.ts` — and, for
+mark-threshold changes, update `engineConstants.ts` (the window-cache key
+token `ENGINE_TOKEN` is derived from `MARK_ON`/`MARK_OFF` automatically).
+Cached evidence from a different engine is stale by definition.
 
 ## Limitations
 

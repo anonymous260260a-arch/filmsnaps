@@ -62,6 +62,9 @@ class FastScanJob(
     private val preferredLang: String?,
     /** R5-3: Silero diagnostics (tensor metadata + the first 200 probabilities). */
     private val vadDebug: Boolean = false,
+    /** Stage D: Silero mark-threshold hysteresis from JS (null → F6 defaults). */
+    private val vadMarkOn: Float? = null,
+    private val vadMarkOff: Float? = null,
     /** G1/G4-3: FINAL player-aware scan budget (Mbps), computed in JS. 0 = uncapped. */
     private val throttleMbps: Double = 0.0,
     /** G3: cellular + projected >20MB → confirm-bybytes unless allowConfirmBytes. */
@@ -421,7 +424,14 @@ class FastScanJob(
         } else {
             null
         }
-        val collector = SignalCollector(fromUs, toUs, silero, log = { msg -> d(msg) })
+        val collector = SignalCollector(
+            fromUs,
+            toUs,
+            silero,
+            log = { msg -> d(msg) },
+            markOnOverride = vadMarkOn,
+            markOffOverride = vadMarkOff,
+        )
         val decoder = AudioDecoder(collector) { d("dec: $it") }
         val tap = AudioTapOutput(decoder)
         val output = TapExtractorOutput(
@@ -715,7 +725,14 @@ class FastScanJob(
         } else {
             null
         }
-        val collector = SignalCollector(fromUs, toUs, silero, log = { msg -> d(msg) })
+        val collector = SignalCollector(
+            fromUs,
+            toUs,
+            silero,
+            log = { msg -> d(msg) },
+            markOnOverride = vadMarkOn,
+            markOffOverride = vadMarkOff,
+        )
         val decoder = AudioDecoder(collector) { d("dec: $it") }
         // ConcurrentHashMap: fetch workers share the AES key cache with the
         // playlist/key path on the scan thread.

@@ -117,6 +117,9 @@ class SubtitleSyncModule : Module() {
             val container = options["container"] as? String ?: "progressive"
             val vadDebug = options["vadDebug"] as? Boolean ?: false // R5-3
     val preferredLang = options["audioLang"] as? String
+            // Stage D: Silero mark-threshold hysteresis from JS (null → F6 defaults).
+            val vadMarkOn = (options["vadMarkOn"] as? Number)?.toFloat()
+            val vadMarkOff = (options["vadMarkOff"] as? Number)?.toFloat()
             // G1/G3/G4-3: governor knobs from JS (player-aware budget + NetInfo).
             val throttleMbps = (options["throttleMbps"] as? Number)?.toDouble() ?: 0.0
             val cellular = options["cellular"] as? Boolean ?: false
@@ -143,6 +146,8 @@ class SubtitleSyncModule : Module() {
                     sendEvent("onDebug", mapOf("message" to msg))
                 },
                 vadDebug = vadDebug,
+                vadMarkOn = vadMarkOn,
+                vadMarkOff = vadMarkOff,
                 throttleMbps = throttleMbps,
                 cellular = cellular,
                 allowConfirmBytes = allowConfirmBytes,
@@ -240,6 +245,8 @@ class SubtitleSyncModule : Module() {
             val fromSec = (options["fromSec"] as? Number)?.toDouble() ?: 0.0
             val windowSec = (options["windowSec"] as? Number)?.toDouble() ?: 90.0
             val silero = options["useSilero"] as? Boolean ?: false
+            val vadMarkOn = (options["vadMarkOn"] as? Number)?.toFloat()
+            val vadMarkOff = (options["vadMarkOff"] as? Number)?.toFloat()
             val ctx = appContext.reactContext
                 ?: throw IllegalStateException("no react context")
             // Replace any existing session first (activate emits its partial).
@@ -247,6 +254,8 @@ class SubtitleSyncModule : Module() {
             val collector = WatchCollector(
                 context = ctx,
                 useSilero = silero,
+                vadMarkOn = vadMarkOn,
+                vadMarkOff = vadMarkOff,
                 onSignal = { r ->
                     sendEvent(
                         "onWatchSignal",

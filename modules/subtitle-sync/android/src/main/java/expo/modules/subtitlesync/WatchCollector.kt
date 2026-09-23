@@ -32,6 +32,9 @@ class WatchCollector(
     private val useSilero: Boolean,
     private val onSignal: (ExtractResult.Success) -> Unit,
     private val log: (String) -> Unit,
+    /** Stage D: Silero mark-threshold hysteresis from JS (null → F6 defaults). */
+    private val vadMarkOn: Float? = null,
+    private val vadMarkOff: Float? = null,
 ) : PlayerAudioTap.Listener {
     companion object {
         /** Content length of each rolling window. */
@@ -201,7 +204,14 @@ class WatchCollector(
         samplesPushed = 0
         lastEmittedEndUs = -1L
         val s = silero
-        collector = SignalCollector(fromUs, toUs, s, log = { msg -> log("watch: $msg") })
+        collector = SignalCollector(
+            fromUs,
+            toUs,
+            s,
+            log = { msg -> log("watch: $msg") },
+            markOnOverride = vadMarkOn,
+            markOffOverride = vadMarkOff,
+        )
         if (srcRate > 0) {
             collector?.onFormatChanged(srcRate, channels, pcmEncoding)
         }

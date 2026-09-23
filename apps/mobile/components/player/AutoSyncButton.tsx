@@ -304,6 +304,9 @@ export function AutoSyncButton({
           break;
         case "confirm-bybytes": {
           // G3: dialog is Continue/Cancel — never default-deny.
+          // Stage D adds a third path: skip the fetch scan entirely and let
+          // the live watch-sync session (already running on the playback PCM
+          // tap) produce the offset without pulling extra bytes.
           setState("idle");
           setMessage(null);
           const mb = outcome.projectedMb;
@@ -317,6 +320,20 @@ export function AutoSyncButton({
             [
               { text: "Cancel", style: "cancel" },
               { text: "Continue", onPress: rerun },
+              {
+                text: "Watch-sync instead (no extra data)",
+                onPress: () => {
+                  console.log(
+                    "[SubSync] cellular: user chose watch-sync piggyback (skip fetch scan)",
+                  );
+                  if (mounted.current) {
+                    setState("idle");
+                    setMessage(
+                      "Skipped download — watch-sync will apply an offset from live playback.",
+                    );
+                  }
+                },
+              },
             ],
             { cancelable: true },
           );

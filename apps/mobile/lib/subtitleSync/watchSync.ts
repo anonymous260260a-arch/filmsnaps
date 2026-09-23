@@ -29,6 +29,7 @@ import {
 } from "./applySync";
 import { setCachedSync, setCachedWindow } from "./cache";
 import { watchWindowKeyFor } from "./autoSync";
+import { MARK_ON, MARK_OFF } from "./engineConstants";
 import { parseSubtitles } from "./parseSubtitles";
 import {
   activateWatchSync,
@@ -415,6 +416,8 @@ export async function startWatchSession(
       fromSec: Math.max(0, opts.fromSec),
       windowSec: 90,
       useSilero: false,
+      vadMarkOn: MARK_ON,
+      vadMarkOff: MARK_OFF,
     });
     if (!activated?.ok && !activated?.active) {
       console.log("[SubSync] watch: native activate failed", activated);

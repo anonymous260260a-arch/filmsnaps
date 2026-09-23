@@ -92,6 +92,12 @@ export type ScanOptions = ExtractOptions & {
   /** R5-3: log Silero tensor metadata + the first 200 probabilities per window. */
   vadDebug?: boolean;
   /**
+   * Stage D: Silero mark-threshold hysteresis (engineConstants.MARK_ON /
+   * MARK_OFF). Omit to use native F6 defaults (0.35 / 0.25).
+   */
+  vadMarkOn?: number;
+  vadMarkOff?: number;
+  /**
    * G1/G4-3: FINAL player-aware scan budget in Mbps (link − player − 1.0,
    * floor 0.5, cap 0.6×link — computed in JS). Native reads are capped at
    * this rate directly (no fixed fraction). 0/omit = uncapped.
@@ -121,6 +127,8 @@ export async function scanAsync(
     container: options.container ?? "progressive",
     audioLang: options.audioLang,
     vadDebug: options.vadDebug ?? false,
+    vadMarkOn: options.vadMarkOn,
+    vadMarkOff: options.vadMarkOff,
     throttleMbps: options.throttleMbps ?? 0,
     cellular: options.cellular ?? false,
     allowConfirmBytes: options.allowConfirmBytes ?? false,
@@ -211,6 +219,12 @@ export type ActivateWatchSyncOptions = {
   windowSec?: number;
   /** Use Silero alongside Energy (native defaults apply when omitted). */
   useSilero?: boolean;
+  /**
+   * Stage D: Silero mark-threshold hysteresis (engineConstants.MARK_ON /
+   * MARK_OFF). Omit to use native F6 defaults (0.35 / 0.25).
+   */
+  vadMarkOn?: number;
+  vadMarkOff?: number;
 };
 
 export type ActivateWatchSyncResult = {
@@ -247,6 +261,8 @@ export async function activateWatchSync(
     fromSec: options.fromSec,
     windowSec: options.windowSec ?? 90,
     useSilero: options.useSilero ?? false,
+    vadMarkOn: options.vadMarkOn,
+    vadMarkOff: options.vadMarkOff,
   });
 }
 

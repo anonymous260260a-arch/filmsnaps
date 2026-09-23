@@ -27,6 +27,7 @@ import { validateSignal } from "./types";
 import type { SourceRef, NetworkType } from "./source";
 import { canAutoSync, windowPlan } from "./source";
 import { parseSubtitles } from "./parseSubtitles";
+import { MARK_ON, MARK_OFF } from "./engineConstants";
 import {
   findOffset,
   refineNear,
@@ -279,6 +280,8 @@ async function extractWithRetry(
               container: source.kind === "hls" ? "hls" : "progressive",
               audioLang,
               vadDebug: vadDebugEnabled,
+              vadMarkOn: MARK_ON,
+              vadMarkOff: MARK_OFF,
               throttleMbps: scanThrottleMbps,
               cellular: scanCellular,
               allowConfirmBytes: scanAllowConfirmBytes,
