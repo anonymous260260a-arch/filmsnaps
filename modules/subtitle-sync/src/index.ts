@@ -188,6 +188,98 @@ export function tapProbeReset(): void {
   SubtitleSyncModule.tapProbeReset();
 }
 
+// ─── Stage B: watch-sync (third slot — concurrent with fetch scans) ───
+
+export type WatchSignalEvent = {
+  ok: true;
+  rate: 100;
+  startSec: number;
+  endSec: number;
+  bins: number;
+  signalB64: string;
+  vadChose?: string;
+  sileroDuty?: number;
+  energyDuty?: number;
+  sileroMaxProb?: number;
+  totalChunks?: number;
+};
+
+export type ActivateWatchSyncOptions = {
+  /** Content-time anchor (seconds) — usually current playback position. */
+  fromSec: number;
+  /** Window length in seconds (default 90). */
+  windowSec?: number;
+  /** Use Silero alongside Energy (native defaults apply when omitted). */
+  useSilero?: boolean;
+};
+
+export type ActivateWatchSyncResult = {
+  ok: boolean;
+  active: boolean;
+  anchorSec: number;
+  windowSec: number;
+};
+
+let _watchSignalListeners: Set<(s: WatchSignalEvent) => void> = new Set();
+
+SubtitleSyncModule.addListener("onWatchSignal", (ev: WatchSignalEvent) => {
+  for (const fn of _watchSignalListeners) fn(ev);
+});
+
+/**
+ * Subscribe to watch-sync signal windows. Each event is a correlation-ready
+ * SpeechSignal-shaped payload covering [startSec, endSec] of content time.
+ * Returns unsubscribe.
+ */
+export function onWatchSignal(fn: (s: WatchSignalEvent) => void): () => void {
+  _watchSignalListeners.add(fn);
+  return () => _watchSignalListeners.delete(fn);
+}
+
+/**
+ * Start (or replace) a watch session on the playback PCM tap.
+ * Outside the fetch-scan busy gate — concurrent scans are allowed.
+ */
+export async function activateWatchSync(
+  options: ActivateWatchSyncOptions,
+): Promise<ActivateWatchSyncResult> {
+  return SubtitleSyncModule.activateWatchSync({
+    fromSec: options.fromSec,
+    windowSec: options.windowSec ?? 90,
+    useSilero: options.useSilero ?? false,
+  });
+}
+
+/** Re-base the watch window after a seek resolves. Emits any usable partial first. */
+export function watchAnchor(toSec: number): boolean {
+  return SubtitleSyncModule.watchAnchor(toSec);
+}
+
+/** Stop the watch session (source change, unmount, end, kill-switch). */
+export function stopWatchSync(): boolean {
+  return SubtitleSyncModule.stopWatchSync();
+}
+
+export type WatchSyncStatus = {
+  active: boolean;
+  anchorSec?: number;
+  windowToSec?: number;
+  decodedSpanMs?: number;
+  hasSignal?: boolean;
+  emits?: number;
+  droppedBuffers?: number;
+  silero?: boolean;
+  monotonicMs?: number;
+};
+
+export function watchSyncStatus(): WatchSyncStatus {
+  try {
+    return SubtitleSyncModule.watchSyncStatus();
+  } catch {
+    return { active: false };
+  }
+}
+
 export type ProbeResult =
   | { ok: true; live: boolean; drmProtected: boolean; muxedOnly: boolean }
   | { ok: false; code: ExtractErrorCode; message: string };

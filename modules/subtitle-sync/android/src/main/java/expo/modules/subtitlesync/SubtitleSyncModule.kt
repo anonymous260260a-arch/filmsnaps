@@ -11,6 +11,12 @@ class SubtitleSyncModule : Module() {
     private var job: AudioExtractJob? = null
     private var scanJob: FastScanJob? = null
     /**
+     * R5c Stage B: watch-sync collector — THIRD slot, deliberately OUTSIDE
+     * job/scanJob busy gates. A fetch scan and a watch session may run
+     * concurrently; only one of each. Cleared by stopWatchSync / OnDestroy.
+     */
+    private var watchCollector: WatchCollector? = null
+    /**
      * F3: snapshot of the last completed scan's status. onResult nulls scanJob
      * BEFORE the promise settles, so a JS flush after await scanAsync() would
      * otherwise read an empty idle map and drop the final trace lines
@@ -45,7 +51,7 @@ class SubtitleSyncModule : Module() {
 
     override fun definition() = ModuleDefinition {
         Name("SubtitleSync")
-        Events("onProgress", "onDebug")
+        Events("onProgress", "onDebug", "onWatchSignal")
 
         // Local files: framework MediaExtractor + MediaCodec (fast, seek works).
         AsyncFunction("extractAsync") { uri: String, options: Map<String, Any?>, promise: expo.modules.kotlin.Promise ->
@@ -226,6 +232,70 @@ class SubtitleSyncModule : Module() {
             true
         }
 
+        // ─── Stage B: watch-sync (third slot — NOT gated by awaitIdle) ───
+        // activateWatchSync / watchAnchor / stopWatchSync + onWatchSignal.
+        // Lives outside job/scanJob so a concurrent fetch scan is allowed.
+
+        AsyncFunction("activateWatchSync") { options: Map<String, Any?>, promise: expo.modules.kotlin.Promise ->
+            val fromSec = (options["fromSec"] as? Number)?.toDouble() ?: 0.0
+            val windowSec = (options["windowSec"] as? Number)?.toDouble() ?: 90.0
+            val silero = options["useSilero"] as? Boolean ?: false
+            val ctx = appContext.reactContext
+                ?: throw IllegalStateException("no react context")
+            // Replace any existing session first (activate emits its partial).
+            watchCollector?.stop()
+            val collector = WatchCollector(
+                context = ctx,
+                useSilero = silero,
+                onSignal = { r ->
+                    sendEvent(
+                        "onWatchSignal",
+                        mapOf(
+                            "ok" to true,
+                            "rate" to 100,
+                            "startSec" to r.startSec,
+                            "endSec" to r.endSec,
+                            "bins" to r.bins,
+                            "signalB64" to r.signalB64,
+                            "vadChose" to (r.vadChose ?: ""),
+                            "sileroDuty" to (r.sileroDuty?.toDouble() ?: 0.0),
+                            "energyDuty" to r.energyDuty.toDouble(),
+                            "sileroMaxProb" to (r.sileroMaxProb?.toDouble() ?: 0.0),
+                            "totalChunks" to (r.totalChunks ?: 0L),
+                        ),
+                    )
+                },
+                log = { msg ->
+                    sendEvent("onDebug", mapOf("message" to msg))
+                },
+            )
+            watchCollector = collector
+            collector.activate(fromSec, windowSec)
+            promise.resolve(
+                mapOf(
+                    "ok" to true,
+                    "active" to collector.isActive(),
+                    "anchorSec" to fromSec,
+                    "windowSec" to windowSec,
+                )
+            )
+        }
+
+        Function("watchAnchor") { toSec: Double ->
+            watchCollector?.anchor(toSec)
+            watchCollector != null
+        }
+
+        Function("stopWatchSync") {
+            watchCollector?.stop()
+            watchCollector = null
+            true
+        }
+
+        Function("watchSyncStatus") {
+            watchCollector?.status() ?: mapOf("active" to false)
+        }
+
         OnDestroy {
             job?.cancel()
             job = null
@@ -233,6 +303,8 @@ class SubtitleSyncModule : Module() {
             scanJob = null
             // Stage B owns PlayerAudioTap.listener — clear on teardown so a
             // dead module never keeps feeding a stale collector.
+            watchCollector?.stop()
+            watchCollector = null
             expo.modules.video.utils.PlayerAudioTap.listener = null
         }
     }
