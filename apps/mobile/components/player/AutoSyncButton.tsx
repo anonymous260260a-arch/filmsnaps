@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import NetInfo from "@react-native-community/netinfo";
@@ -187,6 +188,8 @@ export function AutoSyncButton({
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const mounted = useRef(true);
+  /** G3: one-shot flag — set when the user accepts the cellular byte dialog. */
+  const allowConfirmBytesRef = useRef(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -260,6 +263,7 @@ export function AutoSyncButton({
           subtitleLanguage ?? detectSubtitleLanguage(subtitleUri),
         network,
         platform: Platform.OS === "ios" ? "ios" : "android",
+        allowConfirmBytes: allowConfirmBytesRef.current,
         onProgress: (p, stage) => {
           if (!mounted.current) return;
           setProgress(p);
@@ -298,6 +302,26 @@ export function AutoSyncButton({
           setState("idle");
           setMessage(null);
           break;
+        case "confirm-bybytes": {
+          // G3: dialog is Continue/Cancel — never default-deny.
+          setState("idle");
+          setMessage(null);
+          const mb = outcome.projectedMb;
+          const rerun = () => {
+            allowConfirmBytesRef.current = true;
+            void run();
+          };
+          Alert.alert(
+            "Large download on cellular",
+            `Auto sync needs about ${mb} MB of mobile data for this scan. Continue?`,
+            [
+              { text: "Cancel", style: "cancel" },
+              { text: "Continue", onPress: rerun },
+            ],
+            { cancelable: true },
+          );
+          break;
+        }
       }
     } catch (e: any) {
       console.log(`[SubSync] error: ${e?.message ?? e}`);
@@ -305,6 +329,10 @@ export function AutoSyncButton({
         setState("failed");
         setMessage(e?.message ?? "unknown error");
       }
+    } finally {
+      // One-shot: a confirmed cellular run must not silently re-authorize
+      // the next attempt (user is asked again if the next window is large).
+      allowConfirmBytesRef.current = false;
     }
   }, [state, subtitleUri, sourceInfo, contentId, onSynced]);
 

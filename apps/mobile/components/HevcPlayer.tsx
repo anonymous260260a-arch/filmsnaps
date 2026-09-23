@@ -67,6 +67,7 @@ import {
   type IntroDbResponse,
 } from "../lib/introDetect";
 import { PerfSessionTracker } from "../lib/perfMetrics";
+import { setPlayerStruggling } from "expo-subtitle-sync";
 import {
   getSubtitleOffset,
   setSubtitleOffset as persistSubtitleOffset,
@@ -1094,6 +1095,7 @@ export function HevcPlayer({
       // fault and must not accumulate into a background source swap.
       if (backgroundedRef.current) {
         stallStartedAt = null;
+        setPlayerStruggling(false);
         return;
       }
       if (endedRef.current) return;
@@ -1107,12 +1109,15 @@ export function HevcPlayer({
         if (hasPlayedRef.current) {
           stallStartedAt = Date.now();
           perfRef.current?.rebufferStart();
+          // G2: hold subtitle-scan network reads while playback is starved.
+          setPlayerStruggling(true);
         }
         return;
       }
       if (stallStartedAt == null) return;
       stallStartedAt = null;
       perfRef.current?.rebufferEnd();
+      setPlayerStruggling(false);
       // A seek interrupting an in-flight stall is user action — keep it in
       // telemetry but don't count it against the source.
       if (adapter.isSeeking?.()) return;
@@ -1136,7 +1141,11 @@ export function HevcPlayer({
         }
       }
     });
-    return unsub;
+    return () => {
+      unsub();
+      // Never leave a scan paused after the player goes away.
+      setPlayerStruggling(false);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adapter, showToast]);
 

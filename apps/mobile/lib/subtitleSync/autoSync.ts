@@ -77,6 +77,13 @@ const SILERO_ORT_VERSION = "1.20.0";
  * by default, and read at the single scanAsync call site.
  */
 let vadDebugEnabled = false;
+/**
+ * G1/G3: scan governor knobs, set by autoSync before extractWithRetry runs.
+ * throttleMbps = measured link speed (native caps at 0.35×); 0 = uncapped.
+ */
+let scanThrottleMbps = 0;
+let scanCellular = false;
+let scanAllowConfirmBytes = false;
 import {
   applyOffset,
   writeShiftedSubtitleFile,
@@ -97,6 +104,7 @@ import {
   scanStatus,
   cancel,
 } from "expo-subtitle-sync";
+import { getCachedSpeed } from "../networkSpeedTest";
 
 // Native pipeline trace reaches Metro via two paths (event listener in
 // expo-subtitle-sync's index.ts and the 500ms status poller) - both log
@@ -117,6 +125,8 @@ export type AutoSyncOptions = {
   network: NetworkType;
   platform: "android" | "ios";
   onProgress?: (p: number, stage: "extract" | "analyze" | "done") => void;
+  /** G3: user already approved a >20MB cellular download for this attempt. */
+  allowConfirmBytes?: boolean;
 };
 
 /** Read subtitle file, strip BOM + extra whitespace for SRT/VTT. */
@@ -231,6 +241,9 @@ async function extractWithRetry(
               container: source.kind === "hls" ? "hls" : "progressive",
               audioLang,
               vadDebug: vadDebugEnabled,
+              throttleMbps: scanThrottleMbps,
+              cellular: scanCellular,
+              allowConfirmBytes: scanAllowConfirmBytes,
             });
       finalFlush();
       if (r.ok || source.kind === "local" || attempt >= 1) return r;
@@ -574,7 +587,25 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
     network,
     platform,
     onProgress,
+    allowConfirmBytes = false,
   } = opts;
+
+  // G1/G3: arm the scan governor for this attempt.
+  scanCellular = network === "cellular";
+  scanAllowConfirmBytes = allowConfirmBytes;
+  try {
+    const cached = await getCachedSpeed();
+    scanThrottleMbps = cached?.speedMbps ?? 0;
+  } catch {
+    scanThrottleMbps = 0;
+  }
+  if (scanThrottleMbps > 0) {
+    console.log(
+      `[SubSync] governor: throttle target=${(scanThrottleMbps * 0.35).toFixed(2)} Mbps ` +
+        `(0.35 × measured ${scanThrottleMbps.toFixed(2)}), cellular=${scanCellular}, ` +
+        `allowConfirmBytes=${scanAllowConfirmBytes}`,
+    );
+  }
 
   // Re-sync UX: a shifted filename (synced-31800-… / pristine-…) must not
   // change the cache key — same pristine content, same entry.
@@ -837,6 +868,14 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
       console.log(
         `[SubSync] early extract failed: ${earlyResult.code} - ${earlyResult.message}`,
       );
+      // G3: surface the cellular byte gate so the UI can dialog and re-run.
+      if (earlyResult.code === "confirm-bybytes") {
+        const mb = /projectedMb=(\d+)/.exec(earlyResult.message)?.[1];
+        return {
+          type: "confirm-bybytes",
+          projectedMb: mb ? parseInt(mb, 10) : 21,
+        };
+      }
       const friendly =
         EXTRACT_MESSAGES[earlyResult.code] ?? earlyResult.message;
       return failOrKeep(friendly);
@@ -1183,6 +1222,14 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
       console.log(
         `[SubSync] late extract failed: ${lateResult.code} - ${lateResult.message}`,
       );
+      // G3: late window hits the cellular gate after early already ran —
+      // keep whatever early produced (checkpoint / arbitration) rather than
+      // discarding the whole attempt.
+      if (lateResult.code === "confirm-bybytes") {
+        console.log(
+          "[SubSync] late confirm-bybytes - proceeding with early window only",
+        );
+      }
     }
   }
 

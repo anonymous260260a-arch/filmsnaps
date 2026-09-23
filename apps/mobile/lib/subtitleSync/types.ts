@@ -33,7 +33,9 @@ export type SyncOutcome =
   /** Re-sync could not improve an already-shifted file — keep the existing sync. */
   | { type: "kept"; existingOffsetMs: number; reason: string }
   | { type: "failed"; reason: string }
-  | { type: "cancelled" };
+  | { type: "cancelled" }
+  /** G3: cellular window would pull >20MB — UI must confirm before scanning. */
+  | { type: "confirm-bybytes"; projectedMb: number };
 
 /** Validate Â§1.3 invariants on a received signal. Returns clamped signal or throws. */
 export function validateSignal(raw: {

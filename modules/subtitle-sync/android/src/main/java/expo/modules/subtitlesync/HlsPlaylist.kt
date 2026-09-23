@@ -210,6 +210,7 @@ object HlsPlaylistParser {
         seg: HlsSegment,
         headers: Map<String, String>,
         keyCache: MutableMap<String, ByteArray>,
+        onBytes: ((Long) -> Unit)? = null,
     ): ByteArray {
         val conn = URL(seg.url).openConnection() as java.net.HttpURLConnection
         try {
@@ -228,8 +229,20 @@ object HlsPlaylistParser {
                     "HTTP $code fetching segment",
                 )
             }
-            var data = conn.inputStream.use { it.readBytes() }
+            // G1: bill each chunk so the throttle can sleep mid-download.
+            val data = conn.inputStream.use { stream ->
+                val out = java.io.ByteArrayOutputStream()
+                val buf = ByteArray(65536)
+                while (true) {
+                    val n = stream.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    onBytes?.invoke(n.toLong())
+                }
+                out.toByteArray()
+            }
 
+            var payload = data
             if (seg.keyMethod == "AES-128") {
                 val keyUrl = seg.keyUrl ?: throw PlaylistProbe.PlaylistError("unsupported-format", "AES-128 without key URI")
                 // synchronized: HLS prefetch workers share this cache with the scan thread.
@@ -257,12 +270,12 @@ object HlsPlaylistParser {
                 val cipher = Cipher.getInstance("AES/CBC/NoPadding")
                 cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
                 // PKCS7 unpad per HLS spec (segments are 16-byte aligned).
-                val padded = padToBlock16(data)
+                val padded = padToBlock16(payload)
                 val dec = cipher.doFinal(padded)
                 val padLen = dec.last().toInt() and 0xFF
-                data = if (padLen in 1..16 && padLen <= dec.size) dec.copyOfRange(0, dec.size - padLen) else dec
+                payload = if (padLen in 1..16 && padLen <= dec.size) dec.copyOfRange(0, dec.size - padLen) else dec
             }
-            return data
+            return payload
         } finally {
             conn.disconnect()
         }

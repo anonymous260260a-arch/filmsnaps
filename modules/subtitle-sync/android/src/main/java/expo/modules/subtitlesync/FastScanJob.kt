@@ -62,12 +62,19 @@ class FastScanJob(
     private val preferredLang: String?,
     /** R5-3: Silero diagnostics (tensor metadata + the first 200 probabilities). */
     private val vadDebug: Boolean = false,
+    /** G1: measured link speed (Mbps). Reads capped at 0.35 × this. 0 = uncapped. */
+    private val throttleMbps: Double = 0.0,
+    /** G3: cellular + projected >20MB → confirm-bybytes unless allowConfirmBytes. */
+    private val cellular: Boolean = false,
+    private val allowConfirmBytes: Boolean = false,
     private val onProgress: (Float) -> Unit,
     private val onDebug: (String) -> Unit,
     private val onResult: (ExtractResult) -> Unit,
 ) : ScanJob {
     companion object {
         private const val TAG = "SubSyncFast"
+        /** G2: set by SubtitleSyncModule.setPlayerStruggling — pause reads while true. */
+        @Volatile var playerStruggling: Boolean = false
         /** No-seek sources: max sequential preroll we decode to reach a window. */
         private const val PREROLL_MAX_US = 180_000_000L
         /** Hard wall-clock budget per window. */
@@ -81,6 +88,14 @@ class FastScanJob(
         private const val TRACE_MAX_CHARS = 4000
         /** R5-5: how many trace lines the poller can still read back. */
         private const val TRACE_MAX_LINES = 400
+        /** G3: cellular windows projecting above this many MB need user confirm. */
+        private const val CONFIRM_BYTES_MB = 20.0
+        /** G1: target read rate = THROTTLE_FRACTION × measured link speed. */
+        private const val THROTTLE_FRACTION = 0.35
+        private const val THROTTLE_WINDOW_MS = 1000L
+        private const val THROTTLE_SLEEP_MS = 250L
+        /** Fallback HLS segment size when the playlist has no BYTERANGE (session: 1.5–4MB). */
+        private const val HLS_SEG_EST_BYTES = 2L * 1024 * 1024
         /**
          * B5: projected-download ceiling per window. With the content length and
          * durationUs from the SeekMap we know the average bytes/sec, so a window
@@ -89,6 +104,71 @@ class FastScanJob(
          * through an ~8 Mbps link, which stalls playback and burns data.
          */
         private const val WINDOW_BYTE_BUDGET_MB = 80.0
+    }
+
+    /**
+     * G1: byte-budget throttle over a 1s window. Sleeps the caller in 250ms
+     * steps when the window is over 0.35 × measured speed; logs once per window.
+     */
+    private inner class ReadThrottle {
+        private val budgetBytesPerSec =
+            if (throttleMbps > 0) throttleMbps * THROTTLE_FRACTION * 1_000_000.0 / 8.0 else 0.0
+        private var windowStart = SystemClock.elapsedRealtime()
+        private var windowBytes = 0L
+
+        fun onBytes(n: Long) {
+            if (budgetBytesPerSec <= 0) return
+            windowBytes += n
+            val now = SystemClock.elapsedRealtime()
+            val elapsed = now - windowStart
+            if (elapsed >= THROTTLE_WINDOW_MS) {
+                val avgMbps = windowBytes * 8.0 / (elapsed / 1000.0) / 1_000_000.0
+                val budgetMbps = budgetBytesPerSec * 8.0 / 1_000_000.0
+                d(
+                    "throttle: budget=${"%.2f".format(java.util.Locale.US, budgetMbps)} Mbps, " +
+                        "avg read rate=${"%.2f".format(java.util.Locale.US, avgMbps)} Mbps"
+                )
+                windowStart = now
+                windowBytes = 0
+                return
+            }
+            val allowed = budgetBytesPerSec * (elapsed / 1000.0)
+            if (windowBytes > allowed) {
+                val overMs = ((windowBytes - allowed) / budgetBytesPerSec * 1000.0).toLong()
+                val sleep = ((overMs + THROTTLE_SLEEP_MS - 1) / THROTTLE_SLEEP_MS) * THROTTLE_SLEEP_MS
+                var remaining = sleep
+                while (remaining > 0 && !cancelled.get()) {
+                    val step = minOf(remaining, THROTTLE_SLEEP_MS)
+                    Thread.sleep(step)
+                    remaining -= step
+                }
+            }
+        }
+    }
+
+    private val readThrottle = ReadThrottle()
+
+    /** G2: block while the player rebuffers, feeding the stall watchdog. */
+    private fun awaitPlayerRecovered(tick: () -> Unit) {
+        while (playerStruggling && !cancelled.get()) {
+            tick()
+            try {
+                Thread.sleep(100)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return
+            }
+        }
+    }
+
+    /**
+     * G3: cellular + projected bytes over the confirm threshold → early error
+     * so the UI can dialog before burning the download.
+     */
+    private fun confirmGate(projectedMb: Double): ExtractResult.Error? {
+        if (!cellular || allowConfirmBytes || projectedMb <= CONFIRM_BYTES_MB) return null
+        d("confirm-bybytes: projected=${projectedMb.toInt()}MB on cellular (>${CONFIRM_BYTES_MB.toInt()}MB)")
+        return ExtractResult.Error("confirm-bybytes", "projectedMb=${projectedMb.toInt()}")
     }
 
     private val cancelled = AtomicBoolean(false)
@@ -184,6 +264,31 @@ class FastScanJob(
             setUserAgent(headers["User-Agent"] ?: "filmsnaps")
         }
 
+    /**
+     * G1: wrap the progressive DataSource so every network read is billed
+     * against the 0.35×-of-measured budget (sleeps inside read when over).
+     */
+    private fun throttledDs(): DataSource {
+        val inner = dataSourceFactory().createDataSource()
+        if (throttleMbps <= 0) return inner
+        return object : DataSource {
+            override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) {
+                inner.addTransferListener(transferListener)
+            }
+            override fun open(dataSpec: DataSpec): Long = inner.open(dataSpec)
+            override fun read(target: ByteArray, offset: Int, length: Int): Int {
+                // G2: hold the read while the player is rebuffers.
+                awaitPlayerRecovered { }
+                val n = inner.read(target, offset, length)
+                if (n > 0) readThrottle.onBytes(n.toLong())
+                return n
+            }
+            override fun getUri(): Uri? = inner.uri
+            override fun getResponseHeaders(): Map<String, List<String>> = inner.responseHeaders
+            override fun close() { inner.close() }
+        }
+    }
+
     private fun openAt(ds: DataSource, position: Long): ExtractorInput {
         val spec = DataSpec.Builder()
             .setUri(Uri.parse(uri))
@@ -224,7 +329,7 @@ class FastScanJob(
         var silentTrackRetries = 0
         var langUpgradeTried = false
 
-        val ds = dataSourceFactory().createDataSource()
+        val ds = throttledDs()
         var input: ExtractorInput
         var position = 0L
         try {
@@ -264,6 +369,8 @@ class FastScanJob(
                     d("budget exhausted at inputPos=$lastPos")
                     break
                 }
+                // G2: player rebuffering — hold network reads, keep stall clock fed.
+                awaitPlayerRecovered { lastProgressWall = SystemClock.elapsedRealtime() }
                 if (SystemClock.elapsedRealtime() - lastProgressWall > STALL_MS) {
                     d("STALL: no progress 30s at inputPos=$lastPos")
                     return ExtractResult.Error("timeout", "no extraction progress for ${STALL_MS / 1000}s")
@@ -278,18 +385,20 @@ class FastScanJob(
                     if (sourceLength > 0 && sm.durationUs > 0 && toUs - fromUs > 0) {
                         val bytesPerSec =
                             sourceLength.toDouble() / (sm.durationUs / 1_000_000.0)
+                        val projectedMb =
+                            (toUs - fromUs) / 1_000_000.0 * bytesPerSec / 1024.0 / 1024.0
+                        // G3: dialog gate BEFORE any window decode on cellular.
+                        confirmGate(projectedMb)?.let { return it }
                         val maxSpanUs =
                             (WINDOW_BYTE_BUDGET_MB * 1024.0 * 1024.0 / bytesPerSec * 1_000_000.0).toLong()
                         if (toUs - fromUs > maxSpanUs && maxSpanUs > 0) {
-                            val projectedMb =
-                                ((toUs - fromUs) / 1_000_000.0 * bytesPerSec / 1024.0 / 1024.0).toInt()
                             toUs = fromUs + maxSpanUs
                             // No PCM has been pushed yet (the seek happens next),
                             // so rebasing the collector here is free.
                             collector.resetAll(fromUs, toUs)
                             d(
                                 "window clamp: len=$sourceLength dur=${sm.durationUs / 1_000_000}s " +
-                                    "projected=${projectedMb}MB -> clamped to ${maxSpanUs / 1_000_000}s " +
+                                    "projected=${projectedMb.toInt()}MB -> clamped to ${maxSpanUs / 1_000_000}s " +
                                     "(budget ${WINDOW_BYTE_BUDGET_MB.toInt()}MB)"
                             )
                         }
@@ -538,12 +647,22 @@ class FastScanJob(
             }
             d("hls window: segs $firstIdx..$lastIdx of ${pl.segments.size}")
 
+            // G3: estimate window bytes (BYTERANGE when present, else session median ~2MB/seg).
+            if (cellular && !allowConfirmBytes) {
+                var projectedBytes = 0L
+                for (i in firstIdx..lastIdx) {
+                    val bl = pl.segments[i].byteLength
+                    projectedBytes += if (bl > 0) bl else HLS_SEG_EST_BYTES
+                }
+                confirmGate(projectedBytes / (1024.0 * 1024.0))?.let { return it }
+            }
+
             val initBytes = pl.initUrl?.let {
                 d("fetching init segment")
                 HlsPlaylistParser.fetchSegment(
                     HlsSegment(it, 0, pl.initByteOffset, pl.initByteLength, 0, "NONE", null, null, 0),
                     headers, keyCache,
-                )
+                ) { n -> readThrottle.onBytes(n) }
             }
 
             var segStart = 0L
@@ -563,6 +682,8 @@ class FastScanJob(
                         d("budget exhausted at seg $i")
                         break
                     }
+                    // G2: hold segment fetch while the player rebuffers.
+                    awaitPlayerRecovered { }
 
                     phase = "fetching seg $i"
                     val seg = pl.segments[i]
@@ -713,7 +834,7 @@ class FastScanJob(
      * A "network" failure under parallel fetch is retried once on the consumer
      * thread after flipping to sequential (some CDNs cap concurrent connections).
      */
-    private class HlsSegmentPrefetch(
+    private inner class HlsSegmentPrefetch(
         private val firstIdx: Int,
         private val lastIdx: Int,
         private val segments: List<HlsSegment>,
@@ -738,6 +859,14 @@ class FastScanJob(
         @Volatile private var sequential = false
         private var fetchCount = 0
         private var fetchTotalMs = 0L
+
+        private fun fetchOne(idx: Int): ByteArray {
+            // G2 + G1: recover from player stall, then bill bytes against the throttle.
+            awaitPlayerRecovered { }
+            return HlsPlaylistParser.fetchSegment(segments[idx], headers, keyCache) { n ->
+                readThrottle.onBytes(n)
+            }
+        }
 
         fun await(i: Int): ByteArray {
             if (sequential) return fetchSequential(i)
@@ -814,7 +943,7 @@ class FastScanJob(
                                 throw PlaylistProbe.PlaylistError("cancelled", "cancelled")
                             }
                             // fetchSegment downloads + AES-128 decrypts → plaintext.
-                            val bytes = HlsPlaylistParser.fetchSegment(segments[idx], headers, keyCache)
+                            val bytes = fetchOne(idx)
                             val ms = SystemClock.elapsedRealtime() - t0
                             fetchMsBySeg[idx] = ms
                             synchronized(this) {
@@ -838,7 +967,7 @@ class FastScanJob(
         private fun fetchSequential(i: Int): ByteArray {
             val t0 = SystemClock.elapsedRealtime()
             val bytes = try {
-                HlsPlaylistParser.fetchSegment(segments[i], headers, keyCache)
+                fetchOne(i)
             } catch (e: PlaylistProbe.PlaylistError) {
                 throw e
             }

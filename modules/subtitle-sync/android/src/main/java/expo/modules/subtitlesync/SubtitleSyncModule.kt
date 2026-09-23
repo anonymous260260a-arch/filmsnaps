@@ -111,6 +111,10 @@ class SubtitleSyncModule : Module() {
             val container = options["container"] as? String ?: "progressive"
             val vadDebug = options["vadDebug"] as? Boolean ?: false // R5-3
     val preferredLang = options["audioLang"] as? String
+            // G1/G3: governor knobs from JS (NetworkMonitor speed + NetInfo).
+            val throttleMbps = (options["throttleMbps"] as? Number)?.toDouble() ?: 0.0
+            val cellular = options["cellular"] as? Boolean ?: false
+            val allowConfirmBytes = options["allowConfirmBytes"] as? Boolean ?: false
             val headers = (options["headers"] as? Map<*, *>)
                 ?.entries?.associate { it.key.toString() to it.value.toString() } ?: emptyMap()
 
@@ -133,6 +137,9 @@ class SubtitleSyncModule : Module() {
                     sendEvent("onDebug", mapOf("message" to msg))
                 },
                 vadDebug = vadDebug,
+                throttleMbps = throttleMbps,
+                cellular = cellular,
+                allowConfirmBytes = allowConfirmBytes,
                 onResult = { r ->
                     // Capture final status BEFORE nulling the slot so a
                     // post-await JS flush can still print trailing lines (F3).
@@ -201,6 +208,11 @@ class SubtitleSyncModule : Module() {
             // (awaitIdle) instead of racing a second scan against the dying one.
             job?.cancel()
             scanJob?.cancel()
+        }
+
+        // G2: player rebuffer flag — FastScanJob pauses reads while true.
+        Function("setPlayerStruggling") { struggling: Boolean ->
+            FastScanJob.playerStruggling = struggling
         }
 
         OnDestroy {

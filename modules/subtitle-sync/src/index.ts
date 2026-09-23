@@ -12,7 +12,9 @@ export type ExtractErrorCode =
   | "unseekable"
   | "live-unsupported"
   | "drm-unsupported"
-  | "cancelled";
+  | "cancelled"
+  /** G3: cellular + projected download >20MB — user must confirm to continue. */
+  | "confirm-bybytes";
 
 export type ExtractResult =
   | {
@@ -89,6 +91,12 @@ export type ScanOptions = ExtractOptions & {
   audioLang?: string;
   /** R5-3: log Silero tensor metadata + the first 200 probabilities per window. */
   vadDebug?: boolean;
+  /** G1: measured link speed (Mbps); native caps reads at 0.35 × this. 0/omit = uncapped. */
+  throttleMbps?: number;
+  /** G3: on cellular, windows projecting >20MB return confirm-bybytes unless allowConfirmBytes. */
+  cellular?: boolean;
+  /** G3: user already approved the cellular download for this attempt. */
+  allowConfirmBytes?: boolean;
 };
 
 /**
@@ -109,6 +117,9 @@ export async function scanAsync(
     container: options.container ?? "progressive",
     audioLang: options.audioLang,
     vadDebug: options.vadDebug ?? false,
+    throttleMbps: options.throttleMbps ?? 0,
+    cellular: options.cellular ?? false,
+    allowConfirmBytes: options.allowConfirmBytes ?? false,
   });
 }
 
@@ -135,6 +146,15 @@ export function scanStatus(): ScanStatus {
 }
 export function cancel(): void {
   SubtitleSyncModule.cancel();
+}
+
+/**
+ * G2: tell the scan pipeline the player is rebuffers. While true, FastScanJob
+ * pauses network reads (stall watchdog stays fed) so a rebuffer and a scan do
+ * not fight for the same link.
+ */
+export function setPlayerStruggling(struggling: boolean): void {
+  SubtitleSyncModule.setPlayerStruggling(struggling);
 }
 
 export type ProbeResult =
