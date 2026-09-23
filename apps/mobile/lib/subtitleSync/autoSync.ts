@@ -61,9 +61,25 @@ export const SUBTITLE_SYNC_SILERO = true;
  * revisit after ~2 weeks of weekKeys.
  */
 export const CHECKPOINT_EARLY_APPLY = true;
-const CHECKPOINT_CONF = 0.7;
-const CHECKPOINT_SHARP = 0.15;
-const CHECKPOINT_KEEP = 0.7;
+export const CHECKPOINT_CONF = 0.7;
+export const CHECKPOINT_SHARP = 0.15;
+export const CHECKPOINT_KEEP = 0.7;
+
+/**
+ * Stage C: shared applyOnce gate — one offset rewrite / onSynced at a time
+ * across the fetch path (applyOrConfirm) and the watch path (watchSync).
+ * Returns fn()'s value, or null when another apply already holds the gate.
+ */
+let applyOnceHeld = false;
+export async function runApplyOnce<T>(fn: () => Promise<T>): Promise<T | null> {
+  if (applyOnceHeld) return null;
+  applyOnceHeld = true;
+  try {
+    return await fn();
+  } finally {
+    applyOnceHeld = false;
+  }
+}
 
 /** R8-3: known-good Silero asset identity for the verdict record. */
 const SILERO_MODEL_SHA =
@@ -329,8 +345,15 @@ function cuesInWindow(
   return cues.filter((c) => c.end >= fromSec && c.start <= toSec);
 }
 
+// Watch-path cache keys use the `watch-<from>-<to>` prefix (Stage C) so a
+// fetch window and a live-tap window over the same span never collide.
 function windowKeyFor(fromSec: number, toSec: number): string {
   return `${Math.round(fromSec)}-${Math.round(toSec)}`;
+}
+
+/** Stage C: window-cache key for a live watch-sync span (hyphens, namespaced). */
+export function watchWindowKeyFor(fromSec: number, toSec: number): string {
+  return `watch-${Math.round(fromSec)}-${Math.round(toSec)}`;
 }
 
 /** Fraction of cue time landing in [spanFrom, spanTo] when shifted by offset. */
@@ -802,34 +825,45 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
     conf: number,
     kind: "agree" | "early" | "cross" | "confirm" | "correct",
   ): Promise<SyncOutcome> => {
-    const out = await makeOffsetOutcome(offsetMs, conf);
-    if (out.type !== "offset") return out;
-    const hasCheckpoint = checkpointRef.offsetMs !== null;
-    const differs =
-      hasCheckpoint && Math.abs(checkpointRef.offsetMs! - offsetMs) >= 100;
-    if (hasCheckpoint && !differs) {
-      console.log(
-        `[SubSync] late window confirms early checkpoint ${offsetMs}ms (silent)`,
-      );
-      return finishApplied(out);
-    }
-    if (kind === "correct" && hasCheckpoint && differs) {
-      console.log(
-        `[SubSync] correcting early checkpoint ${checkpointRef.offsetMs}ms -> ${offsetMs}ms`,
-      );
-      return finishApplied(out, { corrected: true });
-    }
-    if (hasCheckpoint && differs) {
-      // Late path wins after a checkpoint without the decisive correction
-      // criteria: still re-apply, but keep the normal Synced toast (no
-      // "adjusted by" notice) unless kind === "correct".
-      if (kind !== "correct") {
+    // Stage C: serialize with the watch path — if watch already holds the
+    // gate, keep the existing on-disk state (no second rewrite race).
+    const raced = await runApplyOnce(async () => {
+      const out = await makeOffsetOutcome(offsetMs, conf);
+      if (out.type !== "offset") return out;
+      const hasCheckpoint = checkpointRef.offsetMs !== null;
+      const differs =
+        hasCheckpoint && Math.abs(checkpointRef.offsetMs! - offsetMs) >= 100;
+      if (hasCheckpoint && !differs) {
         console.log(
-          `[SubSync] post-checkpoint apply ${offsetMs}ms (was ${checkpointRef.offsetMs}ms) - silent update`,
+          `[SubSync] late window confirms early checkpoint ${offsetMs}ms (silent)`,
         );
+        return finishApplied(out);
       }
+      if (kind === "correct" && hasCheckpoint && differs) {
+        console.log(
+          `[SubSync] correcting early checkpoint ${checkpointRef.offsetMs}ms -> ${offsetMs}ms`,
+        );
+        return finishApplied(out, { corrected: true });
+      }
+      if (hasCheckpoint && differs) {
+        // Late path wins after a checkpoint without the decisive correction
+        // criteria: still re-apply, but keep the normal Synced toast (no
+        // "adjusted by" notice) unless kind === "correct".
+        if (kind !== "correct") {
+          console.log(
+            `[SubSync] post-checkpoint apply ${offsetMs}ms (was ${checkpointRef.offsetMs}ms) - silent update`,
+          );
+        }
+      }
+      return finishApplied(out);
+    });
+    if (raced == null) {
+      console.log(
+        "[SubSync] applyOnce busy (watch path holds the gate) - keeping current state",
+      );
+      return { type: "cancelled" };
     }
-    return finishApplied(out);
+    return raced;
   };
 
   // Cached result replay: still produce the offset-applied sidecar file.
@@ -838,10 +872,18 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
       `[SubSync] cache hit: offset=${cached.offsetMs}ms conf=${cached.confidence.toFixed(2)}`,
     );
     onProgress?.(1, "done");
-    return finishApplied(
-      await makeOffsetOutcome(cached.offsetMs, cached.confidence),
+    const replayed = await runApplyOnce(() =>
+      makeOffsetOutcome(cached.offsetMs, cached.confidence),
     );
+    if (replayed == null) {
+      console.log(
+        "[SubSync] cached replay applyOnce busy (watch path) - keeping current state",
+      );
+      return { type: "cancelled" };
+    }
+    return finishApplied(replayed);
   }
+
   // 3. Window plan (speed is the Android scan cap, 1..4)
   const { earlySec, lateSec, speed } = await windowPlan(source, network);
   console.log(
@@ -1027,11 +1069,17 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
             `keep=${earlyKeep.toFixed(2)}/${CHECKPOINT_KEEP}) - ` +
             `late window continues as silent verification`,
         );
-        const out = await makeOffsetOutcome(offsetMs, earlyConf);
-        if (out.type === "offset") {
+        const out = await runApplyOnce(() =>
+          makeOffsetOutcome(offsetMs, earlyConf),
+        );
+        if (out && out.type === "offset") {
           checkpointRef.offsetMs = offsetMs;
           checkpointRef.confidence = earlyConf;
           await bumpOutcome("checkpointApplied");
+        } else if (out == null) {
+          console.log(
+            "[SubSync] early checkpoint applyOnce busy - skipping provisional apply",
+          );
         }
       }
     }

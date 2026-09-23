@@ -69,6 +69,12 @@ import {
 import { PerfSessionTracker } from "../lib/perfMetrics";
 import { setPlayerStruggling } from "expo-subtitle-sync";
 import {
+  startWatchSession,
+  stopWatchSession,
+  anchorWatchSession,
+  WATCH_SYNC_ENABLED,
+} from "../lib/subtitleSync/watchSync";
+import {
   getSubtitleOffset,
   setSubtitleOffset as persistSubtitleOffset,
 } from "../lib/subtitlePrefs";
@@ -1429,6 +1435,54 @@ export function HevcPlayer({
     };
   }, [countdownActive, goNextEpisode]);
 
+  // ── Stage C: watch-sync session ownership ──
+  // Starts on first frames (when a subtitle may attach), re-anchors after
+  // seeks resolve, and stops on source change / unmount / natural end /
+  // 30-min cap (cap enforced inside watchSync).
+  const watchStartedRef = useRef(false);
+  useEffect(() => {
+    if (!WATCH_SYNC_ENABLED) return;
+    if (!hasStarted || !subtitleKey) {
+      if (watchStartedRef.current) {
+        watchStartedRef.current = false;
+        stopWatchSession("source-or-unmounted");
+      }
+      return;
+    }
+    if (watchStartedRef.current) return;
+    watchStartedRef.current = true;
+    const fromSec = Math.max(0, adapter.getCurrentTime());
+    void startWatchSession({
+      contentId: subtitleKey,
+      subtitleCacheKey: subtitleKey,
+      fromSec,
+      durationSec: adapter.getDuration(),
+      getSubtitleUri: () => autoAttachedSubtitleRef.current,
+      getPosition: () => adapterRef.current?.getCurrentTime() ?? 0,
+    });
+    return () => {
+      if (watchStartedRef.current) {
+        watchStartedRef.current = false;
+        stopWatchSession("effect-cleanup");
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasStarted, subtitleKey, adapter]);
+
+  // Immediate anchor after a user seek resolves (isSeeking true → false).
+  const wasSeekingRef = useRef(false);
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const seeking = adapter.isSeeking?.() ?? false;
+      if (wasSeekingRef.current && !seeking && watchStartedRef.current) {
+        const pos = adapterRef.current?.getCurrentTime() ?? 0;
+        if (pos > 0) anchorWatchSession(pos);
+      }
+      wasSeekingRef.current = seeking;
+    }, 400);
+    return () => clearInterval(iv);
+  }, [adapter]);
+
   // ── Natural end of media ──
   // TV with a next episode: start the auto-advance countdown. Movies (or the
   // final episode): stop quietly — NEVER fall back to another source here,
@@ -1439,6 +1493,7 @@ export function HevcPlayer({
       if (endedRef.current) return;
       endedRef.current = true;
       console.log("[HevcPlayer] Playback reached natural end");
+      stopWatchSession("video-end");
       if (switchTimeoutRef.current) {
         clearTimeout(switchTimeoutRef.current);
         switchTimeoutRef.current = null;
@@ -1692,6 +1747,7 @@ export function HevcPlayer({
     if (autoToastTimerRef.current) clearTimeout(autoToastTimerRef.current);
     perfRef.current?.close();
     perfRef.current = null;
+    stopWatchSession("close");
     adapter.destroy();
     onClose();
   }, [tmdbId, mediaType, season, episode, isFullscreen, onClose, adapter]);
@@ -1719,6 +1775,7 @@ export function HevcPlayer({
       if (autoToastTimerRef.current) clearTimeout(autoToastTimerRef.current);
       perfRef.current?.close();
       perfRef.current = null;
+      stopWatchSession("unmount");
       adapter.destroy();
     };
   }, [adapter]);

@@ -48,6 +48,7 @@ import {
   clearSubtitleChoice,
 } from "../../lib/subtitleCache";
 import { AutoSyncButton, type AutoSyncSourceInfo } from "./AutoSyncButton";
+import { registerWatchApplyHandler } from "../../lib/subtitleSync/watchSync";
 import { File } from "expo-file-system";
 import { parseSubtitles } from "../../lib/subtitleSync/parseSubtitles";
 import {
@@ -504,6 +505,7 @@ function SubtitleSheetInner({
       language?: string;
       label?: string;
     },
+    _kind?: "first" | "refine",
   ) => {
     setAutoOffsetMs(offsetMs);
     if (rewritten) {
@@ -548,6 +550,16 @@ function SubtitleSheetInner({
       setAutoSyncPrefs(storageKey, { autoOffsetMs: offsetMs, autoScale: 1 });
     }
   };
+
+  // Stage C: register the watch-sync apply sink whenever this sheet is mounted
+  // (always rendered by PlayerOverlay — visibility is a prop). The handler is
+  // the same path Auto Sync uses, so sidecar re-add + prefs stay consistent.
+  useEffect(() => {
+    if (!autoSync) return;
+    const unreg = registerWatchApplyHandler(handleAutoSynced);
+    return unreg;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSync, storageKey, selectedTrackLanguage, onlineSearch]);
 
   const syncSupported = typeof player.setSubtitleOffset === "function";
 
