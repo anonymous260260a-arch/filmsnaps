@@ -20,6 +20,8 @@ export type SyncOutcome =
       type: "offset";
       offsetMs: number;
       confidence: number;
+      /** P2-1: user-facing toast override when a checkpoint was corrected. */
+      notice?: string;
       rewritten?: {
         uri: string;
         mimeType: string;

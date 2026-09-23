@@ -105,31 +105,31 @@ describe("source", () => {
     expect(w.speed).toBe(1);
   });
 
-  it("remote progressive gets 240s early at speed 4 (android cap)", async () => {
+  it("remote progressive gets 180s early at speed 4 (android cap)", async () => {
     const w = await windowPlan(makeSource(), "wifi");
-    expect(w.earlySec).toBe(240);
+    expect(w.earlySec).toBe(180);
     expect(w.lateSec).toBe(120);
     expect(w.speed).toBe(4);
   });
 
   it("remote progressive cellular gets the same tight plan", async () => {
     const w = await windowPlan(makeSource(), "cellular");
-    expect(w.earlySec).toBe(240);
+    expect(w.earlySec).toBe(180);
     expect(w.speed).toBe(4);
   });
 
-  it("remote mkv gets 240s early (sequential read, 4x)", async () => {
+  it("remote mkv gets 180s early (sequential read, 4x)", async () => {
     expect(
       (await windowPlan(makeSource({ container: "mkv" }), "wifi")).earlySec,
-    ).toBe(240);
+    ).toBe(180);
     expect(
       (await windowPlan(makeSource({ container: "mkv" }), "wifi")).speed,
     ).toBe(4);
   });
 
-  it("remote webm gets 240s early (sequential read, 4x)", async () => {
+  it("remote webm gets 180s early (sequential read, 4x)", async () => {
     const w = await windowPlan(makeSource({ container: "webm" }), "wifi");
-    expect(w.earlySec).toBe(240);
+    expect(w.earlySec).toBe(180);
     expect(w.speed).toBe(4);
   });
 });

@@ -18,3 +18,9 @@ Rule: any change to the signal engine (VAD, scorer) must bump BOTH cache
 version tokens in `apps/mobile/lib/subtitleSync/cache.ts` (`CACHE_NAMESPACE`
 and the `vN/win/` literal) — cached evidence from a different engine is
 stale by definition.
+
+## Limitations
+
+- **CAM/TELESYNC audio**: expect ~1–1.5s lateness (video is often shifted vs
+  the audio the scanner hears); the onset `delta=` log line quantifies it for
+  a given file. Engine output on clean WEBRip/BluRay is within ~0.2s.

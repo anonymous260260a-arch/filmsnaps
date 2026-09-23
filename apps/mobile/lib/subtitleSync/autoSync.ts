@@ -3,7 +3,8 @@
  * Streaming-first, cache keyed by contentId, with re-resolve/retry.
  *
  * Speed model (2026-09 rework, Android-first):
- *   - scan at 4x (Android native cap), small windows (remote 240s/120s)
+ *   - scan at 4x (Android native cap); remote progressive early is 180s (P2-4),
+ *     HLS 240/300, local 900/480
  *   - the EARLY window scans first; the LATE window always scans too (when it
  *     has >= 8 cues), because a lone window can lock onto a music/beat peak
  *   - application requires a two-window agreement (diff < 1.5s) OR a strong
@@ -12,9 +13,9 @@
  *     cue set out of the late scan span (see lateCannotJudge), OR one window
  *     decisively more confident than the other (see the arbitration block - a
  *     less-confident window's disagreement is not a veto)
- *   - a clipped window (keep < 0.7) is rescanned anchored on the candidate
- *     offset so the same cue set is judged with full coverage (see the
- *     "clipped-window rescue" below)
+ *   - a clipped window (keep < 0.7) is DEFERRED behind cross-validation (P2-2):
+ *     the anchored rescan runs only if the cross-check cannot decide AND that
+ *     window is the loser - most files skip both rescans entirely
  *   - per-window correlation cache skips re-scanning a window on retry
  *   - Silero is the production VAD (kill-switch SUBTITLE_SYNC_SILERO below);
  *     EnergyVad remains the fallback when Silero duty < 0.05 or the kill-switch
@@ -45,6 +46,18 @@ import { Platform } from "react-native";
  * rebuild (JS rebundle on reload is enough).
  */
 export const SUBTITLE_SYNC_SILERO = true;
+
+/**
+ * P2-1 kill-switch: set false to skip early checkpoint apply (JS rebundle only).
+ * When true, an early window with conf >= 0.75, sharp lead >= 25% over the
+ * runner-up, and keep >= 0.9 applies immediately; the late window continues as
+ * silent verification (agree → silent confirm; decisive late win → re-apply +
+ * toast; inconclusive → keep the provisional apply).
+ */
+export const CHECKPOINT_EARLY_APPLY = true;
+const CHECKPOINT_CONF = 0.75;
+const CHECKPOINT_SHARP = 0.25;
+const CHECKPOINT_KEEP = 0.9;
 
 /** R8-3: known-good Silero asset identity for the verdict record. */
 const SILERO_MODEL_SHA =
@@ -323,6 +336,66 @@ function dutyOf(sig: SpeechSignal): number {
   return sig.data.length > 0 ? speech / sig.data.length : 0;
 }
 
+// ─── P2-3: weekly outcome counter (measurement base, no UI) ─────
+
+const OUTCOMES_KEY = "@subtitles/outcomes:v1";
+
+type OutcomeCounts = {
+  week: string;
+  attempted: number;
+  applied: number;
+  checkpointApplied: number;
+  correctedAfterCheckpoint: number;
+  refused: number;
+  kept: number;
+};
+
+function weekKey(d = new Date()): string {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(
+    ((t.getTime() - yearStart.getTime()) / 86400000 + 1) / 7,
+  );
+  return `${t.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+async function bumpOutcome(
+  kind: keyof Omit<OutcomeCounts, "week">,
+): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(OUTCOMES_KEY);
+    const week = weekKey();
+    let o: OutcomeCounts;
+    try {
+      o = raw ? (JSON.parse(raw) as OutcomeCounts) : (null as any);
+    } catch {
+      o = null as any;
+    }
+    if (!o || o.week !== week) {
+      o = {
+        week,
+        attempted: 0,
+        applied: 0,
+        checkpointApplied: 0,
+        correctedAfterCheckpoint: 0,
+        refused: 0,
+        kept: 0,
+      };
+    }
+    o[kind] = (o[kind] ?? 0) + 1;
+    await AsyncStorage.setItem(OUTCOMES_KEY, JSON.stringify(o));
+    console.log(
+      `[SubSync] outcomes ${week}: attempted=${o.attempted} applied=${o.applied} ` +
+        `checkpoint=${o.checkpointApplied} corrected=${o.correctedAfterCheckpoint} ` +
+        `refused=${o.refused} kept=${o.kept}`,
+    );
+  } catch {
+    // best-effort
+  }
+}
+
 /** Round a duration so equivalent windows always produce the same cache key. */
 function stableDuration(durationSec: number): number {
   return Math.round(durationSec);
@@ -481,15 +554,34 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
 
   // Already-shifted input: a failed re-sync keeps the existing file intact.
   const existingAppliedMs = appliedOffsetMs(subtitleUri);
-  const failOrKeep = (reason: string): SyncOutcome => {
+  /** P2-1: early checkpoint provisional apply (null until/unless it fires). */
+  const checkpointRef: { offsetMs: number | null; confidence: number } = {
+    offsetMs: null,
+    confidence: 0,
+  };
+  const failOrKeep = async (reason: string): Promise<SyncOutcome> => {
+    if (checkpointRef.offsetMs !== null) {
+      console.log(
+        `[SubSync] ${reason} - keeping early checkpoint ${checkpointRef.offsetMs}ms`,
+      );
+      const out = await makeOffsetOutcome(
+        checkpointRef.offsetMs,
+        checkpointRef.confidence,
+      );
+      if (out.type === "offset") await bumpOutcome("applied");
+      return out;
+    }
     if (existingAppliedMs != null) {
       console.log(
         `[SubSync] ${reason} - existing sync ${existingAppliedMs}ms kept (not disturbed)`,
       );
+      await bumpOutcome("kept");
       return { type: "kept", existingOffsetMs: existingAppliedMs, reason };
     }
+    await bumpOutcome("refused");
     return { type: "failed", reason };
   };
+  await bumpOutcome("attempted");
 
   // 0. Gate check (async - HLS probes the playlist first)
   const gate = await canAutoSync(source, platform);
@@ -544,7 +636,10 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
 
   // Apply helper: rewrite the sidecar subtitle file with the computed offset
   // (the native setSubtitleOffset only shifts embedded MKV text tracks).
-  const makeOffsetOutcome = async (offsetMs: number, confidence: number) => {
+  const makeOffsetOutcome = async (
+    offsetMs: number,
+    confidence: number,
+  ): Promise<Extract<SyncOutcome, { type: "offset" }>> => {
     // Already applied to this exact file (cache replay / re-sync): never shift
     // twice - the file on disk is already the answer.
     if (
@@ -554,7 +649,7 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
     ) {
       // Hand back the existing shifted file so the sheet still selects it.
       return {
-        type: "offset" as const,
+        type: "offset",
         offsetMs,
         confidence,
         rewritten: {
@@ -574,7 +669,7 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
       );
       if (uri) {
         return {
-          type: "offset" as const,
+          type: "offset",
           offsetMs,
           confidence,
           rewritten: {
@@ -586,7 +681,62 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
         };
       }
     }
-    return { type: "offset" as const, offsetMs, confidence };
+    return { type: "offset", offsetMs, confidence };
+  };
+
+  const finishApplied = async (
+    outcome: Awaited<ReturnType<typeof makeOffsetOutcome>>,
+    opts?: { checkpoint?: boolean; corrected?: boolean },
+  ): Promise<SyncOutcome> => {
+    if (outcome.type === "offset") {
+      if (opts?.checkpoint) await bumpOutcome("checkpointApplied");
+      else await bumpOutcome("applied");
+      if (opts?.corrected) await bumpOutcome("correctedAfterCheckpoint");
+      if (
+        opts?.corrected &&
+        checkpointRef.offsetMs !== null &&
+        checkpointRef.offsetMs !== outcome.offsetMs
+      ) {
+        const delta = (outcome.offsetMs - checkpointRef.offsetMs) / 1000;
+        outcome.notice = `Subtitles adjusted by ${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(2)}s`;
+      }
+    }
+    return outcome;
+  };
+
+  const applyOrConfirm = async (
+    offsetMs: number,
+    conf: number,
+    kind: "agree" | "early" | "cross" | "confirm" | "correct",
+  ): Promise<SyncOutcome> => {
+    const out = await makeOffsetOutcome(offsetMs, conf);
+    if (out.type !== "offset") return out;
+    const hasCheckpoint = checkpointRef.offsetMs !== null;
+    const differs =
+      hasCheckpoint && Math.abs(checkpointRef.offsetMs! - offsetMs) >= 100;
+    if (hasCheckpoint && !differs) {
+      console.log(
+        `[SubSync] late window confirms early checkpoint ${offsetMs}ms (silent)`,
+      );
+      return finishApplied(out);
+    }
+    if (kind === "correct" && hasCheckpoint && differs) {
+      console.log(
+        `[SubSync] correcting early checkpoint ${checkpointRef.offsetMs}ms -> ${offsetMs}ms`,
+      );
+      return finishApplied(out, { corrected: true });
+    }
+    if (hasCheckpoint && differs) {
+      // Late path wins after a checkpoint without the decisive correction
+      // criteria: still re-apply, but keep the normal Synced toast (no
+      // "adjusted by" notice) unless kind === "correct".
+      if (kind !== "correct") {
+        console.log(
+          `[SubSync] post-checkpoint apply ${offsetMs}ms (was ${checkpointRef.offsetMs}ms) - silent update`,
+        );
+      }
+    }
+    return finishApplied(out);
   };
 
   // Cached result replay: still produce the offset-applied sidecar file.
@@ -595,7 +745,9 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
       `[SubSync] cache hit: offset=${cached.offsetMs}ms conf=${cached.confidence.toFixed(2)}`,
     );
     onProgress?.(1, "done");
-    return await makeOffsetOutcome(cached.offsetMs, cached.confidence);
+    return finishApplied(
+      await makeOffsetOutcome(cached.offsetMs, cached.confidence),
+    );
   }
   // 3. Window plan (speed is the Android scan cap, 1..4)
   const { earlySec, lateSec, speed } = await windowPlan(source, network);
@@ -720,92 +872,52 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
 
   onProgress?.(0.8, "analyze");
 
-  // Clipped-window rescue: when the early window's best offset pushes a
-  // meaningful share of the cue set outside the scanned span (keep < 0.97),
-  // the candidate was judged on a partial cue set. Re-scan a window anchored
-  // ON the candidate offset (same span, start shifted by the offset) so the
-  // SAME cue set is judged with (nearly) full coverage. Observed: Blacklist's
-  // true +54s was clipped by the cue-anchored early window; Lanterns' +85.25s
-  // kept only ~30% of its cues. Never rescues a confident, sharp win.
-  // NOTE: findOffset returns a GLOBAL offset (cue time -> video time),
-  // independent of the window's start — the rescanned offset needs no
-  // timeline conversion.
+  // P2-2: clipped-window rescue is DEFERRED behind cross-validation.
+  // A clipped candidate (keep < 0.7) is only re-scanned anchored on its
+  // offset if the cross-check fails to decide AND this window is the loser.
+  // Most files now skip both rescans entirely.
+  // NOTE: findOffset returns a GLOBAL offset (cue time -> video time) —
+  // a rescanned offset needs no timeline conversion.
+  let earlyClipped = false;
   if (earlySig) {
     const earlyKeep = keptFraction(earlyCues, earlySig, earlyOff.offset);
-    if (
+    earlyClipped =
       earlyKeep < 0.7 &&
       earlyKeep > 0 &&
       earlyConf < APPLY_CONF &&
       earlyOff.score > 0 &&
-      earlyCues.length >= 8
+      earlyCues.length >= 8;
+    if (earlyClipped) {
+      console.log(
+        `[SubSync] early keep=${earlyKeep.toFixed(2)} - clipped, rescan deferred until cross-check fails`,
+      );
+    }
+
+    // P2-1: early checkpoint - conf/sharp/keep all clear the bar → apply now
+    // and keep scanning the late window as silent verification.
+    if (
+      CHECKPOINT_EARLY_APPLY &&
+      checkpointRef.offsetMs === null &&
+      earlyConf >= CHECKPOINT_CONF &&
+      earlyOff.score > 0
     ) {
-      const span = earlySig.endSec - earlySig.startSec;
-      const anchorFrom = Math.max(0, earlyFrom + earlyOff.offset);
-      const anchorTo =
-        durationSec > 0
-          ? Math.min(durationSec, anchorFrom + span)
-          : anchorFrom + span;
-      if (anchorTo - anchorFrom >= Math.min(span, earlyTo - earlyFrom) * 0.8) {
+      const sharp =
+        earlyOff.runnerUp >= 0
+          ? (earlyOff.score - earlyOff.runnerUp) /
+            Math.max(earlyOff.score, 0.02)
+          : 1;
+      if (earlyKeep >= CHECKPOINT_KEEP && sharp >= CHECKPOINT_SHARP) {
+        const offsetMs = Math.round(earlyOff.offset * 1000);
         console.log(
-          `[SubSync] early keep=${earlyKeep.toFixed(2)} - rescanning anchored at ${earlyOff.offset.toFixed(2)}s (${earlyCues.length} cues, ${anchorFrom.toFixed(0)}s-${anchorTo.toFixed(0)}s)`,
+          `[SubSync] early checkpoint: applied ${offsetMs >= 0 ? "+" : ""}${(offsetMs / 1000).toFixed(2)}s ` +
+            `(conf=${earlyConf.toFixed(3)} sharp=${sharp.toFixed(2)} keep=${earlyKeep.toFixed(2)}) - ` +
+            `late window continues as silent verification`,
         );
-        const anchorResult = await extractWithRetry(
-          source,
-          anchorFrom,
-          anchorTo,
-          sileroEnabled,
-          speed,
-          subtitleLanguage,
-          (p) => onProgress?.(0.8 + p * 0.05, "extract"),
-        );
-        if (anchorResult.ok) {
-          logScanSummary("early-anchor", anchorResult, sileroEnabled);
-          await maybePersistVerdict(
-            anchorResult,
-            sileroEnabled,
-            sileroPersisted,
-          );
-          try {
-            const anchorSig = validateSignal({ rate: 100, ...anchorResult });
-            const anchorOff = findOffset(earlyCues, anchorSig);
-            const anchorConf = confidence(
-              earlyCues,
-              anchorSig,
-              anchorOff.offset,
-              anchorOff.runnerUp,
-              anchorOff.score,
-            );
-            console.log(
-              `[SubSync] anchored rescan: offset=${anchorOff.offset.toFixed(2)}s conf=${anchorConf.toFixed(3)}`,
-            );
-            if (anchorConf > earlyConf) {
-              earlyOff = {
-                offset: anchorOff.offset,
-                score: anchorOff.score,
-                runnerUp: anchorOff.runnerUp,
-              };
-              earlyConf = anchorConf;
-              // Cross-validation must use the signal that produced this offset.
-              earlySig = anchorSig;
-              const anchorWinKey = windowKeyFor(anchorFrom, anchorTo);
-              await setCachedWindow(
-                subtitleCacheKey,
-                source.contentId,
-                anchorWinKey,
-                {
-                  offsetMs: Math.round(anchorOff.offset * 1000),
-                  confidence: anchorConf,
-                  createdAt: Date.now(),
-                  startSec: anchorResult.startSec,
-                  endSec: anchorResult.endSec,
-                  bins: anchorResult.bins,
-                  signalB64: anchorResult.signalB64,
-                },
-              );
-            }
-          } catch {
-            // anchor scan produced an invalid signal - keep the early result
-          }
+        const out = await makeOffsetOutcome(offsetMs, earlyConf);
+        if (out.type === "offset") {
+          checkpointRef.offsetMs = offsetMs;
+          checkpointRef.confidence = earlyConf;
+          await bumpOutcome("checkpointApplied");
         }
       }
     }
@@ -887,6 +999,9 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
   // Whether the late window produced ANY usable signal. When it did not (e.g.
   // an unseekable stream), the early window is allowed to stand alone.
   let lateUsable = false;
+  // P2-2: late candidate is clipped (keep < 0.7) and eligible for a gated
+  // anchored rescan if the cross-check fails and late is the loser.
+  let lateClipped = false;
   /** Late-window signal, kept so we can check whether this window could judge
    *  the early offset at all (see lateCannotJudge below). */
   let lateSigRef: SpeechSignal | null = null;
@@ -955,105 +1070,33 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
           );
           logOnsetWeighted("late", lateCues, lateSig, off.offset);
 
-          // Clipped-late rescue: the late window is pinned near the content end,
-          // so a positive offset pushes its cue set past the signal end. Re-scan
-          // anchored at the candidate offset (same as the early rescue), keeping
-          // >= 30s clear of the early window for independence.
+          // P2-2: clipped-late rescue is DEFERRED behind cross-validation
+          // (same as the early window). Eligibility is recorded; the anchored
+          // rescan runs only if the cross-check fails and late is the loser.
           let keep = keptFraction(lateCues, lateSig, off.offset);
-          // R5-4: the anchored (full-coverage) retest is NOT gated on confidence.
-          // A late window enters the disagreement path precisely because it looks
-          // strong while being judged on a clipped cue set (Lioness: -73.90s at
-          // conf 0.701, keep 0.48) - the old `conf < APPLY_CONF` gate meant such a
-          // candidate was never re-tested with full coverage.
-          if (keep < 0.7 && keep > 0 && off.score > 0 && lateCues.length >= 8) {
-            const span = lateSig.endSec - lateSig.startSec;
-            // Anchor on the CUE span + candidate offset (full coverage for this
-            // cue set), not on the possibly re-anchored scan start.
-            const anchorFrom = Math.max(0, lateCueFrom + off.offset);
-            const anchorTo =
-              durationSec > 0
-                ? Math.min(durationSec, anchorFrom + span)
-                : anchorFrom + span;
-            if (
-              anchorFrom >= earlyTo + 30 &&
-              anchorTo - anchorFrom >= Math.min(span, lateTo - lateFrom) * 0.8
-            ) {
-              console.log(
-                `[SubSync] late keep=${keep.toFixed(2)} - rescanning anchored at ${off.offset.toFixed(2)}s (${anchorFrom.toFixed(0)}s-${anchorTo.toFixed(0)}s)`,
-              );
-              const anchorResult = await extractWithRetry(
-                source,
-                anchorFrom,
-                anchorTo,
-                sileroEnabled,
-                speed,
-                subtitleLanguage,
-                (p) => onProgress?.(0.9 + p * 0.04, "extract"),
-              );
-              if (anchorResult.ok) {
-                logScanSummary("late-anchor", anchorResult, sileroEnabled);
-                await maybePersistVerdict(
-                  anchorResult,
-                  sileroEnabled,
-                  sileroPersisted,
-                );
-                try {
-                  const anchorSig = validateSignal({
-                    rate: 100,
-                    ...anchorResult,
-                  });
-                  const anchorOff = findOffset(lateCues, anchorSig);
-                  const anchorConf = confidence(
-                    lateCues,
-                    anchorSig,
-                    anchorOff.offset,
-                    anchorOff.runnerUp,
-                    anchorOff.score,
-                  );
-                  console.log(
-                    `[SubSync] late anchored rescan: offset=${anchorOff.offset.toFixed(2)}s conf=${anchorConf.toFixed(3)}`,
-                  );
-                  if (anchorConf > conf) {
-                    off = anchorOff;
-                    conf = anchorConf;
-                    keep = keptFraction(lateCues, anchorSig, off.offset);
-                    // Cross-validation must use the signal that produced this offset.
-                    lateSigRef = anchorSig;
-                    const anchorWinKey = windowKeyFor(anchorFrom, anchorTo);
-                    await setCachedWindow(
-                      subtitleCacheKey,
-                      source.contentId,
-                      anchorWinKey,
-                      {
-                        offsetMs: Math.round(anchorOff.offset * 1000),
-                        confidence: anchorConf,
-                        createdAt: Date.now(),
-                        startSec: anchorResult.startSec,
-                        endSec: anchorResult.endSec,
-                        bins: anchorResult.bins,
-                        signalB64: anchorResult.signalB64,
-                      },
-                    );
-                  }
-                } catch {
-                  // invalid anchored signal - keep the direct late result
-                }
-              }
-            }
-          }
+          const lateCanRescan =
+            keep < 0.7 && keep > 0 && off.score > 0 && lateCues.length >= 8;
+          lateClipped = lateCanRescan;
 
           lateOff = off;
           lateConf = conf;
-          // A late window that still keeps < 70% of its cue set at the winning
-          // offset is structurally unable to judge it fairly (its tail is pinned
-          // at the content end and cannot widen) - treat as unusable so the
-          // early window can stand alone instead of hard-failing on an unfair
-          // comparison. The DISAGREE refusal still guards the music-peak
-          // incident: that path requires BOTH windows >= AGREE_CONF.
+          // A late window that keeps < 70% of its cue set is structurally
+          // unable to judge its own candidate fairly. When an anchored rescan
+          // is still pending (P2-2), keep lateUsable=true provisionally so the
+          // cross-check can run FIRST; lateUsable flips false only after the
+          // gated rescan (or if the window is not rescannable at all).
           if (keep < 0.7) {
-            console.log(
-              `[SubSync] late window clipped (keep=${keep.toFixed(2)}) - treating as unusable, early window may stand alone`,
-            );
+            if (lateCanRescan) {
+              console.log(
+                `[SubSync] late keep=${keep.toFixed(2)} - clipped, rescan deferred until cross-check fails`,
+              );
+              lateUsable = true;
+            } else {
+              console.log(
+                `[SubSync] late window clipped (keep=${keep.toFixed(2)}) - treating as unusable, early window may stand alone`,
+              );
+              lateUsable = false;
+            }
           } else {
             lateUsable = true;
             await setCachedWindow(
@@ -1131,7 +1174,7 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
         },
       );
       onProgress?.(1, "done");
-      return await makeOffsetOutcome(offsetMs, conf);
+      return applyOrConfirm(offsetMs, conf, "confirm");
     }
   }
 
@@ -1161,7 +1204,7 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
       createdAt: Date.now(),
     });
     onProgress?.(1, "done");
-    return await makeOffsetOutcome(offsetMs, earlyConf);
+    return applyOrConfirm(offsetMs, earlyConf, "confirm");
   }
 
   // Arbitration: the windows disagree. Cross-validate both candidates on the
@@ -1243,11 +1286,273 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
           createdAt: Date.now(),
         });
         onProgress?.(1, "done");
-        return await makeOffsetOutcome(offsetMs, winConf);
+        // Decisive late win over a checkpoint (lateConf >= 0.75) → correction toast.
+        const decisiveLate =
+          !earlyLeads &&
+          lateConf >= CHECKPOINT_CONF &&
+          checkpointRef.offsetMs !== null &&
+          Math.abs(checkpointRef.offsetMs - offsetMs) >= 100;
+        return applyOrConfirm(
+          offsetMs,
+          winConf,
+          decisiveLate ? "correct" : "confirm",
+        );
       }
       console.log(
         "[SubSync] windows disagree - neither candidate is corroborated on the other window's audio",
       );
+
+      // P2-2: cross-check could not decide. Run only the LOSING candidate's
+      // anchored rescan when that window was clipped (keep < 0.7) - then
+      // re-check agreement and the cross-check once with the improved candidate.
+      const earlyLeadsFail = earlyN >= lateN;
+      const wantLateRescan = earlyLeadsFail && lateClipped;
+      const wantEarlyRescan = !earlyLeadsFail && earlyClipped;
+
+      let rescanRan = false;
+      if (wantLateRescan) {
+        console.log(
+          `[SubSync] cross-check inconclusive - gated late anchored rescan at ${lateOff.offset.toFixed(2)}s`,
+        );
+        rescanRan = true;
+        const span = lateSigRef ? lateSigRef.endSec - lateSigRef.startSec : 0;
+        const anchorFrom = Math.max(0, lateCueFrom + lateOff.offset);
+        const anchorTo =
+          durationSec > 0
+            ? Math.min(durationSec, anchorFrom + span)
+            : anchorFrom + span;
+        if (
+          anchorFrom >= earlyTo + 30 &&
+          span > 0 &&
+          anchorTo - anchorFrom >= Math.min(span, lateTo - lateFrom) * 0.8
+        ) {
+          const anchorResult = await extractWithRetry(
+            source,
+            anchorFrom,
+            anchorTo,
+            sileroEnabled,
+            speed,
+            subtitleLanguage,
+            (p) => onProgress?.(0.9 + p * 0.04, "extract"),
+          );
+          if (anchorResult.ok) {
+            logScanSummary("late-anchor", anchorResult, sileroEnabled);
+            await maybePersistVerdict(
+              anchorResult,
+              sileroEnabled,
+              sileroPersisted,
+            );
+            try {
+              const anchorSig = validateSignal({ rate: 100, ...anchorResult });
+              const anchorOff = findOffset(lateCues, anchorSig);
+              const anchorConf = confidence(
+                lateCues,
+                anchorSig,
+                anchorOff.offset,
+                anchorOff.runnerUp,
+                anchorOff.score,
+              );
+              console.log(
+                `[SubSync] late anchored rescan: offset=${anchorOff.offset.toFixed(2)}s conf=${anchorConf.toFixed(3)}`,
+              );
+              if (anchorConf > lateConf) {
+                lateOff = anchorOff;
+                lateConf = anchorConf;
+                lateSigRef = anchorSig;
+                lateClipped =
+                  keptFraction(lateCues, anchorSig, lateOff.offset) >= 0.7;
+                if (lateClipped) lateUsable = false;
+                else lateUsable = true;
+                const anchorWinKey = windowKeyFor(anchorFrom, anchorTo);
+                await setCachedWindow(
+                  subtitleCacheKey,
+                  source.contentId,
+                  anchorWinKey,
+                  {
+                    offsetMs: Math.round(anchorOff.offset * 1000),
+                    confidence: anchorConf,
+                    createdAt: Date.now(),
+                    startSec: anchorResult.startSec,
+                    endSec: anchorResult.endSec,
+                    bins: anchorResult.bins,
+                    signalB64: anchorResult.signalB64,
+                  },
+                );
+              } else {
+                // Rescan did not improve - candidate still clipped → unusable.
+                const k = keptFraction(lateCues, lateSigRef!, lateOff.offset);
+                if (k < 0.7) lateUsable = false;
+              }
+            } catch {
+              // invalid anchored signal - keep the direct late result
+            }
+          }
+        } else {
+          console.log(
+            `[SubSync] gated late rescan span rejected (${anchorFrom.toFixed(0)}s-${anchorTo.toFixed(0)}s)`,
+          );
+        }
+      }
+
+      if (wantEarlyRescan) {
+        console.log(
+          `[SubSync] cross-check inconclusive - gated early anchored rescan at ${earlyOff.offset.toFixed(2)}s`,
+        );
+        rescanRan = true;
+        const span = earlySig ? earlySig.endSec - earlySig.startSec : 0;
+        const anchorFrom = Math.max(0, earlyFrom + earlyOff.offset);
+        const anchorTo =
+          durationSec > 0
+            ? Math.min(durationSec, anchorFrom + span)
+            : anchorFrom + span;
+        if (
+          span > 0 &&
+          anchorTo - anchorFrom >= Math.min(span, earlyTo - earlyFrom) * 0.8
+        ) {
+          const anchorResult = await extractWithRetry(
+            source,
+            anchorFrom,
+            anchorTo,
+            sileroEnabled,
+            speed,
+            subtitleLanguage,
+            (p) => onProgress?.(0.9 + p * 0.04, "extract"),
+          );
+          if (anchorResult.ok) {
+            logScanSummary("early-anchor", anchorResult, sileroEnabled);
+            await maybePersistVerdict(
+              anchorResult,
+              sileroEnabled,
+              sileroPersisted,
+            );
+            try {
+              const anchorSig = validateSignal({ rate: 100, ...anchorResult });
+              const anchorOff = findOffset(earlyCues, anchorSig);
+              const anchorConf = confidence(
+                earlyCues,
+                anchorSig,
+                anchorOff.offset,
+                anchorOff.runnerUp,
+                anchorOff.score,
+              );
+              console.log(
+                `[SubSync] anchored rescan: offset=${anchorOff.offset.toFixed(2)}s conf=${anchorConf.toFixed(3)}`,
+              );
+              if (anchorConf > earlyConf) {
+                earlyOff = anchorOff;
+                earlyConf = anchorConf;
+                earlySig = anchorSig;
+                earlyClipped =
+                  keptFraction(earlyCues, anchorSig, earlyOff.offset) >= 0.7;
+                const anchorWinKey = windowKeyFor(anchorFrom, anchorTo);
+                await setCachedWindow(
+                  subtitleCacheKey,
+                  source.contentId,
+                  anchorWinKey,
+                  {
+                    offsetMs: Math.round(anchorOff.offset * 1000),
+                    confidence: anchorConf,
+                    createdAt: Date.now(),
+                    startSec: anchorResult.startSec,
+                    endSec: anchorResult.endSec,
+                    bins: anchorResult.bins,
+                    signalB64: anchorResult.signalB64,
+                  },
+                );
+              }
+            } catch {
+              // anchor scan produced an invalid signal - keep the early result
+            }
+          }
+        }
+      }
+
+      if (rescanRan) {
+        // Re-check agreement first (diff < 1.5s), then the cross-check once more.
+        if (earlyConf >= AGREE_CONF && lateConf >= AGREE_CONF) {
+          const diff = Math.abs(earlyOff.offset - lateOff.offset);
+          if (diff < 1.5) {
+            const avgOff = (earlyOff.offset + lateOff.offset) / 2;
+            const conf = Math.max(earlyConf, lateConf);
+            const offsetMs = Math.round(avgOff * 1000);
+            console.log(
+              `[SubSync] windows agree after gated rescan: early=${earlyOff.offset.toFixed(2)}s late=${lateOff.offset.toFixed(2)}s ` +
+                `diff=${diff.toFixed(2)}s - applying avg ${(avgOff * 1000).toFixed(0)}ms (conf=${conf.toFixed(3)})`,
+            );
+            await setCachedSync(
+              subtitleCacheKey,
+              `${source.contentId}:${stableDuration(durationSec)}`,
+              {
+                offsetMs,
+                scale: 1,
+                method: "offset",
+                confidence: conf,
+                createdAt: Date.now(),
+              },
+            );
+            onProgress?.(1, "done");
+            return applyOrConfirm(offsetMs, conf, "confirm");
+          }
+        }
+
+        // Second cross-check pass with the improved candidate(s).
+        const e2x = lateSigRef
+          ? contrastScore(cues, lateSigRef, earlyOff.offset)
+          : null;
+        const l2x = earlySig
+          ? contrastScore(cues, earlySig, lateOff.offset)
+          : null;
+        const e2n = !lateSigRef || e2x === null ? -1 : e2x;
+        const l2n = !earlySig || l2x === null ? -1 : l2x;
+        console.log(
+          `[SubSync] disagree cross-check after gated rescan: early=${earlyOff.offset.toFixed(2)}s -> ${e2n < 0 ? (lateSigRef ? "invalid" : "nosig") : e2n.toFixed(3)} ` +
+            `late=${lateOff.offset.toFixed(2)}s -> ${l2n < 0 ? (earlySig ? "invalid" : "nosig") : l2n.toFixed(3)} ` +
+            `(min ${CROSS_MIN})`,
+        );
+        if (e2n >= 0 || l2n >= 0) {
+          const earlyLeads2 = e2n >= l2n;
+          const winOff2 = earlyLeads2 ? earlyOff.offset : lateOff.offset;
+          const winConf2 = earlyLeads2 ? earlyConf : lateConf;
+          const winX2 = earlyLeads2 ? e2n : l2n;
+          const loseX2 = earlyLeads2 ? l2n : e2n;
+          if (
+            winX2 >= CROSS_MIN &&
+            winConf2 >= TRY_CONF &&
+            (loseX2 < 0 || winX2 - loseX2 >= CROSS_LEAD)
+          ) {
+            const offsetMs = Math.round(winOff2 * 1000);
+            console.log(
+              `[SubSync] windows disagree - ${earlyLeads2 ? "early" : "late"} candidate ${winOff2.toFixed(2)}s ` +
+                `corroborated after gated rescan (x=${winX2.toFixed(3)}) - applying`,
+            );
+            await setCachedSync(
+              subtitleCacheKey,
+              `${source.contentId}:${durKey}`,
+              {
+                offsetMs,
+                scale: 1,
+                method: "offset",
+                confidence: winConf2,
+                createdAt: Date.now(),
+              },
+            );
+            onProgress?.(1, "done");
+            const decisiveLate2 =
+              !earlyLeads2 &&
+              lateConf >= CHECKPOINT_CONF &&
+              checkpointRef.offsetMs !== null &&
+              Math.abs(checkpointRef.offsetMs - offsetMs) >= 100;
+            return applyOrConfirm(
+              offsetMs,
+              winConf2,
+              decisiveLate2 ? "correct" : "confirm",
+            );
+          }
+        }
+        console.log(
+          "[SubSync] windows disagree - neither candidate is corroborated after gated rescan",
+        );
+      }
     }
   }
 

@@ -276,8 +276,9 @@ export function AutoSyncButton({
         case "offset":
           setState("applied");
           setMessage(
-            `Synced ${outcome.offsetMs > 0 ? "+" : "âˆ’"}${Math.abs(outcome.offsetMs / 1000).toFixed(2)}s` +
-              (outcome.confidence < 0.6 ? " â€” low confidence, verify" : ""),
+            outcome.notice ??
+              `Synced ${outcome.offsetMs > 0 ? "+" : "−"}${Math.abs(outcome.offsetMs / 1000).toFixed(2)}s` +
+                (outcome.confidence < 0.6 ? " — low confidence, verify" : ""),
           );
           onSynced(outcome.offsetMs, outcome.confidence, outcome.rewritten);
           break;

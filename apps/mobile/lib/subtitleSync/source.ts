@@ -187,5 +187,7 @@ export async function windowPlan(
   }
   if (source.kind === "local") return { earlySec: 900, lateSec: 480, speed: 1 };
   // Remote progressive (mp4/mkv/webm/mov/m4v): 4x cap, tight windows.
-  return { earlySec: 240, lateSec: 120, speed: 4 };
+  // P2-4: early 180s (was 240s) - speeds first decision; checkpoint/late path
+  // is unchanged so a 180s miss never costs more than the old plan.
+  return { earlySec: 180, lateSec: 120, speed: 4 };
 }
