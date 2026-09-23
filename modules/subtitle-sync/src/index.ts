@@ -91,7 +91,11 @@ export type ScanOptions = ExtractOptions & {
   audioLang?: string;
   /** R5-3: log Silero tensor metadata + the first 200 probabilities per window. */
   vadDebug?: boolean;
-  /** G1: measured link speed (Mbps); native caps reads at 0.35 × this. 0/omit = uncapped. */
+  /**
+   * G1/G4-3: FINAL player-aware scan budget in Mbps (link − player − 1.0,
+   * floor 0.5, cap 0.6×link — computed in JS). Native reads are capped at
+   * this rate directly (no fixed fraction). 0/omit = uncapped.
+   */
   throttleMbps?: number;
   /** G3: on cellular, windows projecting >20MB return confirm-bybytes unless allowConfirmBytes. */
   cellular?: boolean;

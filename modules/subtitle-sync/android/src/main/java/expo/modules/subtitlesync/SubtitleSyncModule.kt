@@ -111,7 +111,7 @@ class SubtitleSyncModule : Module() {
             val container = options["container"] as? String ?: "progressive"
             val vadDebug = options["vadDebug"] as? Boolean ?: false // R5-3
     val preferredLang = options["audioLang"] as? String
-            // G1/G3: governor knobs from JS (NetworkMonitor speed + NetInfo).
+            // G1/G3/G4-3: governor knobs from JS (player-aware budget + NetInfo).
             val throttleMbps = (options["throttleMbps"] as? Number)?.toDouble() ?: 0.0
             val cellular = options["cellular"] as? Boolean ?: false
             val allowConfirmBytes = options["allowConfirmBytes"] as? Boolean ?: false

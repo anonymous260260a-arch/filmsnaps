@@ -62,7 +62,7 @@ class FastScanJob(
     private val preferredLang: String?,
     /** R5-3: Silero diagnostics (tensor metadata + the first 200 probabilities). */
     private val vadDebug: Boolean = false,
-    /** G1: measured link speed (Mbps). Reads capped at 0.35 × this. 0 = uncapped. */
+    /** G1/G4-3: FINAL player-aware scan budget (Mbps), computed in JS. 0 = uncapped. */
     private val throttleMbps: Double = 0.0,
     /** G3: cellular + projected >20MB → confirm-bybytes unless allowConfirmBytes. */
     private val cellular: Boolean = false,
@@ -90,8 +90,8 @@ class FastScanJob(
         private const val TRACE_MAX_LINES = 400
         /** G3: cellular windows projecting above this many MB need user confirm. */
         private const val CONFIRM_BYTES_MB = 20.0
-        /** G1: target read rate = THROTTLE_FRACTION × measured link speed. */
-        private const val THROTTLE_FRACTION = 0.35
+        /** G4-2: minimum gap between "throttle:" log lines while throttling. */
+        private const val THROTTLE_LOG_MIN_MS = 30_000L
         private const val THROTTLE_WINDOW_MS = 1000L
         private const val THROTTLE_SLEEP_MS = 250L
         /** Fallback HLS segment size when the playlist has no BYTERANGE (session: 1.5–4MB). */
@@ -111,43 +111,139 @@ class FastScanJob(
     }
 
     /**
-     * G1: byte-budget throttle over a 1s window. Sleeps the caller in 250ms
-     * steps when the window is over 0.35 × measured speed; logs once per window.
+     * G1/G4: byte-budget throttle over a rolling 1s window.
+     *
+     * G4-3: [throttleMbps] is the FINAL scan budget in Mbps (player-aware,
+     * computed in JS: link − player − 1.0, floor 0.5, cap 0.6×link) — not the
+     * raw measured link. Native no longer multiplies by a fixed fraction.
+     *
+     * G4-1: [precharge] re-anchors the window at real network start (not at
+     * construction). If the first network bytes arrive >1s later the old
+     * window-boundary path reset the meter WITHOUT sleeping, letting the cold
+     * start burst at full line speed (~19 Mbps observed vs 2.67 budget).
+     * Boundary close now enforces overage sleep before reset.
+     *
+     * G4-2: logs at most once per 30s while actually throttling (plus a final
+     * totals line) — was once per 1s window tick (~80 lines/60s).
+     *
+     * G4-4: within-read capping is retained for BOTH progressive and HLS.
+     * Bill-on-completion-between-segments was considered and rejected:
+     * progressive has no segment boundary, and completion-only billing would
+     * let each multi-MB HLS segment download unthrottled (same cold-start
+     * class of starvation G4-1 forbids). Average rate is identical; accounting
+     * stays on one path. Sleep still prefers to land between larger reads
+     * whenever the overage allows it (250ms quanta).
+     *
+     * Thread-safety: HLS prefetch workers call [onBytes] concurrently.
      */
     private inner class ReadThrottle {
-        private val budgetBytesPerSec =
-            if (throttleMbps > 0) throttleMbps * THROTTLE_FRACTION * 1_000_000.0 / 8.0 else 0.0
-        private var windowStart = SystemClock.elapsedRealtime()
+        /** Final budget bytes/sec (G4-3: already player-adjusted). */
+        val budgetBytesPerSec: Double =
+            if (throttleMbps > 0) throttleMbps * 1_000_000.0 / 8.0 else 0.0
+
+        private var windowStart = 0L
         private var windowBytes = 0L
+        private var totalBytes = 0L
+        private var throttledBytes = 0L
+        private var throttledSleepMs = 0L
+        private var lastLogAt = 0L
+        private var precharged = false
+
+        val budgetActive: Boolean get() = budgetBytesPerSec > 0
+
+        /**
+         * G4-1: re-anchor the window at real network start. A sliding-window
+         * meter accrues allowance from windowStart; leaving the clock at
+         * construction time made the first onBytes hit the boundary path.
+         * No debt seed: unused idle allowance is correctly discarded at close.
+         */
+        fun precharge() {
+            if (!budgetActive) return
+            synchronized(this) {
+                if (precharged) return
+                precharged = true
+                windowStart = SystemClock.elapsedRealtime()
+                windowBytes = 0
+            }
+        }
 
         fun onBytes(n: Long) {
-            if (budgetBytesPerSec <= 0) return
-            windowBytes += n
-            val now = SystemClock.elapsedRealtime()
-            val elapsed = now - windowStart
-            if (elapsed >= THROTTLE_WINDOW_MS) {
-                val avgMbps = windowBytes * 8.0 / (elapsed / 1000.0) / 1_000_000.0
-                val budgetMbps = budgetBytesPerSec * 8.0 / 1_000_000.0
-                d(
-                    "throttle: budget=${"%.2f".format(java.util.Locale.US, budgetMbps)} Mbps, " +
-                        "avg read rate=${"%.2f".format(java.util.Locale.US, avgMbps)} Mbps"
-                )
-                windowStart = now
-                windowBytes = 0
-                return
-            }
-            val allowed = budgetBytesPerSec * (elapsed / 1000.0)
-            if (windowBytes > allowed) {
-                val overMs = ((windowBytes - allowed) / budgetBytesPerSec * 1000.0).toLong()
-                val sleep = ((overMs + THROTTLE_SLEEP_MS - 1) / THROTTLE_SLEEP_MS) * THROTTLE_SLEEP_MS
-                var remaining = sleep
-                while (remaining > 0 && !cancelled.get()) {
-                    val step = minOf(remaining, THROTTLE_SLEEP_MS)
-                    Thread.sleep(step)
-                    remaining -= step
+            if (!budgetActive) return
+            synchronized(this) {
+                totalBytes += n
+                windowBytes += n
+                val now = SystemClock.elapsedRealtime()
+                if (windowStart == 0L) windowStart = now
+                val elapsed = now - windowStart
+                if (elapsed >= THROTTLE_WINDOW_MS) {
+                    closeWindow(elapsed, now)
+                    return
+                }
+                val allowed = budgetBytesPerSec * (elapsed / 1000.0)
+                if (windowBytes > allowed) {
+                    enforceSleep(windowBytes - allowed)
                 }
             }
         }
+
+        /** G4-2 final summary — call once when the scan thread exits. */
+        fun logFinal() {
+            if (!budgetActive || totalBytes == 0L) return
+            synchronized(this) {
+                d(
+                    "throttle: done budget=${mbps(budgetBytesPerSec)} Mbps " +
+                        "read=${totalBytes / (1024.0 * 1024.0)}MB " +
+                        "throttled=${throttledBytes / (1024.0 * 1024.0)}MB " +
+                        "slept=${throttledSleepMs}ms"
+                )
+            }
+        }
+
+        /**
+         * Close a 1s+ window: ALWAYS enforce overage sleep first (G4-1 — the
+         * old path reset without sleeping), then rate-limit the log (G4-2).
+         */
+        private fun closeWindow(elapsedMs: Long, now: Long) {
+            val allowed = budgetBytesPerSec * (elapsedMs / 1000.0)
+            val over = windowBytes - allowed
+            if (over > 0) {
+                enforceSleep(over)
+                throttledBytes += over
+                // G4-2: only when we actually throttled, and at most every 30s.
+                // lastLogAt==0 → first throttled window logs immediately (elapsedRealtime
+                // may be << 30s after boot, so a bare age check would swallow it).
+                if (lastLogAt == 0L || now - lastLogAt >= THROTTLE_LOG_MIN_MS) {
+                    lastLogAt = now
+                    val avgMbps = windowBytes * 8.0 / (elapsedMs / 1000.0) / 1_000_000.0
+                    d(
+                        "throttle: budget=${mbps(budgetBytesPerSec)} Mbps, " +
+                            "avg read rate=${"%.2f".format(java.util.Locale.US, avgMbps)} Mbps, " +
+                            "throttled total=${throttledBytes / (1024.0 * 1024.0)}MB " +
+                            "slept=${throttledSleepMs}ms"
+                    )
+                }
+            }
+            windowStart = now
+            windowBytes = 0
+        }
+
+        /** Sleep in 250ms steps for [overBytes] of budget debt. */
+        private fun enforceSleep(overBytes: Double) {
+            if (overBytes <= 0 || !budgetActive) return
+            val overMs = (overBytes / budgetBytesPerSec * 1000.0).toLong()
+            if (overMs <= 0) return
+            val sleep = ((overMs + THROTTLE_SLEEP_MS - 1) / THROTTLE_SLEEP_MS) * THROTTLE_SLEEP_MS
+            var remaining = sleep
+            while (remaining > 0 && !cancelled.get()) {
+                val step = minOf(remaining, THROTTLE_SLEEP_MS)
+                Thread.sleep(step)
+                remaining -= step
+                throttledSleepMs += step
+            }
+        }
+
+        private fun mbps(bytesPerSec: Double): String =
+            "%.2f".format(java.util.Locale.US, bytesPerSec * 8.0 / 1_000_000.0)
     }
 
     private val readThrottle = ReadThrottle()
@@ -232,6 +328,12 @@ class FastScanJob(
     fun start() {
         Thread {
             val t0 = SystemClock.elapsedRealtime()
+            // G4-1: seed the throttle window at real network start (not at
+            // construction) so the cold path never bursts at line speed.
+            readThrottle.precharge()
+            if (throttleMbps > 0) {
+                d("governor: budget=${"%.2f".format(java.util.Locale.US, throttleMbps)} Mbps (G4-3 player-aware)")
+            }
             val r = try {
                 if (container == "hls") scanHls(t0) else scanProgressive(t0)
             } catch (t: Throwable) {
@@ -243,6 +345,7 @@ class FastScanJob(
                     ExtractResult.Error("decode-failed", "${t.javaClass.simpleName}: ${t.message}")
                 }
             }
+            readThrottle.logFinal()
             d(
                 when (r) {
                     is ExtractResult.Success ->
@@ -270,7 +373,8 @@ class FastScanJob(
 
     /**
      * G1: wrap the progressive DataSource so every network read is billed
-     * against the 0.35×-of-measured budget (sleeps inside read when over).
+     * against the player-aware scan budget (sleeps inside read when over).
+     * G4-4: within-read capping (no segment boundary on progressive).
      */
     private fun throttledDs(): DataSource {
         val inner = dataSourceFactory().createDataSource()
@@ -857,13 +961,18 @@ class FastScanJob(
         @Volatile private var sequential = false
         private var fetchCount = 0
         private var fetchTotalMs = 0L
+        private var fetchTotalBytes = 0L
 
         private fun fetchOne(idx: Int): ByteArray {
             // G2 + G1: recover from player stall, then bill bytes against the throttle.
             awaitPlayerRecovered { }
-            return HlsPlaylistParser.fetchSegment(segments[idx], headers, keyCache) { n ->
+            val bytes = HlsPlaylistParser.fetchSegment(segments[idx], headers, keyCache) { n ->
                 readThrottle.onBytes(n)
             }
+            synchronized(this) {
+                fetchTotalBytes += bytes.size
+            }
+            return bytes
         }
 
         fun await(i: Int): ByteArray {
@@ -902,11 +1011,23 @@ class FastScanJob(
             if (segs <= 0) return
             val fetchAvg = fetchTotalMs / segs
             val decodeAvg = decodeTotalMs / segs
-            val overlapSaved = (fetchTotalMs + decodeTotalMs) - wallMs
+            // G4-2: overlap must be vs SEQUENTIAL-AT-THE-SAME-CAP (transfer under
+            // the budget + decode), not the unthrottled sum of fetch wall times.
+            // Under a sustained budget transfer ≈ bytes/budget; raw fetch-sum
+            // already includes throttle sleeps AND overlaps across 2 workers,
+            // which inflated the old "overlap saved ~64s" figure.
+            val capFetchMs = if (readThrottle.budgetActive) {
+                (fetchTotalBytes * 1000.0 / readThrottle.budgetBytesPerSec).toLong()
+            } else {
+                fetchTotalMs
+            }
+            val sequentialAtCapMs = capFetchMs + decodeTotalMs
+            val overlapSaved = sequentialAtCapMs - wallMs
             log(
                 "hls prefetch: $segs segs, wall=${wallMs}ms fetch-sum=${fetchTotalMs}ms " +
                     "(avg ${fetchAvg}ms), decode-sum=${decodeTotalMs}ms " +
-                    "(avg ${decodeAvg}ms), overlap saved ~${overlapSaved}ms" +
+                    "(avg ${decodeAvg}ms), sequential-at-cap=${sequentialAtCapMs}ms " +
+                    "overlap saved ~${overlapSaved}ms" +
                     if (sequential) " (sequential fallback)" else ""
             )
         }

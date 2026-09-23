@@ -78,12 +78,34 @@ const SILERO_ORT_VERSION = "1.20.0";
  */
 let vadDebugEnabled = false;
 /**
- * G1/G3: scan governor knobs, set by autoSync before extractWithRetry runs.
- * throttleMbps = measured link speed (native caps at 0.35×); 0 = uncapped.
+ * G1/G3/G4-3: scan governor knobs, set by autoSync before extractWithRetry runs.
+ * throttleMbps = FINAL player-aware scan budget (Mbps) — native no longer
+ * multiplies by 0.35; 0 = uncapped.
  */
 let scanThrottleMbps = 0;
 let scanCellular = false;
 let scanAllowConfirmBytes = false;
+/**
+ * G4-3: player-aware budget derivation.
+ * scanBudget = link − player − 1.0 (SAFETY), floor 0.5, cap 0.6×link.
+ * playerMbps: no actual player-throughput meter exists yet (perfMetrics /
+ * NetworkMonitor only track rebuffers + speed tests) → fallback 3 Mbps.
+ */
+const PLAYER_FALLBACK_MBPS = 3.0;
+const BUDGET_SAFETY_MBPS = 1.0;
+const BUDGET_FLOOR_MBPS = 0.5;
+const BUDGET_LINK_CAP_FRACTION = 0.6;
+
+function computeScanBudgetMbps(linkMbps: number, playerMbps?: number): number {
+  if (!(linkMbps > 0)) return 0;
+  const player =
+    typeof playerMbps === "number" && playerMbps > 0
+      ? playerMbps
+      : PLAYER_FALLBACK_MBPS;
+  const cap = linkMbps * BUDGET_LINK_CAP_FRACTION;
+  const raw = linkMbps - player - BUDGET_SAFETY_MBPS;
+  return Math.max(BUDGET_FLOOR_MBPS, Math.min(cap, raw));
+}
 import {
   applyOffset,
   writeShiftedSubtitleFile,
@@ -590,21 +612,25 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
     allowConfirmBytes = false,
   } = opts;
 
-  // G1/G3: arm the scan governor for this attempt.
+  // G1/G3/G4-3: arm the scan governor for this attempt.
   scanCellular = network === "cellular";
   scanAllowConfirmBytes = allowConfirmBytes;
   try {
     const cached = await getCachedSpeed();
-    scanThrottleMbps = cached?.speedMbps ?? 0;
+    const linkMbps = cached?.speedMbps ?? 0;
+    scanThrottleMbps = computeScanBudgetMbps(linkMbps);
+    if (linkMbps > 0) {
+      const cap = linkMbps * BUDGET_LINK_CAP_FRACTION;
+      console.log(
+        `[SubSync] governor: link=${linkMbps.toFixed(2)} ` +
+          `player=${PLAYER_FALLBACK_MBPS.toFixed(2)} ` +
+          `budget=${scanThrottleMbps.toFixed(2)} ` +
+          `(floor ${BUDGET_FLOOR_MBPS}, cap ${cap.toFixed(2)}), ` +
+          `cellular=${scanCellular}, allowConfirmBytes=${scanAllowConfirmBytes}`,
+      );
+    }
   } catch {
     scanThrottleMbps = 0;
-  }
-  if (scanThrottleMbps > 0) {
-    console.log(
-      `[SubSync] governor: throttle target=${(scanThrottleMbps * 0.35).toFixed(2)} Mbps ` +
-        `(0.35 × measured ${scanThrottleMbps.toFixed(2)}), cellular=${scanCellular}, ` +
-        `allowConfirmBytes=${scanAllowConfirmBytes}`,
-    );
   }
 
   // Re-sync UX: a shifted filename (synced-31800-… / pristine-…) must not
