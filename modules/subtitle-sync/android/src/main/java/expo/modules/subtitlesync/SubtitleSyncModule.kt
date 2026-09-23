@@ -268,7 +268,7 @@ class SubtitleSyncModule : Module() {
                             "signalB64" to r.signalB64,
                             "vadChose" to (r.vadChose ?: ""),
                             "sileroDuty" to (r.sileroDuty?.toDouble() ?: 0.0),
-                            "energyDuty" to r.energyDuty.toDouble(),
+                            "energyDuty" to (r.energyDuty?.toDouble() ?: 0.0),
                             "sileroMaxProb" to (r.sileroMaxProb?.toDouble() ?: 0.0),
                             "totalChunks" to (r.totalChunks ?: 0L),
                         ),

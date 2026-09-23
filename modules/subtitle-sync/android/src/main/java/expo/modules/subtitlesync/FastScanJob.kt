@@ -211,7 +211,7 @@ class FastScanJob(
             val over = windowBytes - allowed
             if (over > 0) {
                 enforceSleep(over)
-                throttledBytes += over
+                throttledBytes += Math.round(over).toLong()
                 // G4-2: only when we actually throttled, and at most every 30s.
                 // lastLogAt==0 → first throttled window logs immediately (elapsedRealtime
                 // may be << 30s after boot, so a bare age check would swallow it).
