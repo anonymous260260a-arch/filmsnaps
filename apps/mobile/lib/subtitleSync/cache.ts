@@ -85,7 +85,9 @@ function windowCacheKey(
   // is superseded - BOTH families now carry CACHE_NAMESPACE, because a poisoned
   // full-result entry DID replay and re-apply a 74s wrong shift.
   // v9: Silero v5.1.2 asset swap — all pre-Silero window signals (EnergyVad) are stale.
-  return `${KEY_PREFIX}v9/win/${subtitleCacheKey}:${djb2(contentId)}:${windowKey}:${CACHE_NAMESPACE}`;
+  // v10: F6 Silero mark-threshold hysteresis (MARK_ON 0.35 / MARK_OFF 0.25) — every
+  // cached signal still carries old-rule (prob >= 0.5) marks and must not replay.
+  return `${KEY_PREFIX}v10/win/${subtitleCacheKey}:${djb2(contentId)}:${windowKey}:${CACHE_NAMESPACE}`;
 }
 
 export async function getCachedSync(

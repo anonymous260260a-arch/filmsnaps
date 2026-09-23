@@ -46,6 +46,8 @@ class SignalCollector(
     private var maxBinSilero = -1
     /** Latched after a Silero runtime throw — energy alone for the rest of the window. */
     private var sileroFailed = false
+    /** F6 rising-edge hysteresis latch for the Silero mark path (energy path is flat 0.5). */
+    private var sileroMarkOn = false
 
     // Pending 512-sample (32ms) VAD chunk spanning decoder buffer boundaries.
     private val pending = ArrayList<Float>(512)
@@ -120,6 +122,7 @@ class SignalCollector(
         binsSilero.clear()
         maxBinSilero = -1
         sileroFailed = false
+        sileroMarkOn = false
         speechChunks = 0
         sileroSpeechChunks = 0
         totalChunks = 0
@@ -180,7 +183,17 @@ class SignalCollector(
         // Zero Silero bins, latch, continue on energy alone.
         if (silero != null && !sileroFailed) {
             try {
-                if (silero.process(chunk) >= 0.5f) {
+                val prob = silero.process(chunk)
+                // F6: rising-edge hysteresis (energy path stays flat 0.5).
+                // Old rule (prob >= 0.5) marks late on contaminated audio: Silero's
+                // ramp through the threshold arrives after true speech onset, so
+                // speech bins are biased late proportional to music/CAM bleed.
+                // Ground truths: Luther (clean) error < ~0.2s; Lioness (music-dense)
+                // +0.46s LATE (engine +0.76 -> user ~+0.30); Spider-WEBRip (CAM)
+                // +1.5s LATE (31.80 vs true 30.30).
+                if (!sileroMarkOn && prob >= MARK_ON) sileroMarkOn = true
+                else if (sileroMarkOn && prob < MARK_OFF) sileroMarkOn = false
+                if (sileroMarkOn) {
                     sileroSpeechChunks++
                     maxBinSilero = mark(binsSilero, chunkStartUs, maxBinSilero)
                 }
@@ -310,5 +323,24 @@ class SignalCollector(
     companion object {
         /** Keep a little context before/after the window so edge cues still overlap. */
         private const val WINDOW_MARGIN_US = 500_000L
+
+        /**
+         * F6: Silero mark-threshold hysteresis (replaces flat prob >= 0.5).
+         * Mark ON at >= MARK_ON; stay on until prob < MARK_OFF.
+         * Mechanism: on contaminated audio the probability ramp crosses the old
+         * 0.5 mark late → speech bins late → offset biased late, proportional
+         * to contamination. Three-point ground truth: Luther (clean) < ~0.2s;
+         * Lioness (music-dense) +0.46s late (truth ~0.30, was 0.76);
+         * Spider-WEBRip (CAM) +1.5s late (31.80 vs true 30.30).
+         */
+        private const val MARK_ON = 0.35f
+        private const val MARK_OFF = 0.25f
+
+        /**
+         * F6 escalation (NOT active): onset-of-speech binning — mark the first
+         * chunk where prob rises twice consecutively after a below-MARK_OFF run.
+         * Flip to true only if F6 undercorrects Lioness/Spider on device.
+         */
+        private const val ONSET_BINNING = false
     }
 }
