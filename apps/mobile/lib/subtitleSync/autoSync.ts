@@ -314,7 +314,7 @@ function logOnsetWeighted(
   cues: { start: number; end: number; text: string }[],
   sig: SpeechSignal,
   rawOffset: number,
-): void {
+): number | null {
   const onsetCues = cues.map((c) => ({
     start: c.start,
     end: Math.min(c.end, c.start + 0.3),
@@ -328,8 +328,10 @@ function logOnsetWeighted(
       `[SubSync] ${label} onset-weighted: offset=${o.offset.toFixed(2)}s conf=${oc.toFixed(3)} ` +
         `(delta=${delta >= 0 ? "+" : ""}${delta.toFixed(2)}s)`,
     );
+    return o.offset;
   } catch {
     console.log(`[SubSync] ${label} onset-weighted: n/a`);
+    return null;
   }
 }
 
@@ -841,7 +843,19 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
             `keep=${keptFraction(earlyCues, sig, raw.offset).toFixed(2)} baseline=${raw.baseline.toFixed(3)} ` +
             `top=${formatTop(raw.top)}`,
         );
-        logOnsetWeighted("early", earlyCues, sig, raw.offset);
+        const earlyOnset = logOnsetWeighted(
+          "early",
+          earlyCues,
+          sig,
+          raw.offset,
+        );
+        // P3-3 LOG-ONLY: refined vs FFT coarse vs onset-weighted diagnostic.
+        console.log(
+          `[SubSync] refined: offset=${raw.offset.toFixed(3)}s ` +
+            `(coarse ${raw.coarse.toFixed(2)}, onset ${
+              earlyOnset != null ? earlyOnset.toFixed(2) : "n/a"
+            })`,
+        );
 
         // R8-4 LOG-ONLY: re-rank the early window without fully-bracketed cues so
         // an SDH-heavy file's offset shift is visible. The applied path below is
@@ -1079,7 +1093,19 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
               `keep=${keptFraction(lateCues, lateSig, off.offset).toFixed(2)} baseline=${off.baseline.toFixed(3)} ` +
               `top=${formatTop(off.top)}`,
           );
-          logOnsetWeighted("late", lateCues, lateSig, off.offset);
+          const lateOnset = logOnsetWeighted(
+            "late",
+            lateCues,
+            lateSig,
+            off.offset,
+          );
+          // P3-3 LOG-ONLY: refined vs FFT coarse vs onset-weighted diagnostic.
+          console.log(
+            `[SubSync] refined: offset=${off.offset.toFixed(3)}s ` +
+              `(coarse ${off.coarse.toFixed(2)}, onset ${
+                lateOnset != null ? lateOnset.toFixed(2) : "n/a"
+              })`,
+          );
 
           // P2-2: clipped-late rescue is DEFERRED behind cross-validation
           // (same as the early window). Eligibility is recorded; the anchored
