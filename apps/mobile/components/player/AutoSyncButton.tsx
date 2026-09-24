@@ -1,14 +1,21 @@
 ﻿/**
- * AutoSyncButton â€” triggers automatic subtitle synchronization.
+ * AutoSyncButton — card UI for automatic subtitle synchronization.
  *
- * Runs lib/subtitleSync/autoSync against the currently playing stream and
- * the selected external subtitle file. States:
- *   idle â†’ extracting (progress) â†’ analyzing â†’ applied | failed
+ * UX design (keep in sync with SubtitleSheet):
+ *  - Novice-first: the card's title is the user's problem ("Subtitles out of
+ *    sync?"), one line explains the mechanism, one primary action. No jargon.
+ *  - The run lives in a MODULE-LEVEL RUNNER: closing the sheet does NOT cancel
+ *    it. The user is told they can keep watching; the result applies and
+ *    toasts on its own. Only an explicit tap on Cancel cancels.
+ *  - Perceived-speed techniques (honest, monotonic): staged verb copy
+ *    (Connecting → Listening → Matching), an eased progress mapping that
+ *    moves fast early, specific two-decimal offsets on success, skeleton
+ *    expectations ("usually under a minute").
  *
- * [SubSync] logs trace the whole pipeline so device logs show what happened.
+ * States: idle → running (connect/listen/analyze stages) → applied | failed.
  */
 
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -16,6 +23,8 @@ import {
   StyleSheet,
   Platform,
   Alert,
+  Animated,
+  type TextStyle,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import NetInfo from "@react-native-community/netinfo";
@@ -39,28 +48,22 @@ export type AutoSyncSourceInfo = {
   kind: "local" | "remote";
 };
 
-/** User-facing copy for gate reasons reported by autoSync. */
 const GATE_REASONS: Record<string, string> = {
   hls: "Auto sync isn't available for this HLS stream.",
   live: "Live streams can't be auto-synced.",
   dash: "DASH streams aren't supported for auto sync yet.",
   "mkv-ios":
-    "MKV/WebM auto sync isn't supported on iPhone â€” try the downloaded file.",
-  drm: "This stream is DRM-protected â€” auto sync isn't possible.",
+    "MKV/WebM auto sync isn't supported on iPhone — try the downloaded file.",
+  drm: "This stream is DRM-protected — auto sync isn't possible.",
   "probe-fail":
     "Couldn't inspect the stream URL for auto sync. Try again, or use the downloaded file.",
 };
 
 type Props = {
-  /** Latest stream info, read at press time (avoids stale closures). */
   sourceInfo: () => AutoSyncSourceInfo;
-  /** Stable identity for caching (series/release level — never the URL). */
   contentId: string;
-  /** file:// URI of the selected external subtitle — null = nothing to sync. */
   subtitleUri: string | null;
-  /** Language of the selected subtitle (from the sheet track list). */
   subtitleLanguage?: string;
-  /** Called with the resulting offset in ms when sync succeeds. */
   onSynced: (
     offsetMs: number,
     confidence: number,
@@ -71,15 +74,272 @@ type Props = {
       label?: string;
     },
   ) => void;
-  /**
-   * Tap-only watch-sync activation (reviewer directive). Invoked on Auto Sync
-   * press and on the cellular "Watch-sync instead" path — never auto-started
-   * from playback. Returns true when a session was (re)started.
-   */
   startWatch?: () => boolean | Promise<boolean>;
+  /** Live playhead (seconds) for the playhead-anchored scan. */
+  startWatchPosition?: () => number;
 };
 
-type State = "idle" | "extracting" | "analyzing" | "applied" | "failed";
+// ---------------------------------------------------------------------------
+// Module-level runner: survives the sheet closing (background sync).
+// ---------------------------------------------------------------------------
+
+type SyncStage = "connect" | "listen" | "analyze";
+type RunnerStatus = "idle" | "running" | "applied" | "failed";
+
+type RunnerState = {
+  status: RunnerStatus;
+  stage: SyncStage;
+  /** Raw 0..1 from the engine — the UI applies the perceived-speed easing. */
+  progress: number;
+  /** Success line (e.g. "Synced +52.49s"). */
+  resultText: string | null;
+  /** Info / error line. */
+  message: string | null;
+};
+
+interface RunHooks {
+  sourceInfo: () => AutoSyncSourceInfo;
+  contentId: string;
+  subtitleUri: string | null;
+  subtitleLanguage?: string;
+  onSynced: Props["onSynced"];
+  startWatch?: Props["startWatch"];
+  /** Live playhead (seconds) captured when the run starts — scan anchor. */
+  anchorSec?: () => number | null;
+  /** True when the fetch scan should stop (watch sync already applied). */
+  shouldAbort?: () => boolean;
+}
+
+const INITIAL: RunnerState = {
+  status: "idle",
+  stage: "connect",
+  progress: 0,
+  resultText: null,
+  message: null,
+};
+
+let runnerState: RunnerState = INITIAL;
+const runnerListeners = new Set<() => void>();
+let runToken = 0;
+let allowBytesNextAttempt = false;
+
+function setRunner(patch: Partial<RunnerState>) {
+  runnerState = { ...runnerState, ...patch };
+  runnerListeners.forEach((l) => l());
+}
+
+/** Eased mapping: the bar moves fast early (a moving bar feels fast; a
+ *  stalled one feels broken), never sits at 0%, and only hits 100% on done.
+ *  Monotonic in the raw progress — honest, just front-loaded. */
+function easeProgress(p: number): number {
+  if (p >= 1) return 1;
+  const eased = 0.06 + 0.94 * (1 - Math.pow(1 - Math.max(0, p), 1.4));
+  return Math.min(eased, 0.97);
+}
+
+function beginWatch(hooks: RunHooks): Promise<void> {
+  if (!hooks.startWatch) return Promise.resolve();
+  return Promise.resolve(hooks.startWatch())
+    .then((ok: boolean) => {
+      if (ok)
+        console.log("[SubSync] watch: session started from Auto Sync tap");
+    })
+    .catch((e: any) => {
+      console.log(`[SubSync] watch: start failed: ${e?.message ?? e}`);
+    });
+}
+
+function cancelRun() {
+  runToken++; // invalidate any in-flight run's continuations
+  if (runnerState.status === "running") {
+    cancelAutoSync();
+  }
+  setRunner({
+    status: "idle",
+    stage: "connect",
+    progress: 0,
+    resultText: null,
+    message: null,
+  });
+}
+
+async function startRun(hooks: RunHooks) {
+  if (runnerState.status === "running") cancelRun();
+  const token = ++runToken;
+  const alive = () => token === runToken;
+  await beginWatch(hooks);
+  if (!alive()) return;
+
+  if (!hooks.subtitleUri) {
+    setRunner({
+      status: "failed",
+      resultText: null,
+      message: "Load a subtitle first — sync needs a file.",
+    });
+    return;
+  }
+
+  const info = hooks.sourceInfo();
+  if (isHlsOrDash(info.uri) && /\.mpd($|\?)/i.test(info.uri)) {
+    setRunner({
+      status: "failed",
+      resultText: null,
+      message: "Auto sync doesn't support DASH streams yet.",
+    });
+    console.log("[SubSync] gated: DASH stream");
+    return;
+  }
+
+  setRunner({
+    status: "running",
+    stage: "connect",
+    progress: 0,
+    resultText: null,
+    message: null,
+  });
+  const t0 = Date.now();
+  const kind: SourceKind = detectKind(info.uri);
+  console.log(
+    `[SubSync] start: contentId=${hooks.contentId} kind=${kind} container=${info.container} ` +
+      `dur=${info.durationSec.toFixed(0)}s sub=${hooks.subtitleUri.split("/").pop()}`,
+  );
+
+  try {
+    const subText = await new File(hooks.subtitleUri).text();
+    if (!alive()) return;
+    const format = detectFormat(hooks.subtitleUri);
+    const network = await currentNetwork();
+    if (!alive()) return;
+    console.log(`[SubSync] subtitle ${format}, network=${network}`);
+
+    const source: SourceRef = {
+      contentId: hooks.contentId,
+      kind,
+      container: info.container,
+      resolve: async () => {
+        const latest = hooks.sourceInfo();
+        return { uri: latest.uri, headers: latest.headers };
+      },
+    };
+
+    const outcome: SyncOutcome = await autoSync({
+      source,
+      durationSec: info.durationSec,
+      // P4: scan around where the user is watching, and stop fetching the
+      // moment a watch-sync apply lands — the run exists to serve the scene
+      // on screen, not the file head.
+      anchorSec: hooks.anchorSec?.() ?? undefined,
+      shouldAbort: hooks.shouldAbort,
+      subtitleText: subText,
+      subtitleFormat: format,
+      subtitleCacheKey: hooks.subtitleUri.split("/").pop() ?? "sub",
+      subtitleUri: hooks.subtitleUri,
+      subtitleLanguage:
+        hooks.subtitleLanguage ?? detectSubtitleLanguage(hooks.subtitleUri),
+      network,
+      platform: Platform.OS === "ios" ? "ios" : "android",
+      allowConfirmBytes: allowBytesNextAttempt,
+      onProgress: (p, stage) => {
+        if (!alive()) return;
+        setRunner(
+          stage === "analyze"
+            ? { stage: "analyze", progress: p }
+            : { stage: "listen", progress: p },
+        );
+      },
+    });
+
+    if (!alive()) return;
+    console.log(
+      `[SubSync] outcome: ${JSON.stringify(outcome)} in ${Date.now() - t0}ms`,
+    );
+    const uiVisible = runnerListeners.size > 0;
+
+    switch (outcome.type) {
+      case "offset": {
+        const resultText =
+          outcome.notice ??
+          `Synced ${outcome.offsetMs > 0 ? "+" : "−"}${Math.abs(outcome.offsetMs / 1000).toFixed(2)}s` +
+            (outcome.confidence < 0.6 ? " — low confidence, verify" : "");
+        setRunner({ status: "applied", resultText, message: null });
+        if (outcome.notice) downloadToast.info(outcome.notice);
+        if (!uiVisible) downloadToast.info(resultText); // sheet closed: still tell the user
+        hooks.onSynced(outcome.offsetMs, outcome.confidence, outcome.rewritten);
+        break;
+      }
+      case "rewritten":
+        setRunner({
+          status: "applied",
+          resultText: "Synced (timing rescaled)",
+          message: null,
+        });
+        if (!uiVisible) downloadToast.info("Subtitles synced");
+        break;
+      case "kept":
+        setRunner({
+          status: "failed",
+          resultText: null,
+          message: "Couldn't improve on the existing sync — keeping it",
+        });
+        break;
+      case "failed": {
+        const message = GATE_REASONS[outcome.reason] ?? outcome.reason;
+        setRunner({ status: "failed", resultText: null, message });
+        if (!uiVisible) downloadToast.info(message);
+        break;
+      }
+      case "cancelled":
+        setRunner({ status: "idle", resultText: null, message: null });
+        break;
+      case "confirm-bybytes": {
+        setRunner({ status: "idle", resultText: null, message: null });
+        const mb = outcome.projectedMb;
+        Alert.alert(
+          "Large download on cellular",
+          `Auto sync needs about ${mb} MB of mobile data for this scan. Continue?`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Continue",
+              onPress: () => {
+                allowBytesNextAttempt = true;
+                void startRun(hooks);
+              },
+            },
+            {
+              text: "Watch-sync instead (no extra data)",
+              onPress: () => {
+                console.log(
+                  "[SubSync] cellular: user chose watch-sync piggyback (skip fetch scan)",
+                );
+                void beginWatch(hooks);
+                const msg = "Watching playback to sync — no extra data.";
+                setRunner({ status: "idle", resultText: null, message: msg });
+                downloadToast.info(msg);
+              },
+            },
+          ],
+          { cancelable: true },
+        );
+        break;
+      }
+    }
+  } catch (e: any) {
+    if (!alive()) return;
+    console.log(`[SubSync] error: ${e?.message ?? e}`);
+    setRunner({
+      status: "failed",
+      resultText: null,
+      message: e?.message ?? "unknown error",
+    });
+  } finally {
+    allowBytesNextAttempt = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers (unchanged logic)
+// ---------------------------------------------------------------------------
 
 function detectFormat(uri: string): SubFormat {
   const ext = uri.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
@@ -90,13 +350,6 @@ function detectFormat(uri: string): SubFormat {
   return "srt";
 }
 
-/**
- * Best-effort 2-letter language from the subtitle filename, e.g.
- * "95350-EN-Lanterns_S01E01_eng.srt" -> "en", "...-rovers.srt" -> undefined.
- * Matches the ISO-639-1/2 codes the audio tracks report.
- */
-/** ISO-639 codes -> the 2-letter code audio tracks report. Only KNOWN codes count,
- *  so scene tags like "WEB-DL"/"AMZN"/"REPACK" are never mistaken for a language. */
 const ISO1_MAP: Record<string, string> = {
   en: "en",
   eng: "en",
@@ -155,10 +408,6 @@ const ISO1_MAP: Record<string, string> = {
   may: "ms",
 };
 
-/**
- * Best-effort language from the subtitle filename (fallback when the sheet
- * does not know it). Handles "-EN-", "_eng.srt", "..._lang_en.srt", ".en.srt".
- */
 function detectSubtitleLanguage(uri: string): string | undefined {
   const name = (uri.split("/").pop() ?? "").split("?")[0];
   const explicit = name.match(/(?:lang|language)[-_]([A-Za-z]{2,3})/i);
@@ -184,6 +433,16 @@ async function currentNetwork(): Promise<NetworkType> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+const STAGE_COPY: Record<SyncStage, string> = {
+  connect: "Connecting to the stream…",
+  listen: "Listening to the dialogue…",
+  analyze: "Matching subtitles…",
+};
+
 export function AutoSyncButton({
   sourceInfo,
   contentId,
@@ -191,312 +450,304 @@ export function AutoSyncButton({
   subtitleLanguage,
   onSynced,
   startWatch,
+  startWatchPosition,
 }: Props) {
-  const [state, setState] = useState<State>("idle");
-  const [progress, setProgress] = useState(0);
-  const [message, setMessage] = useState<string | null>(null);
-  const mounted = useRef(true);
-  /** G3: one-shot flag — set when the user accepts the cellular byte dialog. */
-  const allowConfirmBytesRef = useRef(false);
+  const [snap, setSnap] = useState<RunnerState>(runnerState);
+  /** P4: a watch-sync apply landed while the fetch scan runs → stop fetching. */
+  const watchAppliedRef = useRef(false);
 
-  const beginWatchSession = useCallback(async () => {
-    if (!startWatch) return false;
-    try {
-      const ok = await startWatch();
-      if (ok) {
-        console.log("[SubSync] watch: session started from Auto Sync tap");
-      }
-      return ok;
-    } catch (e: any) {
-      console.log(`[SubSync] watch: start failed: ${e?.message ?? e}`);
-      return false;
-    }
-  }, [startWatch]);
-
+  // Subscribe to the module runner — remounting (sheet reopened) restores
+  // live state; unmounting does NOT cancel the run.
   useEffect(() => {
-    mounted.current = true;
+    const l = () => setSnap(runnerState);
+    runnerListeners.add(l);
     return () => {
-      mounted.current = false;
-      cancelAutoSync();
+      runnerListeners.delete(l);
     };
   }, []);
 
-  const run = useCallback(async () => {
-    if (state === "extracting" || state === "analyzing") {
-      console.log("[SubSync] cancel requested by user");
-      cancelAutoSync();
-      if (mounted.current) {
-        setState("idle");
-        setMessage(null);
+  // On unmount while running: reassure, don't cancel. (Hard stops — source
+  // change, player teardown — are owned by the HevcPlayer-level session.)
+  const runningRef = useRef(false);
+  useEffect(() => {
+    runningRef.current = snap.status === "running";
+  });
+  useEffect(
+    () => () => {
+      if (runningRef.current) {
+        downloadToast.info(
+          "Still syncing — keep watching. It'll apply on its own.",
+        );
       }
-      return;
-    }
+    },
+    [],
+  );
 
-    // Tap-only activation: opening Auto Sync arms the live watch session
-    // (production default). The fetch scan below still runs for its own path.
-    await beginWatchSession();
-
-    if (!subtitleUri) {
-      setState("failed");
-      setMessage("Load a subtitle (online) first — sync needs a file.");
-      return;
-    }
-
-    const info = sourceInfo();
-    // DASH stays out of scope; HLS (.m3u8) is now supported (probed in canAutoSync).
-    if (isHlsOrDash(info.uri) && /\.mpd($|\?)/i.test(info.uri)) {
-      setState("failed");
-      setMessage("Auto sync doesn't support DASH streams yet.");
-      console.log("[SubSync] gated: DASH stream");
-      return;
-    }
-
-    setState("extracting");
-    setProgress(0);
-    setMessage(null);
-    const t0 = Date.now();
-    const kind: SourceKind = detectKind(info.uri);
-    console.log(
-      `[SubSync] start: contentId=${contentId} kind=${kind} container=${info.container} ` +
-        `dur=${info.durationSec.toFixed(0)}s sub=${subtitleUri.split("/").pop()}`,
-    );
-
-    try {
-      const subText = await new File(subtitleUri).text();
-      const format = detectFormat(subtitleUri);
-      const network = await currentNetwork();
-      console.log(`[SubSync] subtitle ${format}, network=${network}`);
-
-      const source: SourceRef = {
-        contentId,
-        kind,
-        container: info.container,
-        resolve: async () => {
-          // Latest values â€” a link switch mid-run resolves to the new URL.
-          const latest = sourceInfo();
-          return { uri: latest.uri, headers: latest.headers };
-        },
-      };
-
-      const outcome: SyncOutcome = await autoSync({
-        source,
-        durationSec: info.durationSec,
-        subtitleText: subText,
-        subtitleFormat: format,
-        subtitleCacheKey: subtitleUri.split("/").pop() ?? "sub",
-        subtitleUri,
-        subtitleLanguage:
-          subtitleLanguage ?? detectSubtitleLanguage(subtitleUri),
-        network,
-        platform: Platform.OS === "ios" ? "ios" : "android",
-        allowConfirmBytes: allowConfirmBytesRef.current,
-        onProgress: (p, stage) => {
-          if (!mounted.current) return;
-          setProgress(p);
-          if (stage === "analyze") setState("analyzing");
-        },
-      });
-
-      if (!mounted.current) return;
-      console.log(
-        `[SubSync] outcome: ${JSON.stringify(outcome)} in ${Date.now() - t0}ms`,
+  // Connect-stage pulse: a breathing bar reads as active work, not a hang.
+  const pulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (snap.status === "running" && snap.stage === "connect") {
+      const a = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulse, {
+            toValue: 0.35,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulse, {
+            toValue: 1,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+        ]),
       );
-
-      switch (outcome.type) {
-        case "offset":
-          setState("applied");
-          setMessage(
-            outcome.notice ??
-              `Synced ${outcome.offsetMs > 0 ? "+" : "−"}${Math.abs(outcome.offsetMs / 1000).toFixed(2)}s` +
-                (outcome.confidence < 0.6 ? " — low confidence, verify" : ""),
-          );
-          // I-2: fetch-path correction (notice present) also surfaces as a toast
-          // so the outcome is visible after the sheet closes. First-apply and
-          // plain offsets stay on the button (sheet is open during fetch).
-          if (outcome.notice) {
-            downloadToast.info(outcome.notice);
-          }
-          onSynced(outcome.offsetMs, outcome.confidence, outcome.rewritten);
-          break;
-        case "rewritten":
-          setState("applied");
-          setMessage("Subtitle file rewritten (drift corrected).");
-          break;
-        case "kept":
-          setState("failed");
-          setMessage("Couldn't improve on the existing sync — keeping it");
-          break;
-        case "failed":
-          setState("failed");
-          setMessage(GATE_REASONS[outcome.reason] ?? outcome.reason);
-          break;
-        case "cancelled":
-          setState("idle");
-          setMessage(null);
-          break;
-        case "confirm-bybytes": {
-          // G3: dialog is Continue/Cancel — never default-deny.
-          // Stage D adds a third path: skip the fetch scan entirely and let
-          // the live watch-sync session (already running on the playback PCM
-          // tap) produce the offset without pulling extra bytes.
-          setState("idle");
-          setMessage(null);
-          const mb = outcome.projectedMb;
-          const rerun = () => {
-            allowConfirmBytesRef.current = true;
-            void run();
-          };
-          Alert.alert(
-            "Large download on cellular",
-            `Auto sync needs about ${mb} MB of mobile data for this scan. Continue?`,
-            [
-              { text: "Cancel", style: "cancel" },
-              { text: "Continue", onPress: rerun },
-              {
-                text: "Watch-sync instead (no extra data)",
-                onPress: () => {
-                  console.log(
-                    "[SubSync] cellular: user chose watch-sync piggyback (skip fetch scan)",
-                  );
-                  void beginWatchSession();
-                  if (mounted.current) {
-                    setState("idle");
-                    setMessage(
-                      "Skipped download — watch-sync will apply an offset from live playback.",
-                    );
-                  }
-                },
-              },
-            ],
-            { cancelable: true },
-          );
-          break;
-        }
-      }
-    } catch (e: any) {
-      console.log(`[SubSync] error: ${e?.message ?? e}`);
-      if (mounted.current) {
-        setState("failed");
-        setMessage(e?.message ?? "unknown error");
-      }
-    } finally {
-      // One-shot: a confirmed cellular run must not silently re-authorize
-      // the next attempt (user is asked again if the next window is large).
-      allowConfirmBytesRef.current = false;
+      a.start();
+      return () => {
+        a.stop();
+        pulse.setValue(1);
+      };
     }
-  }, [state, subtitleUri, sourceInfo, contentId, onSynced, beginWatchSession]);
+  }, [snap.status, snap.stage, pulse]);
 
-  const iconName =
-    state === "idle"
-      ? "sync-outline"
-      : state === "extracting"
-        ? "close-circle"
-        : state === "analyzing"
-          ? "hourglass-outline"
-          : state === "applied"
-            ? "checkmark-circle"
-            : "alert-circle";
+  const onPress = () => {
+    if (snap.status === "running") {
+      cancelRun();
+      return;
+    }
+    // Capture ONCE at tap: everything downstream (watch session, scan
+    // anchor) must agree on the same moment — a mid-run seek or the watch
+    // session's own re-anchor must not desync the two paths.
+    const anchorAtTap = Math.max(0, startWatchPosition?.() ?? 0);
+    watchAppliedRef.current = false;
+    // Any onSynced call while the fetch scan runs means a watch-sync apply
+    // landed (the watch path calls the same handler through the shared
+    // registry) — the user's scene is synced, so the scan should stop
+    // before its next window instead of downloading audio nobody needs.
+    const onSyncedWrapped: Props["onSynced"] = (
+      offsetMs,
+      confidence,
+      rewritten,
+    ) => {
+      watchAppliedRef.current = true;
+      onSynced(offsetMs, confidence, rewritten);
+    };
+    void startRun({
+      sourceInfo,
+      contentId,
+      subtitleUri,
+      subtitleLanguage,
+      onSynced: onSyncedWrapped,
+      startWatch,
+      anchorSec: () => anchorAtTap,
+      shouldAbort: () => watchAppliedRef.current,
+    });
+  };
 
-  const iconColor =
-    state === "applied"
-      ? "#2ecc71"
-      : state === "failed"
-        ? colors.error
-        : state === "extracting"
-          ? colors.gold
-          : colors.textSecondary;
+  const running = snap.status === "running";
+  const eased = easeProgress(snap.progress);
+  const hasSub = !!subtitleUri;
 
-  const busy = state === "extracting" || state === "analyzing";
+  // Card copy per state — the title is the user's problem, the body is the
+  // mechanism/promise, never more than one line each.
+  let title: string;
+  let titleStyle: TextStyle = styles.title;
+  if (running) {
+    title = STAGE_COPY[snap.stage];
+  } else if (snap.status === "applied") {
+    title = snap.resultText ?? "Synced";
+    titleStyle = styles.titleSuccess;
+  } else if (snap.status === "failed") {
+    title = "Couldn't sync";
+    titleStyle = styles.titleError;
+  } else {
+    title = hasSub ? "Subtitles out of sync?" : "No subtitle loaded";
+  }
+
+  const pillLabel = running
+    ? "Cancel"
+    : snap.status === "applied"
+      ? "Sync again"
+      : snap.status === "failed"
+        ? "Try again"
+        : "Auto Sync";
 
   return (
-    <View style={styles.container}>
+    <View style={styles.card}>
+      <View style={styles.cardHead}>
+        <Text style={titleStyle} numberOfLines={1}>
+          {title}
+        </Text>
+        {running && snap.stage !== "connect" && (
+          <Text style={styles.percent}>{Math.round(eased * 100)}%</Text>
+        )}
+      </View>
+
+      {running ? (
+        <>
+          <View style={styles.progressTrack}>
+            <Animated.View
+              style={[
+                styles.progressBar,
+                {
+                  width: `${eased * 100}%`,
+                  opacity: snap.stage === "connect" ? pulse : 1,
+                },
+              ]}
+            />
+          </View>
+          {/* The <1s background promise. */}
+          <Text style={styles.cardBody}>
+            Keep watching — sync continues even if you close this. Usually under
+            a minute.
+          </Text>
+        </>
+      ) : snap.status === "applied" ? (
+        <Text style={styles.cardBody}>
+          Applied automatically. Slightly off? Use Fine-tune below.
+        </Text>
+      ) : snap.status === "failed" ? (
+        <Text style={styles.cardBodyError} numberOfLines={2}>
+          {snap.message}
+        </Text>
+      ) : hasSub ? (
+        <Text style={styles.cardBody}>
+          Auto Sync listens to the video and fixes the timing automatically.
+        </Text>
+      ) : (
+        <Text style={styles.cardBody}>
+          Pick a subtitle from the list, or find one online below.
+        </Text>
+      )}
+
       <TouchableOpacity
-        style={[styles.button, busy && styles.buttonActive]}
-        onPress={run}
+        style={[
+          styles.pill,
+          running && styles.pillCancel,
+          !hasSub && !running && styles.pillDisabled,
+        ]}
+        onPress={onPress}
+        disabled={!hasSub && !running}
         activeOpacity={0.7}
         accessibilityRole="button"
-        accessibilityLabel="Automatically sync subtitles"
+        accessibilityLabel={
+          running ? "Cancel subtitle sync" : "Automatically sync subtitles"
+        }
       >
-        <Ionicons name={iconName as any} size={18} color={iconColor} />
-        <Text style={[styles.buttonText, { color: iconColor }]}>
-          {state === "idle"
-            ? "Auto Sync"
-            : state === "extracting"
-              ? `Listeningâ€¦ ${(progress * 100).toFixed(0)}%`
-              : state === "analyzing"
-                ? "Analyzingâ€¦"
-                : state === "applied"
-                  ? "Synced"
-                  : "Failed"}
-        </Text>
-      </TouchableOpacity>
-
-      {busy && (
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressBar, { width: `${progress * 100}%` }]} />
-        </View>
-      )}
-
-      {message && !busy && (
+        <Ionicons
+          name={
+            running
+              ? "close-circle"
+              : snap.status === "applied"
+                ? "checkmark-circle"
+                : snap.status === "failed"
+                  ? "refresh"
+                  : "sync-outline"
+          }
+          size={17}
+          color={
+            running
+              ? colors.textSecondary
+              : snap.status === "applied"
+                ? colors.success
+                : colors.gold
+          }
+        />
         <Text
           style={[
-            styles.message,
-            state === "applied" && styles.messageSuccess,
-            state === "failed" && styles.messageError,
+            styles.pillText,
+            running && { color: colors.textSecondary },
+            snap.status === "applied" && { color: colors.success },
           ]}
         >
-          {message}
+          {pillLabel}
         </Text>
-      )}
+      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  card: {
     marginTop: 10,
     marginHorizontal: 20,
-  },
-  button: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
+    padding: 14,
+    borderRadius: 12,
     backgroundColor: colors.bgSubtle,
     borderWidth: 1,
     borderColor: colors.borderSubtle,
+    gap: 10,
   },
-  buttonActive: {
-    borderColor: colors.gold,
-    backgroundColor: "rgba(212,162,55,0.08)",
+  cardHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
-  buttonText: {
-    fontSize: 14,
+  title: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: "700",
+    flex: 1,
+  },
+  titleSuccess: {
+    color: colors.success,
+    fontSize: 15,
+    fontWeight: "700",
+    flex: 1,
+  },
+  titleError: {
+    color: colors.error,
+    fontSize: 15,
+    fontWeight: "700",
+    flex: 1,
+  },
+  percent: {
+    color: colors.textSecondary,
+    fontSize: 13,
     fontWeight: "600",
+    fontVariant: ["tabular-nums"],
+  },
+  cardBody: {
+    color: colors.textTertiary,
+    fontSize: 12.5,
+    lineHeight: 17,
+  },
+  cardBodyError: {
+    color: colors.error,
+    fontSize: 12.5,
+    lineHeight: 17,
   },
   progressTrack: {
-    marginTop: 6,
-    height: 3,
+    height: 4,
     borderRadius: 2,
-    backgroundColor: colors.bgElevated,
+    backgroundColor: colors.zinc800,
     overflow: "hidden",
   },
   progressBar: {
     height: "100%",
-    backgroundColor: colors.gold,
     borderRadius: 2,
+    backgroundColor: colors.gold,
   },
-  message: {
-    marginTop: 6,
-    fontSize: 12,
-    color: colors.textSecondary,
+  pill: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(212,162,55,0.45)",
+    backgroundColor: "rgba(212,162,55,0.08)",
   },
-  messageSuccess: {
-    color: "#2ecc71",
+  pillCancel: {
+    borderColor: colors.borderSubtle,
+    backgroundColor: "transparent",
   },
-  messageError: {
-    color: colors.error,
+  pillDisabled: {
+    opacity: 0.4,
+  },
+  pillText: {
+    color: colors.gold,
+    fontSize: 14,
+    fontWeight: "700",
   },
 });

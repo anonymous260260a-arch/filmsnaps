@@ -114,6 +114,8 @@ const PLAYER_FALLBACK_MBPS = 3.0;
 const BUDGET_SAFETY_MBPS = 1.0;
 const BUDGET_FLOOR_MBPS = 0.5;
 const BUDGET_LINK_CAP_FRACTION = 0.6;
+/** G4-3b: ms to wait after resetPlayerTraffic() before reading the meter. */
+const PLAYER_SETTLE_MS = 1500;
 
 /** I-4: live player throughput for the governor (null = meter unavailable). */
 function livePlayerMbps(): { mbps: number; fallback: boolean } {
@@ -158,6 +160,7 @@ import {
   playerThroughputMbps,
 } from "expo-subtitle-sync";
 import { getCachedSpeed } from "../networkSpeedTest";
+import { resetPlayerTraffic } from "expo-subtitle-sync";
 
 // Native pipeline trace reaches Metro via two paths (event listener in
 // expo-subtitle-sync's index.ts and the 500ms status poller) - both log
@@ -180,6 +183,19 @@ export type AutoSyncOptions = {
   onProgress?: (p: number, stage: "extract" | "analyze" | "done") => void;
   /** G3: user already approved a >20MB cellular download for this attempt. */
   allowConfirmBytes?: boolean;
+  /**
+   * Playhead anchor (seconds): when set, the early window scans around where
+   * the user is watching instead of the file head — sync evidence arrives for
+   * the scene on screen, and the watch session can confirm from live audio
+   * over the same span. Must be stable for the whole run (captured at tap).
+   */
+  anchorSec?: number;
+  /**
+   * Poll between scan stages: return true to stop fetching (a concurrent
+   * watch-sync apply already landed, or the user cancelled). Checked before
+   * each window scan — a finished sync never downloads more audio.
+   */
+  shouldAbort?: () => boolean;
 };
 
 /** Read subtitle file, strip BOM + extra whitespace for SRT/VTT. */
@@ -650,6 +666,8 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
     platform,
     onProgress,
     allowConfirmBytes = false,
+    anchorSec,
+    shouldAbort,
   } = opts;
 
   // G1/G3/G4-3: arm the scan governor for this attempt.
@@ -658,8 +676,20 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
   try {
     const cached = await getCachedSpeed();
     const linkMbps = cached?.speedMbps ?? 0;
-    // I-4: real player throughput (rolling 5s) instead of a hardcoded 3.0.
-    const player = livePlayerMbps();
+    // G4-3b: the fetch scan itself reads through PlayerHttp.client, so its
+    // own download pollutes the PlayerTraffic meter — a second attempt read
+    // the previous scan's bytes (e.g. 12.14 Mbps) and throttled itself to
+    // the 0.5 floor. Reset the meter, let the real player stream for a short
+    // settle, then read the rolling rate scan-free. No scan is running here
+    // (this runs before the first scanAsync of the attempt).
+    resetPlayerTraffic();
+    await new Promise((r) => setTimeout(r, PLAYER_SETTLE_MS));
+    let player = livePlayerMbps();
+    // G4-3b: no samples after the settle means the player is paused/idle and
+    // consuming ~nothing — the 3.0 fallback would OVER-throttle here. Treat
+    // a sample-free reading as 0 (full budget minus safety). A player that
+    // IS streaming always samples within 1.5s.
+    if (player.fallback) player = { mbps: 0, fallback: false };
     scanThrottleMbps = computeScanBudgetMbps(linkMbps, player.mbps);
     if (linkMbps > 0) {
       const cap = linkMbps * BUDGET_LINK_CAP_FRACTION;
@@ -912,13 +942,48 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
 
   onProgress?.(0, "extract");
 
-  // 4. Early window
-  const earlyFrom = Math.max(0, cues[0].start - 10);
-  const earlyTo = earlySec;
+  // P4: anchor the early scan around where the user is actually watching.
+  // The old always-at-head window answered "where is this file's start" while
+  // the viewer sat 9 minutes in — the watch session knew the playhead, the
+  // fetch path never asked. Scanning the watched span means the evidence (and
+  // the apply) targets the scene on screen, and the live watch session —
+  // windowed to the same position — verifies from real playback over the
+  // SAME audio. Falls back to the head window when the anchor is unusable
+  // (no cues in reach, tails, or no anchor supplied).
+  const earlyFromRaw = Math.max(0, cues[0].start - 10);
+  let earlyFrom = earlyFromRaw;
+  let earlyTo = earlySec;
+  let earlyAnchored = false;
+  if (
+    typeof anchorSec === "number" &&
+    Number.isFinite(anchorSec) &&
+    anchorSec > earlySec * 0.5
+  ) {
+    const half = earlySec / 2;
+    const aFrom = Math.max(0, Math.round(anchorSec - half));
+    const aTo = Math.min(stableDuration(durationSec), aFrom + earlySec);
+    const aCues = cuesInWindow(cues, aFrom, aTo);
+    // Head window stays when the anchor is near it (then "anchored" == head
+    // anyway) or when the watched span has too few cues to correlate.
+    if (aCues.length >= 8 && aFrom >= earlyFromRaw - 5) {
+      earlyFrom = aFrom;
+      earlyTo = aTo;
+      earlyAnchored = true;
+      console.log(
+        `[SubSync] early window anchored at playhead ${anchorSec.toFixed(1)}s: ${aFrom}s-${aTo}s (${aCues.length} cues)`,
+      );
+    } else {
+      console.log(
+        `[SubSync] anchor ${anchorSec.toFixed(1)}s unusable (${aCues.length} cues in reach) - head window`,
+      );
+    }
+  }
   const earlyCues = cuesInWindow(cues, earlyFrom, earlyTo);
-  console.log(
-    `[SubSync] early window: ${earlyFrom.toFixed(1)}s-${earlyTo}s (${earlyCues.length} cues)`,
-  );
+  if (!earlyAnchored) {
+    console.log(
+      `[SubSync] early window: ${earlyFrom.toFixed(1)}s-${earlyTo}s (${earlyCues.length} cues)`,
+    );
+  }
 
   let earlyOff = { offset: 0, score: -1, runnerUp: -1 };
   let earlyConf = 0;
@@ -942,6 +1007,14 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
     // this candidate on the other window's audio.
     earlySig = earlyCached.signal;
   } else {
+    if (shouldAbort?.()) {
+      console.log(
+        "[SubSync] fetch scan aborted before early window (watch sync already applied)",
+      );
+      return failOrKeep(
+        "Subtitles were already synced while you watched — no extra scan needed",
+      );
+    }
     const earlyResult = await extractWithRetry(
       source,
       earlyFrom,
@@ -1124,8 +1197,31 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
   );
   // Fixed (historical) late span: cue selection always uses this - the late
   // cues of the FILE. The AUDIO scan may be re-anchored below (Part A).
-  const lateCueFrom = Math.max(earlyTo + 60, lateToRaw - lateSec);
-  const lateCueTo = lateToRaw;
+  // P4: with a playhead anchor, "late" means AFTER the watched span (same
+  // scene-adjacent rationale) rather than the file tail — but always at
+  // least 60s past the early window's end so the two windows stay
+  // independent. Falls back to the tail when the content is too short.
+  let lateCueFrom = Math.max(earlyTo + 60, lateToRaw - lateSec);
+  let lateCueTo = lateToRaw;
+  if (
+    earlyAnchored &&
+    typeof anchorSec === "number" &&
+    Number.isFinite(anchorSec) &&
+    anchorSec > 0
+  ) {
+    const aLateFrom = Math.min(
+      Math.max(earlyTo + 60, Math.round(anchorSec + 60)),
+      Math.max(0, stableDuration(durationSec) - lateSec),
+    );
+    const aLateTo = Math.min(stableDuration(durationSec), aLateFrom + lateSec);
+    if (aLateTo - aLateFrom >= 30 && aLateFrom >= earlyTo + 60) {
+      lateCueFrom = aLateFrom;
+      lateCueTo = aLateTo;
+      console.log(
+        `[SubSync] late window anchored after playhead: ${aLateFrom}s-${aLateTo}s`,
+      );
+    }
+  }
   if (lateCueFrom >= lateCueTo - 30) {
     console.log("[SubSync] content too short for a separate late window");
     onProgress?.(1, "done");
@@ -1214,6 +1310,14 @@ export async function autoSync(opts: AutoSyncOptions): Promise<SyncOutcome> {
     // signal, so the cross-check prints a number instead of "nosig" on a rerun.
     lateSigRef = lateCached.signal;
   } else {
+    if (shouldAbort?.()) {
+      console.log(
+        "[SubSync] fetch scan aborted before late window (watch sync already applied)",
+      );
+      return failOrKeep(
+        "Subtitles were already synced while you watched — no extra scan needed",
+      );
+    }
     const lateResult = await extractWithRetry(
       source,
       lateFrom,

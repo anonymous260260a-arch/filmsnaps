@@ -1355,7 +1355,6 @@ index 0000000000000000000000000000000000000000..7cd59ae3f9072838bcee84ecfb82675e
 +        activeProcessor.compareAndSet(p, null)
 +    }
 +}
-
 diff --git a/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt b/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt
 new file mode 100644
 index 0000000000000000000000000000000000000000..e467a4b1c28a05308b5bc33f9822157ea04050d5
@@ -1450,7 +1449,6 @@ index 0000000000000000000000000000000000000000..e467a4b1c28a05308b5bc33f9822157e
 +        private const val SEGMENT_GAP_MS = 1_000L
 +    }
 +}
-
 diff --git a/android/src/main/java/expo/modules/video/utils/SecondarySeekHeadMatroskaExtractor.java b/android/src/main/java/expo/modules/video/utils/SecondarySeekHeadMatroskaExtractor.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..8fa7c41176ec2411d79f0b5a26d4f60101a1e124

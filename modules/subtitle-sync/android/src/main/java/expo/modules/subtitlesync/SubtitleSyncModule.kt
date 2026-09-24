@@ -244,6 +244,15 @@ class SubtitleSyncModule : Module() {
             expo.modules.video.PlayerTraffic.mbpsLast5s()
         }
 
+        // G4-3b: zero the meter so a measurement can start from a clean window.
+        // The fetch scan reads through PlayerHttp.client, so its own download
+        // lands in the meter — reset right before reading the PLAYER's rate
+        // (never while a scan is running) or the scan throttles itself.
+        Function("resetPlayerTraffic") {
+            expo.modules.video.PlayerTraffic.reset()
+            true
+        }
+
         // ─── Stage B: watch-sync (third slot — NOT gated by awaitIdle) ───
         // activateWatchSync / watchAnchor / stopWatchSync + onWatchSignal.
         // Lives outside job/scanJob so a concurrent fetch scan is allowed.

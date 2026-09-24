@@ -27,7 +27,7 @@ import {
   mimeTypeForFormat,
   appliedOffsetMs,
 } from "./applySync";
-import { setCachedSync, setCachedWindow } from "./cache";
+import { getCachedSync, setCachedSync, setCachedWindow } from "./cache";
 import { watchWindowKeyFor } from "./autoSync";
 import { MARK_ON, MARK_OFF } from "./engineConstants";
 import { parseSubtitles } from "./parseSubtitles";
@@ -60,6 +60,20 @@ const REFINE_MIN_DELTA_MS = 300;
 const REFINE_MAX = 2;
 /** "Same sign + similar magnitude" — within this many ms of the last delta. */
 const REFINE_SIMILAR_MS = 300;
+/**
+ * P4 rework: windows are scored against ONLY the cues overlapping the signal
+ * span (fetch-path parity). The old all-cues scoring capped confidence at
+ * ~0.03 on a 20s live window (keep ≈ window/file span at ANY offset, and
+ * confidence decays with keep) — first apply was structurally unreachable.
+ * With windowed cues a live window scores honestly, so first apply happens
+ * EITHER on one strong window (same bars as the fetch checkpoint) OR on two
+ * consecutive windows agreeing within WINDOW_AGREE_DELTA_SEC at a lower
+ * per-window bar — a lone short window must not need 240s-of-audio evidence.
+ */
+const WINDOW_AGREE_DELTA_SEC = 1.5;
+const AGREE_FIRST_CONF = 0.45;
+const AGREE_FIRST_KEEP = 0.55;
+const AGREE_FIRST_SHARP = 0.08;
 
 export type WatchApplyKind = "first" | "refine";
 
@@ -99,6 +113,11 @@ type Session = WatchSessionOptions & {
   appliedMs: number | null;
   refinements: number;
   lastDeltaMs: number | null;
+  /** P4: previous window's candidate (first-apply two-window agreement). */
+  lastCandidateMs: number | null;
+  lastCandidateConf: number;
+  /** P4: baseline came from the fetch cache, not a live apply (weaker trust). */
+  adoptedFromCache: boolean;
   capAt: number;
   unsubSignal: () => void;
   anchorTimer: ReturnType<typeof setInterval> | null;
@@ -255,9 +274,27 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
   const { cues, format } = loaded;
 
   try {
-    const off = findOffset(cues, sig);
-    const conf = confidence(cues, sig, off.offset, off.runnerUp, off.score);
-    const keep = keptFraction(cues, sig, off.offset);
+    // P4: score against the window's cues only. The old whole-file cue set
+    // made every live window's keep (and thus confidence) collapse — this is
+    // the one-line root cause of "progressive sync never applied".
+    const cuesInWindow = cues.filter(
+      (c) => c.end >= sig.startSec && c.start <= sig.endSec,
+    );
+    if (cuesInWindow.length < 8) {
+      console.log(
+        `[SubSync] watch: window [${sig.startSec.toFixed(1)}..${sig.endSec.toFixed(1)}]s has ${cuesInWindow.length} cues - skipping`,
+      );
+      return;
+    }
+    const off = findOffset(cuesInWindow, sig);
+    const conf = confidence(
+      cuesInWindow,
+      sig,
+      off.offset,
+      off.runnerUp,
+      off.score,
+    );
+    const keep = keptFraction(cuesInWindow, sig, off.offset);
     const sharp =
       off.runnerUp >= 0
         ? (off.score - off.runnerUp) / Math.max(off.score, 0.02)
@@ -265,7 +302,8 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
     console.log(
       `[SubSync] watch: correlate [${sig.startSec.toFixed(1)}..${sig.endSec.toFixed(1)}]s ` +
         `offset=${off.offset.toFixed(2)}s conf=${conf.toFixed(3)} keep=${keep.toFixed(2)} ` +
-        `sharp=${sharp.toFixed(2)} applied=${s.appliedMs ?? "none"} refinements=${s.refinements}`,
+        `sharp=${sharp.toFixed(2)} (${cuesInWindow.length} window cues) ` +
+        `applied=${s.appliedMs ?? "none"} refinements=${s.refinements}`,
     );
 
     // Content-dead / no signal — skip without burning a refinement.
@@ -276,7 +314,9 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
     let kind: WatchApplyKind | null = null;
 
     if (isFirst) {
-      // First apply: same checkpoint bars as the fetch early path.
+      targetMs = Math.round(off.offset * 1000);
+      // Fast path: one strong window applies immediately (fetch checkpoint
+      // bars — reached in ~45s of watching on clean dialogue).
       if (
         CHECKPOINT_EARLY_APPLY &&
         conf >= CHECKPOINT_CONF &&
@@ -284,52 +324,90 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
         keep >= CHECKPOINT_KEEP &&
         sharp >= CHECKPOINT_SHARP
       ) {
-        targetMs = Math.round(off.offset * 1000);
         kind = "first";
         console.log(
           `[SubSync] watch: first apply checkpoint ${targetMs >= 0 ? "+" : ""}${(targetMs / 1000).toFixed(2)}s ` +
             `(conf=${conf.toFixed(3)}/${CHECKPOINT_CONF} keep=${keep.toFixed(2)}/${CHECKPOINT_KEEP} ` +
             `sharp=${sharp.toFixed(2)}/${CHECKPOINT_SHARP})`,
         );
-      } else {
+      } else if (
+        // Agreement path: two consecutive windows landing on the same offset
+        // is fetch-style cross-validation — accept at a lower per-window bar.
+        s.lastCandidateMs != null &&
+        conf >= AGREE_FIRST_CONF &&
+        keep >= AGREE_FIRST_KEEP &&
+        sharp >= AGREE_FIRST_SHARP &&
+        Math.abs(targetMs - s.lastCandidateMs) <= WINDOW_AGREE_DELTA_SEC * 1000
+      ) {
+        targetMs = Math.round((targetMs + s.lastCandidateMs) / 2);
+        kind = "first";
         console.log(
-          `[SubSync] watch: first window below checkpoint bar - waiting for a stronger window ` +
-            `(conf=${conf.toFixed(3)} keep=${keep.toFixed(2)} sharp=${sharp.toFixed(2)})`,
+          `[SubSync] watch: first apply via window agreement ${targetMs >= 0 ? "+" : ""}${(targetMs / 1000).toFixed(2)}s ` +
+            `(windows Δ<=${WINDOW_AGREE_DELTA_SEC}s, this conf=${conf.toFixed(3)}/${AGREE_FIRST_CONF})`,
+        );
+      } else {
+        // Stash this window's candidate and wait for the next emit (~45s).
+        s.lastCandidateMs = targetMs;
+        s.lastCandidateConf = conf;
+        console.log(
+          `[SubSync] watch: first window below bar - candidate stashed ` +
+            `(conf=${conf.toFixed(3)} keep=${keep.toFixed(2)} sharp=${sharp.toFixed(2)}), waiting for agreement`,
         );
         return;
       }
     } else {
-      // Refinement guards.
-      if (s.refinements >= REFINE_MAX) {
-        console.log("[SubSync] watch: refinement budget spent - ignoring");
-        return;
-      }
-      if (conf < REFINE_CONF) {
+      // P4: a strong window that clearly contradicts a CACHE-ADOPTED baseline
+      // is a first-apply override, not a refinement — the cached offset was
+      // never verified against live audio. (Live-applied baselines keep the
+      // normal refinement guards.)
+      const candMs = Math.round(off.offset * 1000);
+      if (
+        s.adoptedFromCache &&
+        CHECKPOINT_EARLY_APPLY &&
+        conf >= CHECKPOINT_CONF &&
+        off.score > 0 &&
+        keep >= CHECKPOINT_KEEP &&
+        sharp >= CHECKPOINT_SHARP &&
+        Math.abs(candMs - s.appliedMs!) > WINDOW_AGREE_DELTA_SEC * 1000
+      ) {
+        targetMs = candMs;
+        kind = "first";
         console.log(
-          `[SubSync] watch: refine conf ${conf.toFixed(3)} < ${REFINE_CONF} - ignoring`,
+          `[SubSync] watch: strong window overrides cache baseline ${s.appliedMs}ms -> ${candMs}ms`,
         );
-        return;
-      }
-      const deltaMs = Math.round(off.offset * 1000) - s.appliedMs!;
-      if (Math.abs(deltaMs) < REFINE_MIN_DELTA_MS) {
+      } else {
+        // Refinement guards.
+        if (s.refinements >= REFINE_MAX) {
+          console.log("[SubSync] watch: refinement budget spent - ignoring");
+          return;
+        }
+        if (conf < REFINE_CONF) {
+          console.log(
+            `[SubSync] watch: refine conf ${conf.toFixed(3)} < ${REFINE_CONF} - ignoring`,
+          );
+          return;
+        }
+        const deltaMs = Math.round(off.offset * 1000) - s.appliedMs!;
+        if (Math.abs(deltaMs) < REFINE_MIN_DELTA_MS) {
+          console.log(
+            `[SubSync] watch: refine |Δ|=${(Math.abs(deltaMs) / 1000).toFixed(2)}s < ${REFINE_MIN_DELTA_MS}ms - ignoring`,
+          );
+          return;
+        }
+        if (s.lastDeltaMs != null && sameSignSimilar(deltaMs, s.lastDeltaMs)) {
+          console.log(
+            `[SubSync] watch: refine Δ=${(deltaMs / 1000).toFixed(2)}s same-sign-similar to last ` +
+              `${(s.lastDeltaMs / 1000).toFixed(2)}s - rejecting`,
+          );
+          return;
+        }
+        targetMs = Math.round(off.offset * 1000);
+        kind = "refine";
         console.log(
-          `[SubSync] watch: refine |Δ|=${(Math.abs(deltaMs) / 1000).toFixed(2)}s < ${REFINE_MIN_DELTA_MS}ms - ignoring`,
+          `[SubSync] watch: refine ${s.appliedMs}ms -> ${targetMs}ms (Δ=${(deltaMs / 1000).toFixed(2)}s ` +
+            `conf=${conf.toFixed(3)}) refine#${s.refinements + 1}/${REFINE_MAX}`,
         );
-        return;
       }
-      if (s.lastDeltaMs != null && sameSignSimilar(deltaMs, s.lastDeltaMs)) {
-        console.log(
-          `[SubSync] watch: refine Δ=${(deltaMs / 1000).toFixed(2)}s same-sign-similar to last ` +
-            `${(s.lastDeltaMs / 1000).toFixed(2)}s - rejecting`,
-        );
-        return;
-      }
-      targetMs = Math.round(off.offset * 1000);
-      kind = "refine";
-      console.log(
-        `[SubSync] watch: refine ${s.appliedMs}ms -> ${targetMs}ms (Δ=${(deltaMs / 1000).toFixed(2)}s ` +
-          `conf=${conf.toFixed(3)}) refine#${s.refinements + 1}/${REFINE_MAX}`,
-      );
     }
 
     if (targetMs == null || kind == null) return;
@@ -348,9 +426,13 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
         return true;
       });
       if (result == null) {
+        // The fetch path is applying its own offset right now. Adopt it as
+        // this session's baseline so later refinements measure against the
+        // actually-applied value instead of re-running a stale first apply.
         console.log(
-          "[SubSync] watch: applyOnce busy (fetch path holds the gate) - skipped",
+          `[SubSync] watch: applyOnce busy (fetch path holds the gate) - adopting ${targetMs}ms as baseline`,
         );
+        s.appliedMs = targetMs;
         return;
       }
     } finally {
@@ -362,6 +444,8 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
       s.refinements++;
     }
     s.appliedMs = targetMs;
+    s.lastCandidateMs = null;
+    s.lastCandidateConf = 0;
 
     // I-2: surface the outcome to the user even with the sheet closed — the
     // session owner owns the toast (first apply + every correction).
@@ -441,6 +525,28 @@ export async function startWatchSession(
     return true;
   }
   stopWatchSession("restart");
+
+  // P4: adopt an already-computed fetch offset as the session baseline.
+  // With playhead-anchored scanning the fetch result IS the watched scene's
+  // answer — adopting it means live windows start as refinements immediately
+  // (or confirm it), instead of re-deriving a first apply from scratch.
+  // Tagged adoptedFromCache so a strong contradicting live window can still
+  // override (the cached number was never verified against this stream).
+  let adoptedMs: number | null = null;
+  try {
+    const cachedSync = await getCachedSync(
+      opts.subtitleCacheKey,
+      `${opts.contentId}:${Math.round(opts.durationSec)}`,
+    );
+    if (cachedSync?.offsetMs != null) {
+      adoptedMs = cachedSync.offsetMs;
+      console.log(
+        `[SubSync] watch: adopting fetch cache offset ${adoptedMs}ms as baseline (conf=${cachedSync.confidence.toFixed(3)})`,
+      );
+    }
+  } catch {
+    // cache read is best-effort
+  }
   try {
     const activated = await activateWatchSync({
       fromSec: Math.max(0, opts.fromSec),
@@ -462,9 +568,12 @@ export async function startWatchSession(
     ...opts,
     cues: null,
     subtitleFormat: null,
-    appliedMs: null,
+    appliedMs: adoptedMs,
+    adoptedFromCache: adoptedMs != null,
     refinements: 0,
     lastDeltaMs: null,
+    lastCandidateMs: null,
+    lastCandidateConf: 0,
     capAt: Date.now() + SESSION_CAP_MS,
     unsubSignal: onWatchSignal(onSignalSafe),
     anchorTimer: null,
