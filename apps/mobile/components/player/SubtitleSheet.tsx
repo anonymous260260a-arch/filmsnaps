@@ -2,22 +2,23 @@
  * SubtitleSheet — bottom sheet for selecting subtitle tracks.
  * Works with PlayerAdapter interface (not raw expo-video player).
  *
- * Also carries the subtitle sync stepper: shifts embedded-subtitle
- * timestamps natively (vendored extractor) and persists the value
- * per series (lib/subtitlePrefs) so users dial it once per show.
+ * UX structure (novice-first; read top-to-bottom as the user's task order):
+ *   1. Track list — the primary task is SELECTION. Off / embedded / online.
+ *   2. Auto Sync card — the FIX task. Its title states the user's problem;
+ *      one line of mechanism; one button. Runs in the background and says so.
+ *   3. Fine-tune timing — expert tool, collapsed by default, only shown when
+ *      a track is selected (nothing to shift otherwise). Auto-opens when an
+ *      auto-sync applies (that's when "nudge" becomes relevant).
+ *   4. Find subtitles online — auto-expands when the video has no tracks
+ *      (the novice's first need). Skeleton rows while searching.
+ * A status chip under the header shows the active sync state at a glance.
  *
- * The "Load subtitles online" section searches through the web app's
- * /api/subtitles proxy (Subdl → Wyzie chain, keys stay server-side) and
- * hands the downloaded file to the player as a sidecar track. Embedded
- * tracks are always listed first — online ones are the fallback.
- *
- * Layout: one ScrollView holds everything below the header so the sheet
- * always scrolls (embedded tracks + online results together), with the
- * selected track marked by a checkmark. Landscape opens it as a centered
- * card instead of a full-width bottom sheet.
+ * Business logic (sidecar rewrite stepper, auto-sync apply, watch session,
+ * online search/download) is unchanged — this pass is layout, copy, and
+ * perceived-speed presentation only.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -26,6 +27,7 @@ import {
   ScrollView,
   StyleSheet,
   ActivityIndicator,
+  Animated,
   useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -33,6 +35,8 @@ import { colors } from "../../theme/colors";
 import type { PlayerAdapter } from "./types";
 import {
   getSubtitleOffset,
+  getAutoSyncPrefs,
+  setAutoSyncPrefs,
   setSubtitleOffset as persistSubtitleOffset,
 } from "../../lib/subtitlePrefs";
 import {
@@ -45,6 +49,18 @@ import {
   saveSubtitleChoice,
   clearSubtitleChoice,
 } from "../../lib/subtitleCache";
+import { AutoSyncButton, type AutoSyncSourceInfo } from "./AutoSyncButton";
+import {
+  registerWatchApplyHandler,
+  startWatchSession,
+} from "../../lib/subtitleSync/watchSync";
+import { parseSubtitles } from "../../lib/subtitleSync/parseSubtitles";
+import {
+  ensurePristineSidecar,
+  formatFromUri,
+  mimeTypeForFormat,
+  writeShiftedSubtitleFile,
+} from "../../lib/subtitleSync/applySync";
 
 interface SubtitleSheetProps {
   visible: boolean;
@@ -53,21 +69,20 @@ interface SubtitleSheetProps {
   storageKey?: string;
   /** When present, enables the "Load subtitles online" section. */
   onlineSearch?: SubtitleSearchQuery;
+  /** When present, enables the Auto Sync card. */
+  autoSync?: {
+    contentId: string;
+    /** Latest stream info, read at press time. */
+    sourceInfo: () => AutoSyncSourceInfo;
+    /** file:// URI of the auto-attached online subtitle (fallback for sync). */
+    getDefaultSubtitleUri?: () => string | null;
+  };
   onClose: () => void;
 }
 
 const SYNC_STEP_S = 0.5;
 /** Online results render in chunks — mounting hundreds of rows at once stalls the JS thread. */
 const RESULTS_STEP = 10;
-
-// ── [SubPerf] open-latency instrumentation ──
-let sheetRequestedAt = 0;
-
-/** Called by PlayerOverlay when the user taps the CC button. */
-export function markSubtitleSheetRequested(): void {
-  sheetRequestedAt = Date.now();
-  console.log("[SubPerf] sheet open requested");
-}
 
 function formatOffset(seconds: number): string {
   if (seconds === 0) return "Off";
@@ -143,17 +158,33 @@ function TrackRow({
   );
 }
 
+/** Skeleton placeholder row — placeholders make search feel faster than a spinner. */
+function SearchSkeleton({ anim }: { anim: Animated.Value }) {
+  return (
+    <View style={styles.trackItem}>
+      <Animated.View style={[styles.skelCircle, { opacity: anim }]} />
+      <View style={styles.trackInfo}>
+        <Animated.View
+          style={[styles.skelLine, { width: "32%", opacity: anim }]}
+        />
+        <Animated.View
+          style={[styles.skelLine, { width: "78%", opacity: anim }]}
+        />
+      </View>
+    </View>
+  );
+}
+
 function SubtitleSheetInner({
   visible,
   player,
   storageKey,
   onlineSearch,
+  autoSync,
   onClose,
 }: SubtitleSheetProps) {
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
-  // Track list is a native read — refresh it on open, not on every render
-  // (the parent overlay would otherwise re-run this at time-update rate).
   const [trackVersion, setTrackVersion] = useState(0);
   const tracks = React.useMemo(
     () => player.getSubtitleTracks(),
@@ -162,64 +193,120 @@ function SubtitleSheetInner({
   const embeddedTracks = tracks.filter((t) => !t.isExternal);
   const externalTracks = tracks.filter((t) => t.isExternal);
   const [syncSeconds, setSyncSeconds] = useState(0);
+  const [autoOffsetMs, setAutoOffsetMs] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedTrackLanguage =
+    tracks.find((t) => t.id === selectedId)?.language || undefined;
   const [onlineOpen, setOnlineOpen] = useState(false);
   const [searching, setSearching] = useState(false);
   const [onlineResults, setOnlineResults] = useState<OnlineSubtitle[]>([]);
   const [onlineError, setOnlineError] = useState<string | null>(null);
   const [addingId, setAddingId] = useState<string | null>(null);
   const [visibleResults, setVisibleResults] = useState(RESULTS_STEP);
+  const [fineTuneOpen, setFineTuneOpen] = useState(false);
+  const externalFileRef = React.useRef<Map<string, string>>(new Map());
+  const autoExpandedOnline = useRef(false);
 
-  // Re-read the persisted offset + current selection each time the sheet opens.
   useEffect(() => {
     if (!visible) return;
-    if (sheetRequestedAt) {
-      console.log(
-        `[SubPerf] sheet visible ${Date.now() - sheetRequestedAt}ms after click`,
-      );
-      sheetRequestedAt = 0;
-    }
     let cancelled = false;
     setTrackVersion((v) => v + 1);
+    autoExpandedOnline.current = false;
     if (storageKey) {
       getSubtitleOffset(storageKey)
         .then((v) => {
-          if (!cancelled) setSyncSeconds(v);
+          if (!cancelled) {
+            setSyncSeconds(v);
+            // Something to fine-tune already? Open the expert drawer for the
+            // user who came back to adjust — stay closed for first-timers.
+            if (v !== 0) setFineTuneOpen(true);
+          }
+        })
+        .catch(() => {});
+      getAutoSyncPrefs(storageKey)
+        .then((p) => {
+          if (!cancelled) {
+            setAutoOffsetMs(p.autoOffsetMs);
+            if (p.autoOffsetMs !== 0) setFineTuneOpen(true);
+          }
         })
         .catch(() => {});
     } else {
       setSyncSeconds(0);
+      setAutoOffsetMs(0);
+      setFineTuneOpen(false);
     }
     setSelectedId(player.getSelectedSubtitleTrackId?.() ?? null);
+    setSyncError(null);
+
+    // Novice path: video has no subtitle tracks at all → the online section
+    // IS the task. Open it (and search) instead of making the user discover
+    // a collapsed header that says nothing to them.
+    const current = player.getSubtitleTracks();
+    if (onlineSearch && current.length === 0 && !autoExpandedOnline.current) {
+      autoExpandedOnline.current = true;
+      setOnlineOpen(true);
+    }
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, storageKey]);
 
+  // Skeleton shimmer while searching.
+  const shimmer = useRef(new Animated.Value(0.4)).current;
+  useEffect(() => {
+    if (!searching) return;
+    const a = Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmer, {
+          toValue: 0.9,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+        Animated.timing(shimmer, {
+          toValue: 0.4,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    a.start();
+    return () => a.stop();
+  }, [searching, shimmer]);
+
   const runSearch = async () => {
     if (!onlineSearch) return;
     setSearching(true);
     setOnlineError(null);
     try {
-      const t0 = Date.now();
       const results = await searchSubtitles(onlineSearch);
-      console.log(
-        `[SubPerf] search took ${Date.now() - t0}ms, ${results.length} results`,
-      );
       setOnlineResults(results);
       setVisibleResults(RESULTS_STEP);
       if (results.length === 0)
         setOnlineError("No subtitles found for this title.");
     } catch {
-      // Subdl/Wyzie problems are handled server-side (our API proxy holds the
-      // keys) — from here they just look unavailable.
       setOnlineError("Subtitles are unavailable right now.");
       setOnlineResults([]);
     } finally {
       setSearching(false);
     }
   };
+
+  // Auto-open triggers the search directly (the toggle handler is for taps).
+  useEffect(() => {
+    if (
+      visible &&
+      onlineOpen &&
+      onlineResults.length === 0 &&
+      !searching &&
+      onlineSearch &&
+      autoExpandedOnline.current
+    ) {
+      void runSearch();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, onlineOpen]);
 
   const openOnlineSection = () => {
     const next = !onlineOpen;
@@ -229,11 +316,9 @@ function SubtitleSheetInner({
     }
   };
 
-  /** Selections keep the sheet open — the checkmark is the feedback. */
   const selectTrack = (trackId: string) => {
     player.setSubtitleTrack(trackId);
     setSelectedId(trackId === "off" ? null : trackId);
-    // Explicit "Off" overrides a cached online-subtitle choice for this title.
     if (trackId === "off" && onlineSearch) {
       clearSubtitleChoice(onlineSearch);
     }
@@ -253,9 +338,8 @@ function SubtitleSheetInner({
         downloaded.label,
       );
       if (trackId) {
-        console.log(`[SubtitleSheet] sidecar selected: ${trackId}`);
+        externalFileRef.current.set(trackId, downloaded.uri);
         setSelectedId(trackId);
-        // Remember the choice — auto-attached next time this title plays.
         if (onlineSearch) {
           saveSubtitleChoice(onlineSearch, {
             uri: downloaded.uri,
@@ -270,9 +354,7 @@ function SubtitleSheetInner({
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.log(`[SubtitleSheet] online subtitle failed: ${msg}`);
       if (msg.includes("Sidecar subtitles unsupported")) {
-        // JS reloaded onto a dev client built before the native sidecar patch.
         setOnlineError(
           "Needs an app rebuild (native sidecar support missing).",
         );
@@ -286,32 +368,272 @@ function SubtitleSheetInner({
     }
   };
 
-  const applySync = (next: number) => {
-    setSyncSeconds(next);
-    player.setSubtitleOffset?.(next * 1000);
-    if (storageKey) persistSubtitleOffset(storageKey, next);
+  const syncSecondsRef = useRef(0);
+  const sidecarRewriteTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const sidecarOpChain = useRef<Promise<unknown>>(Promise.resolve());
+
+  const bumpSync = (delta: number) => {
+    applySync(syncSecondsRef.current + delta);
   };
 
-  // ── [SubPerf] render frequency + JS-thread stall probe (visible only) ──
-  const renderCountRef = React.useRef(0);
-  if (visible) {
-    renderCountRef.current += 1;
-    console.log(`[SubPerf] sheet render #${renderCountRef.current}`);
-  }
-  React.useEffect(() => {
-    if (!visible) return;
-    let last = Date.now();
-    const id = setInterval(() => {
-      const now = Date.now();
-      if (now - last > 700) {
-        console.log(`[SubPerf] JS thread stall: ${now - last}ms between ticks`);
+  const enqueueSidecarOp = <T,>(fn: () => Promise<T>): Promise<T> => {
+    const run = sidecarOpChain.current.then(fn, fn);
+    sidecarOpChain.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  const sidecarTarget = (): string | null =>
+    (selectedId ? externalFileRef.current.get(selectedId) : undefined) ??
+    autoSync?.getDefaultSubtitleUri?.() ??
+    null;
+
+  const describeSidecar = (uri: string) => ({
+    uri,
+    mimeType: mimeTypeForFormat(formatFromUri(uri)),
+    language: selectedTrackLanguage,
+    label: uri.split("/").pop(),
+  });
+
+  const readdSidecar = async (
+    next: { uri: string; mimeType: string; language?: string; label?: string },
+    prev: {
+      uri: string;
+      mimeType: string;
+      language?: string;
+      label?: string;
+    } | null,
+    context: string,
+  ): Promise<string | null> => {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      if (attempt > 1) await sleep(250);
+      try {
+        player.clearExternalSubtitles?.();
+        const trackId = await player.addExternalSubtitle?.(
+          next.uri,
+          next.mimeType,
+          next.language,
+          next.label,
+        );
+        if (trackId) {
+          if (attempt > 1) {
+            console.log(
+              `[SubSync] ${context}: re-add ok on attempt ${attempt}/3 (track ${trackId})`,
+            );
+          }
+          externalFileRef.current.set(trackId, next.uri);
+          player.setSubtitleTrack?.(trackId);
+          setSelectedId(trackId);
+          setTrackVersion((v) => v + 1);
+          setSyncError(null);
+          return trackId;
+        }
+        console.log(
+          `[SubSync] ${context}: re-add attempt ${attempt}/3 returned no track id`,
+        );
+      } catch (e) {
+        console.log(
+          `[SubSync] ${context}: re-add attempt ${attempt}/3 failed: ${(e as Error)?.message ?? e}`,
+        );
       }
-      last = now;
-    }, 300);
-    return () => clearInterval(id);
-  }, [visible]);
+    }
+    if (prev) {
+      try {
+        player.clearExternalSubtitles?.();
+        const prevId = await player.addExternalSubtitle?.(
+          prev.uri,
+          prev.mimeType,
+          prev.language,
+          prev.label,
+        );
+        if (prevId) {
+          externalFileRef.current.set(prevId, prev.uri);
+          player.setSubtitleTrack?.(prevId);
+          setSelectedId(prevId);
+          setTrackVersion((v) => v + 1);
+          console.log(
+            `[SubSync] ${context}: rolled back to previous sidecar (track ${prevId}): ${prev.uri}`,
+          );
+        } else {
+          console.log(
+            `[SubSync] ${context}: rollback also failed - no track id`,
+          );
+        }
+      } catch (e) {
+        console.log(
+          `[SubSync] ${context}: rollback failed: ${(e as Error)?.message ?? e}`,
+        );
+      }
+    }
+    setSyncError("Couldn't adjust — try again");
+    return null;
+  };
+
+  const rewriteSidecarForOffset = async () => {
+    const target = sidecarTarget();
+    if (!target) return;
+    const pristine = await ensurePristineSidecar(target);
+    if (!pristine) {
+      console.log(
+        "[SubSync] stepper: no pristine sidecar available - falling back to the native offset",
+      );
+      player.setSubtitleOffset?.(autoOffsetMs + syncSecondsRef.current * 1000);
+      return;
+    }
+    const format = formatFromUri(target);
+    const cues = parseSubtitles(pristine.text, format);
+    const totalSec = (autoOffsetMs + syncSecondsRef.current * 1000) / 1000;
+    if (cues.length === 0) return;
+    const uri = await writeShiftedSubtitleFile(
+      cues,
+      totalSec,
+      format,
+      pristine.uri,
+    );
+    if (!uri) return;
+    console.log(
+      `[SubSync] stepper: rewriting sidecar total=${totalSec.toFixed(2)}s ` +
+        `(auto=${autoOffsetMs}ms manual=${syncSecondsRef.current}s) from ${target} -> ${uri}`,
+    );
+    try {
+      await enqueueSidecarOp(() =>
+        readdSidecar(
+          {
+            uri,
+            mimeType: mimeTypeForFormat(format),
+            language: selectedTrackLanguage,
+            label: uri.split("/").pop(),
+          },
+          describeSidecar(target),
+          "stepper",
+        ),
+      );
+      console.log(
+        `[SubSync] stepper applied ${totalSec.toFixed(2)}s to the sidecar file: ${uri}`,
+      );
+    } catch (e) {
+      console.log(
+        `[SubSync] stepper re-add failed: ${(e as Error)?.message ?? e}`,
+      );
+      setSyncError("Couldn't adjust — try again");
+    }
+  };
+
+  const applySync = (next: number) => {
+    setSyncSeconds(next);
+    syncSecondsRef.current = next;
+    if (storageKey) persistSubtitleOffset(storageKey, next);
+    if (sidecarTarget()) {
+      if (sidecarRewriteTimer.current)
+        clearTimeout(sidecarRewriteTimer.current);
+      sidecarRewriteTimer.current = setTimeout(() => {
+        void rewriteSidecarForOffset();
+      }, 600);
+      return;
+    }
+    player.setSubtitleOffset?.(autoOffsetMs + next * 1000);
+  };
+
+  const handleAutoSynced = async (
+    offsetMs: number,
+    _confidence: number,
+    rewritten?: {
+      uri: string;
+      mimeType: string;
+      language?: string;
+      label?: string;
+    },
+    _kind?: "first" | "refine",
+  ) => {
+    setAutoOffsetMs(offsetMs);
+    // An apply just happened — "nudge" is now the relevant follow-up, so
+    // surface the fine-tune drawer at exactly that moment.
+    setFineTuneOpen(true);
+    if (rewritten) {
+      const prevTarget = sidecarTarget();
+      try {
+        const trackId = await enqueueSidecarOp(() =>
+          readdSidecar(
+            rewritten,
+            prevTarget ? describeSidecar(prevTarget) : null,
+            "auto-sync",
+          ),
+        );
+        if (trackId) {
+          console.log(
+            `[SubSync] applied shifted subtitle (track ${trackId}): ${rewritten.uri}`,
+          );
+          if (onlineSearch) {
+            saveSubtitleChoice(onlineSearch, {
+              uri: rewritten.uri,
+              mimeType: rewritten.mimeType,
+              language: rewritten.language ?? selectedTrackLanguage ?? "",
+              label: rewritten.label ?? "",
+            });
+          }
+        } else {
+          console.log("[SubSync] re-add returned no track id");
+        }
+      } catch (e) {
+        console.log(
+          `[SubSync] re-add shifted subtitle failed: ${(e as Error)?.message ?? e}`,
+        );
+        setSyncError("Couldn't adjust — try again");
+      }
+    } else {
+      player.setSubtitleOffset?.(offsetMs + syncSeconds * 1000);
+    }
+    if (storageKey) {
+      setAutoSyncPrefs(storageKey, { autoOffsetMs: offsetMs, autoScale: 1 });
+    }
+  };
+
+  useEffect(() => {
+    if (!autoSync) return;
+    const unreg = registerWatchApplyHandler(handleAutoSynced);
+    return unreg;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSync, storageKey, selectedTrackLanguage, onlineSearch]);
 
   const syncSupported = typeof player.setSubtitleOffset === "function";
+
+  const autoSyncSubtitleUri =
+    (selectedId ? externalFileRef.current.get(selectedId) : undefined) ??
+    autoSync?.getDefaultSubtitleUri?.() ??
+    null;
+
+  const startWatchSessionFromTap = async (): Promise<boolean> => {
+    if (!autoSync) return false;
+    const subUri =
+      autoSyncSubtitleUri ?? autoSync.getDefaultSubtitleUri?.() ?? null;
+    return startWatchSession({
+      contentId: autoSync.contentId,
+      subtitleCacheKey: autoSync.contentId,
+      fromSec: Math.max(0, player.getCurrentTime()),
+      durationSec: player.getDuration(),
+      getSubtitleUri: () => subUri,
+      getPosition: () => player.getCurrentTime(),
+    });
+  };
+
+  // One-glance state under the header: what's applied right now.
+  const syncChip = (() => {
+    if (selectedId === null) return null;
+    const parts: string[] = [];
+    if (autoOffsetMs !== 0)
+      parts.push(
+        `auto ${autoOffsetMs > 0 ? "+" : "−"}${Math.abs(autoOffsetMs / 1000).toFixed(1)}s`,
+      );
+    if (syncSeconds !== 0) parts.push(`manual ${formatOffset(syncSeconds)}`);
+    return parts.length ? `Sync: ${parts.join(" · ")}` : null;
+  })();
 
   return (
     <Modal
@@ -325,14 +647,16 @@ function SubtitleSheetInner({
         activeOpacity={1}
         onPress={onClose}
       >
-        {/* Swallows taps on the sheet so blank areas don't dismiss it */}
         <TouchableOpacity
           style={[styles.sheet, isLandscape && styles.sheetLandscape]}
           activeOpacity={1}
           onPress={() => {}}
         >
           <View style={styles.header}>
-            <Text style={styles.headerTitle}>Subtitles</Text>
+            <View style={styles.headerLeft}>
+              <Text style={styles.headerTitle}>Subtitles</Text>
+              {syncChip && <Text style={styles.headerChip}>{syncChip}</Text>}
+            </View>
             <TouchableOpacity
               onPress={onClose}
               activeOpacity={0.7}
@@ -347,63 +671,7 @@ function SubtitleSheetInner({
             contentContainerStyle={styles.bodyContent}
             showsVerticalScrollIndicator={false}
           >
-            {/* Subtitle sync stepper (only when the player supports the offset) */}
-            {syncSupported && (
-              <>
-                <View style={styles.syncRow}>
-                  <View style={styles.syncInfo}>
-                    <Text style={styles.syncLabel}>Subtitle Sync</Text>
-                    <Text style={styles.syncHint}>
-                      Subtitles early? Shift them later (+). Persisted for this
-                      series.
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.syncBtn}
-                    onPress={() => applySync(syncSeconds - SYNC_STEP_S)}
-                    activeOpacity={0.7}
-                    accessibilityRole="button"
-                    accessibilityLabel="Subtitles 0.5 seconds earlier"
-                  >
-                    <Ionicons
-                      name="remove"
-                      size={18}
-                      color={colors.textPrimary}
-                    />
-                  </TouchableOpacity>
-                  <Text style={styles.syncValue}>
-                    {formatOffset(syncSeconds)}
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.syncBtn}
-                    onPress={() => applySync(syncSeconds + SYNC_STEP_S)}
-                    activeOpacity={0.7}
-                    accessibilityRole="button"
-                    accessibilityLabel="Subtitles 0.5 seconds later"
-                  >
-                    <Ionicons name="add" size={18} color={colors.textPrimary} />
-                  </TouchableOpacity>
-                  {syncSeconds !== 0 && (
-                    <TouchableOpacity
-                      style={styles.syncReset}
-                      onPress={() => applySync(0)}
-                      activeOpacity={0.7}
-                      accessibilityRole="button"
-                      accessibilityLabel="Reset subtitle sync"
-                    >
-                      <Ionicons
-                        name="refresh"
-                        size={16}
-                        color={colors.textSecondary}
-                      />
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <View style={styles.separator} />
-              </>
-            )}
-
-            {/* Off — selected when no track is active */}
+            {/* 1. SELECTION — the primary task, first on screen. */}
             <TrackRow
               selected={selectedId === null}
               language="Off"
@@ -411,7 +679,6 @@ function SubtitleSheetInner({
               onPress={() => selectTrack("off")}
             />
 
-            {/* In-file tracks */}
             {embeddedTracks.map((item) => (
               <TrackRow
                 key={item.id}
@@ -422,7 +689,6 @@ function SubtitleSheetInner({
               />
             ))}
 
-            {/* Loaded online tracks — visually distinct from in-file ones */}
             {externalTracks.length > 0 && (
               <>
                 <View style={styles.separator} />
@@ -440,7 +706,110 @@ function SubtitleSheetInner({
               </>
             )}
 
-            {/* ── Online subtitles — below embedded, embedded preferred ── */}
+            {/* 2. FIX — the Auto Sync card states the problem, the mechanism,
+                and the keep-watching promise in one glance. */}
+            {syncSupported && autoSync && (
+              <>
+                <View style={styles.separator} />
+                <AutoSyncButton
+                  sourceInfo={autoSync.sourceInfo}
+                  contentId={autoSync.contentId}
+                  subtitleUri={autoSyncSubtitleUri}
+                  subtitleLanguage={selectedTrackLanguage}
+                  onSynced={handleAutoSynced}
+                  startWatch={startWatchSessionFromTap}
+                  startWatchPosition={() =>
+                    Math.max(0, player.getCurrentTime())
+                  }
+                />
+              </>
+            )}
+
+            {/* 3. FINE-TUNE — expert tool, hidden until relevant. */}
+            {syncSupported && selectedId !== null && (
+              <>
+                <TouchableOpacity
+                  style={styles.fineTuneHeader}
+                  onPress={() => setFineTuneOpen((o) => !o)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Fine-tune subtitle timing"
+                >
+                  <Ionicons
+                    name="options-outline"
+                    size={15}
+                    color={colors.textTertiary}
+                  />
+                  <Text style={styles.fineTuneHeaderText}>
+                    Fine-tune timing
+                  </Text>
+                  <Ionicons
+                    name={fineTuneOpen ? "chevron-up" : "chevron-down"}
+                    size={14}
+                    color={colors.textTertiary}
+                  />
+                </TouchableOpacity>
+                {fineTuneOpen && (
+                  <View>
+                    <Text style={styles.fineTuneHint}>
+                      Only if it's slightly off — nudge by ½ second. Saved for
+                      this series.
+                    </Text>
+                    <View style={styles.syncRow}>
+                      <TouchableOpacity
+                        style={styles.syncBtn}
+                        onPress={() => bumpSync(-SYNC_STEP_S)}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel="Subtitles 0.5 seconds earlier"
+                      >
+                        <Ionicons
+                          name="remove"
+                          size={18}
+                          color={colors.textPrimary}
+                        />
+                      </TouchableOpacity>
+                      <Text style={styles.syncValue}>
+                        {formatOffset(syncSeconds)}
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.syncBtn}
+                        onPress={() => bumpSync(SYNC_STEP_S)}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel="Subtitles 0.5 seconds later"
+                      >
+                        <Ionicons
+                          name="add"
+                          size={18}
+                          color={colors.textPrimary}
+                        />
+                      </TouchableOpacity>
+                      {syncSeconds !== 0 && (
+                        <TouchableOpacity
+                          style={styles.syncReset}
+                          onPress={() => applySync(0)}
+                          activeOpacity={0.7}
+                          accessibilityRole="button"
+                          accessibilityLabel="Reset subtitle sync"
+                        >
+                          <Ionicons
+                            name="refresh"
+                            size={16}
+                            color={colors.textSecondary}
+                          />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                    {syncError && (
+                      <Text style={styles.syncError}>{syncError}</Text>
+                    )}
+                  </View>
+                )}
+              </>
+            )}
+
+            {/* 4. FIND — online search; auto-opened when there's nothing else. */}
             {onlineSearch && (
               <>
                 <View style={styles.separator} />
@@ -461,7 +830,7 @@ function SubtitleSheetInner({
                     color={colors.gold}
                   />
                   <Text style={styles.onlineHeaderText}>
-                    Load subtitles online
+                    Find subtitles online
                   </Text>
                   <Ionicons
                     name={onlineOpen ? "chevron-up" : "chevron-down"}
@@ -469,19 +838,26 @@ function SubtitleSheetInner({
                     color={colors.textTertiary}
                   />
                 </TouchableOpacity>
-                {embeddedTracks.length === 0 && !onlineOpen && (
-                  <Text style={styles.onlineHint}>
-                    No embedded subtitles in this file — search online below.
-                  </Text>
-                )}
+                {embeddedTracks.length === 0 &&
+                  externalTracks.length === 0 &&
+                  !onlineOpen && (
+                    <Text style={styles.onlineHint}>
+                      This video has no built-in subtitles — search online.
+                    </Text>
+                  )}
 
                 {onlineOpen && (
                   <View style={styles.onlineBody}>
                     {searching && (
-                      <View style={styles.onlineStatusRow}>
-                        <ActivityIndicator size="small" color={colors.gold} />
-                        <Text style={styles.onlineStatusText}>Searching…</Text>
-                      </View>
+                      <>
+                        <Text style={styles.onlineStatusText}>
+                          Searching subtitle sites…
+                        </Text>
+                        <SearchSkeleton anim={shimmer} />
+                        <SearchSkeleton anim={shimmer} />
+                        <SearchSkeleton anim={shimmer} />
+                        <SearchSkeleton anim={shimmer} />
+                      </>
                     )}
 
                     {!searching && onlineError && (
@@ -542,12 +918,16 @@ function SubtitleSheetInner({
               </>
             )}
 
-            {embeddedTracks.length === 0 && !onlineSearch && (
-              <View style={styles.emptyState}>
-                <Ionicons name="text" size={48} color={colors.emptyIcon} />
-                <Text style={styles.emptyText}>No subtitles available</Text>
-              </View>
-            )}
+            {embeddedTracks.length === 0 &&
+              externalTracks.length === 0 &&
+              !onlineSearch && (
+                <View style={styles.emptyState}>
+                  <Ionicons name="text" size={48} color={colors.emptyIcon} />
+                  <Text style={styles.emptyText}>
+                    No subtitles in this video
+                  </Text>
+                </View>
+              )}
           </ScrollView>
         </TouchableOpacity>
       </TouchableOpacity>
@@ -586,10 +966,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.zinc800,
   },
+  headerLeft: {
+    flex: 1,
+  },
   headerTitle: {
     color: colors.textPrimary,
     fontSize: 18,
     fontWeight: "700",
+  },
+  headerChip: {
+    color: colors.textTertiary,
+    fontSize: 11.5,
+    marginTop: 2,
   },
   body: {
     flexGrow: 0,
@@ -651,25 +1039,42 @@ const styles = StyleSheet.create({
   trackTextSelected: {
     color: colors.gold,
   },
+  skelCircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.skeletonBg,
+  },
+  skelLine: {
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.skeletonBg,
+  },
+  fineTuneHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+  },
+  fineTuneHeaderText: {
+    flex: 1,
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  fineTuneHint: {
+    color: colors.textTertiary,
+    fontSize: 11.5,
+    paddingHorizontal: 20,
+    paddingBottom: 4,
+  },
   syncRow: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 20,
-    paddingVertical: 14,
+    paddingVertical: 8,
     gap: 10,
-  },
-  syncInfo: {
-    flex: 1,
-  },
-  syncLabel: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  syncHint: {
-    color: colors.textTertiary,
-    fontSize: 12,
-    marginTop: 2,
   },
   syncBtn: {
     width: 34,
@@ -694,6 +1099,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
+  },
+  syncError: {
+    color: colors.error,
+    fontSize: 12,
+    paddingHorizontal: 20,
+    paddingBottom: 6,
   },
   separator: {
     height: 1,
@@ -724,16 +1135,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingBottom: 4,
   },
-  onlineStatusRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
   onlineStatusText: {
     color: colors.textTertiary,
     fontSize: 13,
+    paddingHorizontal: 12,
+    paddingTop: 6,
+    paddingBottom: 2,
   },
   onlineError: {
     color: colors.textTertiary,
@@ -766,6 +1173,4 @@ const styles = StyleSheet.create({
   },
 });
 
-// Memoized: the parent overlay re-renders on seek/pause/state changes — the
-// sheet should only re-render when its own props (visible, player, key) change.
 export const SubtitleSheet = React.memo(SubtitleSheetInner);

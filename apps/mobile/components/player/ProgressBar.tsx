@@ -143,9 +143,7 @@ export function ProgressBar({
     }
   }, []);
 
-  const logScrubJS = useCallback((msg: string) => {
-    console.log(`[Scrub] bar: ${msg}`);
-  }, []);
+  const logScrubJS = useCallback((msg: string) => {}, []);
 
   // Measure container layout width
   const handleLayout = useCallback((e: LayoutChangeEvent) => {

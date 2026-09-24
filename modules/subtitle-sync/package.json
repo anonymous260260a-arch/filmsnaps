@@ -1,0 +1,8 @@
+{
+  "name": "expo-subtitle-sync",
+  "version": "0.1.0",
+  "private": true,
+  "description": "On-device subtitle auto-sync via audio extraction + VAD",
+  "main": "src/index.ts",
+  "types": "src/index.ts"
+}

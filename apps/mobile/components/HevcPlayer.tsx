@@ -49,6 +49,7 @@ import {
 import { toPlayableUri } from "../lib/download/offlineUri";
 import { File } from "expo-file-system";
 import { getSubtitleChoice } from "../lib/subtitleCache";
+import { getAutoSyncPrefs } from "../lib/subtitlePrefs";
 import type { PlayerAdapter, AudioTrackInfo } from "./player/types";
 import type { StreamLink } from "./player/streamTypes";
 import {
@@ -66,6 +67,13 @@ import {
   type IntroDbResponse,
 } from "../lib/introDetect";
 import { PerfSessionTracker } from "../lib/perfMetrics";
+import { setPlayerStruggling } from "expo-subtitle-sync";
+import {
+  stopWatchSession,
+  anchorWatchSession,
+  watchSessionStatus,
+  WATCH_SYNC_ENABLED,
+} from "../lib/subtitleSync/watchSync";
 import {
   getSubtitleOffset,
   setSubtitleOffset as persistSubtitleOffset,
@@ -440,6 +448,8 @@ export function HevcPlayer({
   // addExternalSubtitle re-prepares at the current position and selects the
   // track when it appears — so a remembered choice just plays.
   const cachedSubtitleKeyRef = useRef("");
+  /** Auto-attached online subtitle file — Auto Sync reads it when no sidecar is selected. */
+  const autoAttachedSubtitleRef = useRef<string | null>(null);
   useEffect(() => {
     if (!hasStarted || !subtitleOnlineSearch) return;
     const key = `${subtitleOnlineSearch.mediaType}:${subtitleOnlineSearch.tmdbId}:${subtitleOnlineSearch.season ?? ""}:${subtitleOnlineSearch.episode ?? ""}`;
@@ -450,25 +460,16 @@ export function HevcPlayer({
         const choice = await getSubtitleChoice(subtitleOnlineSearch);
         if (!choice) return;
         const file = new File(choice.uri);
-        if (!file.exists) {
-          console.log(
-            `[SidecarSubs] JS: cached subtitle no longer on disk — skipping (${choice.label})`,
-          );
-          return;
-        }
-        console.log(
-          `[SidecarSubs] JS: auto-loading cached subtitle for ${key}`,
-        );
+        if (!file.exists) return;
+        autoAttachedSubtitleRef.current = choice.uri;
         await adapterRef.current?.addExternalSubtitle?.(
           choice.uri,
           choice.mimeType,
           choice.language,
           choice.label,
         );
-      } catch (e) {
-        console.log(
-          `[SidecarSubs] JS: cached subtitle auto-load failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
+      } catch {
+        // Auto-attach is best-effort — the sheet's online section remains.
       }
     })();
   }, [hasStarted, subtitleOnlineSearch]);
@@ -695,9 +696,6 @@ export function HevcPlayer({
           backgroundedRef.current ||
           Date.now() - lastActiveAtRef.current < 1500
         ) {
-          console.log(
-            "[FS-BG] switch timeout deferred — backgrounded or just returned",
-          );
           switchTimeoutRef.current = setTimeout(switchTimeout, 2000);
           return;
         }
@@ -993,6 +991,19 @@ export function HevcPlayer({
   );
   const bufferProfile = getBufferProfile(container, codec);
 
+  // Latest stream facts for subtitle Auto Sync — read at button-press time so
+  // a source switch mid-run resolves to the current URL, never a stale one.
+  const autoSyncSourceRef = useRef({
+    uri: activeUrl,
+    headers: {} as Record<string, string>,
+    container,
+  });
+  autoSyncSourceRef.current = {
+    uri: activeUrl,
+    headers: videoSource.headers,
+    container,
+  };
+
   // Track continuous playback position across source switches and seeking
   const lastPlaybackTimeRef = useRef(startAt);
 
@@ -1019,7 +1030,6 @@ export function HevcPlayer({
     if (initialTime > 0) {
       playerInstance.currentTime = initialTime;
     }
-    console.log("[FS-BG] source (re)created → initial play()");
     playerInstance.play();
   });
 
@@ -1035,16 +1045,10 @@ export function HevcPlayer({
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "background" || state === "inactive") {
-        console.log(
-          `[FS-BG] app → ${state}: pausing (playing=${player.playing}, status=${player.status})`,
-        );
         backgroundedRef.current = true;
         adapterRef.current?.setAppBackgrounded?.(true);
         adapterRef.current?.pause();
       } else if (state === "active") {
-        console.log(
-          `[FS-BG] app → active (playing=${player.playing}, status=${player.status})`,
-        );
         backgroundedRef.current = false;
         lastActiveAtRef.current = Date.now();
         adapterRef.current?.setAppBackgrounded?.(false);
@@ -1097,6 +1101,7 @@ export function HevcPlayer({
       // fault and must not accumulate into a background source swap.
       if (backgroundedRef.current) {
         stallStartedAt = null;
+        setPlayerStruggling(false);
         return;
       }
       if (endedRef.current) return;
@@ -1110,12 +1115,15 @@ export function HevcPlayer({
         if (hasPlayedRef.current) {
           stallStartedAt = Date.now();
           perfRef.current?.rebufferStart();
+          // G2: hold subtitle-scan network reads while playback is starved.
+          setPlayerStruggling(true);
         }
         return;
       }
       if (stallStartedAt == null) return;
       stallStartedAt = null;
       perfRef.current?.rebufferEnd();
+      setPlayerStruggling(false);
       // A seek interrupting an in-flight stall is user action — keep it in
       // telemetry but don't count it against the source.
       if (adapter.isSeeking?.()) return;
@@ -1139,20 +1147,26 @@ export function HevcPlayer({
         }
       }
     });
-    return unsub;
+    return () => {
+      unsub();
+      // Never leave a scan paused after the player goes away.
+      setPlayerStruggling(false);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adapter, showToast]);
 
-  // ── Restore this series' subtitle sync offset (persisted per series) ──
+  // ── Restore this series' subtitle sync offset (manual + auto, persisted per series) ──
   useEffect(() => {
     if (!subtitleKey) return;
     let cancelled = false;
-    getSubtitleOffset(subtitleKey)
-      .then((seconds) => {
-        if (!cancelled && seconds !== 0) {
-          adapter.setSubtitleOffset(seconds * 1000);
+    Promise.all([getSubtitleOffset(subtitleKey), getAutoSyncPrefs(subtitleKey)])
+      .then(([manualSec, auto]) => {
+        if (cancelled) return;
+        const totalMs = auto.autoOffsetMs + manualSec * 1000;
+        if (totalMs !== 0) {
+          adapter.setSubtitleOffset(totalMs);
           console.log(
-            `[HevcPlayer] Restored subtitle offset ${seconds}s for ${subtitleKey}`,
+            `[SubSync] restored offset for ${subtitleKey}: auto=${(auto.autoOffsetMs / 1000).toFixed(2)}s manual=${manualSec.toFixed(1)}s`,
           );
         }
       })
@@ -1371,6 +1385,11 @@ export function HevcPlayer({
     console.log(
       `[Flow] player: active source → #${activeLinkIndex} ${currentLink?.quality ?? ""} ${url?.slice(0, 60)}`,
     );
+    // I-1: a real URL/source switch is an allowed stop — but only here (where
+    // urlChanged is proven), never from hasStarted flicker alone.
+    if (watchSessionStatus().active) {
+      stopWatchSession("source-change");
+    }
     setHasStarted(false);
     hasPlayedRef.current = false;
     lastSavedPositionRef.current = 0;
@@ -1421,6 +1440,47 @@ export function HevcPlayer({
     };
   }, [countdownActive, goNextEpisode]);
 
+  // ── Stage C: watch-sync session teardown ──
+  // Activation is tap-only (Auto-Sync / watch-sync alternative) — never
+  // auto-started here. HevcPlayer only stops on source change / unmount /
+  // natural end and re-anchors after seeks resolve while a session is active.
+  //
+  // I-1: `hasStarted` can flip false transiently (source-select reset at
+  // :541, URL-change effect at :1388) WITHOUT a real content change. The
+  // session is keyed by subtitleKey (media identity) — only stop when that
+  // identity actually changes or the player is going away, never on a
+  // hasStarted flicker (sheet open/close never touches either).
+  const watchContentKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!WATCH_SYNC_ENABLED) return;
+    const prev = watchContentKeyRef.current;
+    if (prev !== null && prev !== subtitleKey && watchSessionStatus().active) {
+      // Real content change (episode/media) — allowed stop.
+      stopWatchSession("source-change");
+    }
+    watchContentKeyRef.current = subtitleKey;
+    if (!subtitleKey && watchSessionStatus().active) {
+      // Lost the content identity entirely (media unmounted mid-session).
+      stopWatchSession("source-or-unmounted");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subtitleKey]);
+
+  // Immediate anchor after a user seek resolves (isSeeking true → false),
+  // only while a watch session is active (tap-only activation).
+  const wasSeekingRef = useRef(false);
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const seeking = adapter.isSeeking?.() ?? false;
+      if (wasSeekingRef.current && !seeking && watchSessionStatus().active) {
+        const pos = adapterRef.current?.getCurrentTime() ?? 0;
+        if (pos > 0) anchorWatchSession(pos);
+      }
+      wasSeekingRef.current = seeking;
+    }, 400);
+    return () => clearInterval(iv);
+  }, [adapter]);
+
   // ── Natural end of media ──
   // TV with a next episode: start the auto-advance countdown. Movies (or the
   // final episode): stop quietly — NEVER fall back to another source here,
@@ -1431,6 +1491,7 @@ export function HevcPlayer({
       if (endedRef.current) return;
       endedRef.current = true;
       console.log("[HevcPlayer] Playback reached natural end");
+      stopWatchSession("video-end");
       if (switchTimeoutRef.current) {
         clearTimeout(switchTimeoutRef.current);
         switchTimeoutRef.current = null;
@@ -1684,6 +1745,7 @@ export function HevcPlayer({
     if (autoToastTimerRef.current) clearTimeout(autoToastTimerRef.current);
     perfRef.current?.close();
     perfRef.current = null;
+    stopWatchSession("close");
     adapter.destroy();
     onClose();
   }, [tmdbId, mediaType, season, episode, isFullscreen, onClose, adapter]);
@@ -1711,6 +1773,7 @@ export function HevcPlayer({
       if (autoToastTimerRef.current) clearTimeout(autoToastTimerRef.current);
       perfRef.current?.close();
       perfRef.current = null;
+      stopWatchSession("unmount");
       adapter.destroy();
     };
   }, [adapter]);
@@ -1799,6 +1862,33 @@ export function HevcPlayer({
         }}
         subtitleKey={subtitleKey ?? undefined}
         subtitleOnlineSearch={subtitleOnlineSearch}
+        autoSync={
+          subtitleKey
+            ? {
+                contentId: subtitleKey,
+                sourceInfo: () => {
+                  const s = autoSyncSourceRef.current;
+                  const duration = adapter.getDuration?.() ?? 0;
+                  const c = s.container;
+                  const mapped:
+                    | "mp4"
+                    | "mkv"
+                    | "webm"
+                    | "mov"
+                    | "m4v"
+                    | "other" = c === "unknown" || c === "mpegts" ? "other" : c;
+                  return {
+                    uri: s.uri,
+                    headers: s.headers,
+                    container: mapped,
+                    durationSec: duration > 0 ? duration : 0,
+                    kind: s.uri.startsWith("http") ? "remote" : "local",
+                  };
+                },
+                getDefaultSubtitleUri: () => autoAttachedSubtitleRef.current,
+              }
+            : undefined
+        }
         onSourcePicker={
           isMultiLink ? () => setShowStreamPicker(true) : undefined
         }

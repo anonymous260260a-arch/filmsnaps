@@ -109,17 +109,11 @@ export class ExpoVideoAdapter implements PlayerAdapter {
             this.isSeekResolved(time)
           ) {
             this._isSeeking = false;
-            console.log(
-              `[Seek] gen=${this._seekGeneration} landed at ${time.toFixed(1)}s (target ${this._targetSeekTime.toFixed(1)}s)`,
-            );
           } else {
             // Still resolving — suppress transient/stale values. One log per
             // seek shows the pre-seek updates the UI must NOT display.
             if (this._suppressLogGen !== this._seekGeneration) {
               this._suppressLogGen = this._seekGeneration;
-              console.log(
-                `[Seek] gen=${this._seekGeneration} suppressing pre-seek update ${time.toFixed(1)}s (target ${this._targetSeekTime.toFixed(1)}s)`,
-              );
             }
             return;
           }
@@ -134,9 +128,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     this.subs.push(
       player.addListener("playingChange", (update) => {
         if (this.destroyed) return;
-        console.log(
-          `[FS-BG] playingChange isPlaying=${update.isPlaying} userPaused=${this._userPaused} status=${this.player.status}`,
-        );
+
         // While backgrounded, native playing transitions are leftovers from
         // play() calls issued before the background pause took effect — squash
         // them. Without this, the isPlaying=true branch below clears
@@ -190,8 +182,6 @@ export class ExpoVideoAdapter implements PlayerAdapter {
           this.timeListeners.forEach((l) => l(time, dur));
         }
 
-        console.log(`[ExpoVideoAdapter] statusChange: ${status.status}`);
-
         // Track if metadata is available (duration > 0 means metadata parsed)
         if (Number.isFinite(this.player.duration) && this.player.duration > 0) {
           this.metadataLoaded = true;
@@ -218,15 +208,9 @@ export class ExpoVideoAdapter implements PlayerAdapter {
             : 0;
 
           if (dur > 0) {
-            console.log(
-              `[ExpoVideoAdapter] readyToPlay: time=${time}s dur=${dur}s (seeking=${this._isSeeking})`,
-            );
             if (this._isSeeking) {
               if (this.isSeekResolved(time)) {
                 this._isSeeking = false;
-                console.log(
-                  `[Seek] gen=${this._seekGeneration} landed (status) at ${time.toFixed(1)}s (target ${this._targetSeekTime.toFixed(1)}s)`,
-                );
                 this.timeListeners.forEach((l) => l(time, dur));
               }
             } else if (time > 0) {
@@ -234,9 +218,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
             }
           } else {
             // HEVC/MKV: duration not yet parsed — poll for it with exponential backoff
-            console.log(
-              `[ExpoVideoAdapter] readyToPlay: time=${time}s dur=0, polling for metadata...`,
-            );
+
             this.pollForMetadata(this.estimatedSizeBytes);
           }
 
@@ -253,9 +235,6 @@ export class ExpoVideoAdapter implements PlayerAdapter {
               ? rawErr
               : (rawErr?.message ?? "Playback error");
           const errorType = this.classifyError(err);
-          console.log(
-            `[ExpoVideoAdapter] Error via statusChange: "${err}" (${errorType})`,
-          );
           this.currentError = this.errorMessageForType(errorType, err);
           const currentErr = this.currentError;
           this.errorListeners.forEach((l) => l(currentErr));
@@ -338,9 +317,6 @@ export class ExpoVideoAdapter implements PlayerAdapter {
         const errMsg =
           typeof err === "string" ? err : (err?.message ?? "Playback error");
         const errorType = this.classifyError(errMsg);
-        console.log(
-          `[ExpoVideoAdapter] Error detected via poll: "${err}" (${errorType})`,
-        );
         this.currentError = this.errorMessageForType(errorType, errMsg);
         const currentErr = this.currentError;
         this.errorListeners.forEach((l) => l(currentErr));
@@ -361,12 +337,6 @@ export class ExpoVideoAdapter implements PlayerAdapter {
           if (this.stuckSince === 0) {
             this.stuckSince = Date.now();
           } else if (Date.now() - this.stuckSince > noMetadataTimeout) {
-            console.log(
-              `[ExpoVideoAdapter] No metadata after ${noMetadataTimeout}ms, triggering fallback`,
-            );
-            console.log(
-              `[ExpoVideoAdapter] currentTime=${time}, duration=${this.player.duration}, status=${status}`,
-            );
             this.currentError =
               "Stream connection stalled — switching to backup source";
             const currentErr = this.currentError;
@@ -402,9 +372,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
         const time = Number.isFinite(this.player.currentTime)
           ? Math.max(0, this.player.currentTime)
           : 0;
-        console.log(
-          `[ExpoVideoAdapter] Metadata found: time=${time}s dur=${dur}s`,
-        );
+
         this.timeListeners.forEach((l) => l(time, dur));
         return;
       }
@@ -502,7 +470,6 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       : 0;
     if (dur > 0 && time >= dur - 1) {
       this.endedEmitted = true;
-      console.log(`[ExpoVideoAdapter] Media ended (time=${time}, dur=${dur})`);
       this.endedListeners.forEach((l) => l());
       return true;
     }
@@ -534,16 +501,10 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   /** Internal auto-resume — logs a reason so a background-resume bug can be
    *  traced to its exact call site ([FS-BG] diagnosis). */
   private resumePlay(reason: string) {
-    console.log(
-      `[FS-BG] player.play() via ${reason} (userPaused=${this._userPaused}, status=${this.player.status}, playing=${this.player.playing})`,
-    );
     this.player.play();
   }
 
   setAppBackgrounded(backgrounded: boolean) {
-    console.log(
-      `[FS-BG] adapter.setAppBackgrounded(${backgrounded}) (playing=${this.player.playing})`,
-    );
     this._appBackgrounded = backgrounded;
     // Entering background while the player is still playing — the AppState
     // pause raced ahead of the native transition. Stop it here.
@@ -553,9 +514,6 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   }
 
   play() {
-    console.log(
-      `[FS-BG] adapter.play() called (was userPaused=${this._userPaused}, status=${this.player.status}, playing=${this.player.playing})`,
-    );
     this._userPaused = false;
     this.player.play();
     this.playPauseListeners.forEach((l) => l(false));
@@ -563,9 +521,6 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   }
 
   pause() {
-    console.log(
-      `[FS-BG] adapter.pause() called (was userPaused=${this._userPaused}, playing=${this.player.playing}, status=${this.player.status})`,
-    );
     this._userPaused = true;
     this.player.pause();
     this.playPauseListeners.forEach((l) => l(true));
@@ -596,9 +551,6 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     // doesn't visually snap back while the real seek resolves.
     this.timeListeners.forEach((l) => l(clamped, dur));
 
-    console.log(
-      `[ExpoVideoAdapter] seek to ${clamped}s (dur=${dur}s, gen=${myGeneration})`,
-    );
     try {
       this.player.currentTime = clamped;
     } catch (e) {
@@ -640,9 +592,6 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       const resolvedTime = this.isSeekResolved(actualTime)
         ? actualTime
         : clamped;
-      console.log(
-        `[Seek] gen=${myGeneration} safety resolve at ${resolvedTime.toFixed(1)}s (target ${clamped.toFixed(1)}s)`,
-      );
       this.timeListeners.forEach((l) => l(resolvedTime, this.getDuration()));
 
       // If the player failed to seek (stuck near 0 while target was >10s),
@@ -737,9 +686,6 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     const tracks = this.player.availableSubtitleTracks;
     const dt = Date.now() - t0;
     if (dt > 30) {
-      console.log(
-        `[SubPerf] availableSubtitleTracks read took ${dt}ms (${tracks.length} tracks)`,
-      );
     }
     return tracks.map((t) => {
       const id = t.id ?? t.language ?? "off";
@@ -777,7 +723,6 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     const current = this.player.subtitleTrack;
     const dt = Date.now() - t0;
     if (dt > 30) {
-      console.log(`[SubPerf] player.subtitleTrack read took ${dt}ms`);
     }
     if (!current) return null;
     return current.id ?? current.language ?? null;
@@ -810,16 +755,12 @@ export class ExpoVideoAdapter implements PlayerAdapter {
         "Sidecar subtitles unsupported (expo-video patch missing)",
       );
     }
-    console.log(
-      `[SidecarSubs] JS: calling native addSidecarSubtitle uri=…${uri.slice(-48)} mime=${mimeType} lang=${language} label=${label}`,
-    );
     const trackId = await api.addSidecarSubtitle(
       uri,
       mimeType,
       language ?? null,
       label ?? null,
     );
-    console.log(`[SidecarSubs] JS: native returned trackId=${trackId}`);
     if (!trackId) return null;
 
     // After the re-prepare the track list refreshes asynchronously — poll briefly.
@@ -833,19 +774,12 @@ export class ExpoVideoAdapter implements PlayerAdapter {
         (t) => t.id === trackId || t.id.endsWith(`:${trackId}`),
       );
       if (match) {
-        console.log(
-          `[SidecarSubs] JS: track ${match.id} appeared after ${Date.now() - started}ms — selecting`,
-        );
         this.setSubtitleTrack(match.id);
         this.subtitleEnabledAt = Date.now();
         return match.id;
       }
     }
     const finalTracks = this.getSubtitleTracks();
-    console.log(
-      `[SidecarSubs] JS: timed out waiting for ${trackId}. Available tracks: ` +
-        (finalTracks.map((t) => `${t.id}|${t.label}`).join(", ") || "none"),
-    );
     return null;
   }
 

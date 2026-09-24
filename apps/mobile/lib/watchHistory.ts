@@ -182,11 +182,6 @@ export async function saveProgress(progress: WatchProgress): Promise<void> {
     progress.isAnime,
   );
 
-  if (__DEV__)
-    console.log(
-      `[FS-WH] saveProgress key=${key} isAnime=${progress.isAnime} mediaType=${progress.mediaType} tmdbId=${progress.tmdbId} pct=${progress.percent}`,
-    );
-
   // Only persist meaningful progress (>5s) or mark completed
   const shouldPersist = progress.currentTime > 5 || progress.completed;
   if (!shouldPersist) return;

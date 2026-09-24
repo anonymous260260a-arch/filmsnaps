@@ -36,7 +36,8 @@ import type { PlayerAdapter } from "./types";
 import type { SubtitleSearchQuery } from "../../lib/subtitleSearch";
 import { ProgressBar } from "./ProgressBar";
 import { AudioTrackSheet } from "./AudioTrackSheet";
-import { SubtitleSheet, markSubtitleSheetRequested } from "./SubtitleSheet";
+import { SubtitleSheet } from "./SubtitleSheet";
+import type { AutoSyncSourceInfo } from "./AutoSyncButton";
 import { PlayerSettingsSheet } from "./PlayerSettingsSheet";
 import { DoubleTapRippleOverlay } from "./DoubleTapRippleOverlay";
 
@@ -75,6 +76,12 @@ interface PlayerOverlayProps {
   subtitleKey?: string;
   /** Enables the "Load subtitles online" section in the subtitle sheet. */
   subtitleOnlineSearch?: SubtitleSearchQuery;
+  /** Enables the Auto Sync button in the subtitle sheet. */
+  autoSync?: {
+    contentId: string;
+    sourceInfo: () => AutoSyncSourceInfo;
+    getDefaultSubtitleUri?: () => string | null;
+  };
   /** Called when user taps the source pill. Omit to hide the pill. */
   onSourcePicker?: () => void;
   onToggleFullscreen: () => void;
@@ -109,6 +116,7 @@ export function PlayerOverlay({
   onAudioTrackSelected,
   subtitleKey,
   subtitleOnlineSearch,
+  autoSync,
   onSourcePicker,
   onToggleFullscreen,
   onClose,
@@ -312,16 +320,10 @@ export function PlayerOverlay({
           const isLanded =
             target <= 15 ? time <= target + 3 : Math.abs(time - target) <= 3;
           if (isLanded) {
-            console.log(
-              `[Seek] lock released: update ${time.toFixed(1)}s ≈ target ${target.toFixed(1)}s`,
-            );
             releaseSeekLock();
             applyTime(time);
           } else if (!seekHoldLogRef.current) {
             seekHoldLogRef.current = true;
-            console.log(
-              `[Seek] lock holding: ignoring pre-seek update ${time.toFixed(1)}s (target ${target.toFixed(1)}s)`,
-            );
           }
         } else {
           applyTime(time);
@@ -377,9 +379,6 @@ export function PlayerOverlay({
       const newTarget = Math.max(
         0,
         Math.min(duration > 0 ? duration : 99999, current + delta),
-      );
-      console.log(
-        `[Seek] double-tap ${side}: base ${current.toFixed(1)}s → target ${newTarget.toFixed(1)}s${isSeekLockedRef.current ? " (burst)" : ""}`,
       );
 
       acquireSeekLock(newTarget);
@@ -793,7 +792,6 @@ export function PlayerOverlay({
                 {subtitleButtonVisible && (
                   <TouchableOpacity
                     onPress={() => {
-                      markSubtitleSheetRequested();
                       setShowSubtitleSheet(true);
                     }}
                     style={styles.iconButton}
@@ -880,6 +878,7 @@ export function PlayerOverlay({
         player={player}
         storageKey={subtitleKey}
         onlineSearch={subtitleOnlineSearch}
+        autoSync={autoSync}
         onClose={closeSubtitleSheet}
       />
       <PlayerSettingsSheet
