@@ -1,12 +1,12 @@
 /**
  * playerConfig — single source of truth for player tuning, JS and native.
  *
- * Post-ship fix path: every value here can be overridden by a small JSON
- * document fetched from the app API (GET {API}/api/player-config) and cached
- * in AsyncStorage — a player regression then becomes a server-side config
- * change, no store update and no OTA needed. Defaults are baked into the
- * bundle, so when the endpoint is missing/offline the player behaves exactly
- * as shipped.
+ * Defaults are baked into the bundle. Optional overrides may later come from
+ * a remote JSON document (GET {API}/api/player-config) cached in AsyncStorage —
+ * that endpoint does not exist yet; until it ships we only read the local
+ * cache (written if/when a future version fetches it).
+ * TODO(server): add GET /api/player-config so initPlayerConfig can refresh
+ * remote overrides without an app update.
  *
  * Native knobs (expo-video patch): the module-level Properties
  * mkvExtractorMode / defaultHttpHeaders / httpConnectTimeoutMs /
@@ -16,11 +16,8 @@
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getApiBaseUrl } from "./api";
 
 const STORAGE_KEY = "@settings/playerConfig";
-const FETCH_TIMEOUT_MS = 8000;
-const CONFIG_URL = `${getApiBaseUrl()}/api/player-config`;
 
 /**
  * Built-in request headers shared by the probe and playback. Per-host rules
@@ -233,16 +230,15 @@ function sanitize(raw: unknown): PlayerRemoteConfig | null {
 }
 
 /**
- * Load the player config: cached copy first (instant, applied to native),
- * then a fresh fetch to refresh the cache. Safe to call more than once —
- * only the first call does work. Never throws.
+ * Load the player config from AsyncStorage only (bundled defaults when
+ * missing). Safe to call more than once — only the first call does work.
+ * Never throws. No network: /api/player-config is not implemented yet.
  */
 let initPromise: Promise<void> | null = null;
 
 export function initPlayerConfig(): Promise<void> {
   if (initPromise) return initPromise;
   initPromise = (async () => {
-    // 1) Cached config — applied immediately so a cold start keeps last known state.
     try {
       const cached = await AsyncStorage.getItem(STORAGE_KEY);
       if (cached) {
@@ -255,29 +251,8 @@ export function initPlayerConfig(): Promise<void> {
     } catch {
       // Unreadable cache — defaults apply.
     }
-
-    // 2) Fresh config — refresh the cache for the next cold start.
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-      const response = await fetch(CONFIG_URL, {
-        signal: controller.signal,
-        cache: "no-store",
-      });
-      clearTimeout(timer);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const fresh = sanitize(await response.json());
-      if (fresh) {
-        remoteConfig = fresh;
-        applyNativeKnobs(fresh);
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(fresh)).catch(
-          () => {},
-        );
-        console.log("[PlayerConfig] remote config applied");
-      }
-    } catch {
-      // Endpoint missing/offline — cached/default config keeps shipped behavior.
-    }
+    // TODO(server): fetch fresh config from GET /api/player-config when the
+    // endpoint exists; keep AsyncStorage write-through + applyNativeKnobs.
   })();
   return initPromise;
 }

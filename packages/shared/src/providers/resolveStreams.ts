@@ -180,6 +180,9 @@ export async function resolveStreams(
     }
   }
 
+  /** True when the last examined tier met its playable threshold. */
+  let satisfied = false;
+
   fetchLoop: for (const tierKey of tierKeys) {
     const tierSources = tiers.get(tierKey)!;
     const tierThreshold = Math.max(
@@ -252,7 +255,7 @@ export async function resolveStreams(
       ]),
     );
 
-    let satisfied = false;
+    satisfied = false;
     while (true) {
       if (tierThreshold > 0 && tierLinks() >= tierThreshold) {
         satisfied = true;
@@ -276,7 +279,11 @@ export async function resolveStreams(
 
   // Grace window: give escalated-past / timed-out fetches a final chance to
   // land before the pool is handed to the ranker.
-  const graceDeadline = Date.now() + GRACE_WINDOW_MS;
+  // FIX 10: when the threshold was already satisfied, skip the full grace —
+  // we have enough playable links; late landers during a short tail still
+  // merge via record() until closed. Escalation paths keep the full window.
+  const graceMs = satisfied ? 400 : GRACE_WINDOW_MS;
+  const graceDeadline = Date.now() + graceMs;
   const stillPending = () =>
     enabledSources.filter((s) => launched.has(s.id) && !recorded.has(s.id))
       .length;

@@ -21,7 +21,7 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
-        disallow: ["/saved", "/history", "/exp", "/api"],
+        disallow: ["/saved", "/history", "/exp", "/api", "/admin"],
       },
     ],
     sitemap: "https://filmsnap-pro.netlify.app/sitemap.xml",

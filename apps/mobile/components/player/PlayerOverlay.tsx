@@ -40,6 +40,8 @@ import { SubtitleSheet } from "./SubtitleSheet";
 import type { AutoSyncSourceInfo } from "./AutoSyncButton";
 import { PlayerSettingsSheet } from "./PlayerSettingsSheet";
 import { DoubleTapRippleOverlay } from "./DoubleTapRippleOverlay";
+import { audioTrackTitle, audioChipLabel } from "../../lib/audioLanguage";
+import { trackFeatureUsed } from "../../lib/telemetry";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
@@ -353,6 +355,7 @@ export function PlayerOverlay({
     if (isLockedRef.current) return;
     player.setPlaybackRate(2.0);
     setIs2xSpeedActive(true);
+    trackFeatureUsed("speed_2x_hold", "player");
   }, [player]);
 
   const handleStop2xSpeed = useCallback(() => {
@@ -435,6 +438,7 @@ export function PlayerOverlay({
         runOnJS(setOverlayState)("WATCHING");
       }
     });
+    trackFeatureUsed("lock", "player");
   }, [overlayOpacity]);
 
   const handleUnlock = useCallback(() => {
@@ -666,19 +670,47 @@ export function PlayerOverlay({
                   </TouchableOpacity>
                 )}
 
-                <TouchableOpacity
-                  onPress={() => setShowAudioSheet(true)}
-                  style={styles.iconButton}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Audio tracks"
-                >
-                  <Ionicons
-                    name="musical-notes-outline"
-                    size={20}
-                    color={colors.textPrimary}
-                  />
-                </TouchableOpacity>
+                {/* A1/A2: audio chrome — icon + short chip; hidden when ≤1 track */}
+                {(() => {
+                  const audioTracks = player.getAudioTracks();
+                  if (audioTracks.length <= 1) return null;
+                  const selectedId =
+                    player.getSelectedAudioTrackId?.() ?? null;
+                  const selectedIdx = Math.max(
+                    0,
+                    audioTracks.findIndex((t) => t.id === selectedId),
+                  );
+                  const selected =
+                    audioTracks.find((t) => t.id === selectedId) ??
+                    audioTracks[selectedIdx];
+                  const chip = selected
+                    ? audioChipLabel(audioTrackTitle(selected, selectedIdx))
+                    : null;
+                  return (
+                    <TouchableOpacity
+                      onPress={() => setShowAudioSheet(true)}
+                      style={styles.audioButton}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        chip
+                          ? `Audio tracks, currently ${chip}`
+                          : "Audio tracks"
+                      }
+                    >
+                      <Ionicons
+                        name="musical-notes-outline"
+                        size={20}
+                        color={colors.textPrimary}
+                      />
+                      {chip ? (
+                        <View style={styles.audioChip}>
+                          <Text style={styles.audioChipText}>{chip}</Text>
+                        </View>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })()}
 
                 <TouchableOpacity
                   onPress={() => setShowSettingsSheet(true)}
@@ -843,7 +875,10 @@ export function PlayerOverlay({
       {skipLabel && onSkipSegment && !overlaySuppressed && !isLocked && (
         <TouchableOpacity
           style={[styles.skipSegmentBtn, { bottom: paddingBottom + 96 }]}
-          onPress={onSkipSegment}
+          onPress={() => {
+            trackFeatureUsed("skip_intro", "player");
+            onSkipSegment();
+          }}
           activeOpacity={0.8}
           accessibilityRole="button"
           accessibilityLabel={skipLabel}
@@ -1103,5 +1138,25 @@ const styles = StyleSheet.create({
     borderColor: "rgba(212, 162, 55, 0.4)",
     zIndex: 40,
     elevation: 8,
+  },
+  audioButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  audioChip: {
+    backgroundColor: colors.goldBadge,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  audioChipText: {
+    color: colors.gold,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.4,
   },
 });

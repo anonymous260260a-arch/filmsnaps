@@ -18,6 +18,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
 import { useSettings } from "../../lib/settings";
 import type { PlayerAdapter } from "./types";
+import { trackFeatureUsed } from "../../lib/telemetry";
 
 interface PlayerSettingsSheetProps {
   visible: boolean;
@@ -67,6 +68,7 @@ export function PlayerSettingsSheet({
 
   const handleSelectSpeed = (speed: number) => {
     player.setPlaybackRate(speed);
+    trackFeatureUsed("speed_changed", "player");
     setCurrentView("menu");
     onClose();
   };
@@ -202,31 +204,65 @@ export function PlayerSettingsSheet({
                   <Text style={styles.sectionHeaderText}>Media</Text>
                 </View>
 
-                {/* Audio Track Option */}
-                <TouchableOpacity
-                  style={styles.menuItem}
-                  onPress={() => {
-                    onClose();
-                    onOpenAudioSheet();
-                  }}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Audio tracks"
-                >
-                  <View style={styles.menuItemLeft}>
-                    <Ionicons
-                      name="musical-notes-outline"
-                      size={20}
-                      color={colors.gold}
-                    />
-                    <Text style={styles.menuItemText}>Audio track</Text>
-                  </View>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={18}
-                    color={colors.textTertiary}
-                  />
-                </TouchableOpacity>
+                {/* Audio Track Option — A2: keep reachable but disabled when ≤1 track */}
+                {(() => {
+                  const trackCount = player.getAudioTracks().length;
+                  if (trackCount <= 1) {
+                    return (
+                      <View
+                        style={[styles.menuItem, styles.menuItemDisabled]}
+                        accessibilityElementsHidden={false}
+                        accessible
+                        accessibilityLabel="Audio track, only one audio track available"
+                      >
+                        <View style={styles.menuItemLeft}>
+                          <Ionicons
+                            name="musical-notes-outline"
+                            size={20}
+                            color={colors.textTertiary}
+                          />
+                          <Text
+                            style={[
+                              styles.menuItemText,
+                              { color: colors.textTertiary },
+                            ]}
+                          >
+                            Audio track
+                          </Text>
+                        </View>
+                        <Text style={styles.menuItemHint}>
+                          Only one audio track
+                        </Text>
+                      </View>
+                    );
+                  }
+                  return (
+                    <TouchableOpacity
+                      style={styles.menuItem}
+                      onPress={() => {
+                        onClose();
+                        onOpenAudioSheet();
+                      }}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel="Audio tracks"
+                    >
+                      <View style={styles.menuItemLeft}>
+                        <Ionicons
+                          name="musical-notes-outline"
+                          size={20}
+                          color={colors.gold}
+                        />
+                        <Text style={styles.menuItemText}>Audio track</Text>
+                      </View>
+                      <Ionicons
+                        name="chevron-forward"
+                        size={18}
+                        color={colors.textTertiary}
+                      />
+                    </TouchableOpacity>
+                  );
+                })()}
 
                 <View style={styles.separator} />
 
@@ -265,6 +301,7 @@ export function PlayerSettingsSheet({
                       onPress={() => {
                         onClose();
                         onOpenSourcePicker();
+                        trackFeatureUsed("quality_manual_override", "player");
                       }}
                       activeOpacity={0.7}
                     >
@@ -338,6 +375,7 @@ export function PlayerSettingsSheet({
                     ]}
                     onPress={() => {
                       updateSetting("preferredAudioLanguage", option.value);
+                      trackFeatureUsed("audio_manual_override", "player");
                       setCurrentView("menu");
                       onClose();
                     }}
@@ -430,6 +468,16 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 20,
     paddingVertical: 14,
+  },
+  menuItemDisabled: {
+    opacity: 0.7,
+  },
+  menuItemHint: {
+    color: colors.textTertiary,
+    fontSize: 12,
+    fontWeight: "500",
+    flexShrink: 1,
+    textAlign: "right",
   },
   menuItemLeft: {
     flexDirection: "row",

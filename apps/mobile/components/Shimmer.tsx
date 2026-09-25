@@ -10,7 +10,7 @@
  * - Accepts width, height, borderRadius, and optional style overrides
  */
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { View, Animated, Easing, AccessibilityInfo } from "react-native";
 import { colors } from "../theme/colors";
 
@@ -28,36 +28,52 @@ export function Shimmer({
   style,
 }: ShimmerProps) {
   const shimmerAnim = useRef(new Animated.Value(0)).current;
-  const reduceMotionRef = useRef(false);
+  // Start STATIC — only animate after the async reduce-motion check confirms
+  // animation is allowed (initial frames must not move when reduce-motion is on).
+  const [allowAnimation, setAllowAnimation] = useState(false);
 
   useEffect(() => {
-    AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-      reduceMotionRef.current = enabled;
-    });
+    let cancelled = false;
+    let animation: Animated.CompositeAnimation | null = null;
 
-    if (!reduceMotionRef.current) {
-      const animation = Animated.loop(
-        Animated.timing(shimmerAnim, {
-          toValue: 1,
-          duration: 1600,
-          easing: Easing.ease,
-          useNativeDriver: true,
-        }),
-      );
-      animation.start();
-      return () => animation.stop();
-    }
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => {
+        if (cancelled || enabled) return;
+        setAllowAnimation(true);
+        animation = Animated.loop(
+          Animated.timing(shimmerAnim, {
+            toValue: 1,
+            duration: 1600,
+            easing: Easing.ease,
+            useNativeDriver: true,
+          }),
+        );
+        animation.start();
+      })
+      .catch(() => {
+        // If the check fails, stay static (safe default).
+      });
+
+    return () => {
+      cancelled = true;
+      animation?.stop();
+    };
   }, [shimmerAnim]);
 
-  const translateX = shimmerAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-200, (typeof width === "number" ? width : 300) + 200],
-  });
+  // Static skeleton until reduce-motion is known-allowed.
+  const translateX = allowAnimation
+    ? shimmerAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [-200, (typeof width === "number" ? width : 300) + 200],
+      })
+    : 0;
 
-  const opacity = shimmerAnim.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [0.5, 1, 0.5],
-  });
+  const opacity = allowAnimation
+    ? shimmerAnim.interpolate({
+        inputRange: [0, 0.5, 1],
+        outputRange: [0.5, 1, 0.5],
+      })
+    : 0.75;
 
   return (
     <View

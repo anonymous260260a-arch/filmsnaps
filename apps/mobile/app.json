@@ -10,20 +10,20 @@
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#070708"
-    },
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "app.filmsnaps.mobile",
-      "infoPlist": {
-        "UIBackgroundModes": ["fetch", "processing"]
-      }
+      "backgroundColor": "#070708",
+      "imageWidth": 260
     },
     "android": {
       "backgroundColor": "#080808",
       "adaptiveIcon": {
         "backgroundColor": "#09090b",
         "foregroundImage": "./assets/icon.png"
+      },
+      "splash": {
+        "image": "./assets/splash.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#070708",
+        "imageWidth": 260
       },
       "package": "app.filmsnaps.mobile",
       "navigationBar": {
@@ -55,6 +55,16 @@
       "expo-video",
       "expo-sqlite",
       "expo-notifications",
+      "@sentry/react-native/expo",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#070708",
+          "imageWidth": 260
+        }
+      ],
       "./plugins/with-filmsnaps-downloader"
     ],
     "extra": {

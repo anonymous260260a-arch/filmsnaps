@@ -22,6 +22,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiBaseUrl, tmdbApi } from "./api";
+import { getImdbId, setImdbId } from "./imdbIdCache";
 import {
   buildStreamSourceUrl,
   createHdHubAdapter,
@@ -264,6 +265,12 @@ async function resolveImdbId(
 ): Promise<string | null> {
   const idStr = String(tmdbId);
   if (/^tt\d+$/i.test(idStr)) return idStr;
+  // D2: write-through AsyncStorage cache — a re-watch skips the worker
+  // roundtrip entirely (log line: `[Flow] imdb cache HIT …`).
+  try {
+    const cached = await getImdbId(mediaType, tmdbId);
+    if (cached) return cached;
+  } catch {}
   try {
     // tmdbApi has no built-in timeout — race one so a hung pass-through
     // can't stall stream loading indefinitely.
@@ -272,6 +279,9 @@ async function resolveImdbId(
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000)),
     ]);
     const imdb = (result as { imdb_id?: string | null } | null)?.imdb_id;
+    if (imdb) {
+      void setImdbId(mediaType, tmdbId, imdb);
+    }
     return imdb || null;
   } catch {
     return null;

@@ -33,6 +33,14 @@ import { useDownloadList } from "../../lib/download";
 import { tmdbToAnimeIds } from "../../lib/anime/resolve";
 import { getAllBookmarks } from "../../lib/bookmarks";
 import {
+  openDetail,
+  prepareDetail,
+  toDetailNavItem,
+} from "../../lib/openDetail";
+import { beginIntentTap } from "../../lib/perfMetrics";
+import { useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
+import {
   useWatchHistory,
   watchHistoryStore,
 } from "../../lib/watchHistoryStore";
@@ -64,6 +72,8 @@ function formatDate(ts: number): string {
 
 export default function LibraryScreen() {
   const nav = useSafeNavigation();
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const { settings } = useSettings();
   const { width: SCREEN_WIDTH } = useWindowDimensions();
@@ -184,6 +194,11 @@ export default function LibraryScreen() {
           if (ids.anilistId != null) params.set("aid", String(ids.anilistId));
         }
       }
+      const perfKey =
+        p.mediaType === "tv"
+          ? `tv:${p.tmdbId}:s${p.season ?? 1}e${p.episode ?? 1}`
+          : `movie:${p.tmdbId}`;
+      beginIntentTap(perfKey);
       nav.push(params.toString() ? `${base}?${params.toString()}` : base);
     },
     [nav],
@@ -597,12 +612,35 @@ export default function LibraryScreen() {
                   return (
                     <TouchableOpacity
                       key={b.tmdbId}
+                      onPressIn={() => {
+                        const navItem = toDetailNavItem(
+                          {
+                            id: b.tmdbId,
+                            media_type: b.mediaType,
+                            title: b.title,
+                            poster_path: poster,
+                          },
+                          b.mediaType === "tv" ? "tv" : "movie",
+                        );
+                        if (navItem)
+                          prepareDetail(navItem, "library", queryClient, router);
+                      }}
                       onPress={() => {
-                        if (b.mediaType === "tv") {
-                          nav.push(`/tv/${b.tmdbId}`);
-                        } else {
-                          nav.push(`/movie/${b.tmdbId}`);
-                        }
+                        const navItem = toDetailNavItem(
+                          {
+                            id: b.tmdbId,
+                            media_type: b.mediaType,
+                            title: b.title,
+                            poster_path: poster,
+                          },
+                          b.mediaType === "tv" ? "tv" : "movie",
+                        );
+                        if (navItem)
+                          openDetail(navItem, "library", {
+                            queryClient,
+                            router,
+                            nav,
+                          });
                       }}
                       activeOpacity={0.75}
                       style={{ width: posterWidth }}

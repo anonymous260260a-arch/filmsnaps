@@ -391,6 +391,7 @@ class FilmsnapsDownloadService : Service() {
 
                 var written = effectiveOffset
                 var lastEmit = 0L
+                var streamEndedNaturally = false
                 val buffer = ByteArray(64 * 1024)
 
                 try {
@@ -409,10 +410,26 @@ class FilmsnapsDownloadService : Service() {
                                 this@FilmsnapsDownloadService.notifyProgress()
                             }
                         }
+                        // Reaching EOF (-1) is the ONLY natural end of a stream.
+                        streamEndedNaturally = true
                     }
                 } catch (e: IOException) {
-                    // Expected path for both pause() (call.cancel() -> stream throws) and
-                    // genuine network errors. Distinguish by our own flags, not by exception type.
+                    // pause()/cancel() cancel the call, whose stream then throws
+                    // here — distinguish by OUR OWN flags, never by the exception
+                    // type. Anything else is a genuine network failure and the
+                    // download is NOT complete: propagate it to the JS layer so
+                    // the task is failed (or retried) instead of masquerading as
+                    // a finished file. F10 fix.
+                    if (!paused.get() && !cancelled.get()) {
+                        jobs.remove(taskId)
+                        listener?.onError(
+                            taskId,
+                            "Download interrupted: ${e.message ?: "network error"}",
+                            -1,
+                        )
+                        refreshOrStopForeground()
+                        return@use
+                    }
                 } finally {
                     raf.fd.sync()
                     raf.close()
@@ -428,6 +445,24 @@ class FilmsnapsDownloadService : Service() {
                         refreshOrStopForeground()
                     }
                     else -> {
+                        // F10: a partial download must NEVER be reported as
+                        // completed. Either the stream ended early (network drop
+                        // that didn't throw, or a server closing the connection
+                        // short) or we know the expected size and didn't get it
+                        // all — both are failures, not completions.
+                        val fullyReceived =
+                            streamEndedNaturally &&
+                                (totalBytes < 0 || written >= totalBytes)
+                        if (!fullyReceived) {
+                            jobs.remove(taskId)
+                            listener?.onError(
+                                taskId,
+                                "Incomplete download: ${written}/$totalBytes bytes",
+                                -1,
+                            )
+                            refreshOrStopForeground()
+                            return@use
+                        }
                         jobs.remove(taskId)
                         // The JS layer cannot know the real container up front, and ANY
                         // download server may serve ANY extension. Derive the true

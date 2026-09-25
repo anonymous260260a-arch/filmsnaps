@@ -59,6 +59,11 @@ export interface PlayerAdapter {
   onPlayPause(cb: (isPaused: boolean) => void): () => void;
   /** Subscribe to buffering state. Returns unsubscribe function. */
   onBuffering(cb: (isBuffering: boolean) => void): () => void;
+  /**
+   * Subscribe to native status transitions (expo-video statusChange:
+   * idle | loading | readyToPlay | error). Used for [watchperf] playerReady.
+   */
+  onStatusChange?(cb: (status: string) => void): () => void;
   /** Subscribe to playback errors (for auto-fallback). Returns unsubscribe. */
   onError?(cb: (error: string) => void): () => void;
   /** Subscribe to natural end of media (fires once per source). Returns unsubscribe. */

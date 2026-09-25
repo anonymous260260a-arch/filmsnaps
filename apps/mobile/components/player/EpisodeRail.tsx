@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   Modal,
   ScrollView,
+  FlatList,
   Dimensions,
   ActivityIndicator,
   Animated,
@@ -42,6 +43,9 @@ const RUBBER_BAND_RESISTANCE = 0.3;
 
 const THUMB_WIDTH = 104;
 const THUMB_HEIGHT = 58;
+// Fixed row height so FlatList getItemLayout / scrollToIndex are exact.
+// padding 10+10 + content minHeight THUMB_HEIGHT + marginBottom 10.
+const EPISODE_ROW_HEIGHT = THUMB_HEIGHT + 30;
 
 export function EpisodeRail({
   visible,
@@ -68,9 +72,8 @@ export function EpisodeRail({
 
   // Scroll anchors
   const seasonScrollRef = useRef<ScrollView>(null);
-  const episodeScrollRef = useRef<ScrollView>(null);
+  const episodeListRef = useRef<FlatList>(null);
   const seasonPillX = useRef<Record<number, number>>({});
-  const epRowY = useRef<Record<number, number>>({});
 
   // ── PanResponder for swipe-down-to-dismiss ──
   const panResponder = useRef(
@@ -182,20 +185,23 @@ export function EpisodeRail({
       ?.filter((s: any) => s.season_number > 0 && s.episode_count > 0)
       ?.map((s: any) => s.season_number) ?? [];
 
-  // Scroll episode list to currently-playing episode
+  // Scroll episode list to currently-playing episode (FlatList scrollToIndex)
   useEffect(() => {
     if (!visible || pickerSeason !== currentSeason) return;
     const t = setTimeout(() => {
-      const ey = epRowY.current[currentEpisode];
-      if (ey != null && episodeScrollRef.current) {
-        episodeScrollRef.current.scrollTo({
-          y: Math.max(0, ey - 80),
+      const idx = episodes.findIndex(
+        (ep: any, i: number) => (ep.episode_number ?? i + 1) === currentEpisode,
+      );
+      if (idx >= 0 && episodeListRef.current) {
+        episodeListRef.current.scrollToIndex({
+          index: idx,
+          viewPosition: 0.25,
           animated: false,
         });
       }
     }, 90);
     return () => clearTimeout(t);
-  }, [visible, pickerSeason, currentSeason, currentEpisode, episodes.length]);
+  }, [visible, pickerSeason, currentSeason, currentEpisode, episodes]);
 
   // Reset picker season when modal opens
   useEffect(() => {
@@ -395,13 +401,31 @@ export function EpisodeRail({
               </Text>
             </View>
           ) : (
-            <ScrollView
-              ref={episodeScrollRef}
+            <FlatList
+              ref={episodeListRef}
+              data={episodes}
+              keyExtractor={(ep: any, index: number) =>
+                String(ep.id ?? index)
+              }
               className="flex-1 px-4 pt-3"
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 24 }}
-            >
-              {episodes.map((ep: any, index: number) => {
+              initialNumToRender={10}
+              maxToRenderPerBatch={8}
+              windowSize={7}
+              removeClippedSubviews
+              getItemLayout={(_, index) => ({
+                length: EPISODE_ROW_HEIGHT,
+                offset: EPISODE_ROW_HEIGHT * index,
+                index,
+              })}
+              onScrollToIndexFailed={(info) => {
+                episodeListRef.current?.scrollToOffset({
+                  offset: info.averageItemLength * info.index,
+                  animated: false,
+                });
+              }}
+              renderItem={({ item: ep, index }) => {
                 const epNum = ep.episode_number ?? index + 1;
                 const isActive =
                   pickerSeason === currentSeason && epNum === currentEpisode;
@@ -419,11 +443,6 @@ export function EpisodeRail({
 
                 return (
                   <TouchableOpacity
-                    key={ep.id ?? index}
-                    onLayout={(e) => {
-                      if (epNum != null)
-                        epRowY.current[epNum] = e.nativeEvent.layout.y;
-                    }}
                     onPress={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                       onSelect(pickerSeason, epNum);
@@ -442,6 +461,7 @@ export function EpisodeRail({
                       borderRadius: 14,
                       padding: 10,
                       marginBottom: 10,
+                      height: EPISODE_ROW_HEIGHT,
                     }}
                   >
                     {/* Fixed 16:9 Thumbnail Box */}
@@ -678,8 +698,8 @@ export function EpisodeRail({
                     </View>
                   </TouchableOpacity>
                 );
-              })}
-            </ScrollView>
+              }}
+            />
           )}
         </Animated.View>
       </View>

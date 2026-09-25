@@ -17,6 +17,7 @@ import type { Movie } from "@filmsnaps/shared";
 interface MediaCardProps {
   item: Movie;
   onPress: (item: Movie) => void;
+  onPressIn?: (item: Movie) => void;
   variant?: "default" | "search";
 }
 
@@ -30,6 +31,7 @@ interface MediaCardProps {
 export function MediaCard({
   item,
   onPress,
+  onPressIn: onItemPressIn,
   variant = "default",
 }: MediaCardProps) {
   const { width: SCREEN_WIDTH } = useWindowDimensions();
@@ -73,7 +75,10 @@ export function MediaCard({
   return (
     <TouchableOpacity
       onPress={() => onPress(item)}
-      onPressIn={onPressIn}
+      onPressIn={() => {
+        onItemPressIn?.(item);
+        onPressIn();
+      }}
       onPressOut={onPressOut}
       activeOpacity={1}
       style={{ marginBottom: 14 }}

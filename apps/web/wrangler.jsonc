@@ -1,9 +1,12 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"main": ".open-next/worker.js",
-	"name": "filmsnaps",
+	"main": "./worker.mjs",
+	"name": "filmsnaps1",
 	"compatibility_date": "2026-06-12",
-	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"compatibility_flags": [
+		"nodejs_compat",
+		"global_fetch_strictly_public"
+	],
 	"assets": {
 		"directory": ".open-next/assets",
 		"binding": "ASSETS"
@@ -11,13 +14,26 @@
 	"services": [
 		{
 			"binding": "WORKER_SELF_REFERENCE",
-			"service": "filmsnaps"
+			"service": "filmsnaps1"
 		}
 	],
 	"images": {
 		"binding": "IMAGES"
 	},
+	"d1_databases": [
+		{
+			"binding": "TELEMETRY_DB",
+			"database_name": "filmsnaps-telemetry",
+			"database_id": "a11336a8-8ce8-4a8f-9fda-3c5d97e8a7fa",
+			"remote": true
+		}
+	],
 	"observability": {
 		"enabled": true
+	},
+	"triggers": {
+		"crons": [
+			"30 3 * * *"
+		]
 	}
 }

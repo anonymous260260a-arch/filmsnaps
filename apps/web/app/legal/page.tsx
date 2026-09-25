@@ -27,7 +27,18 @@ export default function LegalPage() {
       icon={<Scale className="h-10 w-10 text-primary" strokeWidth={1.5} />}
     >
       <p className="mb-2 text-sm font-medium text-faint">
-        Last updated: August 2026
+        Last updated: September 2026
+      </p>
+
+      <p className="mb-8 text-base leading-7 text-muted-foreground">
+        Privacy: FilmSnaps collects no personal data —{" "}
+        <Link
+          href="/privacy"
+          className="text-primary underline-offset-2 hover:underline"
+        >
+          see the Privacy Policy
+        </Link>
+        .
       </p>
 
       <Section title="Nature of the Software">

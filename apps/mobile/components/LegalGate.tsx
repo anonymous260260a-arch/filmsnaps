@@ -19,7 +19,6 @@ import {
   Image,
   LayoutAnimation,
   Platform,
-  UIManager,
   Alert,
   BackHandler,
 } from "react-native";
@@ -27,14 +26,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useSettings } from "../lib/settings";
 import { colors } from "../theme/colors";
+import PrivacyPolicyBody from "./PrivacyPolicyBody";
+import { BackIcon } from "./Icons";
 
-// Enable LayoutAnimation on Android
-if (
-  Platform.OS === "android" &&
-  UIManager.setLayoutAnimationEnabledExperimental
-) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+// Phase 1C FIX 5.1: removed UIManager.setLayoutAnimationEnabledExperimental
+// (no-op warning on New Architecture / RN 0.83).
 
 const SECTIONS = [
   {
@@ -150,9 +146,12 @@ export default function LegalGate() {
   const { updateSetting } = useSettings();
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [showingDecline, setShowingDecline] = useState(false);
+  const [showingPrivacy, setShowingPrivacy] = useState(false);
 
   const handleAccept = useCallback(() => {
-    updateSetting("legalAccepted", true);
+    // Immediate write (no 300ms debounce) — settings.tsx short-circuits
+    // legalAccepted to a sync setItem. Logs "[Settings] write legalAccepted resolved".
+    void updateSetting("legalAccepted", true);
   }, [updateSetting]);
 
   const handleDecline = useCallback(() => {
@@ -249,10 +248,33 @@ export default function LegalGate() {
       className="flex-1"
       style={{ backgroundColor: colors.bg, paddingTop: insets.top }}
     >
-      <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 160 }}
-        showsVerticalScrollIndicator={false}
-      >
+      {showingPrivacy ? (
+        <>
+          <View className="px-5 pt-4 pb-2 flex-row items-center">
+            <TouchableOpacity
+              onPress={() => setShowingPrivacy(false)}
+              className="w-9 h-9 rounded-full bg-zinc-800/60 items-center justify-center mr-3"
+              activeOpacity={0.7}
+            >
+              <BackIcon width={20} height={20} color={colors.textPrimary} />
+            </TouchableOpacity>
+            <Text
+              style={{
+                fontFamily: "PlayfairDisplay_700Bold",
+                fontSize: 22,
+                color: colors.textPrimary,
+              }}
+            >
+              Privacy Policy
+            </Text>
+          </View>
+          <PrivacyPolicyBody bottomPadding={160} />
+        </>
+      ) : (
+        <ScrollView
+          contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 160 }}
+          showsVerticalScrollIndicator={false}
+        >
         {/* Centered brand area */}
         <View className="items-center pt-8 pb-6">
           <Image
@@ -337,7 +359,30 @@ export default function LegalGate() {
         >
           By tapping "I Understand", you accept these terms.
         </Text>
-      </ScrollView>
+        <Text
+          className="text-xs text-center mt-2 leading-5"
+          style={{ color: colors.textTertiary }}
+        >
+          FilmSnaps may send anonymous usage statistics and crash reports —
+          small, non-personal signals that help us fix crashes and improve
+          streaming sources (crash reports are processed by Sentry, a US-based
+          crash-reporting service). Nothing identifies you. You can turn this
+          off anytime in Settings → Anonymous usage statistics.
+        </Text>
+        <TouchableOpacity
+          onPress={() => setShowingPrivacy(true)}
+          activeOpacity={0.7}
+          className="mt-3 items-center"
+        >
+          <Text
+            className="text-xs underline"
+            style={{ color: colors.info, fontFamily: "Inter_500Medium" }}
+          >
+            Read the Privacy Policy →
+          </Text>
+        </TouchableOpacity>
+        </ScrollView>
+      )}
 
       {/* Fixed bottom: Accept + Decline */}
       <View

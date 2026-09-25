@@ -16,6 +16,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { tmdbApi } from "../../lib/api";
 import { MediaCard } from "../../components/MediaCard";
+import {
+  openDetail,
+  prepareDetail,
+  toDetailNavItem,
+} from "../../lib/openDetail";
 import { colors } from "../../theme/colors";
 
 const CATEGORY_CONFIG: Record<
@@ -98,21 +103,22 @@ export default function CategoryListScreen() {
     }
   }, [isFetching, data, page]);
 
+  const handleItemPressIn = useCallback(
+    (item: any) => {
+      const mediaType =
+        item.media_type || (category?.includes("movies") ? "movie" : "tv");
+      const navItem = toDetailNavItem(item, mediaType === "tv" ? "tv" : "movie");
+      if (navItem) prepareDetail(navItem, "list", queryClient, router);
+    },
+    [queryClient, router, category],
+  );
+
   const handleItemPress = useCallback(
     (item: any) => {
       const mediaType =
         item.media_type || (category?.includes("movies") ? "movie" : "tv");
-      const dest = mediaType === "tv" ? `/tv/${item.id}` : `/movie/${item.id}`;
-      queryClient.prefetchQuery({
-        queryKey: [mediaType, item.id],
-        queryFn: () =>
-          mediaType === "tv"
-            ? tmdbApi.getTVDetails(item.id)
-            : tmdbApi.getMovieDetails(item.id),
-        staleTime: 1000 * 60 * 60,
-      });
-      router.prefetch(dest);
-      nav.push(dest);
+      const navItem = toDetailNavItem(item, mediaType === "tv" ? "tv" : "movie");
+      if (navItem) openDetail(navItem, "list", { queryClient, router, nav });
     },
     [nav, router, queryClient, category],
   );
@@ -242,7 +248,7 @@ export default function CategoryListScreen() {
               <MediaCard
                 item={item}
                 onPress={handleItemPress}
-                variant="default"
+                onPressIn={handleItemPressIn}
               />
             </View>
           )}

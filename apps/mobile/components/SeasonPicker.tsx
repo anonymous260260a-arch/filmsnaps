@@ -14,6 +14,7 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
+  FlatList,
   ActivityIndicator,
   useWindowDimensions,
 } from "react-native";
@@ -52,6 +53,8 @@ interface SeasonPickerProps {
 const COLLAPSE_THRESHOLD = 8;
 const THUMB_W = 88;
 const THUMB_H = 50; // 16:9
+// Fixed row height for FlatList getItemLayout: padding 8+8 + thumb 50.
+const EPISODE_ROW_HEIGHT = THUMB_H + 16;
 
 function formatRuntime(minutes: number): string {
   if (!minutes || minutes < 1) return "";
@@ -323,41 +326,57 @@ export function SeasonPicker({
           <ActivityIndicator size="small" color={colors.gold} />
         </View>
       ) : displayEpisodes.length > 0 ? (
-        <View style={{ gap: 8 }}>
-          {displayEpisodes.map((episode: any) => {
-            const epNum = episode.episode_number;
-            const epKey = `${selectedSeason}-${epNum}`;
-            const progress = episodeProgress[epKey];
-            const stillUri = episode.still_path
-              ? getImageUrl(episode.still_path, "w300")
-              : backdropPath
-                ? getImageUrl(backdropPath, "w300")
-                : null;
+        <View>
+          <FlatList
+            data={displayEpisodes}
+            keyExtractor={(episode: any, index: number) =>
+              `${selectedSeason}-${episode.episode_number ?? index}`
+            }
+            scrollEnabled={false}
+            initialNumToRender={10}
+            maxToRenderPerBatch={8}
+            windowSize={7}
+            removeClippedSubviews
+            getItemLayout={(_, index) => ({
+              length: EPISODE_ROW_HEIGHT,
+              offset: (EPISODE_ROW_HEIGHT + 8) * index,
+              index,
+            })}
+            ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+            renderItem={({ item: episode }) => {
+              const epNum = episode.episode_number;
+              const epKey = `${selectedSeason}-${epNum}`;
+              const progress = episodeProgress[epKey];
+              const stillUri = episode.still_path
+                ? getImageUrl(episode.still_path, "w300")
+                : backdropPath
+                  ? getImageUrl(backdropPath, "w300")
+                  : null;
 
-            const dlStatus = getEpisodeDownloadStatus(epNum);
+              const dlStatus = getEpisodeDownloadStatus(epNum);
 
-            return (
-              <TouchableOpacity
-                key={`${selectedSeason}-${epNum}`}
-                onPress={() => {
-                  const base = `/watch/tv/${tmdbId}/${selectedSeason}/${epNum}`;
-                  const qs =
-                    progress && progress.percent > 0 && progress.percent < 0.95
-                      ? `?t=${Math.floor(progress.currentTime)}&backdrop=${backdropPath || ""}`
-                      : `?backdrop=${backdropPath || ""}`;
-                  nav.push(`${base}${qs}`);
-                }}
-                activeOpacity={0.75}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  padding: 8,
-                  backgroundColor: "rgba(14, 14, 17, 0.45)",
-                  borderRadius: 12,
-                  borderWidth: 0.5,
-                  borderColor: colors.borderSubtle,
-                }}
-              >
+              return (
+                <TouchableOpacity
+                  onPress={() => {
+                    const base = `/watch/tv/${tmdbId}/${selectedSeason}/${epNum}`;
+                    const qs =
+                      progress && progress.percent > 0 && progress.percent < 0.95
+                        ? `?t=${Math.floor(progress.currentTime)}&backdrop=${backdropPath || ""}`
+                        : `?backdrop=${backdropPath || ""}`;
+                    nav.push(`${base}${qs}`);
+                  }}
+                  activeOpacity={0.75}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    padding: 8,
+                    height: EPISODE_ROW_HEIGHT,
+                    backgroundColor: "rgba(14, 14, 17, 0.45)",
+                    borderRadius: 12,
+                    borderWidth: 0.5,
+                    borderColor: colors.borderSubtle,
+                  }}
+                >
                 {/* 16:9 Thumbnail container */}
                 <View
                   style={{
@@ -521,8 +540,9 @@ export function SeasonPicker({
                   )}
                 </View>
               </TouchableOpacity>
-            );
-          })}
+              );
+            }}
+          />
 
           {/* Expand / collapse */}
           {showExpandButton && (

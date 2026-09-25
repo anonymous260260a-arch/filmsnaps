@@ -4,6 +4,8 @@ import type { QueryKey } from "@tanstack/react-query";
 
 const ASYNC_STORAGE_KEY = "@filmsnaps/tanstack-query-cache";
 
+export { ASYNC_STORAGE_KEY };
+
 /**
  * React Query persister backed by AsyncStorage.
  *
@@ -32,35 +34,37 @@ export const asyncStoragePersister = createAsyncStoragePersister({
 /**
  * Determine whether a query should be persisted to disk.
  *
- * Persists TMDB metadata (static-ish data that survives cold launch).
- * Drops volatile queries that change per-query or per-params.
+ * Only home-feed LIST queries are persisted (target blob < 500KB):
+ *   - trending movies / trending tv / popular / upcoming
+ *   - anime home rails (anilist.home)
+ *
+ * EXCLUDED (large 200KB–1MB payloads that bloat restore and risk Android
+ * AsyncStorage size caps): details, seasons, person, similar, moreLikeThis,
+ * filtered discover, search.
  */
 export function isPersistableQuery(key: QueryKey): boolean {
   if (!Array.isArray(key) || typeof key[0] !== "string") return false;
 
   const prefix = key[0];
+  const second = key[1];
 
-  // Drop volatile — search results change per query, low value to persist
-  if (prefix === "search") return false;
+  // Home feed lists only
+  if (prefix === "movies" && second === "trending") return true;
+  if (prefix === "movies" && second === "popular") return true;
+  if (prefix === "movies" && second === "upcoming") return true;
+  if (prefix === "tv" && second === "trending") return true;
+  // Anime home feed rails
+  if (prefix === "anilist" && second === "home") return true;
 
-  // Drop filtered discover — changes with every param combination
-  if (
-    (prefix === "movies" && key[1] === "filtered") ||
-    (prefix === "tv" && key[1] === "filtered")
-  )
-    return false;
+  return false;
+}
 
-  // Persist static + semi-static TMDB data
-  const persistable = [
-    "movie",
-    "movies",
-    "tv",
-    "trending",
-    "popular",
-    "upcoming",
-    "season",
-    "person",
-    "anilist", // anime home feed — stable content, persists like trending/popular
-  ];
-  return persistable.includes(prefix);
+/** Read the raw persisted blob size in bytes (0 if missing). */
+export async function readPersistedCacheBytes(): Promise<number> {
+  try {
+    const raw = await AsyncStorage.getItem(ASYNC_STORAGE_KEY);
+    return raw ? raw.length : 0;
+  } catch {
+    return 0;
+  }
 }

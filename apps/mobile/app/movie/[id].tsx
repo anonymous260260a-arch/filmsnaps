@@ -15,16 +15,26 @@ import {
   Share,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { trackFeatureUsed } from "../../lib/telemetry";
 import { colors } from "../../theme/colors";
 import { getImageUrl, getTrailerKey } from "@filmsnaps/shared";
 import { ProgressiveImage } from "../../components/ProgressiveImage";
 import { typography } from "../../lib/typography";
 import { FilmGrain } from "../../components/FilmGrain";
 import { useMovieDetails } from "../../hooks/useTMDB";
+import {
+  beginDetail,
+  markDetailFirstFrame,
+  markDetailContentReady,
+} from "../../lib/detailMetrics";
+import { DETAIL_BACKDROP_SIZE } from "../../components/heroLayout";
+import { openDetail, prepareDetail, toDetailNavItem } from "../../lib/openDetail";
+import { useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
 import { MediaCarousel } from "../../components/MediaCarousel";
 import { CastCarousel } from "../../components/CastCarousel";
 import { TrailerModal } from "../../components/TrailerModal";
@@ -38,8 +48,10 @@ import {
 import { getProgress } from "../../lib/watchHistory";
 import { downloadToast } from "../../lib/download";
 import { prefetchArtwork } from "../../lib/prefetchArtwork";
-import { prefetchStreams } from "../../lib/streamPrefetch";
-import { resolvePrefetchProviderId } from "../../lib/resolvePrefetchProvider";
+import { prefetchStreams, peekPrefetchStreams, setStreamHandoff } from "../../lib/streamPrefetch";
+import { resolvePlaybackProviderId } from "../../lib/resolvePlaybackProvider";
+import { beginDetailsTap } from "../../lib/perfMetrics";
+import { holdEarlyPlayer, releaseEarlyPlayer } from "../../lib/earlyPlayerHolder";
 import { useSettings } from "../../lib/settings";
 import type { WatchProgress } from "../../lib/watchHistory";
 import { resolveMovie } from "../../lib/anime/resolve";
@@ -55,19 +67,77 @@ function formatRuntime(minutes: number): string {
 }
 
 export default function MovieDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const routeParams = useLocalSearchParams<{
+    id: string;
+    title?: string;
+    poster_path?: string;
+    backdrop_path?: string;
+    vote_average?: string;
+    release_date?: string;
+    blurhash?: string;
+  }>();
+  const id = routeParams.id;
   const nav = useSafeNavigation();
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = useWindowDimensions();
-  const { data, isLoading } = useMovieDetails(id!);
+  const { data, isLoading, isFetched, isError } = useMovieDetails(id!);
+
+  // Params-first snapshot: header fields available before query resolves.
+  const paramsSnapshot = useMemo(() => {
+    if (!routeParams.title && !routeParams.poster_path && !routeParams.backdrop_path) {
+      return null;
+    }
+    return {
+      title: routeParams.title ?? "",
+      poster_path: routeParams.poster_path ?? null,
+      backdrop_path: routeParams.backdrop_path ?? null,
+      vote_average: routeParams.vote_average
+        ? Number(routeParams.vote_average)
+        : null,
+      release_date: routeParams.release_date ?? null,
+      blurhash: routeParams.blurhash ?? null,
+    };
+  }, [
+    routeParams.title,
+    routeParams.poster_path,
+    routeParams.backdrop_path,
+    routeParams.vote_average,
+    routeParams.release_date,
+    routeParams.blurhash,
+  ]);
+
+  // Phase 2 instrumentation — once per screen mount.
+  const metricsStarted = useRef(false);
+  useEffect(() => {
+    if (metricsStarted.current || !id) return;
+    metricsStarted.current = true;
+    beginDetail("movie", String(id));
+  }, [id]);
+
+  useEffect(() => {
+    if (isFetched) markDetailContentReady();
+  }, [isFetched]);
 
   const BACKDROP_HEIGHT = Math.min(SCREEN_HEIGHT * 0.42, 350);
   const POSTER_WIDTH = 104;
   const POSTER_OVERLAP = 52;
   const scrollY = useRef(new Animated.Value(0)).current;
 
-  const movie = data;
-  const title = movie?.title || movie?.name || "";
+  // Header fields: query data wins; params are the pre-fetch fallback.
+  const movie = data ?? null;
+  const header = movie
+    ? {
+        title: movie.title || movie.name || "",
+        poster_path: movie.poster_path ?? null,
+        backdrop_path: movie.backdrop_path ?? null,
+        vote_average: movie.vote_average ?? null,
+        release_date: movie.release_date ?? null,
+      }
+    : paramsSnapshot;
+  const title = header?.title || "";
+  const queryReady = !!movie;
 
   const animeHit = useMemo(() => resolveMovie(id!) ?? null, [id]);
 
@@ -78,69 +148,120 @@ export default function MovieDetailScreen() {
   const { settings, loaded: settingsLoaded } = useSettings();
   const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
 
+  // FIX 7: rank-option deps are value-level; selection re-prefetch debounced 500ms.
+  // B1: prefetch only while focused — defer rank changes until next focus.
+  const rankSig = `${settings.cellularMaxMB}|${settings.maxQuality}|${settings.preferredAudioLanguage}|${settings.defaultServer}`;
+  const lastRankSigRef = useRef<string | null>(null);
+  const pendingRankSigRef = useRef<string | null>(null);
+  // D1: provider this details page resolved — Watch always passes it via ?provider=.
+  const resolvedProviderRef = useRef<string | null>(null);
+  // D3: set true when Watch is pressed so unmount cleanup keeps the warm player.
+  const navigatedToWatchRef = useRef(false);
+  // D3: last cache key we held a warm player for (release on leave-without-watch).
+  const heldEarlyKeyRef = useRef<string | null>(null);
+  // Bookmark / resume loads stay mount-driven (not focus-gated).
   useEffect(() => {
-    if (id) {
-      isBookmarked(id!).then(setBookmarked);
-      getProgress(id!, "movie", undefined, undefined, animeHit != null).then(
-        (p) => {
-          if (p && p.percent > 0) setResumeState(p);
-        },
-      );
-      // Prefetch stream links in background — but NOT before settings
-      // hydrate: ranking with default settings would cache a wrong-language
-      // chain that the real settings must re-rank.
-      // The prefetch targets what watch will actually open: the title's
-      // last-used direct provider (CW restore), else the saved default
-      // server, else the platform default (hdhub). Embed defaults → nothing.
-      if (!settingsLoaded) return;
+    if (!id) return;
+    isBookmarked(id!).then(setBookmarked);
+    getProgress(id!, "movie", undefined, undefined, animeHit != null).then(
+      (p) => {
+        if (p && p.percent > 0) setResumeState(p);
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, animeHit]);
+  useFocusEffect(
+    useCallback(() => {
+      if (!id || !settingsLoaded) return;
+      // D3: each focus is a fresh visit — a prior Watch tap must not keep
+      // skipping the blur release forever (that orphaned a playing holder).
+      navigatedToWatchRef.current = false;
+      // If rank options changed while unfocused, apply them on focus now.
+      const sig = pendingRankSigRef.current ?? rankSig;
+      pendingRankSigRef.current = null;
+      const isFirst = lastRankSigRef.current === null;
+      lastRankSigRef.current = sig;
+      const delay = isFirst ? 0 : 500;
       let prefetchCancelled = false;
-      resolvePrefetchProviderId("movie", parseInt(id), settings.defaultServer)
-        .then((providerId) => {
-          if (prefetchCancelled || !providerId) return;
-          return prefetchStreams(parseInt(id), "movie", undefined, undefined, {
-            cellularMaxMB: settings.cellularMaxMB,
-            maxQuality: settings.maxQuality,
-            preferredAudioLanguage: settings.preferredAudioLanguage,
-            providerId,
-            trigger: "details",
-          }).catch((err) => {
-            console.log(`[MovieDetail] Prefetch failed:`, err?.message);
-          });
+      const timer = setTimeout(() => {
+        if (prefetchCancelled) return;
+        resolvePlaybackProviderId({
+          mediaType: "movie",
+          tmdbId: parseInt(id),
+          savedServer: settings.defaultServer,
         })
-        .catch(() => {});
+          .then((providerId) => {
+            if (prefetchCancelled || !providerId) return;
+            resolvedProviderRef.current = providerId;
+            return prefetchStreams(parseInt(id), "movie", undefined, undefined, {
+              cellularMaxMB: settings.cellularMaxMB,
+              maxQuality: settings.maxQuality,
+              preferredAudioLanguage: settings.preferredAudioLanguage,
+              providerId,
+              trigger: "details",
+            })
+              .then((snap) => {
+                // D3: pipeline READY during details dwell → warm player on head.
+                if (prefetchCancelled || !snap || snap.links.length === 0) return;
+                const head = snap.links[snap.bestIndex];
+                const key = `movie:${parseInt(id)}:s0:e0:${providerId}`;
+                if (holdEarlyPlayer(key, head)) {
+                  heldEarlyKeyRef.current = key;
+                }
+              })
+              .catch((err) => {
+                console.log(`[MovieDetail] Prefetch failed:`, err?.message);
+              });
+          })
+          .catch(() => {});
+      }, delay);
       return () => {
         prefetchCancelled = true;
+        clearTimeout(timer);
+        // D3: left details without navigating to watch → release the warm player.
+        if (!navigatedToWatchRef.current && heldEarlyKeyRef.current) {
+          releaseEarlyPlayer(heldEarlyKeyRef.current);
+          heldEarlyKeyRef.current = null;
+        }
       };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id, settingsLoaded, rankSig]),
+  );
+  // Track rank changes while unfocused so next focus re-prefetches with them.
+  useEffect(() => {
+    if (lastRankSigRef.current !== null && lastRankSigRef.current !== rankSig) {
+      pendingRankSigRef.current = rankSig;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, animeHit, settings, settingsLoaded]);
+  }, [rankSig]);
 
   const toggleBookmark = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const next = !bookmarked;
-    setBookmarked(next);
-    if (next) {
+setBookmarked(next);
+      trackFeatureUsed("bookmark_save", "detail");
+      if (next) {
       debouncedSaveBookmark({
         tmdbId: id!,
         mediaType: "movie",
-        title: movie?.title || movie?.name || "",
-        posterPath: movie?.poster_path ?? null,
-        year: movie?.release_date?.split("-")[0] ?? "",
+        title: header?.title || "",
+        posterPath: header?.poster_path ?? null,
+        year: (header?.release_date ?? "").split("-")[0] ?? "",
         addedAt: Date.now(),
       });
       prefetchArtwork({
-        poster_path: movie?.poster_path,
-        backdrop_path: movie?.backdrop_path,
+        poster_path: header?.poster_path,
+        backdrop_path: header?.backdrop_path,
       });
       downloadToast.success("Saved to Library", 2500);
     } else {
       debouncedRemoveBookmark(id!);
       downloadToast.info("Removed from Saved", 2000);
     }
-  }, [id, bookmarked, movie]);
+  }, [id, bookmarked, header]);
 
   const handleShare = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    trackFeatureUsed("share_used", "detail");
     Share.share({
       message: `Check out "${title}" on FilmSnaps 🎬\nhttps://filmsnap-pro.netlify.app/movie/${id}`,
     });
@@ -149,37 +270,50 @@ export default function MovieDetailScreen() {
   const handleDownloadServer = useCallback(
     (server: string) => {
       const qs = new URLSearchParams({
-        poster: movie?.poster_path || "",
-        backdrop: movie?.backdrop_path || "",
+        poster: header?.poster_path || "",
+        backdrop: header?.backdrop_path || "",
       }).toString();
       nav.push(`/download/${server}/movie/${id}?${qs}`);
     },
-    [id, nav, movie?.poster_path, movie?.backdrop_path],
+    [id, nav, header?.poster_path, header?.backdrop_path],
   );
 
-  if (isLoading) {
+  // Deep link / cold route with no header params → full skeleton until data.
+  // Params present → paint header immediately; skeleton only for query sections.
+  if (!header && isLoading) {
     return <DetailSkeleton />;
   }
 
-  if (!movie) {
+  if (!header && !isLoading) {
     return (
       <View
         className="flex-1 items-center justify-center bg-void"
         style={{ backgroundColor: colors.bg }}
+        onLayout={() => markDetailFirstFrame()}
       >
         <Ionicons name="film-outline" size={48} color={colors.textTertiary} />
-        <Text className="text-text-secondary mt-3">Movie not found</Text>
+        <Text className="text-text-secondary mt-3">
+          {isError ? "Couldn't load movie" : "Movie not found"}
+        </Text>
       </View>
     );
   }
 
-  const year = movie.release_date?.split("-")[0] ?? "";
-  const genres = movie.genres ?? [];
-  const trailerKey = getTrailerKey(movie.videos);
-  const cast = movie.credits?.cast?.slice(0, 10) ?? [];
+  const year =
+    (movie?.release_date || header?.release_date)?.split("-")[0] ?? "";
+  const genres = movie?.genres ?? [];
+  const trailerKey = movie ? getTrailerKey(movie.videos) : null;
+  const cast = movie?.credits?.cast?.slice(0, 10) ?? [];
+  const backdropPath = header?.backdrop_path ?? null;
+  const posterPath = header?.poster_path ?? null;
+  const voteAverage = header?.vote_average ?? null;
 
   return (
-    <View className="flex-1 bg-void" style={{ backgroundColor: colors.bg }}>
+    <View
+      className="flex-1 bg-void"
+      style={{ backgroundColor: colors.bg }}
+      onLayout={() => markDetailFirstFrame()}
+    >
       {/* ── Floating Top Glass Navigation Bar ── */}
       <View
         style={{
@@ -285,7 +419,7 @@ export default function MovieDetailScreen() {
             position: "relative",
           }}
         >
-          {movie.backdrop_path ? (
+          {backdropPath ? (
             <Animated.View
               style={{
                 position: "absolute",
@@ -308,7 +442,7 @@ export default function MovieDetailScreen() {
               }}
             >
               <ProgressiveImage
-                uri={getImageUrl(movie.backdrop_path, "w780")}
+                uri={getImageUrl(backdropPath, DETAIL_BACKDROP_SIZE)}
                 style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT }}
                 resizeMode="cover"
               />
@@ -356,9 +490,9 @@ export default function MovieDetailScreen() {
           {/* Poster + Info row */}
           <View className="flex-row items-center">
             {/* Elevated Poster */}
-            {movie.poster_path ? (
+            {posterPath ? (
               <ProgressiveImage
-                uri={getImageUrl(movie.poster_path, "w342")}
+                uri={getImageUrl(posterPath, "w342")}
                 style={{
                   width: POSTER_WIDTH,
                   height: POSTER_WIDTH * 1.5,
@@ -422,7 +556,7 @@ export default function MovieDetailScreen() {
                   marginBottom: 6,
                 }}
               >
-                {movie.vote_average != null && movie.vote_average > 0 && (
+                {voteAverage != null && voteAverage > 0 && (
                   <View
                     style={{
                       backgroundColor: "rgba(212,162,55,0.15)",
@@ -442,7 +576,7 @@ export default function MovieDetailScreen() {
                         fontFamily: "Inter_600SemiBold",
                       }}
                     >
-                      ★ {movie.vote_average.toFixed(1)}
+                      ★ {voteAverage.toFixed(1)}
                     </Text>
                   </View>
                 )}
@@ -468,7 +602,7 @@ export default function MovieDetailScreen() {
                   </View>
                 ) : null}
 
-                {movie.runtime ? (
+                {queryReady && movie.runtime ? (
                   <View
                     style={{
                       backgroundColor: "rgba(255, 255, 255, 0.08)",
@@ -498,8 +632,8 @@ export default function MovieDetailScreen() {
                 ) : null}
               </View>
 
-              {/* Genre badges */}
-              {genres.length > 0 && (
+              {/* Genre badges — query-dependent */}
+              {queryReady && genres.length > 0 && (
                 <View className="flex-row flex-wrap" style={{ gap: 4 }}>
                   {genres.slice(0, 3).map((g: { id: number; name: string }) => (
                     <View
@@ -531,7 +665,7 @@ export default function MovieDetailScreen() {
 
           {/* ── Action Buttons: Primary Watch + Secondary Quick Actions ── */}
           <View style={{ marginTop: 18 }}>
-            {/* Primary Watch/Resume CTA */}
+            {/* Primary Watch/Resume CTA — resume state is local; title works from params */}
             <TouchableOpacity
               onPress={() => {
                 const base = `/watch/movie/${id}`;
@@ -539,9 +673,9 @@ export default function MovieDetailScreen() {
                   resumeState && resumeState.percent < 0.95
                     ? {
                         t: String(Math.floor(resumeState.currentTime)),
-                        backdrop: movie.backdrop_path || "",
+                        backdrop: backdropPath || "",
                       }
-                    : { backdrop: movie.backdrop_path || "" },
+                    : { backdrop: backdropPath || "" },
                 );
                 if (animeHit) {
                   params.set("isAnime", "1");
@@ -550,6 +684,38 @@ export default function MovieDetailScreen() {
                     params.set("aid", String(animeHit.anilistId));
                   params.set("audio", "sub");
                 }
+                // D1: always pass the provider this details page resolved so
+                // watch does one sync resolve — no async flip, no cancelled
+                // pipeline. Peek with the SAME provider id for the exact key.
+                const resolvedProvider = resolvedProviderRef.current;
+                if (resolvedProvider) {
+                  params.set("provider", resolvedProvider);
+                }
+                // FIX 5: hand the warm snapshot to watch; still runs trigger=watch.
+                const snap = peekPrefetchStreams(parseInt(id), "movie", undefined, undefined, {
+                  cellularMaxMB: settings.cellularMaxMB,
+                  maxQuality: settings.maxQuality,
+                  preferredAudioLanguage: settings.preferredAudioLanguage,
+                  providerId: resolvedProvider ?? undefined,
+                });
+                if (snap && snap.links.length > 0) {
+                  const head = snap.links[snap.bestIndex];
+                  setStreamHandoff(
+                    parseInt(id),
+                    "movie",
+                    undefined,
+                    undefined,
+                    resolvedProvider ?? head?._meta?.providerId ?? "direct",
+                    snap,
+                  );
+                  if (head?.url) params.set("streamUrl", head.url);
+                  params.set("bestIndex", String(snap.bestIndex));
+                }
+                // FIX 9: detailsTap opens the perf session before the player tree.
+                const perfKey = `movie:${id}`;
+                beginDetailsTap(perfKey);
+                // D3: keep the warm player for adoption — don't release on unmount.
+                navigatedToWatchRef.current = true;
                 nav.push(`${base}?${params.toString()}`);
               }}
               activeOpacity={0.88}
@@ -594,9 +760,12 @@ export default function MovieDetailScreen() {
 
             {/* Secondary Action Row: Trailer & Download */}
             <View className="flex-row items-center mt-3" style={{ gap: 10 }}>
-              {trailerKey ? (
+              {queryReady && trailerKey ? (
                 <TouchableOpacity
-                  onPress={() => setTrailerOpen(true)}
+                  onPress={() => {
+                    trackFeatureUsed("trailer_open", "detail");
+                    setTrailerOpen(true);
+                  }}
                   activeOpacity={0.75}
                   style={{
                     flex: 1,
@@ -658,8 +827,8 @@ export default function MovieDetailScreen() {
             </View>
           </View>
 
-          {/* Overview */}
-          {movie.overview ? (
+          {/* Overview — query-dependent */}
+          {queryReady && movie.overview ? (
             <View className="mt-6">
               <Text
                 style={{
@@ -702,16 +871,68 @@ export default function MovieDetailScreen() {
             </View>
           ) : null}
 
-          {/* Cast */}
-          {cast.length > 0 && <CastCarousel cast={movie.credits.cast} />}
+          {/* Cast — query-dependent */}
+          {queryReady && cast.length > 0 && (
+            <CastCarousel cast={movie.credits.cast} />
+          )}
 
-          {/* Similar movies */}
-          {movie.similar?.results?.length > 0 && (
+          {/* Similar movies — query-dependent */}
+          {queryReady && movie.similar?.results?.length > 0 && (
             <View className="mt-6">
               <MediaCarousel
                 title="Similar Movies"
                 data={movie.similar.results}
-                onItemPress={(item) => nav.push(`/movie/${item.id}`)}
+                onItemPressIn={(item) => {
+                  const navItem = toDetailNavItem(item, "movie");
+                  if (navItem)
+                    prepareDetail(navItem, "similar", queryClient, router);
+                }}
+                onItemPress={(item) => {
+                  const navItem = toDetailNavItem(item, "movie");
+                  if (navItem)
+                    openDetail(navItem, "similar", {
+                      queryClient,
+                      router,
+                      nav,
+                    });
+                }}
+              />
+            </View>
+          )}
+
+          {/* Query-dependent placeholder while details load (params-only paint) */}
+          {!queryReady && !isLoading && isError && (
+            <View className="mt-6">
+              <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
+                Details unavailable — check your connection.
+              </Text>
+            </View>
+          )}
+          {!queryReady && isLoading && (
+            <View className="mt-6" style={{ gap: 8 }}>
+              <View
+                style={{
+                  height: 14,
+                  width: "40%",
+                  borderRadius: 4,
+                  backgroundColor: colors.bgElevated,
+                }}
+              />
+              <View
+                style={{
+                  height: 12,
+                  width: "100%",
+                  borderRadius: 4,
+                  backgroundColor: colors.bgElevated,
+                }}
+              />
+              <View
+                style={{
+                  height: 12,
+                  width: "85%",
+                  borderRadius: 4,
+                  backgroundColor: colors.bgElevated,
+                }}
               />
             </View>
           )}

@@ -129,7 +129,8 @@ export {
 } from "./utils/falix";
 
 // ── API ──
-export { createTmdbApi } from "./api/tmdb";
+export { createTmdbApi, ApiError, fetchJson } from "./api/tmdb";
+export type { FetchJsonOptions } from "./api/tmdb";
 
 // ── Utils ──
 export { getImageUrl, getTrailerKey, cn } from "./utils";

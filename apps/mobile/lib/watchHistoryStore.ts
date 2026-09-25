@@ -23,6 +23,7 @@
  */
 
 import { useMemo, useSyncExternalStore } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { tmdbApi } from "./api";
 import {
   getAggregatedHistory,
@@ -37,6 +38,35 @@ import {
 import type { Movie } from "@filmsnaps/shared";
 
 const META_TTL_MS = 24 * 60 * 60 * 1000; // 24h — industry-standard for TMDB
+
+/**
+ * "Known non-empty" hint — set once history has ever been non-empty on this
+ * device so the home screen can reserve the Continue Watching slot while the
+ * store is still hydrating (first frames of a cold start).
+ */
+const HISTORY_HINT_KEY = "@filmsnaps/watch-history-hint";
+let historyHint: boolean | null = null;
+AsyncStorage.getItem(HISTORY_HINT_KEY)
+  .then((v) => {
+    historyHint = v === "1";
+  })
+  .catch(() => {});
+
+/** true / false once known; null before the first read completes. */
+export function getHistoryHint(): boolean | null {
+  return historyHint;
+}
+
+async function writeHistoryHint(nonEmpty: boolean): Promise<void> {
+  if (historyHint === nonEmpty) return;
+  historyHint = nonEmpty;
+  try {
+    if (nonEmpty) await AsyncStorage.setItem(HISTORY_HINT_KEY, "1");
+    else await AsyncStorage.removeItem(HISTORY_HINT_KEY);
+  } catch {
+    // best-effort
+  }
+}
 
 export interface ResolvedHistoryEntry {
   latest: WatchProgress;
@@ -141,6 +171,7 @@ class WatchHistoryStore {
         metaTs: fresh ? c.ts : 0,
       };
     });
+    void writeHistoryHint(this.entries.length > 0);
     this.emit();
 
     const needsFetch = this.entries

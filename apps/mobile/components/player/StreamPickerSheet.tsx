@@ -26,6 +26,7 @@ import {
   parseLinkLanguages,
   getLanguageSection,
   isCamPrint,
+  isDownloadOnlyLink,
   type LinkLanguage,
   type PreferredLanguage,
 } from "../../lib/streamSelector";
@@ -160,6 +161,8 @@ export function StreamPickerSheet({
   const rows = useMemo<PickerRow[]>(() => {
     const matching = links
       .map((link, index) => ({ link, index }))
+      // S4: download-only links never appear in the watch-time sheet.
+      .filter(({ link }) => !isDownloadOnlyLink(link))
       .filter(
         ({ link }) =>
           languageFilter === "all" ||
@@ -200,7 +203,8 @@ export function StreamPickerSheet({
       out.push(...group.rows);
     }
     if (dead.length > 0) {
-      out.push({ kind: "header", key: "h-failed", label: "Failed" });
+      // S5: friendlier heading than "Failed".
+      out.push({ kind: "header", key: "h-failed", label: "Didn't work" });
       out.push(...dead);
     }
     return out;
@@ -219,10 +223,13 @@ export function StreamPickerSheet({
         onPress={onClose}
       >
         <View style={styles.sheet}>
-          {/* Header */}
+          {/* Header — S2: match embed sheet title + subtitle */}
           <View style={styles.header}>
             <View style={styles.headerTitleWrap}>
-              <Text style={styles.headerTitle}>Sources</Text>
+              <Text style={styles.headerTitle}>Streaming sources</Text>
+              <Text style={styles.headerSubtitle}>
+                Switch if your stream is slow or buffering
+              </Text>
             </View>
             <View style={styles.headerActions}>
               {onRetest && (
@@ -293,7 +300,6 @@ export function StreamPickerSheet({
               const { link, index } = item;
               const isActive = index === activeIndex;
               const isRecommended = index === recommendedIndex;
-              const meta = link._meta;
               const outcome = linkStatuses[index];
               const status = statusIcon(outcome);
               const failed = outcome === "dead";
@@ -302,11 +308,9 @@ export function StreamPickerSheet({
                 preferredLanguage,
               );
               const sizeLabel = formatSizeHuman(link);
+              // S3: main line is quality · language · size only — no container/codec jargon.
               const hasBadges =
-                isRecommended ||
-                index === lastUsedIndex ||
-                isCamPrint(link) ||
-                meta?.isDownloadOnly;
+                isRecommended || index === lastUsedIndex || isCamPrint(link);
               return (
                 <TouchableOpacity
                   style={[
@@ -392,18 +396,6 @@ export function StreamPickerSheet({
                             </Text>
                           </View>
                         )}
-                        {meta?.isDownloadOnly && (
-                          <View style={[styles.badge, styles.badgeDownload]}>
-                            <Text
-                              style={[
-                                styles.badgeText,
-                                styles.badgeTextDownload,
-                              ]}
-                            >
-                              Download only
-                            </Text>
-                          </View>
-                        )}
                       </View>
                     )}
                   </View>
@@ -465,6 +457,11 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 18,
     fontWeight: "700",
+  },
+  headerSubtitle: {
+    color: colors.textTertiary,
+    fontSize: 11,
+    marginTop: 2,
   },
   headerActions: {
     flexDirection: "row",
@@ -595,16 +592,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 3,
   },
-  badgeDownload: {
-    backgroundColor: "rgba(251,146,60,0.15)",
-  },
   badgeText: {
     color: colors.textSecondary,
     fontSize: 10,
     fontWeight: "600",
-  },
-  badgeTextDownload: {
-    color: "#fb923c",
   },
   badgeTextRecommended: {
     color: colors.gold,

@@ -26,6 +26,8 @@ import {
 } from "../lib/watchHistoryStore";
 import { getImageUrl } from "@filmsnaps/shared";
 import { tmdbToAnimeIds } from "../lib/anime/resolve";
+import { prepareDetail, toDetailNavItem } from "../lib/openDetail";
+import { beginIntentTap } from "../lib/perfMetrics";
 import { EmptyState } from "../components/EmptyState";
 import type { WatchProgress } from "../lib/watchHistory";
 
@@ -211,6 +213,25 @@ export default function HistoryScreen() {
     [entries],
   );
 
+  const handleItemPressIn = useCallback(
+    (p: WatchProgress) => {
+      prepareDetail(
+        toDetailNavItem(
+          {
+            id: p.tmdbId,
+            media_type: p.mediaType,
+            poster_path: null,
+          },
+          p.mediaType === "tv" ? "tv" : "movie",
+        )!,
+        "history",
+        queryClient,
+        router,
+      );
+    },
+    [queryClient, router],
+  );
+
   const handleItemPress = useCallback(
     (item: WatchProgress) => {
       const id = item.tmdbId;
@@ -235,21 +256,28 @@ export default function HistoryScreen() {
       }
       const target = params.toString() ? `${base}?${params.toString()}` : base;
 
-      if (item.mediaType === "tv") {
-        queryClient.prefetchQuery({
-          queryKey: ["tv", id],
-          queryFn: () => tmdbApi.getTVDetails(Number(id)),
-          staleTime: 1000 * 60 * 60,
-        });
-        router.prefetch(`/tv/${id}`);
-      } else {
-        queryClient.prefetchQuery({
-          queryKey: ["movie", id],
-          queryFn: () => tmdbApi.getMovieDetails(Number(id)),
-          staleTime: 1000 * 60 * 60,
-        });
-        router.prefetch(`/movie/${id}`);
-      }
+      // [watchperf] intent mark for history → watch (same as details/CW).
+      const perfKey =
+        item.mediaType === "tv"
+          ? `tv:${id}:s${item.season ?? 1}e${item.episode ?? 1}`
+          : `movie:${id}`;
+      beginIntentTap(perfKey);
+
+      // History primary action opens the player (resume). Still warm the
+      // detail cache + images on touch-down so a later detail open is instant.
+      prepareDetail(
+        toDetailNavItem(
+          {
+            id,
+            media_type: item.mediaType,
+            poster_path: null,
+          },
+          item.mediaType === "tv" ? "tv" : "movie",
+        )!,
+        "history",
+        queryClient,
+        router,
+      );
       nav.push(target);
     },
     [nav, router, queryClient],
@@ -441,6 +469,7 @@ export default function HistoryScreen() {
             return (
               <TouchableOpacity
                 onPress={() => handleItemPress(p)}
+                onPressIn={() => handleItemPressIn(p)}
                 activeOpacity={0.7}
                 className="flex-row bg-elevated rounded-xl overflow-hidden"
                 style={{ backgroundColor: colors.bgCard }}

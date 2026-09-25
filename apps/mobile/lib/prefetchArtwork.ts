@@ -1,5 +1,6 @@
 import { Image } from "expo-image";
 import { getImageUrl } from "@filmsnaps/shared";
+import { DETAIL_BACKDROP_SIZE } from "../components/heroLayout";
 
 const prefetchCache = new Set<string>();
 
@@ -23,7 +24,7 @@ export function prefetchArtwork(media: {
     urls.push(getImageUrl(media.poster_path, "w342"));
   }
   if (media.backdrop_path) {
-    urls.push(getImageUrl(media.backdrop_path, "w780"));
+    urls.push(getImageUrl(media.backdrop_path, DETAIL_BACKDROP_SIZE));
   }
 
   const unique = urls.filter((u) => !prefetchCache.has(u));
