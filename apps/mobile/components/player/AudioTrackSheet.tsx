@@ -18,6 +18,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
 import type { PlayerAdapter } from "./types";
+import { audioTrackTitle } from "../../lib/audioLanguage";
 
 interface AudioTrackSheetProps {
   visible: boolean;
@@ -64,8 +65,14 @@ export function AudioTrackSheet({
           <FlatList
             data={tracks}
             keyExtractor={(item) => item.id}
-            renderItem={({ item }) => {
+            renderItem={({ item, index }) => {
               const isSelected = item.id === selectedId;
+              const title = audioTrackTitle(item, index);
+              const showSecondary =
+                item.label &&
+                item.label !== title &&
+                item.label.toLowerCase() !== "audio" &&
+                item.label.toLowerCase() !== "audio track";
               return (
                 <TouchableOpacity
                   style={[styles.trackItem, isSelected && styles.trackSelected]}
@@ -76,7 +83,7 @@ export function AudioTrackSheet({
                   }}
                   activeOpacity={0.7}
                   accessibilityRole="button"
-                  accessibilityLabel={`Audio track: ${item.language || item.label}${isSelected ? ", currently selected" : ""}`}
+                  accessibilityLabel={`Audio track: ${title}${isSelected ? ", currently selected" : ""}`}
                 >
                   <View style={styles.trackIconWrap}>
                     <Ionicons
@@ -93,9 +100,9 @@ export function AudioTrackSheet({
                       ]}
                       numberOfLines={1}
                     >
-                      {item.language || item.label || "Audio"}
+                      {title}
                     </Text>
-                    {item.label && item.language ? (
+                    {showSecondary ? (
                       <Text style={styles.trackName} numberOfLines={1}>
                         {item.label}
                       </Text>

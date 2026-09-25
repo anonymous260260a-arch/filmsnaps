@@ -14,7 +14,16 @@ import {
   forgetWorkingSource,
   getLastWorkingSource,
 } from "../lib/lastWorkingSource";
-import { prefetchStreams } from "../lib/streamPrefetch";
+import {
+  prefetchStreams,
+  peekStreamHandoff,
+  pinPrefetchKey,
+  chainStageMessage,
+  type ChainStage,
+  type PipelineFeedMeta,
+} from "../lib/streamPrefetch";
+import { markPerfStage, setPerfContext } from "../lib/perfMetrics";
+import { noteConsumed } from "../lib/watchPerfMismatch";
 import type { StreamLink } from "../components/player/streamTypes";
 
 interface UseDirectStreamPipelineParams {
@@ -36,6 +45,8 @@ interface UseDirectStreamPipelineParams {
   initialSeason?: number;
   initialEpisode?: number;
   settingsRef: React.MutableRefObject<any>;
+  /** FIX 2: when the user manually picked this provider, do not chain. */
+  lockProvider?: boolean;
 }
 
 export interface DirectStreamPipelineState {
@@ -46,6 +57,8 @@ export interface DirectStreamPipelineState {
   lastWorkingIndex: number | undefined;
   loading: boolean;
   error: string | null;
+  /** B3: stage copy while the chain is in flight (null when settled). */
+  stageMessage: string | null;
   /** Re-run the fetch pipeline (Retry / first selection on the picker). */
   refetch: () => void;
   /** Season/episode the current fetch is keyed by (EpisodeRail updates). */
@@ -64,6 +77,7 @@ export function useDirectStreamPipeline({
   initialSeason,
   initialEpisode,
   settingsRef,
+  lockProvider = false,
 }: UseDirectStreamPipelineParams): DirectStreamPipelineState {
   const [links, setLinks] = useState<StreamLink[]>([]);
   const [bestIndex, setBestIndex] = useState(0);
@@ -79,8 +93,26 @@ export function useDirectStreamPipeline({
   // yet, and "loading=false with 0 links" on the very first render is
   // indistinguishable from "finished, nothing found" — it once made the
   // player's auto-fallback fire before the pipeline even started.
-  const [loading, setLoading] = useState(isDirectPlayback);
+  // FIX 5: if details handed us a warm snapshot, start with loading=false
+  // so the player can mount the head immediately (trigger=watch still runs).
+  const [loading, setLoading] = useState(() => {
+    if (!isDirectPlayback) return false;
+    if (!id) return true;
+    const handoff = peekStreamHandoff(
+      parseInt(id, 10),
+      type,
+      initialSeason,
+      initialEpisode,
+    );
+    return !(handoff && handoff.result.links.length > 0);
+  });
   const [error, setError] = useState<string | null>(null);
+  const [stage, setStage] = useState<ChainStage | null>(null);
+  const stageRef = useRef<ChainStage | null>(null);
+  const onStage = useCallback((s: ChainStage | null) => {
+    stageRef.current = s;
+    setStage(s);
+  }, []);
   /** Bumped by Retry to re-run the fetch. */
   const [fetchToken, setFetchToken] = useState(0);
   /** Active season/episode for direct links (EpisodeRail updates these). */
@@ -102,8 +134,43 @@ export function useDirectStreamPipeline({
     if (!languageAnswered) return;
 
     let cancelled = false;
-    setLoading(true);
     setError(null);
+    setStage(null);
+
+    // FIX 5: seed from the details handoff so the first paint already has
+    // the head (still join the pipeline below for trigger=watch confirmation).
+    const handoff =
+      id && parseInt(id, 10)
+        ? peekStreamHandoff(parseInt(id, 10), type, directSeason, directEpisode)
+        : null;
+    if (handoff && handoff.result.links.length > 0) {
+      // D1: accept the handoff even when its provider differs from ours —
+      // details resolved the same tiered provider, so this IS our pool. The
+      // exact-key prefetch join below remains the source of truth.
+      console.log(
+        `[Flow] watch: handoff hit — head #${handoff.result.bestIndex} (trigger=watch runs in background)`,
+      );
+      markPerfStage("handoff", {
+        used: true,
+        providerId: handoff.providerId,
+      });
+      setPerfContext({
+        handoff: "used",
+        provider: handoff.providerId,
+        bestValidated: handoff.result.bestValidated,
+      });
+      markPerfStage("linksSet", { provider: handoff.providerId, via: "handoff" });
+      setLinks(handoff.result.links);
+      setBestIndex(handoff.result.bestIndex);
+      setPrevalidated(handoff.result.validationResults);
+      setSelectionReason(handoff.result.selectionReason);
+      setLastWorkingIndex(undefined);
+      setLoading(false);
+    } else {
+      markPerfStage("handoff", { used: false, providerId: provider ?? null });
+      setPerfContext({ handoff: "none" });
+      setLoading(true);
+    }
 
     // Single source of truth: join the pipeline the details page / CW home
     // already started (or start it here). The snapshot's links are frozen and
@@ -126,17 +193,62 @@ export function useDirectStreamPipeline({
             preferredAudioLanguage:
               settingsRef.current.preferredAudioLanguage ?? "auto",
             trigger: "watch",
+            lockProvider,
+            onStage,
+            // [watchperf] FIX 1 — mode + age of the pipeline that feeds the player.
+            onPipelineMeta: (meta: PipelineFeedMeta) => {
+              markPerfStage("pipelineFeed", {
+                mode: meta.mode,
+                startedAt: meta.startedAt,
+                key: meta.cacheKey,
+                provider: meta.providerId,
+              });
+            },
           },
         );
         if (cancelled) return;
+        onStage(null);
         if (!snap || snap.links.length === 0) {
-          setError(
-            "No streams available for this title right now. Try again later.",
-          );
+          // Keep any handoff-seeded links; only surface an error when empty.
+          if (!handoff || handoff.result.links.length === 0) {
+            setError(
+              "No streams available for this title right now. Try again later.",
+            );
+          }
           return;
+        }
+        // D1: when the exact-key miss left handoff-seeded links already on
+        // screen (different provider id at handoff vs resolve), prefer the
+        // handoff head — it is the same pool details already probed.
+        if (handoff && handoff.result.links.length > 0 && links.length > 0) {
+          const exactHeadProvider = snap.links[snap.bestIndex]?._meta?.providerId;
+          if (exactHeadProvider && exactHeadProvider !== handoff.providerId) {
+            console.log(
+              `[Flow] watch: keeping handoff head over exact-key ${exactHeadProvider} — same tiered pool`,
+            );
+            markPerfStage("linksSet", {
+              provider: handoff.providerId,
+              via: "handoff-preferred",
+            });
+            return;
+          }
         }
         console.log(
           `[Flow] watch: pipeline ready — head #${snap.bestIndex} verified=${snap.bestValidated} allDead=${snap.allDead}`,
+        );
+        // [watchperf] FIX 3b — which pipeline the player is about to consume.
+        const head = snap.links[snap.bestIndex];
+        const consumedProvider = head?._meta?.providerId ?? provider;
+        if (consumedProvider) {
+          noteConsumed(type, parseInt(id, 10), directSeason, directEpisode, consumedProvider);
+          setPerfContext({
+            provider: consumedProvider,
+            bestValidated: snap.bestValidated,
+          });
+        }
+        markPerfStage("linksSet", { provider: consumedProvider });
+        pinPrefetchKey(
+          `${type}:${parseInt(id, 10)}:s${directSeason ?? 0}:e${directEpisode ?? 0}:${provider ?? "direct"}`,
         );
 
         // Promote the source that worked last time (stable URL identity) by
@@ -199,6 +311,10 @@ export function useDirectStreamPipeline({
         setSelectionReason(snap.selectionReason);
         setBestIndex(nextBestIndex);
         setLastWorkingIndex(lastUsed);
+        // linksSet after last-working promotion — player may consume a reordered head.
+        const head2 = nextLinks[nextBestIndex];
+        const fed = head2?._meta?.providerId ?? consumedProvider;
+        if (fed) noteConsumed(type, parseInt(id, 10), directSeason, directEpisode, fed);
       } catch (err: any) {
         if (!cancelled) {
           setError(
@@ -223,6 +339,8 @@ export function useDirectStreamPipeline({
     directEpisode,
     fetchToken,
     languageAnswered,
+    lockProvider,
+    onStage,
   ]);
 
   useEffect(() => {
@@ -242,6 +360,7 @@ export function useDirectStreamPipeline({
     lastWorkingIndex,
     loading,
     error,
+    stageMessage: chainStageMessage(stage),
     refetch,
     season: directSeason,
     episode: directEpisode,

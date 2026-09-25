@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import { ProgressiveImage } from "./ProgressiveImage";
 import { typography } from "../theme/typography";
 import { colors } from "../theme/colors";
 import { FilmGrain } from "./FilmGrain";
+import { heroHeightForWidth, HERO_BACKDROP_SIZE } from "./heroLayout";
 import type { Movie } from "@filmsnaps/shared";
 
 interface HeroProps {
@@ -22,11 +23,12 @@ interface HeroProps {
 }
 
 export function Hero({ item, onWatchPress, onDetailsPress }: HeroProps) {
-  const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = useWindowDimensions();
-  const HERO_HEIGHT = Math.min(SCREEN_HEIGHT * 0.52, 430);
+  const { width: SCREEN_WIDTH } = useWindowDimensions();
+  const HERO_HEIGHT = heroHeightForWidth(SCREEN_WIDTH);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
+  const loggedLayoutRef = useRef(false);
 
-  const backdropUrl = getImageUrl(item.backdrop_path, "w780");
+  const backdropUrl = getImageUrl(item.backdrop_path, HERO_BACKDROP_SIZE);
   const title = item.title || item.name || "";
   const overview = item.overview || "";
   const rating = item.vote_average ?? 0;
@@ -37,6 +39,15 @@ export function Hero({ item, onWatchPress, onDetailsPress }: HeroProps) {
 
   return (
     <View
+      onLayout={(e) => {
+        // Phase 1C FIX 3: prove the real rendered box matches HERO_ASPECT_RATIO.
+        if (loggedLayoutRef.current) return;
+        loggedLayoutRef.current = true;
+        const { height, width } = e.nativeEvent.layout;
+        console.log(
+          `[hero] height=${height} ratio=${(height / (width || 1)).toFixed(4)} width=${width} expected=${HERO_HEIGHT}`,
+        );
+      }}
       style={{
         height: HERO_HEIGHT,
         position: "relative",
@@ -45,7 +56,7 @@ export function Hero({ item, onWatchPress, onDetailsPress }: HeroProps) {
         borderBottomRightRadius: 28,
       }}
     >
-      {/* ── Backdrop image — full bleed ── */}
+      {/* ── Backdrop image — full bleed, contentFit cover (crop, no letterbox) ── */}
       {item.backdrop_path ? (
         <ProgressiveImage
           uri={backdropUrl}

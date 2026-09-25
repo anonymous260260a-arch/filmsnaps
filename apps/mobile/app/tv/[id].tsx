@@ -14,15 +14,26 @@ import {
   Platform,
   Share,
 } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { trackFeatureUsed } from "../../lib/telemetry";
 import { colors } from "../../theme/colors";
 import { getImageUrl, getTrailerKey } from "@filmsnaps/shared";
 import { ProgressiveImage } from "../../components/ProgressiveImage";
 import { FilmGrain } from "../../components/FilmGrain";
 import { useTVDetails } from "../../hooks/useTMDB";
+import {
+  beginDetail,
+  markDetailFirstFrame,
+  markDetailContentReady,
+} from "../../lib/detailMetrics";
+import { DETAIL_BACKDROP_SIZE } from "../../components/heroLayout";
+import { DETAIL_STALE_TIME } from "../../lib/detailQuery";
+import { openDetail, prepareDetail, toDetailNavItem } from "../../lib/openDetail";
+import { useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
 import { MediaCarousel } from "../../components/MediaCarousel";
 import { CastCarousel } from "../../components/CastCarousel";
 import { TrailerModal } from "../../components/TrailerModal";
@@ -38,8 +49,10 @@ import {
 import { getResumePoint } from "../../lib/watchHistory";
 import { downloadToast } from "../../lib/download";
 import { prefetchArtwork } from "../../lib/prefetchArtwork";
-import { prefetchStreams } from "../../lib/streamPrefetch";
-import { resolvePrefetchProviderId } from "../../lib/resolvePrefetchProvider";
+import { prefetchStreams, peekPrefetchStreams, setStreamHandoff } from "../../lib/streamPrefetch";
+import { resolvePlaybackProviderId } from "../../lib/resolvePlaybackProvider";
+import { beginDetailsTap } from "../../lib/perfMetrics";
+import { holdEarlyPlayer, releaseEarlyPlayer } from "../../lib/earlyPlayerHolder";
 import { useSettings } from "../../lib/settings";
 import type { WatchProgress } from "../../lib/watchHistory";
 import * as Haptics from "expo-haptics";
@@ -49,20 +62,96 @@ import { resolveShowIds } from "../../lib/anime/resolve";
 export default function TVDetailScreen() {
   const [trailerOpen, setTrailerOpen] = useState(false);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const routeParams = useLocalSearchParams<{
+    id: string;
+    title?: string;
+    poster_path?: string;
+    backdrop_path?: string;
+    vote_average?: string;
+    release_date?: string;
+    blurhash?: string;
+  }>();
+  const id = routeParams.id;
   const nav = useSafeNavigation();
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = useWindowDimensions();
   const { settings, loaded: settingsLoaded } = useSettings();
-  const { data, isLoading } = useTVDetails(id!);
+  const { data, isLoading, isFetched, isError } = useTVDetails(id!);
+
+  // Params-first snapshot: header fields available before query resolves.
+  const paramsSnapshot = useMemo(() => {
+    if (
+      !routeParams.title &&
+      !routeParams.poster_path &&
+      !routeParams.backdrop_path
+    ) {
+      return null;
+    }
+    return {
+      title: routeParams.title ?? "",
+      poster_path: routeParams.poster_path ?? null,
+      backdrop_path: routeParams.backdrop_path ?? null,
+      vote_average: routeParams.vote_average
+        ? Number(routeParams.vote_average)
+        : null,
+      release_date: routeParams.release_date ?? null,
+      blurhash: routeParams.blurhash ?? null,
+    };
+  }, [
+    routeParams.title,
+    routeParams.poster_path,
+    routeParams.backdrop_path,
+    routeParams.vote_average,
+    routeParams.release_date,
+    routeParams.blurhash,
+  ]);
+
+  // Phase 2 instrumentation — once per screen mount.
+  const metricsStarted = useRef(false);
+  useEffect(() => {
+    if (metricsStarted.current || !id) return;
+    metricsStarted.current = true;
+    beginDetail("tv", String(id));
+  }, [id]);
+
+  useEffect(() => {
+    if (isFetched) markDetailContentReady();
+  }, [isFetched]);
+
+  // FIX 5: after details settle, warm SeasonPicker's initial season episodes.
+  const resumeSeasonRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!isFetched || !id) return;
+    const season = resumeSeasonRef.current ?? 1;
+    void queryClient.prefetchQuery({
+      queryKey: ["tv", id, "season", season],
+      queryFn: () =>
+        import("../../lib/api").then((m) =>
+          m.tmdbApi.getSeasonEpisodes(Number(id), season),
+        ),
+      staleTime: DETAIL_STALE_TIME,
+    });
+  }, [isFetched, id, queryClient]);
 
   const BACKDROP_HEIGHT = Math.min(SCREEN_HEIGHT * 0.42, 350);
   const POSTER_WIDTH = 104;
   const POSTER_OVERLAP = 52;
   const scrollY = useRef(new Animated.Value(0)).current;
 
-  const show = data;
-  const title = show?.name || show?.title || "";
+  const show = data ?? null;
+  const header = show
+    ? {
+        title: show.name || show.title || "",
+        poster_path: show.poster_path ?? null,
+        backdrop_path: show.backdrop_path ?? null,
+        vote_average: show.vote_average ?? null,
+        release_date: show.first_air_date ?? null,
+      }
+    : paramsSnapshot;
+  const title = header?.title || "";
+  const queryReady = !!show;
 
   const animeHit = useMemo(() => (id ? resolveShowIds(id) : null), [id]);
   const isAnime = animeHit != null;
@@ -72,64 +161,131 @@ export default function TVDetailScreen() {
   const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
   const downloadSummary = useMediaDownloadState("tv", String(id));
 
+  // FIX 7: rank-option deps are value-level; selection re-prefetch debounced 500ms.
+  // B1: prefetch only while focused — defer rank changes until next focus.
+  const rankSig = `${settings.cellularMaxMB}|${settings.maxQuality}|${settings.preferredAudioLanguage}|${settings.defaultServer}`;
+  const lastRankSigRef = useRef<string | null>(null);
+  const pendingRankSigRef = useRef<string | null>(null);
+  // D1: provider this details page resolved — Watch always passes it via ?provider=.
+  const resolvedProviderRef = useRef<string | null>(null);
+  // D3: set true when Watch is pressed so unmount cleanup keeps the warm player.
+  const navigatedToWatchRef = useRef(false);
+  // D3: last cache key we held a warm player for (release on leave-without-watch).
+  const heldEarlyKeyRef = useRef<string | null>(null);
+  // Bookmark / resume loads stay mount-driven (not focus-gated).
   useEffect(() => {
-    if (id) {
-      isBookmarked(id!).then(setBookmarked);
-      getResumePoint(id!, "tv").then((p) => {
-        if (p) setResumeState(p);
-        // Pre-warm stream links for the resume episode (or first episode).
-        // NOT before settings hydrate — ranking with default settings would
-        // cache a wrong-language chain that the real settings must re-rank.
-        if (!settingsLoaded) return;
-        const season = p?.season ?? 1;
-        const episode = p?.episode ?? 1;
-        // Prefetch what watch will actually open: last-used direct provider
-        // for this title, else saved default server, else platform default.
-        resolvePrefetchProviderId("tv", parseInt(id), settings.defaultServer)
+    if (!id) return;
+    isBookmarked(id!).then(setBookmarked);
+    getResumePoint(id!, "tv").then((p) => {
+      if (p) {
+        setResumeState(p);
+        resumeSeasonRef.current = p.season ?? 1;
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+  useFocusEffect(
+    useCallback(() => {
+      if (!id || !settingsLoaded) return;
+      // D3: each focus is a fresh visit — a prior Watch tap must not keep
+      // skipping the blur release forever (that orphaned a playing holder).
+      navigatedToWatchRef.current = false;
+      let cancelled = false;
+      let cleared = false;
+      // B1: apply rank changes deferred while unfocused, else current sig.
+      const sig = pendingRankSigRef.current ?? rankSig;
+      pendingRankSigRef.current = null;
+      const isFirst = lastRankSigRef.current === null;
+      lastRankSigRef.current = sig;
+      const delay = isFirst ? 0 : 500;
+      // Prefer the resume episode when known; otherwise first episode.
+      const season = resumeSeasonRef.current ?? 1;
+      const timer = setTimeout(() => {
+        if (cancelled || cleared) return;
+        resolvePlaybackProviderId({
+          mediaType: "tv",
+          tmdbId: parseInt(id),
+          savedServer: settings.defaultServer,
+        })
           .then((providerId) => {
-            if (!providerId) return;
-            return prefetchStreams(parseInt(id), "tv", season, episode, {
+            if (!providerId || cancelled || cleared) return;
+            resolvedProviderRef.current = providerId;
+            return prefetchStreams(parseInt(id), "tv", season, 1, {
               cellularMaxMB: settings.cellularMaxMB,
               maxQuality: settings.maxQuality,
               preferredAudioLanguage: settings.preferredAudioLanguage,
               providerId,
               trigger: "details",
-            }).catch((err) => {
-              console.log(`[TVDetail] Prefetch failed:`, err?.message);
-            });
+            })
+              .then((snap) => {
+                // D3: pipeline READY during details dwell → warm player on head.
+                if (cancelled || cleared || !snap || snap.links.length === 0)
+                  return;
+                const head = snap.links[snap.bestIndex];
+                const key = `tv:${parseInt(id)}:s${season}:e1:${providerId}`;
+                if (holdEarlyPlayer(key, head)) {
+                  heldEarlyKeyRef.current = key;
+                }
+              })
+              .catch((err) => {
+                console.log(`[TVDetail] Prefetch failed:`, err?.message);
+              });
           })
           .catch(() => {});
-      });
+      }, delay);
+      clearedTimerRef.current = () => {
+        cleared = true;
+        clearTimeout(timer);
+      };
+      return () => {
+        cancelled = true;
+        clearedTimerRef.current?.();
+        clearedTimerRef.current = null;
+        // D3: left details without navigating to watch → release the warm player.
+        if (!navigatedToWatchRef.current && heldEarlyKeyRef.current) {
+          releaseEarlyPlayer(heldEarlyKeyRef.current);
+          heldEarlyKeyRef.current = null;
+        }
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id, settingsLoaded, rankSig]),
+  );
+  // Track rank changes while unfocused so next focus re-prefetches with them.
+  useEffect(() => {
+    if (lastRankSigRef.current !== null && lastRankSigRef.current !== rankSig) {
+      pendingRankSigRef.current = rankSig;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, settings, settingsLoaded]);
+  }, [rankSig]);
+  const clearedTimerRef = useRef<(() => void) | null>(null);
 
   const toggleBookmark = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const next = !bookmarked;
-    setBookmarked(next);
-    if (next) {
+setBookmarked(next);
+      trackFeatureUsed("bookmark_save", "detail");
+      if (next) {
       debouncedSaveBookmark({
         tmdbId: id!,
         mediaType: "tv",
-        title: show?.name || show?.title || "",
-        posterPath: show?.poster_path ?? null,
-        year: show?.first_air_date?.split("-")[0] ?? "",
+        title: header?.title || "",
+        posterPath: header?.poster_path ?? null,
+        year: (header?.release_date ?? "").split("-")[0] ?? "",
         addedAt: Date.now(),
       });
       prefetchArtwork({
-        poster_path: show?.poster_path,
-        backdrop_path: show?.backdrop_path,
+        poster_path: header?.poster_path,
+        backdrop_path: header?.backdrop_path,
       });
       downloadToast.success("Saved to Library", 2500);
     } else {
       debouncedRemoveBookmark(id!);
       downloadToast.info("Removed from Saved", 2000);
     }
-  }, [id, bookmarked, show]);
+  }, [id, bookmarked, header]);
 
   const handleShare = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    trackFeatureUsed("share_used", "detail");
     Share.share({
       message: `Check out "${title}" on FilmSnaps 🎬\nhttps://filmsnap-pro.netlify.app/tv/${id}`,
     });
@@ -138,39 +294,51 @@ export default function TVDetailScreen() {
   const handleDownloadServer = useCallback(
     (server: string) => {
       const qs = new URLSearchParams({
-        poster: show?.poster_path || "",
-        backdrop: show?.backdrop_path || "",
+        poster: header?.poster_path || "",
+        backdrop: header?.backdrop_path || "",
       }).toString();
       nav.push(`/download/${server}/tv/${id}?${qs}`);
     },
-    [id, nav, show?.poster_path, show?.backdrop_path],
+    [id, nav, header?.poster_path, header?.backdrop_path],
   );
 
-  if (isLoading) {
+  // Deep link / cold route with no header params → full skeleton until data.
+  if (!header && isLoading) {
     return <DetailSkeleton />;
   }
 
-  if (!show) {
+  if (!header && !isLoading) {
     return (
       <View
         className="flex-1 items-center justify-center bg-void"
         style={{ backgroundColor: colors.bg }}
+        onLayout={() => markDetailFirstFrame()}
       >
         <Ionicons name="tv-outline" size={48} color={colors.textTertiary} />
-        <Text className="text-text-secondary mt-3">Show not found</Text>
+        <Text className="text-text-secondary mt-3">
+          {isError ? "Couldn't load show" : "Show not found"}
+        </Text>
       </View>
     );
   }
 
-  const year = show.first_air_date?.split("-")[0] ?? "";
-  const genres = show.genres ?? [];
-  const trailerKey = getTrailerKey(show.videos);
-  const cast = show.credits?.cast?.slice(0, 10) ?? [];
+  const year =
+    (show?.first_air_date || header?.release_date)?.split("-")[0] ?? "";
+  const genres = show?.genres ?? [];
+  const trailerKey = show ? getTrailerKey(show.videos) : null;
+  const cast = show?.credits?.cast?.slice(0, 10) ?? [];
   const seasonCount =
-    show.seasons?.filter((s: any) => s.season_number > 0).length ?? 0;
+    show?.seasons?.filter((s: any) => s.season_number > 0).length ?? 0;
+  const backdropPath = header?.backdrop_path ?? null;
+  const posterPath = header?.poster_path ?? null;
+  const voteAverage = header?.vote_average ?? null;
 
   return (
-    <View className="flex-1 bg-void" style={{ backgroundColor: colors.bg }}>
+    <View
+      className="flex-1 bg-void"
+      style={{ backgroundColor: colors.bg }}
+      onLayout={() => markDetailFirstFrame()}
+    >
       {/* ── Floating Top Glass Navigation Bar ── */}
       <View
         style={{
@@ -276,7 +444,7 @@ export default function TVDetailScreen() {
             position: "relative",
           }}
         >
-          {show.backdrop_path ? (
+          {backdropPath ? (
             <Animated.View
               style={{
                 position: "absolute",
@@ -299,7 +467,7 @@ export default function TVDetailScreen() {
               }}
             >
               <ProgressiveImage
-                uri={getImageUrl(show.backdrop_path, "w780")}
+                uri={getImageUrl(backdropPath, DETAIL_BACKDROP_SIZE)}
                 style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT }}
                 resizeMode="cover"
               />
@@ -347,9 +515,9 @@ export default function TVDetailScreen() {
           {/* Poster + Info row */}
           <View className="flex-row items-center">
             {/* Elevated Poster */}
-            {show.poster_path ? (
+            {posterPath ? (
               <ProgressiveImage
-                uri={getImageUrl(show.poster_path, "w342")}
+                uri={getImageUrl(posterPath, "w342")}
                 style={{
                   width: POSTER_WIDTH,
                   height: POSTER_WIDTH * 1.5,
@@ -413,7 +581,7 @@ export default function TVDetailScreen() {
                   marginBottom: 6,
                 }}
               >
-                {show.vote_average != null && show.vote_average > 0 && (
+                {voteAverage != null && voteAverage > 0 && (
                   <View
                     style={{
                       backgroundColor: "rgba(212,162,55,0.15)",
@@ -433,7 +601,7 @@ export default function TVDetailScreen() {
                         fontFamily: "Inter_600SemiBold",
                       }}
                     >
-                      ★ {show.vote_average.toFixed(1)}
+                      ★ {voteAverage.toFixed(1)}
                     </Text>
                   </View>
                 )}
@@ -459,7 +627,7 @@ export default function TVDetailScreen() {
                   </View>
                 ) : null}
 
-                {seasonCount > 0 && (
+                {queryReady && seasonCount > 0 && (
                   <View
                     style={{
                       backgroundColor: "rgba(255, 255, 255, 0.08)",
@@ -489,8 +657,8 @@ export default function TVDetailScreen() {
                 )}
               </View>
 
-              {/* Genre badges */}
-              {genres.length > 0 && (
+              {/* Genre badges — query-dependent */}
+              {queryReady && genres.length > 0 && (
                 <View className="flex-row flex-wrap" style={{ gap: 4 }}>
                   {genres.slice(0, 3).map((g: { id: number; name: string }) => (
                     <View
@@ -534,9 +702,9 @@ export default function TVDetailScreen() {
                     resumeState.percent < 0.95
                     ? {
                         t: String(Math.floor(resumeState.currentTime)),
-                        backdrop: show.backdrop_path || "",
+                        backdrop: backdropPath || "",
                       }
-                    : { backdrop: show.backdrop_path || "" },
+                    : { backdrop: backdropPath || "" },
                 );
                 const hit = isAnime && id ? resolveShowIds(id, s) : null;
                 if (hit) {
@@ -546,6 +714,37 @@ export default function TVDetailScreen() {
                     params.set("aid", String(hit.anilistId));
                   params.set("audio", "sub");
                 }
+                // D1: always pass the provider this details page resolved so
+                // watch does one sync resolve — no async flip, no cancelled
+                // pipeline. Peek with the SAME provider id for the exact key.
+                const resolvedProvider = resolvedProviderRef.current;
+                if (resolvedProvider) {
+                  params.set("provider", resolvedProvider);
+                }
+                // FIX 5: hand the warm snapshot to watch; still runs trigger=watch.
+                const snap = peekPrefetchStreams(parseInt(id), "tv", s, e, {
+                  cellularMaxMB: settings.cellularMaxMB,
+                  maxQuality: settings.maxQuality,
+                  preferredAudioLanguage: settings.preferredAudioLanguage,
+                  providerId: resolvedProvider ?? undefined,
+                });
+                if (snap && snap.links.length > 0) {
+                  const head = snap.links[snap.bestIndex];
+                  setStreamHandoff(
+                    parseInt(id),
+                    "tv",
+                    s,
+                    e,
+                    resolvedProvider ?? head?._meta?.providerId ?? "direct",
+                    snap,
+                  );
+                  if (head?.url) params.set("streamUrl", head.url);
+                  params.set("bestIndex", String(snap.bestIndex));
+                }
+                // FIX 9: detailsTap opens the perf session before the player tree.
+                beginDetailsTap(`tv:${id}:s${s}e${e}`);
+                // D3: keep the warm player for adoption — don't release on unmount.
+                navigatedToWatchRef.current = true;
                 nav.push(`${base}?${params.toString()}`);
               }}
               activeOpacity={0.88}
@@ -590,9 +789,12 @@ export default function TVDetailScreen() {
 
             {/* Secondary Action Row: Trailer & Download */}
             <View className="flex-row items-center mt-3" style={{ gap: 10 }}>
-              {trailerKey ? (
+              {queryReady && trailerKey ? (
                 <TouchableOpacity
-                  onPress={() => setTrailerOpen(true)}
+                  onPress={() => {
+                    trackFeatureUsed("trailer_open", "detail");
+                    setTrailerOpen(true);
+                  }}
                   activeOpacity={0.75}
                   style={{
                     flex: 1,
@@ -654,8 +856,8 @@ export default function TVDetailScreen() {
             </View>
           </View>
 
-          {/* Overview */}
-          {show.overview ? (
+          {/* Overview — query-dependent */}
+          {queryReady && show.overview ? (
             <View className="mt-6">
               <Text
                 style={{
@@ -698,33 +900,87 @@ export default function TVDetailScreen() {
             </View>
           ) : null}
 
-          {/* Season picker (TV only) */}
-          <SeasonPicker
-            tmdbId={id!}
-            title={show.name}
-            posterPath={show.poster_path}
-            downloadSummary={downloadSummary}
-            seasons={(show.seasons ?? [])
-              .filter((s: any) => s.season_number > 0 && s.episode_count > 0)
-              .map((s: any) => ({
-                seasonNumber: s.season_number,
-                episodeCount: s.episode_count,
-                name: s.name ?? `Season ${s.season_number}`,
-              }))}
-            initialSeason={resumeState?.season ?? 1}
-            backdropPath={show.backdrop_path}
-          />
+          {/* Season picker (TV only) — query-dependent */}
+          {queryReady && (
+            <SeasonPicker
+              tmdbId={id!}
+              title={show.name}
+              posterPath={show.poster_path}
+              downloadSummary={downloadSummary}
+              seasons={(show.seasons ?? [])
+                .filter((s: any) => s.season_number > 0 && s.episode_count > 0)
+                .map((s: any) => ({
+                  seasonNumber: s.season_number,
+                  episodeCount: s.episode_count,
+                  name: s.name ?? `Season ${s.season_number}`,
+                }))}
+              initialSeason={resumeState?.season ?? resumeSeasonRef.current ?? 1}
+              backdropPath={show.backdrop_path}
+            />
+          )}
 
-          {/* Cast */}
-          {cast.length > 0 && <CastCarousel cast={show.credits.cast} />}
+          {/* Cast — query-dependent */}
+          {queryReady && cast.length > 0 && (
+            <CastCarousel cast={show.credits.cast} />
+          )}
 
-          {/* Similar shows */}
-          {show.similar?.results?.length > 0 && (
+          {/* Similar shows — query-dependent */}
+          {queryReady && show.similar?.results?.length > 0 && (
             <View className="mt-6">
               <MediaCarousel
                 title="Similar Shows"
                 data={show.similar.results}
-                onItemPress={(item) => nav.push(`/tv/${item.id}`)}
+                onItemPressIn={(item) => {
+                  const navItem = toDetailNavItem(item, "tv");
+                  if (navItem)
+                    prepareDetail(navItem, "similar", queryClient, router);
+                }}
+                onItemPress={(item) => {
+                  const navItem = toDetailNavItem(item, "tv");
+                  if (navItem)
+                    openDetail(navItem, "similar", {
+                      queryClient,
+                      router,
+                      nav,
+                    });
+                }}
+              />
+            </View>
+          )}
+
+          {/* Query-dependent placeholder while details load (params-only paint) */}
+          {!queryReady && !isLoading && isError && (
+            <View className="mt-6">
+              <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
+                Details unavailable — check your connection.
+              </Text>
+            </View>
+          )}
+          {!queryReady && isLoading && (
+            <View className="mt-6" style={{ gap: 8 }}>
+              <View
+                style={{
+                  height: 14,
+                  width: "40%",
+                  borderRadius: 4,
+                  backgroundColor: colors.bgElevated,
+                }}
+              />
+              <View
+                style={{
+                  height: 12,
+                  width: "100%",
+                  borderRadius: 4,
+                  backgroundColor: colors.bgElevated,
+                }}
+              />
+              <View
+                style={{
+                  height: 12,
+                  width: "85%",
+                  borderRadius: 4,
+                  backgroundColor: colors.bgElevated,
+                }}
               />
             </View>
           )}

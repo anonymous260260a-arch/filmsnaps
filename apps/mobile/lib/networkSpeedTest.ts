@@ -8,8 +8,15 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo, { type NetInfoState } from "@react-native-community/netinfo";
+import {
+  trackNetworkSpeed,
+  bucketMbps,
+  bucketLatencyMs,
+} from "./telemetry";
 
-const SPEED_TEST_URL = "https://speed.cloudflare.com/__down?bytes=5000000"; // 5MB test
+const SPEED_TEST_BYTES = 2_000_000; // 2MB per sample (was 5MB)
+const SPEED_TEST_URL = `https://speed.cloudflare.com/__down?bytes=${SPEED_TEST_BYTES}`;
+const NUM_SAMPLES = 2; // was 3 — max 4MB total
 const CACHE_KEY = "@filmsnaps/network-speed";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -35,6 +42,26 @@ export function getMaxQualityForSpeed(speedMbps: number): string {
   if (speedMbps < 15) return "1080p";
   if (speedMbps < 25) return "1080p"; // high bitrate 1080p
   return "4k";
+}
+
+/**
+ * Returns 'missing' | 'stale' | 'fresh' for the CURRENT network type's
+ * cached result. Used to gate whether a run is allowed at all.
+ */
+export type SpeedCacheState = "missing" | "stale" | "fresh";
+
+export async function getSpeedCacheState(): Promise<SpeedCacheState> {
+  try {
+    const cached = await AsyncStorage.getItem(CACHE_KEY);
+    if (!cached) return "missing";
+    const data: CachedSpeed = JSON.parse(cached);
+    const netInfo = await NetInfo.fetch();
+    const result = netInfo.type === "cellular" ? data.cellular : data.wifi;
+    if (!result) return "missing";
+    return Date.now() - result.timestamp > CACHE_TTL_MS ? "stale" : "fresh";
+  } catch {
+    return "missing";
+  }
 }
 
 /**
@@ -69,14 +96,27 @@ export async function getCachedSpeed(): Promise<SpeedTestResult | null> {
 
 /**
  * Run speed test (async, non-blocking).
- * Fetches 5MB file 3×, takes median result.
- * Updates cache with result.
+ * Fetches 2MB file 2×, takes median result. Updates cache with result.
+ * Callers must gate on cache age / connection cost / content-ready first.
  */
 export async function runSpeedTest(): Promise<SpeedTestResult> {
   const netInfo = await NetInfo.fetch();
   const networkType = netInfo.type;
   const samples: number[] = [];
-  const numSamples = 3;
+  const numSamples = NUM_SAMPLES;
+
+  // E8 — one lightweight RTT probe (headers only, ~0 bytes body) for the
+  // latency bucket. Adds negligible traffic; never stored raw.
+  let latencyMs = 0;
+  try {
+    const latencyStart = Date.now();
+    await fetch(`https://speed.cloudflare.com/__down?bytes=0`, {
+      cache: "no-store",
+    });
+    latencyMs = Date.now() - latencyStart;
+  } catch {
+    latencyMs = 0;
+  }
 
   for (let i = 0; i < numSamples; i++) {
     try {
@@ -133,6 +173,19 @@ export async function runSpeedTest(): Promise<SpeedTestResult> {
 
   // Update cache
   await updateCache(result);
+
+  // E8 — one network_speed per completed test (whitelisted buckets only).
+  // Best-effort; the telemetry gate (legal+analytics) decides whether to send.
+  try {
+    trackNetworkSpeed({
+      mbpsBucket: bucketMbps(medianSpeed),
+      connectionClass: networkType === "cellular" ? "cellular" : networkType === "wifi" || networkType === "ethernet" ? "wifi" : "other",
+      latencyBucket: bucketLatencyMs(latencyMs),
+    });
+  } catch {
+    // Telemetry must never break the speed test itself.
+  }
+
   return result;
 }
 

@@ -24,6 +24,11 @@ import { useSafeNavigation } from "@/lib/navigation";
 import { MOVIE_GENRES, TV_GENRES } from "@filmsnaps/shared";
 import { useDebounce } from "../../hooks/useDebounce";
 import {
+  openDetail,
+  prepareDetail,
+  toDetailNavItem,
+} from "../../lib/openDetail";
+import {
   useSearch,
   useFilteredMovies,
   useFilteredTVShows,
@@ -45,6 +50,13 @@ import { lookupMal } from "../../lib/anime/resolve";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
+import {
+  trackSearchPerformed,
+  trackFeatureUsed,
+  bucketQueryLength,
+  bucketLinkCount,
+  type SearchMode,
+} from "../../lib/telemetry";
 
 const NUM_COLUMNS = 3;
 const GAP = 10;
@@ -271,6 +283,54 @@ export default function SearchScreen() {
     });
   }, []);
 
+  // P2 — search_performed once per settled query. Tracks the start time so
+  // tookMs is the wall time from the debounced query becoming active to the
+  // first result batch landing on screen (or failing).
+  const lastSearchQueryRef = useRef<string>("");
+  const searchStartMsRef = useRef(0);
+  // E4 — remember a query that FAILED so the next successful attempt of the
+  // same query is flagged retriedAfterFail (still no query text, just a bool).
+  const failedSearchQueryRef = useRef<string>("");
+  useEffect(() => {
+    if (isSearching && searchStartMsRef.current === 0) {
+      searchStartMsRef.current = Date.now();
+    }
+    if (debouncedQuery !== lastSearchQueryRef.current) {
+      lastSearchQueryRef.current = debouncedQuery;
+      searchStartMsRef.current = 0;
+    }
+  }, [debouncedQuery, isSearching]);
+  const reportSearchOnce = useCallback(
+    (
+      q: string,
+      resultsCount: number,
+      failed: boolean,
+      mode: SearchMode = "movie_tv",
+    ) => {
+      if (!q.trim() || q.length < 2) return;
+      if (lastSearchQueryRef.current !== q) return;
+      const tookMs =
+        searchStartMsRef.current === 0
+          ? 0
+          : Date.now() - searchStartMsRef.current;
+      searchStartMsRef.current = 0;
+      const retriedAfterFail =
+        !failed && failedSearchQueryRef.current === q;
+      if (failed) failedSearchQueryRef.current = q;
+      else if (failedSearchQueryRef.current === q) failedSearchQueryRef.current = "";
+      trackSearchPerformed({
+        queryLengthBucket: bucketQueryLength(q.trim().length),
+        resultsCountBucket: bucketLinkCount(resultsCount),
+        tookMs,
+        failed,
+        mediaType: mode === "anime" ? "tv" : "mixed",
+        mode,
+        retriedAfterFail,
+      });
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!isSearching) return;
     if (!searchResult.data?.results) return;
@@ -282,6 +342,7 @@ export default function SearchScreen() {
       appendUnique(clean);
       saveRecentSearch(debouncedQuery);
     }
+    reportSearchOnce(debouncedQuery, clean.length, false);
   }, [
     searchResult.data,
     isSearching,
@@ -350,10 +411,12 @@ export default function SearchScreen() {
         const ranked = rankAnimeSearchResults(res.results, q, 24);
         setAnimeResults(ranked);
         if (ranked.length > 0) saveRecentSearch(q);
+        reportSearchOnce(q, ranked.length, false, "anime");
       })
       .catch(() => {
         if (id !== animeReqId.current) return;
         setAnimeError("Couldn't reach the anime search service.");
+        reportSearchOnce(q, 0, true, "anime");
       })
       .finally(() => {
         if (id !== animeReqId.current) return;
@@ -404,6 +467,10 @@ export default function SearchScreen() {
   const handleMediaTypeChange = useCallback(
     (type: MediaTypeFilter) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      trackFeatureUsed(
+        type === "anime" ? "mode_toggle_anime" : "mode_toggle_movie_tv",
+        "search",
+      );
       setMediaTypeFilter(type);
       resetPagination();
     },
@@ -435,32 +502,52 @@ export default function SearchScreen() {
     }
   }, [isFetchingCurrent, hasMorePages]);
 
+  const handleItemPressIn = useCallback(
+    (item: Movie) => {
+      const mediaType = (item as any)._mediaType || item.media_type || "movie";
+      const navItem = toDetailNavItem(item, mediaType === "tv" ? "tv" : "movie");
+      if (navItem) prepareDetail(navItem, "search", queryClient, router);
+    },
+    [queryClient, router],
+  );
+
   const handleItemPress = useCallback(
     (item: Movie) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       if (query.trim()) saveRecentSearch(query.trim());
       const mediaType = (item as any)._mediaType || item.media_type || "movie";
-      const id = item.id;
-
-      if (mediaType === "tv") {
-        queryClient.prefetchQuery({
-          queryKey: ["tv", id],
-          queryFn: () => tmdbApi.getTVDetails(id),
-          staleTime: 1000 * 60 * 60,
-        });
-        router.prefetch(`/tv/${id}`);
-        nav.push(`/tv/${id}`);
-      } else {
-        queryClient.prefetchQuery({
-          queryKey: ["movie", id],
-          queryFn: () => tmdbApi.getMovieDetails(id),
-          staleTime: 1000 * 60 * 60,
-        });
-        router.prefetch(`/movie/${id}`);
-        nav.push(`/movie/${id}`);
-      }
+      const navItem = toDetailNavItem(item, mediaType === "tv" ? "tv" : "movie");
+      if (navItem) openDetail(navItem, "search", { queryClient, router, nav });
     },
     [nav, router, queryClient, query, saveRecentSearch],
+  );
+
+  const handleAnimePressIn = useCallback(
+    (item: AnimeResult) => {
+      const twin = lookupMal(item.malId);
+      if (twin?.tmdbShowId != null) {
+        const navItem = toDetailNavItem(
+          {
+            id: twin.tmdbShowId,
+            media_type: "tv",
+            title: item.titleEnglish || item.title,
+          },
+          "tv",
+        );
+        if (navItem) prepareDetail(navItem, "search", queryClient, router);
+      } else if (twin?.tmdbMovieId != null) {
+        const navItem = toDetailNavItem(
+          {
+            id: twin.tmdbMovieId,
+            media_type: "movie",
+            title: item.titleEnglish || item.title,
+          },
+          "movie",
+        );
+        if (navItem) prepareDetail(navItem, "search", queryClient, router);
+      }
+    },
+    [queryClient, router],
   );
 
   const handleAnimePress = useCallback(
@@ -471,21 +558,23 @@ export default function SearchScreen() {
       const tmdbShowId = twin?.tmdbShowId;
       const tmdbMovieId = twin?.tmdbMovieId;
       if (tmdbShowId != null) {
-        queryClient.prefetchQuery({
-          queryKey: ["tv", tmdbShowId],
-          queryFn: () => tmdbApi.getTVDetails(tmdbShowId),
-          staleTime: 1000 * 60 * 60,
-        });
-        router.prefetch(`/tv/${tmdbShowId}`);
-        nav.push(`/tv/${tmdbShowId}`);
+        openDetail(
+          toDetailNavItem(
+            { id: tmdbShowId, media_type: "tv", title: item.titleEnglish || item.title },
+            "tv",
+          )!,
+          "search",
+          { queryClient, router, nav },
+        );
       } else if (tmdbMovieId != null) {
-        queryClient.prefetchQuery({
-          queryKey: ["movie", tmdbMovieId],
-          queryFn: () => tmdbApi.getMovieDetails(tmdbMovieId),
-          staleTime: 1000 * 60 * 60,
-        });
-        router.prefetch(`/movie/${tmdbMovieId}`);
-        nav.push(`/movie/${tmdbMovieId}`);
+        openDetail(
+          toDetailNavItem(
+            { id: tmdbMovieId, media_type: "movie", title: item.titleEnglish || item.title },
+            "movie",
+          )!,
+          "search",
+          { queryClient, router, nav },
+        );
       } else {
         setAnimeError(
           `No matching FilmSnaps title for "${item.titleEnglish || item.title}".`,
@@ -918,6 +1007,7 @@ export default function SearchScreen() {
                 <TouchableOpacity
                   activeOpacity={0.75}
                   onPress={() => handleAnimePress(item)}
+                  onPressIn={() => handleAnimePressIn(item)}
                   style={{ width: itemWidth, marginBottom: 8 }}
                 >
                   <View
@@ -1111,7 +1201,11 @@ export default function SearchScreen() {
           }
           renderItem={({ item }) => (
             <View style={{ width: itemWidth, marginBottom: 8 }}>
-              <MediaCard item={item} onPress={handleItemPress} />
+              <MediaCard
+                item={item}
+                onPress={handleItemPress}
+                onPressIn={handleItemPressIn}
+              />
             </View>
           )}
         />

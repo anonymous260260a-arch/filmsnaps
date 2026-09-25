@@ -83,8 +83,8 @@ export default function TransparencyScreen() {
           style={{ color: colors.textSecondary }}
         >
           FilmSnaps is a privacy-first streaming interface. We don't host
-          content, we don't track you, and we block the dangerous ads that free
-          streaming sites throw at you.
+          content, we don't profile you, and we block the dangerous ads that
+          free streaming sites throw at you.
         </Text>
 
         <Section num={++sectionIndex} title="The Problem We Solve">
@@ -173,7 +173,7 @@ export default function TransparencyScreen() {
         <Section num={++sectionIndex} title="What We Don't Do">
           <Body>To be completely transparent:</Body>
           <Bullet text="We don't host, store, or distribute any video content." />
-          <Bullet text="We don't collect analytics, telemetry, or usage data." />
+          <Bullet text="The website sends nothing; the app's optional statistics are anonymous, disclosed at first launch, and switchable off." />
           <Bullet text="We don't show ads and have no advertising partnerships." />
           <Bullet text="We don't modify or re-encode video streams." />
           <Body extraMargin>
@@ -256,12 +256,11 @@ export default function TransparencyScreen() {
 
           <FaqItem question="Does FilmSnaps collect my personal data?">
             <Body>
-              <Bold>No.</Bold> FilmSnaps does not collect, store, or transmit
-              any personal data to external servers. Your watch history,
-              watchlist, and settings stay on your device and are removed when
-              you uninstall the app. There are no analytics SDKs, no tracking
-              pixels, and no telemetry. For full details, see the Privacy
-              Policy.
+              <Bold>No.</Bold> We collect no personal data. The Android app can
+              send anonymous usage statistics and crash reports (switchable off
+              in Settings); these contain no identifiers, no IP addresses, and
+              no titles by name. The website sends nothing. The Privacy Policy
+              lists exactly what's sent.
             </Body>
           </FaqItem>
 
@@ -316,14 +315,12 @@ export default function TransparencyScreen() {
 
           <FaqItem question="How do I verify your privacy claims?">
             <Body>
-              Review our <LinkText url={GITHUB}>open-source code</LinkText>.
-              Check that we have no analytics SDKs and no tracking pixels, and
-              that the only requests our servers receive are{" "}
-              <Bold>anonymous metadata lookups</Bold> — a TMDB proxy that keeps
-              the API key server-side — which carry no personal data. Verify
-              that all of your watch history, watchlist, and settings stay
-              stored locally on your device. Our ad-blocking filter lists and
-              security architecture are publicly documented in the codebase.
+              FilmSnaps is <LinkText url={GITHUB}>open source</LinkText> — the
+              telemetry module and its field whitelist are in the public
+              repository. The Privacy Policy lists every kind of connection the
+              app makes, so you can check the code against each claim. Your
+              history, bookmarks, and settings are stored locally and never
+              transmitted.
             </Body>
           </FaqItem>
         </Section>

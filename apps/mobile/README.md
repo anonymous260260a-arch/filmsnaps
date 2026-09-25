@@ -40,7 +40,9 @@ lib/
   bufferProfiles.ts       Per-format ExoPlayer buffer profiles (start/rebuffer/forward targets)
   lastWorkingSource.ts    Remembers the server URL that last played per title
   networkMonitor.ts       On-device bandwidth measurement
-  perfMetrics.ts          Player perf session telemetry (logs only, stays on device)
+  perfMetrics.ts          Player perf session — emits optional anonymous watch
+                          metrics through the telemetry gate (plays only when
+                          enabled)
   hevc.ts                 MKV/HEVC format detection helpers
   nxshaApi.ts             NXSha provider API (AES-CBC request encoding)
   download/               Download engine (manager, store, SQLite, native adapter)

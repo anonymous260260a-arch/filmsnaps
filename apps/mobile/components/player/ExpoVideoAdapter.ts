@@ -49,6 +49,8 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   private playPauseListeners: ((isPaused: boolean) => void)[] = [];
   private bufferingListeners: ((isBuffering: boolean) => void)[] = [];
   private errorListeners: ((error: string) => void)[] = [];
+  /** Native statusChange (idle/loading/readyToPlay/error) — [watchperf] playerReady. */
+  private statusListeners: ((status: string) => void)[] = [];
   /** Timestamp of the last non-"off" subtitle selection — used to attribute errors. */
   private subtitleEnabledAt = 0;
   private endedListeners: (() => void)[] = [];
@@ -165,6 +167,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
 
         const isBuffering = status.status === "loading";
         this.bufferingListeners.forEach((l) => l(isBuffering));
+        this.statusListeners.forEach((l) => l(status.status));
 
         // Re-announce position/duration once the source is actually open
         // (e.g. ready again after a rebuffer). Never while loading — there
@@ -806,6 +809,13 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     this.bufferingListeners.push(cb);
     return () => {
       this.bufferingListeners = this.bufferingListeners.filter((l) => l !== cb);
+    };
+  }
+
+  onStatusChange(cb: (status: string) => void): () => void {
+    this.statusListeners.push(cb);
+    return () => {
+      this.statusListeners = this.statusListeners.filter((l) => l !== cb);
     };
   }
 

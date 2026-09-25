@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -14,14 +14,40 @@ import { MediaCard } from "./MediaCard";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useSwipeTabNavigator } from "./SwipeTabNavigator";
 
-const ITEM_WIDTH = (width: number) => (width - 48) / 3;
+const ITEM_GAP = 10;
+const ITEM_PADDING = 16;
+const itemWidth = (width: number) => (width - 48) / 3;
 
 interface MediaCarouselProps {
   title: string;
   data: Movie[];
   onItemPress: (item: Movie) => void;
+  onItemPressIn?: (item: Movie) => void;
   onSeeAll?: () => void;
 }
+
+/** D5: memoized row — skips re-render of offscreen posters on parent state. */
+const MediaCarouselRow = React.memo(function MediaCarouselRow({
+  item,
+  width,
+  onItemPress,
+  onItemPressIn,
+}: {
+  item: Movie;
+  width: number;
+  onItemPress: (item: Movie) => void;
+  onItemPressIn?: (item: Movie) => void;
+}) {
+  return (
+    <View style={{ width: itemWidth(width), marginRight: ITEM_GAP }}>
+      <MediaCard
+        item={item}
+        onPress={onItemPress}
+        onPressIn={onItemPressIn}
+      />
+    </View>
+  );
+});
 
 /**
  * Horizontal carousel with Playfair Display section heading
@@ -30,11 +56,15 @@ interface MediaCarouselProps {
  * Registers its horizontal FlatList's native scroll gesture with the root
  * SwipeTabNavigator, so a drag on this carousel scrolls it instead of cycling
  * tabs (and never dead-zones the scroll).
+ *
+ * D5: fixed item geometry + getItemLayout + memoized rows — kills the
+ * VirtualizedList content-length recalcs seen on detail scroll (3.2s jank).
  */
 export function MediaCarousel({
   title,
   data,
   onItemPress,
+  onItemPressIn,
   onSeeAll,
 }: MediaCarouselProps) {
   const { width: SCREEN_WIDTH } = useWindowDimensions();
@@ -49,6 +79,32 @@ export function MediaCarousel({
     return swipeTab.registerCarousel(nativeGesture);
   }, [swipeTab, nativeGesture]);
 
+  const w = itemWidth(SCREEN_WIDTH);
+  const step = w + ITEM_GAP;
+
+  const getItemLayout = useCallback(
+    (_: unknown, index: number) => ({
+      length: w,
+      offset: step * index,
+      index,
+    }),
+    [w, step],
+  );
+
+  const renderItem = useCallback(
+    ({ item }: ListRenderItemInfo<Movie>) => (
+      <MediaCarouselRow
+        item={item}
+        width={SCREEN_WIDTH}
+        onItemPress={onItemPress}
+        onItemPressIn={onItemPressIn}
+      />
+    ),
+    [SCREEN_WIDTH, onItemPress, onItemPressIn],
+  );
+
+  const keyExtractor = useCallback((item: Movie) => String(item.id), []);
+
   if (!data?.length) return null;
 
   return (
@@ -62,15 +118,19 @@ export function MediaCarousel({
       <GestureDetector gesture={nativeGesture}>
         <FlatList
           data={data}
-          keyExtractor={(item) => String(item.id)}
+          keyExtractor={keyExtractor}
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
-          renderItem={({ item }: ListRenderItemInfo<Movie>) => (
-            <View style={{ width: ITEM_WIDTH(SCREEN_WIDTH) }}>
-              <MediaCard item={item} onPress={onItemPress} />
-            </View>
-          )}
+          contentContainerStyle={{
+            paddingHorizontal: ITEM_PADDING,
+            paddingRight: ITEM_PADDING,
+          }}
+          renderItem={renderItem}
+          getItemLayout={getItemLayout}
+          initialNumToRender={4}
+          maxToRenderPerBatch={4}
+          windowSize={5}
+          removeClippedSubviews
         />
       </GestureDetector>
     </View>

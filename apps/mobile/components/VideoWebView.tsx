@@ -18,6 +18,7 @@ import {
   AppState,
 } from "react-native";
 import { colors } from "../theme/colors";
+import { trackFeatureUsed, trackPlayerError } from "../lib/telemetry";
 import { ProgressiveImage } from "./ProgressiveImage";
 import PlayerWebView, { PlayerWebViewRef } from "../modules/player-webview";
 import { Ionicons } from "@expo/vector-icons";
@@ -55,7 +56,8 @@ import { fetchIntroSegments, getActiveSkipSegment } from "../lib/introDetect";
 import type { IntroDbResponse } from "../lib/introDetect";
 import { tmdbApi } from "../lib/api";
 import { getNextEpisode } from "../lib/tvUtils";
-import { prefetchStreams } from "../lib/streamPrefetch";
+import { prefetchStreams, getPrefetchAgeMs } from "../lib/streamPrefetch";
+import { resolvePlaybackProviderId } from "../lib/resolvePlaybackProvider";
 import { getPlayerTuning } from "../lib/playerConfig";
 import { clearAllState, getConfigVersion } from "../modules/player-webview";
 import { providerConfigs, generateProviderSnippet } from "./providerConfig";
@@ -64,6 +66,7 @@ import { EpisodeRail } from "./player/EpisodeRail";
 import { ServerPickerSheet } from "./player/ServerPickerSheet";
 import { ServerNotes } from "./player/ServerNotes";
 import { HevcPlayer } from "./HevcPlayer";
+import type { VideoPlayer } from "expo-video";
 import type { StreamLink } from "./player/streamTypes";
 import type { ValidationResult } from "../lib/streamValidator";
 import { useSettings } from "../lib/settings";
@@ -95,6 +98,8 @@ export interface DirectStreamState {
   lastWorkingIndex?: number;
   loading: boolean;
   error: string | null;
+  /** B3: real chain-stage copy while waiting ("HDHub didn't respond — …"). */
+  stageMessage?: string | null;
 }
 
 // â”€â”€ Guard scripts â”€â”€ injected via shared package â”€â”€
@@ -597,6 +602,9 @@ interface VideoWebViewProps {
   /** Fired when the user changes season/episode while the direct server is
    *  active (links are per-episode and must be re-fetched). */
   onDirectEpisodeChange?: (season: number, episode: number) => void;
+  /** D3: warm player adopted from the details page (ready before links land). */
+  earlyPlayer?: VideoPlayer | null;
+  earlyPlayerKey?: string;
 }
 
 export function VideoWebView({
@@ -617,10 +625,14 @@ export function VideoWebView({
   onDirectSelected,
   onDirectRetry,
   onDirectEpisodeChange,
+  earlyPlayer,
+  earlyPlayerKey,
 }: VideoWebViewProps) {
   useKeepAwake();
   const insets = useSafeAreaInsets();
   const { settings, updateSetting } = useSettings();
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } =
     Dimensions.get("window");
   const webViewRef = useRef<PlayerWebViewRef>(null);
@@ -769,6 +781,12 @@ export function VideoWebView({
     };
   }, [loadState.type]);
   const [showPicker, setShowPicker] = useState(false);
+  // FIX 6: mount heavy sheets only after first open (player + chrome first).
+  const [serverSheetMounted, setServerSheetMounted] = useState(false);
+  const openServerPicker = useCallback(() => {
+    setServerSheetMounted(true);
+    setShowPicker(true);
+  }, []);
   const [auditMode, setAuditMode] = useState(false);
   const [auditHosts, setAuditHosts] = useState<string[]>([]);
 
@@ -833,6 +851,36 @@ export function VideoWebView({
   }, [initialProvider, providers, settings.defaultServer]);
 
   const [providerId, setProviderId] = useState<string>(initialProviderId);
+
+  // E2 — emit player_error (surface=embed) exactly once per FAILED transition.
+  // Classification is staged from the user-facing reason string; the embed
+  // surface never shares raw provider URLs or messages.
+  const lastFailedReasonRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (loadState.type !== "FAILED") return;
+    if (loadState.reason === lastFailedReasonRef.current) return;
+    lastFailedReasonRef.current = loadState.reason;
+    const reason = loadState.reason.toLowerCase();
+    const errorClass =
+      loadState.isCloudflare || reason.includes("cloudflare")
+        ? ("cloudflare" as const)
+        : reason.includes("404")
+          ? ("http404" as const)
+          : reason.includes("410")
+            ? ("http410" as const)
+            : reason.includes("timed out")
+              ? ("timeout" as const)
+              : reason.includes("no response")
+                ? ("no-response" as const)
+                : ("tc" as const);
+    trackPlayerError({
+      errorClass,
+      surface: "embed",
+      providerId: providerId || "unknown",
+      mediaType: type,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadState, type, providerId]);
 
   // Sync providerId when the parent updates initialProvider (e.g. CW
   // promoted a way2movies link or HDHub failed and fallback picked
@@ -1023,6 +1071,12 @@ export function VideoWebView({
   }, []);
 
   const [showEpPicker, setShowEpPicker] = useState(false);
+  // FIX 6: EpisodeRail mounts on first open only.
+  const [epRailMounted, setEpRailMounted] = useState(false);
+  const openEpPicker = useCallback(() => {
+    setEpRailMounted(true);
+    setShowEpPicker(true);
+  }, []);
   const [currentSeason, setCurrentSeason] = useState<number>(season ?? 1);
   const [currentEpisode, setCurrentEpisode] = useState<number>(episode ?? 1);
   seasonRef.current = currentSeason;
@@ -1565,6 +1619,8 @@ export function VideoWebView({
     episode: number;
   } | null>(null);
   const directNextEpKeyRef = useRef("");
+  // FIX 11: one re-warm attempt per episode key.
+  const nextEpRewarmDoneRef = useRef(false);
   useEffect(() => {
     if (!isDirect || type !== "tv" || !currentSeason || !currentEpisode) {
       setDirectNextEp(null);
@@ -1573,6 +1629,7 @@ export function VideoWebView({
     const key = `${id}:${currentSeason}:${currentEpisode}`;
     if (directNextEpKeyRef.current === key) return;
     directNextEpKeyRef.current = key;
+    nextEpRewarmDoneRef.current = false;
     let cancelled = false;
     setDirectNextEp(null);
     getNextEpisode(id, currentSeason, currentEpisode)
@@ -1592,12 +1649,24 @@ export function VideoWebView({
         console.log(
           `[VideoWebView] Direct next episode resolved: S${nextSeason}E${nextEp} (prefetching links)`,
         );
-        prefetchStreams(parseInt(id, 10), "tv", nextSeason, nextEp, {
-          cellularMaxMB: settings.cellularMaxMB,
-          maxQuality: settings.maxQuality,
-          preferredAudioLanguage: settings.preferredAudioLanguage,
-          trigger: "next-episode",
-        }).catch(() => {});
+        // FIX 1: next-episode prefetch must use the provider watch will open.
+        void resolvePlaybackProviderId({
+          mediaType: "tv",
+          tmdbId: parseInt(id, 10),
+          savedServer: settingsRef.current.defaultServer,
+        })
+          .then((nextProviderId) => {
+            if (!nextProviderId || cancelled) return;
+            return prefetchStreams(parseInt(id, 10), "tv", nextSeason, nextEp, {
+              cellularMaxMB: settingsRef.current.cellularMaxMB,
+              maxQuality: settingsRef.current.maxQuality,
+              preferredAudioLanguage:
+                settingsRef.current.preferredAudioLanguage,
+              providerId: nextProviderId,
+              trigger: "next-episode",
+            });
+          })
+          .catch(() => {});
       })
       .catch(() => {});
     return () => {
@@ -1745,6 +1814,7 @@ export function VideoWebView({
     // can be re-expanded after the WebView remount (provider fullscreen is lost
     // on remount and can't be re-entered without a fresh user gesture).
     wasFullscreenOnNextRef.current = providerFsRef.current;
+    trackFeatureUsed("next_episode_manual", "watch");
     setCurrentSeason(nextEpInfo.season);
     setCurrentEpisode(nextEpInfo.episode);
     setMountGen((g) => g + 1);
@@ -1831,29 +1901,33 @@ export function VideoWebView({
   // provider once per mount. Gated to avoid infinite loops. The one-shot ref
   // is consumed INSIDE the timeout — scheduling then getting cancelled by a
   // prop change (the watch screen flips loading=true right after mount) must
-  // not burn the only shot. ──
+  // not burn the only shot.
+  //
+  // FIX 3: depend on a primitive signature of the empty/error state, NOT the
+  // directStream object identity (watch rebuilds that object every render —
+  // the timer used to clear forever and never fire). ──
   const autoDirectFallbackUsedRef = useRef(false);
+  const dsLoading = directStream?.loading ?? false;
+  const dsError = directStream?.error ?? null;
+  const dsLinkCount = directStream?.links.length ?? 0;
+  const dsEmptySettled = !dsLoading && (!!dsError || dsLinkCount === 0);
+  const fallbackSig =
+    isDirect && dsEmptySettled && providers.length > 1
+      ? `${dsError ?? ""}|${dsLinkCount}`
+      : "";
 
   useEffect(() => {
-    if (
-      isDirect &&
-      directStream &&
-      !directStream.loading &&
-      (directStream.error || directStream.links.length === 0) &&
-      !autoDirectFallbackUsedRef.current &&
-      providers.length > 1
-    ) {
-      const timer = setTimeout(() => {
-        if (autoDirectFallbackUsedRef.current) return;
-        autoDirectFallbackUsedRef.current = true;
-        console.log(
-          "[Flow] direct provider empty — auto-switching to next provider",
-        );
-        tryNextProvider();
-      }, getPlayerTuning().providerFallbackDelayMs);
-      return () => clearTimeout(timer);
-    }
-  }, [isDirect, directStream, tryNextProvider, providers.length]);
+    if (!fallbackSig || autoDirectFallbackUsedRef.current) return;
+    const timer = setTimeout(() => {
+      if (autoDirectFallbackUsedRef.current) return;
+      autoDirectFallbackUsedRef.current = true;
+      console.log(
+        "[Flow] direct provider empty — auto-switching to next provider",
+      );
+      tryNextProvider();
+    }, getPlayerTuning().providerFallbackDelayMs);
+    return () => clearTimeout(timer);
+  }, [fallbackSig, tryNextProvider]);
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Empty URL guard Ã¢â€â‚¬Ã¢â€â‚¬
   if (!isDirect && !watchUrl) {
@@ -1869,7 +1943,7 @@ export function VideoWebView({
           No streaming sources are available. Try selecting a different source.
         </Text>
         <TouchableOpacity
-          onPress={() => setShowPicker(true)}
+          onPress={openServerPicker}
           className="bg-primary rounded-xl py-3 px-6 flex-row items-center"
           activeOpacity={0.8}
         >
@@ -1878,14 +1952,16 @@ export function VideoWebView({
             Choose Source
           </Text>
         </TouchableOpacity>
-        <ServerPickerSheet
-          visible={showPicker}
-          providers={providers}
-          currentId={providerId}
-          onSelect={switchProvider}
-          onClose={() => setShowPicker(false)}
-          getDisplayName={getProviderDisplayName}
-        />
+        {serverSheetMounted && (
+          <ServerPickerSheet
+            visible={showPicker}
+            providers={providers}
+            currentId={providerId}
+            onSelect={switchProvider}
+            onClose={() => setShowPicker(false)}
+            getDisplayName={getProviderDisplayName}
+          />
+        )}
       </View>
     );
   }
@@ -1946,6 +2022,82 @@ export function VideoWebView({
       ).catch(() => {});
     }
     prevPctRef.current = state.percent;
+
+    // FIX 11: re-warm next-episode links when the original prefetch is
+    // within ~5 min of its 45 min TTL (age >= 40 min). Once per episode.
+    if (
+      isDirect &&
+      isTV &&
+      state.percent >= 0.8 &&
+      !nextEpRewarmDoneRef.current &&
+      directNextEp
+    ) {
+      const age = getPrefetchAgeMs(
+        parseInt(id, 10),
+        "tv",
+        directNextEp.season,
+        directNextEp.episode,
+        {
+          providerId: provider?.id,
+        },
+      );
+      if (age !== null && age >= 40 * 60 * 1000) {
+        nextEpRewarmDoneRef.current = true;
+        console.log(
+          `[VideoWebView] FIX 11 re-warm next-ep S${directNextEp.season}E${directNextEp.episode} (age=${Math.round(age / 1000)}s)`,
+        );
+        void resolvePlaybackProviderId({
+          mediaType: "tv",
+          tmdbId: parseInt(id, 10),
+          savedServer: settingsRef.current.defaultServer,
+        })
+          .then((nextProviderId) => {
+            if (!nextProviderId) return;
+            return prefetchStreams(
+              parseInt(id, 10),
+              "tv",
+              directNextEp.season,
+              directNextEp.episode,
+              {
+                cellularMaxMB: settingsRef.current.cellularMaxMB,
+                maxQuality: settingsRef.current.maxQuality,
+                preferredAudioLanguage:
+                  settingsRef.current.preferredAudioLanguage,
+                providerId: nextProviderId,
+                trigger: "next-episode",
+                force: true,
+              },
+            );
+          })
+          .catch(() => {});
+      } else if (age === null) {
+        // Miss (expired/evicted) — also re-warm once.
+        nextEpRewarmDoneRef.current = true;
+        void resolvePlaybackProviderId({
+          mediaType: "tv",
+          tmdbId: parseInt(id, 10),
+          savedServer: settingsRef.current.defaultServer,
+        })
+          .then((nextProviderId) => {
+            if (!nextProviderId) return;
+            return prefetchStreams(
+              parseInt(id, 10),
+              "tv",
+              directNextEp.season,
+              directNextEp.episode,
+              {
+                cellularMaxMB: settingsRef.current.cellularMaxMB,
+                maxQuality: settingsRef.current.maxQuality,
+                preferredAudioLanguage:
+                  settingsRef.current.preferredAudioLanguage,
+                providerId: nextProviderId,
+                trigger: "next-episode",
+              },
+            );
+          })
+          .catch(() => {});
+      }
+    }
 
     // (3) Skip-Intro button — event-driven from engine.currentTime.
     if (
@@ -2048,10 +2200,8 @@ export function VideoWebView({
               ? applyDirectFullscreen(!directFullscreen)
               : setIsFullscreen((f) => !f)
           }
-          onServerPickerOpen={() => setShowPicker(true)}
-          onEpisodePickerOpen={() => {
-            setShowEpPicker(true);
-          }}
+          onServerPickerOpen={openServerPicker}
+          onEpisodePickerOpen={openEpPicker}
           onTryNextSource={tryNextProvider}
           currentSeason={currentSeason}
           currentEpisode={currentEpisode}
@@ -2066,18 +2216,20 @@ export function VideoWebView({
         />
       )}
 
-      {/* Server picker modal */}
-      <ServerPickerSheet
-        visible={showPicker}
-        providers={providers}
-        currentId={providerId}
-        onSelect={switchProvider}
-        onClose={() => setShowPicker(false)}
-        getDisplayName={getProviderDisplayName}
-      />
+      {/* Server picker modal — FIX 6: deferred until first open */}
+      {serverSheetMounted && (
+        <ServerPickerSheet
+          visible={showPicker}
+          providers={providers}
+          currentId={providerId}
+          onSelect={switchProvider}
+          onClose={() => setShowPicker(false)}
+          getDisplayName={getProviderDisplayName}
+        />
+      )}
 
-      {/* ── Episode picker modal (TV only) ── */}
-      {isTV && (
+      {/* ── Episode picker modal (TV only) — FIX 6: deferred until first open ── */}
+      {isTV && epRailMounted && (
         <EpisodeRail
           visible={showEpPicker}
           tvId={id}
@@ -2213,11 +2365,35 @@ export function VideoWebView({
             <View className="flex-1 items-center justify-center">
               <ActivityIndicator size="large" color={colors.gold} />
               <Text
-                className="text-sm mt-4"
+                className="text-sm mt-4 text-center px-6"
                 style={{ color: colors.textSecondary }}
               >
-                Finding streams…
+                {directStream.stageMessage || "Finding streams…"}
               </Text>
+              {providers.length > 1 && (
+                <TouchableOpacity
+                  onPress={openServerPicker}
+                  className="rounded-xl py-2.5 px-4 mt-5 flex-row items-center"
+                  style={{
+                    backgroundColor: colors.bgSurface,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons
+                    name="layers-outline"
+                    size={14}
+                    color={colors.textSecondary}
+                  />
+                  <Text
+                    className="text-xs ml-2 font-semibold"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    All Sources
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           ) : directStream &&
             (directStream.error || directStream.links.length === 0) ? (
@@ -2259,7 +2435,7 @@ export function VideoWebView({
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  onPress={() => setShowPicker(true)}
+                  onPress={openServerPicker}
                   className="rounded-xl py-3 px-5 flex-row items-center border"
                   style={{
                     backgroundColor: colors.bgCard,
@@ -2289,6 +2465,9 @@ export function VideoWebView({
               selectionReason={directStream.selectionReason}
               lastWorkingIndex={directStream.lastWorkingIndex}
               preferredLanguage={settings.preferredAudioLanguage ?? "auto"}
+              providerDisplayName={
+                currentProvider ? getProviderDisplayName(currentProvider) : undefined
+              }
               tmdbId={id}
               mediaType={type}
               season={isTV ? currentSeason : undefined}
@@ -2313,7 +2492,9 @@ export function VideoWebView({
               externalFullscreen={directFullscreen}
               onClose={handleClose}
               onExhausted={tryNextProvider}
-              onTryProvider={() => setShowPicker(true)}
+              onTryProvider={openServerPicker}
+              externalPlayer={earlyPlayer ?? undefined}
+              earlyPlayerKey={earlyPlayerKey}
             />
           ) : null
         ) : (
@@ -2420,7 +2601,7 @@ export function VideoWebView({
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    onPress={() => setShowPicker(true)}
+                    onPress={openServerPicker}
                     className="rounded-xl py-3 px-5 flex-row items-center border"
                     style={{
                       backgroundColor: colors.bgCard,

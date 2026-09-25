@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, ActivityIndicator, Modal, BackHandler } from "react-native";
+import { View, Image, Modal, BackHandler, AppState } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { Stack } from "expo-router";
+import { Stack, usePathname } from "expo-router";
 import { safeGoBack, resetNavigationInterlock } from "../lib/navigation";
 import { initLongTaskMonitor } from "../lib/performance/long-task-monitor";
 import { StatusBar } from "expo-status-bar";
@@ -15,11 +15,19 @@ import {
   Geist_700Bold,
 } from "@expo-google-fonts/geist";
 import { Fraunces_700Bold } from "@expo-google-fonts/fraunces";
+import * as SplashScreen from "expo-splash-screen";
+import { Image as ExpoImage } from "expo-image";
 import { UpdateOverlay } from "../components/UpdateOverlay";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { DownloadInfraProvider, useDownloadQueue } from "../lib/download";
 import { migrateDownloads, isMigrationDone } from "../lib/download/migration";
-import { SettingsProvider, useSettings } from "../lib/settings";
+import {
+  SettingsProvider,
+  useSettings,
+  startSettingsPreload,
+  isSettingsPreloaded,
+  getSettingsReadCount,
+} from "../lib/settings";
 import { persistQueryClient } from "@tanstack/react-query-persist-client";
 import { initNetworkMonitor } from "../lib/networkMonitor";
 import { initPlayerConfig } from "../lib/playerConfig";
@@ -27,29 +35,173 @@ import { warmProviderConfig } from "../lib/directStreams";
 import {
   asyncStoragePersister,
   isPersistableQuery,
+  readPersistedCacheBytes,
 } from "../lib/queryPersister";
 import { DownloadToastView } from "../components/DownloadToast";
 import LegalGate from "../components/LegalGate";
 import { colors } from "../theme/colors";
+import {
+  launchNow,
+  markLaunch,
+  logLaunchSummary,
+} from "../lib/launchMetrics";
+import {
+  setTelemetryGate,
+  refreshConnectionClass,
+  setPrefAudioLang,
+  trackScreenView,
+  emitSessionEndOnBackground,
+} from "../lib/telemetry";
+import { initSentryIfAllowed } from "../lib/sentry";
+import { getImageUrl } from "@filmsnaps/shared";
+import { HERO_BACKDROP_SIZE } from "../components/heroLayout";
 import "./globals.css";
+
+// FIX 4: hold the native splash until the app tree is ready (module top).
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// FIX 9: cold-start t0 — module scope, before any work below.
+launchNow();
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 2,
+      // FIX 3: typed smart retry — no retry on 4xx (except 408/429), else ≤2.
+      retry: (failureCount, error) => {
+        const status = (error as { status?: number } | null)?.status;
+        if (
+          typeof status === "number" &&
+          status < 500 &&
+          status !== 408 &&
+          status !== 429
+        ) {
+          return false;
+        }
+        return failureCount < 2;
+      },
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 8000),
       staleTime: 1000 * 60 * 5, // safety net — overridden per-hook for TMDB queries
-      gcTime: Infinity, // never GC mid-session; disk bounded by maxAge
+      gcTime: 30 * 60 * 1000, // FIX 3: was Infinity — GC idle queries after 30min
       refetchOnWindowFocus: false,
       refetchOnReconnect: true,
     },
   },
 });
 
+// FIX 5: start cache restore at module scope (parallel with fonts + settings).
+const cacheRestoreStartedAt = launchNow();
+const [, persistPromise] = persistQueryClient({
+  queryClient,
+  persister: asyncStoragePersister,
+  maxAge: 1000 * 60 * 60 * 24, // 24h backstop
+  dehydrateOptions: {
+    shouldDehydrateQuery: (q) => isPersistableQuery(q.queryKey),
+  },
+});
+
+const cacheRestorePromise = persistPromise
+  .then(async () => {
+    const bytes = await readPersistedCacheBytes();
+    const ms = Math.round(launchNow() - cacheRestoreStartedAt);
+    console.log(`[perf] cacheRestore ms=${ms} bytes=${bytes}`);
+
+    const trending = queryClient.getQueryState(["movies", "trending"]);
+    let reason: "no-cache" | "stale" | "warm" = "no-cache";
+    if (trending?.data !== undefined) {
+      const age = Date.now() - (trending.dataUpdatedAt || 0);
+      // Home trending staleTime is 10min — align coldStartReason with that.
+      reason = age > 10 * 60 * 1000 ? "stale" : "warm";
+    }
+    markLaunch("cacheRestoredMs", launchNow());
+    markLaunch("cacheBytes", bytes);
+    markLaunch("coldStartReason", reason);
+
+    // FIX 6: fire-and-forget warm of hero backdrop + first 4 posters.
+    // Skip network work when there is nothing cached to prefetch from.
+    try {
+      const data = queryClient.getQueryData(["movies", "trending"]) as
+        | { results?: Array<{ backdrop_path?: string | null; poster_path?: string | null }> }
+        | undefined;
+      const results = data?.results ?? [];
+      if (results.length > 0) {
+        const hero = results.find((r) => r.backdrop_path) ?? results[0];
+        if (hero?.backdrop_path) {
+          // Same URL as Hero.tsx render path (HERO_BACKDROP_SIZE = w1280).
+          ExpoImage.prefetch(getImageUrl(hero.backdrop_path, HERO_BACKDROP_SIZE)).catch(
+            () => {},
+          );
+        }
+        results.slice(0, 4).forEach((r) => {
+          if (r.poster_path) {
+            ExpoImage.prefetch(getImageUrl(r.poster_path, "w342")).catch(
+              () => {},
+            );
+          }
+        });
+      }
+    } catch {
+      // best-effort image warm
+    }
+  })
+  .catch(() => {
+    markLaunch("cacheRestoredMs", launchNow());
+    markLaunch("cacheBytes", 0);
+    markLaunch("coldStartReason", "no-cache");
+  });
+
+// FIX B: splash mark is recorded synchronously when the tree is first allowed.
+let splashMarkDone = false;
+function markSplashHiddenOnce(): void {
+  if (splashMarkDone) return;
+  splashMarkDone = true;
+  console.log(`[appReady] true + hide splash at t=${launchNow()}ms`);
+  markLaunch("splashHiddenMs", launchNow());
+  SplashScreen.hideAsync().catch(() => {});
+}
+
+// Phase 1C FIX 1: mount counter — exactly ONE mount per JS runtime expected.
+let rootLayoutMountCount = 0;
+
+/** Static branded hold — matches native splash (bg #070708, contain image). */
+function SplashHold() {
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: "#070708",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <Image
+        source={require("../assets/splash.png")}
+        style={{ width: "100%", height: "100%" }}
+        resizeMode="contain"
+        accessible={false}
+      />
+    </View>
+  );
+}
+
 export default function RootLayout() {
+  // Phase 1C FIX 1: detect root remounts (should be #1 only per runtime).
+  useEffect(() => {
+    rootLayoutMountCount += 1;
+    console.log(
+      `[RootLayout] mount #${rootLayoutMountCount} at t=${launchNow()}ms readCount=${getSettingsReadCount()}`,
+    );
+    if (rootLayoutMountCount > 1) {
+      console.warn(
+        `[RootLayout] REMOUNT detected (#${rootLayoutMountCount}) — providers will re-create`,
+      );
+    }
+  }, []);
+
   // Alias web fonts onto the app's existing string keys so every
   // `fontFamily: "Inter_*"` / `"PlayfairDisplay_700Bold"` now renders Geist /
   // Fraunces with no per-screen edits. Test swap — remove to revert.
-  const [fontsLoaded] = useFonts({
+  // FIX C: useFonts returns [loaded, error] — fall back only on rejection.
+  const [fontsLoaded, fontsError] = useFonts({
     Inter_400Regular: Geist_400Regular,
     Inter_500Medium: Geist_500Medium,
     Inter_600SemiBold: Geist_600SemiBold,
@@ -57,87 +209,99 @@ export default function RootLayout() {
     PlayfairDisplay_700Bold: Fraunces_700Bold,
   });
 
-  // FIX: Font loading timeout — prevents infinite spinner if fonts fail to load
-  const [fontsTimedOut, setFontsTimedOut] = useState(false);
+  const [fontsFallback, setFontsFallback] = useState(false);
 
   useEffect(() => {
-    if (fontsLoaded) return;
+    if (fontsLoaded) {
+      console.log(
+        `[RootLayout] fonts loaded t=${launchNow()}ms (gate needs fontsLoaded||fontsFallback)`,
+      );
+      markLaunch("fontsDoneMs", launchNow());
+      return;
+    }
+    if (fontsError) {
+      console.warn(
+        "[RootLayout] Fonts failed to load (rejection), falling back to system fonts:",
+        fontsError,
+      );
+      setFontsFallback(true);
+      markLaunch("fontsDoneMs", launchNow());
+      return;
+    }
+    // FIX C: 10s hard-cap only (safety net) — no 3s false fallback.
     const timer = setTimeout(() => {
       if (!fontsLoaded) {
         console.warn(
-          "[RootLayout] Fonts failed to load within 3s, falling back to system fonts",
+          "[RootLayout] Fonts failed to load within 10s, falling back to system fonts",
         );
-        setFontsTimedOut(true);
+        setFontsFallback(true);
+        markLaunch("fontsDoneMs", launchNow());
       }
-    }, 3000);
+    }, 10_000);
     return () => clearTimeout(timer);
-  }, [fontsLoaded]);
+  }, [fontsLoaded, fontsError]);
 
   const [cacheRestored, setCacheRestored] = useState(false);
-  const persistedRef = useRef(false);
+  const [settingsReady, setSettingsReady] = useState(() =>
+    isSettingsPreloaded(),
+  );
+  const bootRef = useRef(false);
 
   useEffect(() => {
-    if (persistedRef.current) return;
-    persistedRef.current = true;
+    if (bootRef.current) return;
+    bootRef.current = true;
 
-    // Hydrate from disk cache on cold launch — only then render the app tree.
-    // This prevents the mount-time fetch race: without the gate, query hooks
-    // fire synchronously on mount and fetch from network BEFORE the cache
-    // file is read from disk, defeating the whole purpose of persistence.
-    //
-    // Using the official persistQueryClient which preserves each query's
-    // original dataUpdatedAt, so staleness is computed naturally against
-    // per-hook staleTime. Combined with gated rendering + default
-    // refetchOnMount, stale-while-revalidate across cold launches is free.
-    const [, persistPromise] = persistQueryClient({
-      queryClient,
-      persister: asyncStoragePersister,
-      maxAge: 1000 * 60 * 60 * 24, // 24h backstop
-      dehydrateOptions: {
-        shouldDehydrateQuery: (q) => isPersistableQuery(q.queryKey),
-      },
-    });
-    persistPromise.finally(() => {
-      setCacheRestored(true);
-    });
+    // FIX A / Phase 1C: single settings read — RootLayout first effect only.
+    // SettingsProvider also calls startSettingsPreload() but that is idempotent.
+    startSettingsPreload()
+      .then(() => {
+        markLaunch("settingsDoneMs", launchNow());
+        setSettingsReady(true);
+      })
+      .catch((e) => {
+        console.warn("[RootLayout] settings preload rejected:", e);
+        setSettingsReady(true);
+      });
+
+    cacheRestorePromise
+      .then(() => {
+        setCacheRestored(true);
+      })
+      .catch((e) => {
+        console.warn("[RootLayout] cacheRestore rejected:", e);
+        setCacheRestored(true);
+      });
 
     // Run download migration once (non-blocking)
     (async () => {
       const done = await isMigrationDone();
       if (!done) {
         console.log("[App] Running download migration...");
-        const result = await migrateDownloads();
-        console.log(
-          `[App] Migration complete: ${result.migrated} migrated, ${result.cleaned} cleaned`,
-        );
+        try {
+          const result = await migrateDownloads();
+          console.log(
+            `[App] Migration complete: ${result.migrated} migrated, ${result.cleaned} cleaned`,
+          );
+        } catch (e) {
+          console.warn("[App] Migration failed:", e);
+        }
       }
     })();
   }, []);
 
-  // Gate 1: Wait for disk cache to hydrate before mounting any query consumers.
-  // This ensures cached data is available on first render so isLoading is never
-  // true for persisted queries. Native splash remains visible during this step.
-  if (!cacheRestored) {
-    return (
-      <View
-        className="flex-1 items-center justify-center"
-        style={{ backgroundColor: colors.bg }}
-      >
-        <ActivityIndicator size="large" color={colors.gold} />
-      </View>
-    );
+  // Phase 1C FIX 5.2: REAL gate — cache + (fontsLoaded || fontsError→fallback
+  // || 10s cap) + settings. fontsFallback is set by fontsError OR the 10s timer.
+  const appReady =
+    cacheRestored && (fontsLoaded || fontsFallback) && settingsReady;
+
+  // FIX B: mark + hide BEFORE rendering children (child effects run first).
+  if (appReady) {
+    markSplashHiddenOnce();
   }
 
-  // Gate 2: Wait for fonts to load (with 3s timeout fallback)
-  if (!fontsLoaded && !fontsTimedOut) {
-    return (
-      <View
-        className="flex-1 items-center justify-center"
-        style={{ backgroundColor: colors.bg }}
-      >
-        <ActivityIndicator size="large" color={colors.gold} />
-      </View>
-    );
+  // FIX 4: static branded view while gated — no ActivityIndicator, no spinner.
+  if (!appReady) {
+    return <SplashHold />;
   }
 
   return (
@@ -165,7 +329,61 @@ export default function RootLayout() {
  * overlay on top. Once accepted, the overlay fades away cleanly.
  */
 function AppContent() {
-  const { settings, loaded: settingsLoaded } = useSettings();
+  const { settings } = useSettings();
+
+  // Phase 4 Package B: open/close the telemetry gate from the legal +
+  // analytics settings. Closing either drops the queue and stops sends.
+  // Sentry is crashes-only and follows the same gate.
+  useEffect(() => {
+    const legalAccepted = settings.legalAccepted === true;
+    const analyticsEnabled = settings.analyticsEnabled !== false;
+    setTelemetryGate({ legalAccepted, analyticsEnabled });
+    initSentryIfAllowed({ legalAccepted, analyticsEnabled });
+  }, [settings.legalAccepted, settings.analyticsEnabled]);
+
+  useEffect(() => {
+    refreshConnectionClass();
+  }, []);
+
+  // P2 — preferred audio language sync (whitelisted enum for telemetry).
+  useEffect(() => {
+    setPrefAudioLang(settings.preferredAudioLanguage);
+  }, [settings.preferredAudioLanguage]);
+
+  // P2 — screen_view on every route change (adoption histogram). Maps the
+  // current pathname to the small whitelisted screen enum; unmapped screens
+  // (legal, guide, announcements, …) emit nothing.
+  const pathname = usePathname();
+  const lastScreenRef = useRef<string | null>(null);
+  useEffect(() => {
+    let screen: "home" | "detail_movie" | "detail_tv" | "watch" | "search" | "library" | "history" | "saved" | "settings" | null = null;
+    if (pathname.startsWith("/movie/")) screen = "detail_movie";
+    else if (pathname.startsWith("/tv/")) screen = "detail_tv";
+    else if (pathname.startsWith("/watch/")) screen = "watch";
+    else if (pathname.startsWith("/history")) screen = "history";
+    else if (pathname.startsWith("/saved")) screen = "saved";
+    else if (pathname.startsWith("/search")) screen = "search";
+    else if (pathname.startsWith("/library")) screen = "library";
+    else if (pathname.startsWith("/settings")) screen = "settings";
+    else if (pathname === "/" || pathname === "" || pathname.startsWith("/(tabs)/")) screen = "home";
+    if (screen && screen !== lastScreenRef.current) {
+      lastScreenRef.current = screen;
+      trackScreenView({ screen });
+    }
+  }, [pathname]);
+
+  // P3 — session_end when the app leaves the foreground (AppState listener
+  // lives here so the queue's flush-on-background stays unchanged). iOS
+  // "inactive" fires mid-transition (notification shade, app switcher) and
+  // would end the session early, so only "background" counts as a leak.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "background") {
+        emitSessionEndOnBackground();
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   // Download queue runs for the lifetime of the app (not just while
   // the Downloads page is visible) so in-flight downloads continue
@@ -197,7 +415,7 @@ function AppContent() {
   }, []);
 
   // ── Network monitor (speed test in background) ──
-  // Triggers initial speed test on app start, then on network changes.
+  // Schedules via runAfterContentReady(+15s) inside initNetworkMonitor.
   // Non-blocking — uses cached speed for immediate decisions.
   // Gated by user setting (enableSpeedTest).
   useEffect(() => {
@@ -205,38 +423,22 @@ function AppContent() {
     return initNetworkMonitor();
   }, [settings.enableSpeedTest]);
 
-  // ── Player config (remote-tunable player settings) ──
-  // Cache-first, then a background refresh; applies native knobs
-  // (MKV extractor mode, HTTP timeouts, default headers). Never blocks.
+  // ── Player config (cache-first; no remote fetch) ──
   useEffect(() => {
     initPlayerConfig();
   }, []);
 
   // ── Stream/download provider registry (remote-updatable URLs) ──
-  // Warms the config so the first stream or download fetch doesn't wait on
-  // the remote lookup. Never blocks.
   useEffect(() => {
     warmProviderConfig();
   }, []);
 
   // Reset the navigation interlock on every screen focus.
-  // Prevents stale interlock state from a previous navigation that
-  // never completed (e.g., error boundary recovery).
   useEffect(() => {
     resetNavigationInterlock();
   });
 
-  if (!settingsLoaded) {
-    return (
-      <View
-        className="flex-1 items-center justify-center"
-        style={{ backgroundColor: colors.bg }}
-      >
-        <ActivityIndicator size="large" color={colors.gold} />
-      </View>
-    );
-  }
-
+  // FIX 4: settings are part of appReady — no third ActivityIndicator gate.
   return (
     <>
       <StatusBar style="light" />
@@ -428,3 +630,9 @@ function AppContent() {
     </>
   );
 }
+
+// Fallback: if home never mounts (deep link into a detail route), still emit
+// the one-line launch summary. Idempotent — the home path wins when it runs.
+setTimeout(() => {
+  logLaunchSummary();
+}, 30_000);

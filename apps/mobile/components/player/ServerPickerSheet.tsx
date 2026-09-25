@@ -149,11 +149,13 @@ export function ServerPickerSheet({
           />
         </Animated.View>
 
-        {/* Animated sheet */}
+        {/* Animated sheet — C1: bgElevated + radius 16 to match Audio/Stream sheets */}
         <Animated.View
-          className="rounded-t-3xl border-t"
+          className="border-t"
           style={{
-            backgroundColor: colors.bgCard,
+            backgroundColor: colors.bgElevated,
+            borderTopLeftRadius: 16,
+            borderTopRightRadius: 16,
             borderColor: colors.borderSubtle,
             maxHeight: SCREEN_HEIGHT * 0.58,
             paddingBottom: insets.bottom + 16,
@@ -179,9 +181,10 @@ export function ServerPickerSheet({
           >
             <View>
               <Text
-                className="text-base font-bold"
+                className="font-bold"
                 style={{
                   color: colors.textPrimary,
+                  fontSize: 18,
                   fontFamily: "Inter_600SemiBold",
                 }}
               >
@@ -218,13 +221,10 @@ export function ServerPickerSheet({
                 activeOpacity={0.7}
                 accessibilityLabel="Close source selection"
                 accessibilityRole="button"
-                className="w-7 h-7 rounded-full items-center justify-center border"
-                style={{
-                  backgroundColor: colors.bgSurface,
-                  borderColor: colors.borderSubtle,
-                }}
+                className="items-center justify-center"
+                style={{ width: 28, height: 28 }}
               >
-                <Ionicons name="close" size={15} color={colors.textSecondary} />
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
           </View>

@@ -17,6 +17,9 @@ import { getImageUrl } from "@filmsnaps/shared";
 import { ProgressiveImage } from "../../components/ProgressiveImage";
 import { MediaCard } from "../../components/MediaCard";
 import { usePersonDetails, usePersonCredits } from "../../hooks/useTMDB";
+import { openDetail, prepareDetail, toDetailNavItem } from "../../lib/openDetail";
+import { useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
 import { PersonSkeleton } from "../../components/Skeletons";
 import { colors } from "../../theme/colors";
 
@@ -24,6 +27,8 @@ export default function PersonDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const personId = Number(id);
   const nav = useSafeNavigation();
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
 
   const { data: person, isLoading: loadingPerson } = usePersonDetails(personId);
@@ -246,7 +251,20 @@ export default function PersonDetailScreen() {
                       media_type: "movie",
                     } as any
                   }
-                  onPress={(item: any) => nav.push(`/movie/${item.id}`)}
+                  onPressIn={(item: any) => {
+                    const navItem = toDetailNavItem(item, "movie");
+                    if (navItem)
+                      prepareDetail(navItem, "person", queryClient, router);
+                  }}
+                  onPress={(item: any) => {
+                    const navItem = toDetailNavItem(item, "movie");
+                    if (navItem)
+                      openDetail(navItem, "person", {
+                        queryClient,
+                        router,
+                        nav,
+                      });
+                  }}
                   variant="default"
                 />
               ))}
@@ -285,7 +303,20 @@ export default function PersonDetailScreen() {
                       media_type: "tv",
                     } as any
                   }
-                  onPress={(item: any) => nav.push(`/tv/${item.id}`)}
+                  onPressIn={(item: any) => {
+                    const navItem = toDetailNavItem(item, "tv");
+                    if (navItem)
+                      prepareDetail(navItem, "person", queryClient, router);
+                  }}
+                  onPress={(item: any) => {
+                    const navItem = toDetailNavItem(item, "tv");
+                    if (navItem)
+                      openDetail(navItem, "person", {
+                        queryClient,
+                        router,
+                        nav,
+                      });
+                  }}
                   variant="default"
                 />
               ))}

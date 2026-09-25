@@ -69,21 +69,20 @@ const FAQS: {
   {
     question: "Does FilmSnaps collect my personal data?",
     answerText:
-      "No. FilmSnaps does not collect, store, or transmit any personal data to external servers. Your watch history, watchlist, and settings stay on your device and are removed when you uninstall the app. There are no analytics SDKs, no tracking pixels, and no telemetry. For full details, see the Privacy Policy.",
+      "No. We collect no personal data. The Android app can send anonymous usage statistics and crash reports (switchable off in Settings); these contain no identifiers, no IP addresses, and no titles by name. The website sends nothing. The Privacy Policy lists exactly what's sent.",
     answer: (
       <Body>
-        <Bold>No.</Bold> FilmSnaps does not collect, store, or transmit any
-        personal data to external servers. Your watch history, watchlist, and
-        settings stay on your device and are removed when you uninstall the app.
-        There are no analytics SDKs, no tracking pixels, and no telemetry. For
-        full details, see the{" "}
+        <Bold>No.</Bold> We collect no personal data. The Android app can send
+        anonymous usage statistics and crash reports (switchable off in
+        Settings); these contain no identifiers, no IP addresses, and no titles
+        by name. The website sends nothing. The{" "}
         <Link
           href="/privacy"
           className="text-primary underline-offset-2 hover:underline"
         >
           Privacy Policy
-        </Link>
-        .
+        </Link>{" "}
+        lists exactly what&apos;s sent.
       </Body>
     ),
   },
@@ -144,30 +143,27 @@ const FAQS: {
   {
     question: "How do I verify your privacy claims?",
     answerText:
-      "Review our open-source code. Check that we have no analytics SDKs and no tracking pixels, and that the only requests our servers receive are anonymous metadata lookups (a TMDB proxy that keeps the API key server-side) which carry no personal data. Verify that all of your watch history, watchlist, and settings stay stored locally on your device. Our ad-blocking filter lists and security architecture are publicly documented in the codebase.",
+      "FilmSnaps is open source — the telemetry module and its field whitelist are in the public repository. The Privacy Policy lists every kind of connection the app makes, so you can check the code against each claim. Your history, bookmarks, and settings are stored locally and never transmitted.",
     answer: (
       <Body>
-        Review our{" "}
+        FilmSnaps is{" "}
         <Link
           href={GITHUB}
           className="text-primary underline-offset-2 hover:underline"
         >
-          open-source code
-        </Link>
-        . Check that we have no analytics SDKs and no tracking pixels, and that
-        the only requests our servers receive are{" "}
-        <Bold>anonymous metadata lookups</Bold> — a TMDB proxy that keeps the
-        API key server-side — which carry no personal data. Verify that all of
-        your watch history, watchlist, and settings stay stored locally on your
-        device. Our ad-blocking filter lists and security architecture are
-        publicly documented in the codebase — see the{" "}
+          open source
+        </Link>{" "}
+        — the telemetry module and its field whitelist are in the public
+        repository. The{" "}
         <Link
           href="/privacy"
           className="text-primary underline-offset-2 hover:underline"
         >
           Privacy Policy
         </Link>{" "}
-        for what stays on your device.
+        lists every kind of connection the app makes, so you can check the code
+        against each claim. Your history, bookmarks, and settings are stored
+        locally and never transmitted.
       </Body>
     ),
   },
@@ -196,7 +192,7 @@ export default function TransparencyPage() {
         icon={<Info className="h-10 w-10 text-primary" strokeWidth={1.5} />}
       >
         <p className="mb-2 text-sm font-medium text-faint">
-          Last updated: August 2026
+          Last updated: September 2026
         </p>
 
         <p className="mb-8 text-base leading-7 text-muted-foreground">
@@ -284,7 +280,7 @@ export default function TransparencyPage() {
 
         <Section title="What We Don't Do">
           <Bullet text="We don't host, store, or distribute any video content." />
-          <Bullet text="We don't collect analytics, telemetry, or usage data." />
+          <Bullet text="We don't collect personal data, and we never sell or share anything. The app's usage statistics are anonymous and optional — see the Privacy Policy." />
           <Bullet text="We don't show ads and have no advertising partnerships." />
           <Bullet text="We don't modify or re-encode video streams." />
           <Body extraMargin>

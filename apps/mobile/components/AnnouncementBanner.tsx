@@ -1,20 +1,19 @@
 /**
- * AnnouncementBanner — Non-blocking, color-coded announcement banner for the home screen.
+ * AnnouncementBanner — Inline feed notice card under the home hero.
  *
- * Features:
- *   - Supports 4 types: feature (gold), alert (amber), info (blue), critical (red)
- *   - Dismissible with X button (persists to AsyncStorage)
- *   - Tappable — navigates to detail page or external URL
- *   - Fade-in animation using RN Animated
- *   - Loaded as DeferredContent so it never blocks the main UI
- *   - Respects reduced-motion (when available)
+ * - Color-coded by type (feature/alert/info/critical)
+ * - Dismissible with X (persists to AsyncStorage)
+ * - Secondary visual weight: quieter and smaller than content rows
+ * - maxHeight ~120dp (inner content scrolls if longer — parent ScrollView)
+ * - Entrance/exit animations are supplied by the parent via
+ *   reanimated FadeInDown / FadeOutUp on the wrapper (Phase 1D FIX 1)
  *
  * Usage:
  *   <AnnouncementBanner announcement={ann} onDismiss={handleDismiss} />
  */
 
-import React, { useEffect, useRef } from "react";
-import { View, Text, TouchableOpacity, Animated, Linking } from "react-native";
+import React from "react";
+import { View, Text, TouchableOpacity, Linking } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeNavigation } from "@/lib/navigation";
 import type { Announcement } from "../lib/announcements";
@@ -74,25 +73,7 @@ export function AnnouncementBanner({
   onDismiss,
 }: AnnouncementBannerProps) {
   const nav = useSafeNavigation();
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(-20)).current;
   const style = TYPE_STYLES[announcement.type] ?? TYPE_STYLES.info;
-
-  // Entrance animation (spring-like for feature, smooth for others)
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 400,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 350,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [fadeAnim, slideAnim]);
 
   const handlePress = () => {
     if (announcement.externalUrl) {
@@ -102,23 +83,10 @@ export function AnnouncementBanner({
     }
   };
 
-  const handleDismiss = () => {
-    Animated.timing(fadeAnim, {
-      toValue: 0,
-      duration: 200,
-      useNativeDriver: true,
-    }).start(() => {
-      onDismiss(announcement.id);
-    });
-  };
-
   const isDismissible = announcement.dismissible !== false;
 
   return (
-    <Animated.View
-      className="px-4 mb-4"
-      style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}
-    >
+    <View style={{ marginBottom: 8 }}>
       <TouchableOpacity
         onPress={handlePress}
         activeOpacity={
@@ -145,13 +113,13 @@ export function AnnouncementBanner({
             }}
           />
 
-          <View className="flex-row items-start px-4 py-3">
-            {/* Type icon */}
+          <View className="flex-row items-start px-3 py-2.5">
+            {/* Type icon — compact */}
             <View
-              className="w-8 h-8 rounded-lg items-center justify-center mr-3 mt-0.5"
+              className="w-7 h-7 rounded-lg items-center justify-center mr-2.5 mt-0.5"
               style={{ backgroundColor: `${style.accent}18` }}
             >
-              <Ionicons name={style.icon} size={16} color={style.iconColor} />
+              <Ionicons name={style.icon} size={14} color={style.iconColor} />
             </View>
 
             {/* Text content */}
@@ -166,9 +134,9 @@ export function AnnouncementBanner({
                 {announcement.title}
               </Text>
               <Text
-                className="text-xs leading-5"
+                className="text-xs leading-4"
                 style={{ color: colors.textSecondary }}
-                numberOfLines={3}
+                numberOfLines={2}
               >
                 {announcement.subtitle}
               </Text>
@@ -177,14 +145,14 @@ export function AnnouncementBanner({
             {/* Dismiss button */}
             {isDismissible && (
               <TouchableOpacity
-                onPress={handleDismiss}
+                onPress={() => onDismiss(announcement.id)}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                className="ml-2 -mr-1 -mt-1"
+                className="ml-2 -mr-1 -mt-0.5"
                 activeOpacity={0.6}
                 accessibilityRole="button"
                 accessibilityLabel="Dismiss announcement"
               >
-                <Ionicons name="close" size={18} color={colors.textTertiary} />
+                <Ionicons name="close" size={16} color={colors.textTertiary} />
               </TouchableOpacity>
             )}
           </View>
@@ -194,7 +162,7 @@ export function AnnouncementBanner({
             <TouchableOpacity
               onPress={handlePress}
               activeOpacity={0.6}
-              className="flex-row items-center justify-center py-2"
+              className="flex-row items-center justify-center py-1.5"
               style={{
                 borderTopWidth: 0.5,
                 borderTopColor: style.border,
@@ -211,6 +179,6 @@ export function AnnouncementBanner({
           )}
         </View>
       </TouchableOpacity>
-    </Animated.View>
+    </View>
   );
 }

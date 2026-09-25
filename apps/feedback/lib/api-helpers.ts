@@ -7,6 +7,7 @@
  */
 
 import type { NextRequest } from "next/server";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 // ── Types ──
 
@@ -25,7 +26,9 @@ export interface RateLimitConfig {
 // ── D1 Binding ──
 
 export function getDB(): any | null {
-  const db = (process.env as any).FEEDBACK_DB;
+  // D1 bindings are objects — OpenNext only copies *string* bindings onto
+  // process.env, so read through the Cloudflare context instead.
+  const db = (getCloudflareContext().env as any).FEEDBACK_DB;
   if (!db) {
     return null;
   }

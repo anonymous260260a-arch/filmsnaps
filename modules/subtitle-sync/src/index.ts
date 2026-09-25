@@ -205,6 +205,21 @@ export function playerThroughputMbps(): number {
   }
 }
 
+/**
+ * G4-3b: zero the PlayerTraffic meter. The fetch scan downloads through
+ * PlayerHttp.client, so its own bytes land in the meter — a follow-up scan
+ * that read the meter without a reset measured the PREVIOUS scan's traffic
+ * and throttled itself to the floor. Reset right before measuring the
+ * player's rate (never while a scan is running), then read after a settle.
+ */
+export function resetPlayerTraffic(): void {
+  try {
+    SubtitleSyncModule.resetPlayerTraffic();
+  } catch {
+    // older native build without the function — ignore
+  }
+}
+
 /** Zero the tap counters so a rate measurement starts clean. */
 export function tapProbeReset(): void {
   SubtitleSyncModule.tapProbeReset();

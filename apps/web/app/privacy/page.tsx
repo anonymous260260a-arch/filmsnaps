@@ -29,100 +29,101 @@ export default function PrivacyPage() {
       }
     >
       <p className="mb-2 text-sm font-medium text-faint">
-        Last updated: August 2026
+        Last updated: September 2026
       </p>
 
-      <Section title="Our Privacy Philosophy">
+      <Section title="The Short Version">
+        <Bullet text="FilmSnaps has no accounts — we don't know who you are." />
+        <Bullet text="Your watch history, bookmarks, progress, and settings never leave your device." />
+        <Bullet text="The Android app can send anonymous usage statistics and crash reports — on by default, off anytime in Settings." />
+        <Bullet text="We never collect anything that can identify you: no identifiers, no IP addresses, no search text, no titles by name." />
+      </Section>
+
+      <Section title="What Stays on Your Device">
         <Body>
-          We believe privacy is a fundamental right, not a premium feature.
-          FilmSnaps is engineered with a strict{" "}
-          <Bold>zero-knowledge architecture</Bold>. The app does not collect,
-          store, or transmit any personal data, telemetry, or usage statistics
-          to external servers. Everything you do stays on your device.
+          Watch history and progress, bookmarks, your download list, all
+          settings, and downloaded files are stored only on your device and are
+          never transmitted to us. Downloads are saved to your device&apos;s
+          shared Downloads folder — like any file there, they remain after you
+          uninstall FilmSnaps.
         </Body>
       </Section>
 
-      <Section title="Data We Collect">
+      <Section title="Anonymous Usage Statistics (Optional)">
         <Body>
-          In short: <Bold>no personal data.</Bold> FilmSnaps does not operate
-          servers that receive, process, or store any information that
-          identifies you. The only requests our server handles are anonymous
-          movie and TV metadata lookups (a TMDB proxy we run to keep the API key
-          off your device) — these carry no user identifiers, watch history, or
-          browsing data. There are no cookies, no tracking pixels, no analytics
-          SDKs, no crash reporters, and no third-party monitoring tools embedded
-          in our code. We do not create a device fingerprint and do not track
-          your behavior across the app or across the web.
-        </Body>
-      </Section>
-
-      <Section title="Data Stored Locally on Your Device">
-        <Body>
-          The following data is stored exclusively in your device&apos;s local
-          storage or file system. It never leaves your device and is not
-          transmitted to FilmSnaps:
-        </Body>
-        <Bullet text="Watch history and progress (to enable the 'Continue Watching' feature)" />
-        <Bullet text="Your personal watchlist and bookmarked titles" />
-        <Bullet text="App settings (preferred providers, subtitle defaults, UI preferences)" />
-        <Bullet text="Offline downloads (saved to your device's shared media folders)" />
-        <Body extraMargin>
-          You can delete any of this at any time through the app&apos;s settings
-          or by uninstalling FilmSnaps. Deleting the app removes locally stored
-          data.
-        </Body>
-      </Section>
-
-      <Section title="Third-Party Connections">
-        <Body>
-          When you stream content, your device connects directly to third-party
-          content servers. These independent providers may log your IP address
-          and request details as part of their standard web server operations.
-          FilmSnaps has no control over, and assumes no responsibility for, the
-          data practices or privacy policies of these third-party hosts. We
-          strongly recommend using a reputable VPN if you wish to mask your IP
-          address from streaming providers.
+          To know which streaming sources actually work and what to fix, the
+          app sends small anonymous events — for example, whether a source
+          succeeded or failed, roughly how long it took (rounded), whether
+          playback stalled, which features get used, plus app version and
+          connection type (Wi-Fi or cellular). To measure source coverage we
+          count the content ID (a TMDB number) of titles you open, in aggregate
+          only. No title names, no search text, no URLs, and no free text are
+          ever sent.
         </Body>
         <Body extraMargin>
-          FilmSnaps also queries public metadata services (such as TMDB) for
-          movie and TV information. Those requests are governed by the metadata
-          provider&apos;s own privacy policy, not ours. For details on the
-          security architecture protecting you from third-party threats, see the{" "}
-          <Link
-            href="/transparency"
-            className="text-primary underline-offset-2 hover:underline"
-          >
-            Transparency &amp; Security
-          </Link>{" "}
-          page.
-        </Body>
-      </Section>
-
-      <Section title="Blocklist Updates">
-        <Body>
-          To keep the ad-blocking engine effective, the app periodically fetches
-          updated filter rules from a static, public repository. This request
-          contains no user identifiers, device IDs, or browsing history. It is a
-          simple, anonymous file download. The filter lists are
-          cryptographically signed, so they cannot be tampered with in transit.
-        </Body>
-      </Section>
-
-      <Section title="Your Rights">
-        <Body>
-          Because FilmSnaps collects no personal data about you, there is
-          nothing for us to access, correct, or delete on a server. All of your
-          data is local to your device and is entirely under your control — you
-          can review, clear, or remove it at any time through the app&apos;s
-          settings or by uninstalling the app.
+          <Bold>
+            The website sends no statistics and no crash reports. Everything
+            below about statistics applies to the Android app.
+          </Bold>
         </Body>
         <Body extraMargin>
-          If you are located in a region covered by privacy laws such as the EU
-          General Data Protection Regulation (GDPR) or the California Consumer
-          Privacy Act (CCPA), those laws generally apply to organizations that
-          collect and process personal information. Since we collect none, we
-          incur no data-handling obligations under them. Your practical rights
-          reduce to the local-data control described above.
+          Statistics start after you accept the terms and stay on until you
+          turn them off. Turning them off (Settings → Anonymous usage
+          statistics) stops all sending immediately and clears anything queued.
+        </Body>
+      </Section>
+
+      <Section title="Crash Reports (Optional — Same Toggle)">
+        <Body>
+          When the app crashes, a report — the error type and stack trace, with
+          web addresses removed — is sent to Sentry, a third-party
+          crash-reporting service hosted in the United States, so we can fix
+          crashes. The same toggle controls this.
+        </Body>
+      </Section>
+
+      <Section title="What We Never Collect">
+        <Body>
+          No names, emails, or accounts (there are none) · no user, device,
+          advertising, or session identifiers · no IP addresses (we never read
+          or store them) · no search queries · no titles by name · no location ·
+          no advertising or tracking SDKs.
+        </Body>
+      </Section>
+
+      <Section title="Who FilmSnaps Connects To">
+        <Bullet text="Our servers (Cloudflare): movie/TV metadata lookups (this keeps the TMDB API key off your device), app configuration (source list, announcements, player settings), ad-block filter updates, app update checks, and — if enabled — the anonymous statistics above." />
+        <Bullet text="Cloudflare's public speed-test endpoint: only when the app needs to measure your connection (about 4 MB; results cached for a day)." />
+        <Bullet text="The streaming source you choose: when you play or download, that provider sees your IP address — exactly as if you opened their site in a browser. We don't control this; a VPN hides it." />
+        <Bullet text="Anime metadata (AniList, Kitsu, Shikimori) and subtitle services, when you use those features." />
+      </Section>
+
+      <Section title="How Long We Keep It">
+        <Body>
+          Anonymous statistics are kept for up to 12 months, then deleted
+          automatically. Crash reports follow Sentry&apos;s standard retention.
+          Nothing on our side is linked to you, so there is no profile of you to
+          expire.
+        </Body>
+      </Section>
+
+      <Section title="Your Control">
+        <Body>
+          Everything personal to you is already in your hands — history,
+          bookmarks, and settings live on your device, and clearing app data
+          removes them. Because nothing we collect is linked to you, there is
+          nothing of yours on our servers to access, correct, or delete — and
+          turning statistics off stops all future collection instantly.
+        </Body>
+      </Section>
+
+      <Section title="Your Rights (GDPR / CCPA)">
+        <Body>
+          These laws protect personal data. Our statistics and crash reports
+          contain no identifiers and no IP addresses, so they aren&apos;t
+          personal data — but if you ever want anything stopped, the Settings
+          toggle works immediately, and you can reach us at{" "}
+          <Bold>privacy@filmsnaps.app</Bold>.
         </Body>
       </Section>
 

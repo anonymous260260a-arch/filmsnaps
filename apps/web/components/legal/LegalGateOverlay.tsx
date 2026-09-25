@@ -130,6 +130,10 @@ export function LegalGateOverlay({
 
             {/* Summary line */}
             <p className="mt-6 text-center text-xs leading-[18px] text-zinc-400">
+              This website sends no statistics or crash reports. The Android
+              app sends optional, anonymous ones — see the Privacy Policy.
+            </p>
+            <p className="mt-2 text-center text-xs leading-[18px] text-zinc-400">
               By continuing, you acknowledge and accept the above terms.
             </p>
           </div>

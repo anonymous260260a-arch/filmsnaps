@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   Image,
 } from "react-native";
+import Animated, { FadeInDown, FadeOutUp, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useSafeNavigation } from "@/lib/navigation";
 import { Ionicons } from "@expo/vector-icons";
@@ -26,6 +27,7 @@ import { Shimmer } from "../../components/Shimmer";
 import { SeeAllButton } from "../../components/SeeAllButton";
 import { DeferredContent } from "../../components/DeferredContent";
 import { prefetchStreams } from "../../lib/streamPrefetch";
+import { resolvePlaybackProviderId } from "../../lib/resolvePlaybackProvider";
 import { getNextEpisode } from "../../lib/tvUtils";
 import {
   useTrendingMovies,
@@ -38,7 +40,14 @@ import { useDownloadList } from "../../lib/download";
 import {
   useWatchHistory,
   watchHistoryStore,
+  getHistoryHint,
 } from "../../lib/watchHistoryStore";
+import {
+  markContentReady,
+  runAfterContentReady,
+} from "../../lib/runAfterContentReady";
+import { launchNow, markLaunch, logLaunchSummary } from "../../lib/launchMetrics";
+import { heroHeightForWidth } from "../../components/heroLayout";
 import { getImageUrl, PROVIDERS } from "@filmsnaps/shared";
 import { useFocusEffect } from "expo-router";
 import type { Movie } from "@filmsnaps/shared";
@@ -49,6 +58,10 @@ import {
   dismissAnnouncement,
 } from "../../lib/announcements";
 import { AnnouncementBanner } from "../../components/AnnouncementBanner";
+import { openDetail, prepareDetail, toDetailNavItem } from "../../lib/openDetail";
+import { beginIntentTap } from "../../lib/perfMetrics";
+import { trackFeatureUsed } from "../../lib/telemetry";
+import { useRouter } from "expo-router";
 import NetInfo from "@react-native-community/netinfo";
 import { useSettings } from "../../lib/settings";
 import { useAniListHome } from "../../lib/anime/home";
@@ -59,6 +72,9 @@ import { typography } from "../../theme/typography";
 import { SwipeExemptScrollView } from "../../components/SwipeExemptScroll";
 
 const SKELETON_ITEMS = 3;
+
+/** Fixed CW row slot (header + one card row + section margin). */
+const CW_RESERVED_HEIGHT = 236;
 
 // ── Module-level constants (never rebuilt per render) ──
 const PROVIDER_LABELS: Record<string, string> = Object.fromEntries(
@@ -75,6 +91,7 @@ const SECTION_CONFIG: Record<string, { label: string }> = {
 
 export default function HomeScreen() {
   const nav = useSafeNavigation();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const { width: SCREEN_WIDTH } = useWindowDimensions();
@@ -96,15 +113,27 @@ export default function HomeScreen() {
     isLoading: loadingPopular,
   } = usePopularMovies();
 
+  // ── FIX 1: single content-ready signal (all three home queries settled) ──
+  const contentReadyRef = useRef(false);
+  useEffect(() => {
+    if (loadingMovies || loadingTV || loadingPopular) return;
+    if (contentReadyRef.current) return;
+    contentReadyRef.current = true;
+    markContentReady();
+    markLaunch("homeContentReadyMs", launchNow());
+    logLaunchSummary();
+  }, [loadingMovies, loadingTV, loadingPopular]);
+
   // ── Settings (hoisted above history subscription which reads `settings.mode`) ──
   const { settings, updateSetting, loaded: settingsLoaded } = useSettings();
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
-  // ── History — subscribe to the local-first singleton (no local load state).
-  // The store owns hydration + TMDB enrichment and survives unmounts, so the
-  // home screen just renders whatever it currently holds. ──
-  const { entries: storeHistory } = useWatchHistory(
-    settings.mode === "anime" ? "anime" : "movie_tv",
-  );
+  // ── History — subscribe to the local-first singleton (no local load state). ──
+  const {
+    entries: storeHistory,
+    isHydrated: historyHydrated,
+  } = useWatchHistory(settings.mode === "anime" ? "anime" : "movie_tv");
   const historyEntries = useMemo(
     () => storeHistory.slice(0, 6),
     [storeHistory],
@@ -115,9 +144,21 @@ export default function HomeScreen() {
     return m;
   }, [storeHistory]);
 
-  // ── Announcements (loaded with lowest priority, never blocks UI) ──
+  // ── Announcements (inline card under hero — cache-first at first paint) ──
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const announcementsFetchedRef = useRef(false);
+
+  // FIX E: cached non-dismissed announcements paint immediately (no wait).
+  useEffect(() => {
+    if (announcementsFetchedRef.current) return;
+    announcementsFetchedRef.current = true;
+
+    fetchAnnouncements()
+      .then((result) => {
+        if (result.length > 0) setAnnouncements(result);
+      })
+      .catch(() => {});
+  }, []);
 
   // ── Offline detection ──
   const [isOffline, setIsOffline] = useState(false);
@@ -140,56 +181,67 @@ export default function HomeScreen() {
   // re-arm — so the prefetch never ran at all. Latest entries are read
   // through a ref when the timer fires; only unmount clears the timer.
   const cwPrefetchedRef = useRef(false);
-  const cwPrefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cwScheduledRef = useRef(false);
   const cwHistoryRef = useRef(storeHistory);
   cwHistoryRef.current = storeHistory;
   useEffect(() => {
-    if (cwPrefetchedRef.current || !settingsLoaded || storeHistory.length === 0)
+    if (
+      cwPrefetchedRef.current ||
+      cwScheduledRef.current ||
+      !settingsLoaded ||
+      storeHistory.length === 0
+    )
       return;
-    if (cwPrefetchTimerRef.current) return; // already armed — don't re-arm
-    cwPrefetchTimerRef.current = setTimeout(() => {
-      cwPrefetchTimerRef.current = null;
-      cwPrefetchedRef.current = true;
-      for (const entry of cwHistoryRef.current.slice(0, 2)) {
-        const p = entry.latest;
-        const tmdbIdNum = parseInt(p.tmdbId);
-        if (Number.isNaN(tmdbIdNum)) continue;
-        const prefetch = (season?: number, episode?: number) =>
-          prefetchStreams(tmdbIdNum, p.mediaType, season, episode, {
-            cellularMaxMB: settings.cellularMaxMB,
-            maxQuality: settings.maxQuality,
-            preferredAudioLanguage: settings.preferredAudioLanguage,
-            trigger: "home-cw",
-          }).catch(() => {});
-        // Finished the latest episode? Warm the NEXT one — that's what the
-        // user will actually play from this card (season rollover aware).
-        // Fully-watched titles stay in CW for exactly this reason.
-        if (
-          entry.fullyWatched &&
-          p.mediaType === "tv" &&
-          p.season &&
-          p.episode
-        ) {
-          getNextEpisode(p.tmdbId, p.season, p.episode)
-            .then(({ nextSeason, nextEpisode, hasNext }) => {
-              if (hasNext) prefetch(nextSeason, nextEpisode);
+    // FIX 1: CW stream prefetch only after content ready + 2s.
+    cwScheduledRef.current = true;
+      runAfterContentReady(2000, () => {
+        if (cwPrefetchedRef.current) return;
+        cwPrefetchedRef.current = true;
+        for (const entry of cwHistoryRef.current.slice(0, 2)) {
+          const p = entry.latest;
+          const tmdbIdNum = parseInt(p.tmdbId);
+          if (Number.isNaN(tmdbIdNum)) continue;
+          const prefetch = (season?: number, episode?: number) => {
+            // FIX 1: CW must pass the same provider id watch will open with.
+            void resolvePlaybackProviderId({
+              mediaType: p.mediaType,
+              tmdbId: tmdbIdNum,
+              savedServer: settingsRef.current.defaultServer,
             })
-            .catch(() => {});
-        } else {
-          prefetch(p.season, p.episode);
+              .then((providerId) => {
+                if (!providerId) return;
+                return prefetchStreams(tmdbIdNum, p.mediaType, season, episode, {
+                  cellularMaxMB: settingsRef.current.cellularMaxMB,
+                  maxQuality: settingsRef.current.maxQuality,
+                  preferredAudioLanguage:
+                    settingsRef.current.preferredAudioLanguage,
+                  providerId,
+                  trigger: "home-cw",
+                });
+              })
+              .catch(() => {});
+          };
+          // Finished the latest episode? Warm the NEXT one — that's what the
+          // user will actually play from this card (season rollover aware).
+          // Fully-watched titles stay in CW for exactly this reason.
+          if (
+            entry.fullyWatched &&
+            p.mediaType === "tv" &&
+            p.season &&
+            p.episode
+          ) {
+            getNextEpisode(p.tmdbId, p.season, p.episode)
+              .then(({ nextSeason, nextEpisode, hasNext }) => {
+                if (hasNext) prefetch(nextSeason, nextEpisode);
+              })
+              .catch(() => {});
+          } else {
+            prefetch(p.season, p.episode);
+          }
         }
-      }
-    }, 3000);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeHistory, settingsLoaded]);
-  // Unmount cleanup — deliberately separate from the arm effect above,
-  // because clearing on dep changes is what killed the prefetch.
-  useEffect(
-    () => () => {
-      if (cwPrefetchTimerRef.current) clearTimeout(cwPrefetchTimerRef.current);
-    },
-    [],
-  );
 
   // More Like This — genre-based recommendations from last-watched item
   const { data: moreLikeThis } = useMoreLikeThis(historyEntries);
@@ -238,28 +290,6 @@ export default function HomeScreen() {
       watchHistoryStore.syncProgress().catch(() => {});
     }, []),
   );
-
-  // ── Fetch announcements (lowest priority — deferred until after main data) ──
-  useEffect(() => {
-    if (announcementsFetchedRef.current) return;
-    announcementsFetchedRef.current = true;
-
-    // Use a microtask delay so announcements never compete with initial hero/sections
-    const handle = requestAnimationFrame(() => {
-      setTimeout(async () => {
-        try {
-          const result = await fetchAnnouncements();
-          if (result.length > 0) {
-            setAnnouncements(result);
-          }
-        } catch {
-          // Silent — never block UI
-        }
-      }, 1500); // 1.5s delay to let everything else load first
-    });
-
-    return () => cancelAnimationFrame(handle);
-  }, []);
 
   const handleDismissAnnouncement = useCallback((id: string) => {
     dismissAnnouncement(id).catch(() => {});
@@ -310,32 +340,26 @@ export default function HomeScreen() {
     nav.push("/list/popular-movies");
   }, [nav]);
 
+  const handleMoviePressIn = useCallback(
+    (item: Movie) => {
+      const navItem = toDetailNavItem(item, item.media_type === "tv" ? "tv" : "movie");
+      if (navItem) prepareDetail(navItem, "home", queryClient, router);
+    },
+    [queryClient, router],
+  );
+
   const handleMoviePress = useCallback(
     (item: Movie) => {
-      const mediaType = item.media_type || "movie";
-      const id = item.id;
-
-      if (mediaType === "tv") {
-        queryClient.prefetchQuery({
-          queryKey: ["tv", id],
-          queryFn: () => tmdbApi.getTVDetails(id),
-          staleTime: 1000 * 60 * 60,
-        });
-        nav.push(`/tv/${id}`);
-      } else {
-        queryClient.prefetchQuery({
-          queryKey: ["movie", id],
-          queryFn: () => tmdbApi.getMovieDetails(id),
-          staleTime: 1000 * 60 * 60,
-        });
-        nav.push(`/movie/${id}`);
-      }
+      const navItem = toDetailNavItem(item, item.media_type === "tv" ? "tv" : "movie");
+      if (!navItem) return;
+      openDetail(navItem, "home", { queryClient, router, nav });
     },
-    [nav, queryClient],
+    [nav, router, queryClient],
   );
 
   const handleWatchPress = useCallback(
     (item: Movie) => {
+      beginIntentTap(`movie:${item.id}`);
       nav.push(`/watch/movie/${item.id}`);
     },
     [nav],
@@ -362,6 +386,7 @@ export default function HomeScreen() {
               title={SECTION_CONFIG["trending-movies"].label}
               data={trendingMovies.results ?? []}
               onItemPress={handleMoviePress}
+              onItemPressIn={handleMoviePressIn}
               onSeeAll={handleSeeAllTrendingMovies}
             />
           ) : (
@@ -391,6 +416,7 @@ export default function HomeScreen() {
               title={SECTION_CONFIG["trending-tv"].label}
               data={trendingTV.results ?? []}
               onItemPress={handleMoviePress}
+              onItemPressIn={handleMoviePressIn}
               onSeeAll={handleSeeAllTrendingTV}
             />
           ) : (
@@ -421,6 +447,7 @@ export default function HomeScreen() {
                 title={SECTION_CONFIG["more-like-this"].label}
                 data={moreLikeThis}
                 onItemPress={handleMoviePress}
+                onItemPressIn={handleMoviePressIn}
               />
             </DeferredContent>
           ) : null;
@@ -428,27 +455,40 @@ export default function HomeScreen() {
         case "continue-watching":
           // Rendered immediately once the store has entries — no DeferredContent
           // gap, so it paints in the same frame as Trending and never "pops in".
-          return historyEntries.length > 0 ? (
-            <ContinueWatchingSection
-              historyEntries={historyEntries}
-              historyMeta={historyMeta}
-              nav={nav}
-              SCREEN_WIDTH={SCREEN_WIDTH}
-              providerLabelMap={PROVIDER_LABELS}
-              onRemoveItem={handleRemoveHistoryItem}
-            />
-          ) : null;
+          // While hydrating with a known non-empty history, reserve the fixed
+          // row height so content below does not shift when entries land.
+          if (historyEntries.length > 0) {
+            return (
+              <ContinueWatchingSection
+                historyEntries={historyEntries}
+                historyMeta={historyMeta}
+                nav={nav}
+                SCREEN_WIDTH={SCREEN_WIDTH}
+                providerLabelMap={PROVIDER_LABELS}
+                onRemoveItem={handleRemoveHistoryItem}
+              />
+            );
+          }
+          if (!historyHydrated && getHistoryHint() === true) {
+            return (
+              <View
+                style={{ height: CW_RESERVED_HEIGHT }}
+                accessibilityLabel="Continue watching loading"
+              />
+            );
+          }
+          return null;
 
         case "popular-movies":
+          // FIX F: no DeferredContent delay — home already gates on all 3 queries.
           return popularMovies ? (
-            <DeferredContent fallback={null} delayMs={600}>
-              <MediaCarousel
-                title={SECTION_CONFIG["popular-movies"].label}
-                data={popularMovies.results ?? []}
-                onItemPress={handleMoviePress}
-                onSeeAll={handleSeeAllPopularMovies}
-              />
-            </DeferredContent>
+            <MediaCarousel
+              title={SECTION_CONFIG["popular-movies"].label}
+              data={popularMovies.results ?? []}
+              onItemPress={handleMoviePress}
+              onItemPressIn={handleMoviePressIn}
+              onSeeAll={handleSeeAllPopularMovies}
+            />
           ) : (
             <View className="mb-6 px-4">
               <Shimmer
@@ -489,6 +529,7 @@ export default function HomeScreen() {
       SCREEN_WIDTH,
       itemWidth,
       itemHeight,
+      historyHydrated,
     ],
   );
 
@@ -505,11 +546,11 @@ export default function HomeScreen() {
         className="flex-1 bg-void"
         style={{ paddingTop: insets.top, backgroundColor: colors.bg }}
       >
-        {/* Hero skeleton */}
+        {/* Hero skeleton — same aspect as real Hero (HERO_ASPECT_RATIO) */}
         <View
           style={{
             width: SCREEN_WIDTH,
-            height: SCREEN_WIDTH * 0.56,
+            height: heroHeightForWidth(SCREEN_WIDTH),
             backgroundColor: colors.skeletonBgAlt,
           }}
         />
@@ -542,6 +583,10 @@ export default function HomeScreen() {
     <View
       className="flex-1 bg-void"
       style={{ paddingTop: insets.top, backgroundColor: colors.bg }}
+      onLayout={() => {
+        markLaunch("homeFirstFrameMs", launchNow());
+        logLaunchSummary();
+      }}
     >
       <ScrollView
         refreshControl={
@@ -560,7 +605,7 @@ export default function HomeScreen() {
         <View className="px-5 py-4 flex-row items-center justify-between">
           <View className="flex-row items-center">
             <Image
-              source={require("../../assets/icon.png")}
+              source={require("../../assets/icon-128.webp")}
               style={{ width: 36, height: 36, borderRadius: 12 }}
               accessibilityLabel="FilmSnaps logo"
             />
@@ -593,7 +638,15 @@ export default function HomeScreen() {
                 return (
                   <TouchableOpacity
                     key={m}
-                    onPress={() => updateSetting("mode", m)}
+                    onPress={() => {
+                      updateSetting("mode", m);
+                      trackFeatureUsed(
+                        m === "anime"
+                          ? "mode_toggle_anime"
+                          : "mode_toggle_movie_tv",
+                        "settings",
+                      );
+                    }}
                     className="px-3 h-7 rounded-full items-center justify-center"
                     style={{
                       backgroundColor: active ? colors.gold : "transparent",
@@ -761,51 +814,73 @@ export default function HomeScreen() {
             <View
               className="w-full"
               style={{
-                height: SCREEN_WIDTH * 0.62,
+                height: heroHeightForWidth(SCREEN_WIDTH),
                 backgroundColor: colors.skeletonBgAlt,
               }}
             />
           ) : null)}
 
-        {/* ── Announcements banner (non-blocking, between Hero and sections) ── */}
+        {/* ── Announcements — inline under hero, above first section.
+             Cache-first → present at first paint (no shift for returning users).
+             Late arrivals animate in; each dismiss uses FadeOutUp. ── */}
         {announcements.length > 0 && (
-          <DeferredContent fallback={null} delayMs={100}>
-            {announcements.map((ann) => (
-              <AnnouncementBanner
-                key={ann.id}
-                announcement={ann}
-                onDismiss={handleDismissAnnouncement}
-              />
-            ))}
-          </DeferredContent>
+          <Animated.View
+            entering={FadeInDown.duration(300)}
+            exiting={FadeOutUp.duration(200)}
+            style={{
+              marginTop: 12,
+              marginHorizontal: 16,
+              maxHeight: 120,
+            }}
+          >
+            <ScrollView
+              style={{ maxHeight: 120 }}
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled
+            >
+              {announcements.map((ann) => (
+                <Animated.View key={ann.id} exiting={FadeOutUp.duration(200)}>
+                  <AnnouncementBanner
+                    announcement={ann}
+                    onDismiss={handleDismissAnnouncement}
+                  />
+                </Animated.View>
+              ))}
+            </ScrollView>
+          </Animated.View>
         )}
 
-        {/* ── Hard Mode Split: anime mode swaps the data hook, not the layout ── */}
-        {settings.mode === "anime" ? (
-          <View>
-            {/* Continue Watching (anime-scoped history) — the movie_tv branch
-                renders this via the orderedSections switch, but the anime branch
-                only rendered <AnimeHomeFeed>, so CW was missing in anime mode.
-                The store already scopes history to anime when mode==="anime"
-                (:103-105) and ContinueWatchingSection handles p.isAnime nav. */}
-            {historyEntries.length > 0 ? (
-              <ContinueWatchingSection
-                historyEntries={historyEntries}
-                historyMeta={historyMeta}
-                nav={nav}
-                SCREEN_WIDTH={SCREEN_WIDTH}
-                providerLabelMap={PROVIDER_LABELS}
-                onRemoveItem={handleRemoveHistoryItem}
-              />
-            ) : null}
-            <AnimeHomeFeed nav={nav} />
-          </View>
-        ) : (
-          /* ── Remaining TMDB sections ordered by settings.homeRowOrder
-              (Continue Watching is included in homeRowOrder, so it renders
-              via the switch below — no separate block needed). ── */
-          orderedSections.map((id) => <View key={id}>{renderSection(id)}</View>)
-        )}
+        {/* Sections container: LinearTransition so rows below glide on insert/dismiss */}
+        <Animated.View layout={LinearTransition.duration(300)}>
+          {/* ── Hard Mode Split: anime mode swaps the data hook, not the layout ── */}
+          {settings.mode === "anime" ? (
+            <View>
+              {/* Continue Watching (anime-scoped history) — the movie_tv branch
+                  renders this via the orderedSections switch, but the anime branch
+                  only rendered <AnimeHomeFeed>, so CW was missing in anime mode.
+                  The store already scopes history to anime when mode==="anime"
+                  (:103-105) and ContinueWatchingSection handles p.isAnime nav. */}
+              {historyEntries.length > 0 ? (
+                <ContinueWatchingSection
+                  historyEntries={historyEntries}
+                  historyMeta={historyMeta}
+                  nav={nav}
+                  SCREEN_WIDTH={SCREEN_WIDTH}
+                  providerLabelMap={PROVIDER_LABELS}
+                  onRemoveItem={handleRemoveHistoryItem}
+                />
+              ) : !historyHydrated && getHistoryHint() === true ? (
+                <View style={{ height: CW_RESERVED_HEIGHT }} />
+              ) : null}
+              <AnimeHomeFeed nav={nav} />
+            </View>
+          ) : (
+            /* ── Remaining TMDB sections ordered by settings.homeRowOrder
+                (Continue Watching is included in homeRowOrder, so it renders
+                via the switch below — no separate block needed). ── */
+            orderedSections.map((id) => <View key={id}>{renderSection(id)}</View>)
+          )}
+        </Animated.View>
       </ScrollView>
     </View>
   );
@@ -995,6 +1070,13 @@ function ContinueWatchingSection({
                       params.set("aid", String(ids.anilistId));
                   }
                 }
+                // [watchperf] CW intent mark so every session has intentTap.
+                const perfKey =
+                  p.mediaType === "tv"
+                    ? `tv:${p.tmdbId}:s${p.season ?? 1}e${p.episode ?? 1}`
+                    : `movie:${p.tmdbId}`;
+                beginIntentTap(perfKey);
+                trackFeatureUsed("cw_resume", "library");
                 nav.push(
                   params.toString() ? `${base}?${params.toString()}` : base,
                 );

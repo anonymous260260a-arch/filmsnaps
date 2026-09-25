@@ -38,6 +38,10 @@ export function getApiBaseUrl(): string {
 /**
  * Pre-configured TMDB API client pointing at the web app's pass-through.
  */
-import { createTmdbApi } from "@filmsnaps/shared";
+import { createTmdbApi, ApiError } from "@filmsnaps/shared";
+// Ensure payload-bytes bridge registers before any TMDB fetch (FIX 6).
+import "./detailMetrics";
+
+export { ApiError };
 
 export const tmdbApi = createTmdbApi(getApiBaseUrl());

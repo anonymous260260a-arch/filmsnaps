@@ -73,7 +73,25 @@ export default function LegalScreen() {
           className="text-sm font-medium mb-6"
           style={{ color: colors.textTertiary }}
         >
-          Last updated: August 2026
+          Last updated: September 2026
+        </Text>
+
+        <Text
+          className="text-sm leading-7 mb-6"
+          style={{ color: colors.textSecondary }}
+        >
+          Privacy: FilmSnaps collects no personal data —{" "}
+          <Text
+            style={{
+              fontFamily: "Inter_500Medium",
+              color: colors.info,
+              textDecorationLine: "underline",
+            }}
+            onPress={() => nav.push("/privacy")}
+          >
+            see the Privacy Policy
+          </Text>
+          .
         </Text>
 
         <Section num={++sectionIndex} title="What FilmSnaps Is">

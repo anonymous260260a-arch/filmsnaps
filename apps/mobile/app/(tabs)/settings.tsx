@@ -35,6 +35,7 @@ import Constants from "expo-constants";
 import { colors } from "../../theme/colors";
 import * as Haptics from "expo-haptics";
 import { LanguagePromptSheet } from "../../components/player/LanguagePromptSheet";
+import { trackFeatureUsed } from "../../lib/telemetry";
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes === 0) return "0 B";
@@ -92,6 +93,7 @@ function SettingsRow({
   color,
   right,
   onPress,
+  footer,
 }: {
   icon?: keyof typeof Ionicons.glyphMap;
   label: string;
@@ -99,6 +101,7 @@ function SettingsRow({
   color?: string;
   right?: React.ReactNode;
   onPress?: () => void;
+  footer?: React.ReactNode;
 }) {
   const Content = onPress ? TouchableOpacity : View;
   return (
@@ -159,6 +162,7 @@ function SettingsRow({
             {subtitle}
           </Text>
         )}
+        {footer}
       </View>
       {right}
     </Content>
@@ -423,6 +427,12 @@ export default function SettingsScreen() {
                     key={m}
                     onPress={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      trackFeatureUsed(
+                        m === "anime"
+                          ? "mode_toggle_anime"
+                          : "mode_toggle_movie_tv",
+                        "settings",
+                      );
                       updateSetting("mode", m);
                     }}
                     activeOpacity={0.75}
@@ -751,7 +761,7 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="lock-closed-outline"
             label="Privacy Policy"
-            subtitle="Zero telemetry · We believe privacy is a fundamental right"
+            subtitle="Anonymous stats you can turn off · No personal data"
             color={colors.successGreen}
             onPress={() => nav.push("/privacy")}
             right={
@@ -759,6 +769,64 @@ export default function SettingsScreen() {
                 name="chevron-forward"
                 size={16}
                 color={colors.textTertiary}
+              />
+            }
+          />
+          <Divider />
+          {settings.analyticsGrandfathered && (
+            <View
+              className="mx-4 mb-3 rounded-xl px-4 py-3"
+              style={{ backgroundColor: "rgba(91,156,246,.12)" }}
+            >
+              <Text
+                className="text-xs leading-5"
+                style={{ color: colors.textSecondary }}
+              >
+                We've updated our privacy controls — anonymous usage statistics
+                are now off by default. You can re-enable them anytime with the
+                toggle below.
+              </Text>
+            </View>
+          )}
+          <SettingsRow
+            icon="bar-chart-outline"
+            label="Anonymous usage statistics"
+            subtitle="Helps us fix crashes and improve streaming sources. No personal data."
+            color={colors.info}
+            footer={
+              <TouchableOpacity
+                onPress={() => nav.push("/privacy")}
+                activeOpacity={0.7}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <Text
+                  className="mt-2 text-xs"
+                  style={{
+                    color: colors.info,
+                    fontFamily: "Inter_500Medium",
+                    textDecorationLine: "underline",
+                  }}
+                >
+                  Learn more
+                </Text>
+              </TouchableOpacity>
+            }
+            right={
+              <Switch
+                value={settings.analyticsEnabled !== false}
+                onValueChange={(v) => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  updateSetting("analyticsEnabled", v);
+                }}
+                trackColor={{
+                  false: colors.zinc800,
+                  true: colors.goldBadge,
+                }}
+                thumbColor={
+                  settings.analyticsEnabled !== false
+                    ? colors.gold
+                    : colors.textTertiary
+                }
               />
             }
           />

@@ -18,6 +18,11 @@ import { tmdbApi } from "../lib/api";
 import { MediaCard } from "../components/MediaCard";
 import { EmptyState } from "../components/EmptyState";
 import { getAllBookmarks, clearAllBookmarks } from "../lib/bookmarks";
+import {
+  openDetail,
+  prepareDetail,
+  toDetailNavItem,
+} from "../lib/openDetail";
 import type { Bookmark } from "../lib/bookmarks";
 import { colors } from "../theme/colors";
 
@@ -115,26 +120,34 @@ export default function SavedScreen() {
     }, [loadBookmarks]),
   );
 
+  const handleItemPressIn = useCallback(
+    (item: Bookmark) => {
+      const navItem = toDetailNavItem(
+        {
+          id: item.tmdbId,
+          media_type: item.mediaType,
+          title: item.title,
+          poster_path: item.posterPath,
+        },
+        item.mediaType === "tv" ? "tv" : "movie",
+      );
+      if (navItem) prepareDetail(navItem, "saved", queryClient, router);
+    },
+    [queryClient, router],
+  );
+
   const handleItemPress = useCallback(
     (item: Bookmark) => {
-      const id = item.tmdbId;
-      if (item.mediaType === "tv") {
-        queryClient.prefetchQuery({
-          queryKey: ["tv", id],
-          queryFn: () => tmdbApi.getTVDetails(Number(id)),
-          staleTime: 1000 * 60 * 60,
-        });
-        router.prefetch(`/tv/${id}`);
-        nav.push(`/tv/${id}`);
-      } else {
-        queryClient.prefetchQuery({
-          queryKey: ["movie", id],
-          queryFn: () => tmdbApi.getMovieDetails(Number(id)),
-          staleTime: 1000 * 60 * 60,
-        });
-        router.prefetch(`/movie/${id}`);
-        nav.push(`/movie/${id}`);
-      }
+      const navItem = toDetailNavItem(
+        {
+          id: item.tmdbId,
+          media_type: item.mediaType,
+          title: item.title,
+          poster_path: item.posterPath,
+        },
+        item.mediaType === "tv" ? "tv" : "movie",
+      );
+      if (navItem) openDetail(navItem, "saved", { queryClient, router, nav });
     },
     [router, nav, queryClient],
   );
@@ -234,6 +247,7 @@ export default function SavedScreen() {
                   } as any
                 }
                 onPress={() => handleItemPress(item)}
+                onPressIn={() => handleItemPressIn(item)}
                 variant="default"
               />
             </View>

@@ -26,7 +26,7 @@ import type {
   StatusChange,
   DownloadConfig,
 } from "./types";
-import { DEFAULT_CONFIG } from "./types";
+import { DEFAULT_CONFIG, SERVER_TO_QUALITY } from "./types";
 import {
   getInfoAsync,
   deleteFile,
@@ -35,11 +35,28 @@ import {
 } from "./fsCompat";
 import { buildFileName, sanitizeForNative } from "./fileNameUtils";
 import { PermissionsAndroid, Platform } from "react-native";
+import {
+  trackDownloadEvent,
+  type DownloadFailureClass,
+  type DownloadStage,
+  type QualityBucket,
+} from "../telemetry";
 
 // ─── Constants ───
 const RETRY_DELAYS = [5_000, 15_000, 60_000];
 const DB_WRITE_INTERVAL = 3_000;
 const PROGRESS_EMIT_INTERVAL = 400;
+
+const DOWNLOAD_QUALITY_TO_BUCKET: Record<string, QualityBucket> = {
+  hd: "1080p",
+  standard: "720p",
+  small: "480p",
+};
+
+function qualityBucketForTask(task: DownloadTask): QualityBucket {
+  const q = task.quality ?? SERVER_TO_QUALITY[task.server];
+  return DOWNLOAD_QUALITY_TO_BUCKET[q] ?? "unknown";
+}
 
 // ─── Speed Tracker ───
 class SpeedTracker {
@@ -662,6 +679,7 @@ export class DownloadManager {
         error: undefined,
         updatedAt: Date.now(),
       });
+      this.emitDownloadEvent(task, "started");
       // Bug F fix: include fileUri in emitStatus
       const expectedFileUri = this.adapter.getDestinationPath(fileName);
       this.emitStatus({
@@ -730,6 +748,7 @@ export class DownloadManager {
     // Delete file (try both paths)
     const task = await DownloadDatabase.getById(taskId);
     if (task) {
+      this.emitDownloadEvent(task, "cancelled");
       if (task.fileUri) {
         deleteFile(task.fileUri);
       }
@@ -975,6 +994,7 @@ export class DownloadManager {
       startedOnWifi: this.networkPolicy.isWifi(),
       updatedAt: Date.now(),
     });
+    this.emitDownloadEvent(task, "started");
 
     // Initialize trackers
     const tracker = new SpeedTracker();
@@ -1263,6 +1283,9 @@ export class DownloadManager {
       updatedAt: Date.now(),
     });
 
+    const task = await DownloadDatabase.getById(taskId);
+    if (task) this.emitDownloadEvent(task, "completed");
+
     this.emitStatus({
       taskId,
       status: "completed",
@@ -1327,6 +1350,7 @@ export class DownloadManager {
         receivedBytes: this.liveReceived.get(task.id) ?? 0,
         totalBytes: this.liveTotal.get(task.id) ?? 0,
       });
+      this.emitDownloadEvent(task, "retried");
 
       setTimeout(() => {
         logger.debug(
@@ -1365,7 +1389,43 @@ export class DownloadManager {
       receivedBytes: this.liveReceived.get(task.id) ?? 0,
       totalBytes: this.liveTotal.get(task.id) ?? 0,
     });
+    const lower = msg.toLowerCase();
+    const failureClass: DownloadFailureClass = /http|status ?\d{3}|4\d\d|5\d\d/.test(
+      lower,
+    )
+      ? "http"
+      : /storage|space|disk|no space/.test(lower)
+        ? "storage"
+        : /cancel/.test(lower)
+          ? "cancelled"
+          : /timed? ?out|timeout|network|connect|resolve|unreachable|interrupted/.test(
+                lower,
+              )
+            ? "network"
+            : /incomplete/.test(lower)
+              ? "incomplete"
+              : "other";
+    this.emitDownloadEvent(task, "failed", failureClass);
     logger.debug("Manager failTask done", task.id);
+  }
+
+  /** E5: fire-and-forget download_event teardown/start telemetry. */
+  private emitDownloadEvent(
+    task: DownloadTask,
+    stage: DownloadStage,
+    failureClass?: DownloadFailureClass,
+  ): void {
+    try {
+      trackDownloadEvent({
+        stage,
+        provider: task.server,
+        qualityBucket: qualityBucketForTask(task),
+        failureClass,
+        mediaType: task.mediaType ?? "movie",
+      });
+    } catch (err) {
+      logger.warn("Manager emitDownloadEvent failed:", err);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════
