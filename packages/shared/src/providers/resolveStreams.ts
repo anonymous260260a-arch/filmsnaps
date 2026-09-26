@@ -32,6 +32,8 @@ export interface ResolveStreamsParams {
   imdbId: string;
   /** TMDB id — used by urlTemplate-based upstreams (e.g. spacedom) */
   tmdbId?: number;
+  /** MAL id — used by anime-keyed upstreams (e.g. justanime) */
+  malId?: number;
   /** Media type */
   mediaType: "movie" | "tv";
   /** Season number (TV only) */
@@ -70,16 +72,16 @@ const POLL_MS = 150;
 
 /**
  * Build a source's request URL from its urlTemplate / urlTemplateTv.
- * Placeholders: {tmdbId} {imdbId} {type} {season} {episode}. For movies the
- * trailing query (which only carried season/episode) is stripped. Returns
- * null when the source has no template — the platform fetcher owns URL
+ * Placeholders: {tmdbId} {malId} {imdbId} {type} {season} {episode}. For
+ * movies the trailing query (which only carried season/episode) is stripped.
+ * Returns null when the source has no template — the platform fetcher owns URL
  * building for catalog-style APIs.
  */
 export function buildStreamSourceUrl(
   source: StreamSourceConfig,
   params: Pick<
     ResolveStreamsParams,
-    "imdbId" | "tmdbId" | "mediaType" | "season" | "episode"
+    "imdbId" | "tmdbId" | "malId" | "mediaType" | "season" | "episode"
   >,
 ): string | null {
   const template =
@@ -89,6 +91,7 @@ export function buildStreamSourceUrl(
   if (!template) return null;
   let url = template
     .replace(/\{tmdbId\}/g, String(params.tmdbId ?? ""))
+    .replace(/\{malId\}/g, String(params.malId ?? ""))
     .replace(/\{imdbId\}/g, params.imdbId ?? "")
     .replace(/\{type\}/g, params.mediaType);
   if (params.mediaType === "tv") {
@@ -130,6 +133,7 @@ export async function resolveStreams(
     context: {
       imdbId: string;
       tmdbId?: number;
+      malId?: number;
       mediaType: "movie" | "tv";
       season?: number;
       episode?: number;
@@ -208,6 +212,7 @@ export async function resolveStreams(
       const context = {
         imdbId,
         tmdbId: params.tmdbId,
+        malId: params.malId,
         mediaType,
         season: params.season,
         episode: params.episode,

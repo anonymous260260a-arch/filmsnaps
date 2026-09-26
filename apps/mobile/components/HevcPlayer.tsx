@@ -62,6 +62,10 @@ import {
 } from "../lib/streamValidator";
 import { getPlayerTuning, headersForUrl } from "../lib/playerConfig";
 import { clearPrefetchCache } from "../lib/streamPrefetch";
+import {
+  downloadAnimeSubtitle,
+  type AnimeSubtitleFile,
+} from "../lib/anime/subtitles";
 import { humanizeAudioLanguage } from "../lib/audioLanguage";
 import {
   getActiveSkipSegment,
@@ -116,6 +120,9 @@ interface HevcPlayerProps {
   mediaType?: "movie" | "tv";
   season?: number;
   episode?: number;
+  /** Anime session — progress is written to the anime-scoped history keys so
+   *  the title shows up in anime-mode Continue Watching, never movie/TV mode. */
+  isAnime?: boolean;
   startAt?: number;
   title?: string;
   backdropUrl?: string;
@@ -308,6 +315,7 @@ export function HevcPlayer({
   onNextEpisode,
   externalPlayer,
   earlyPlayerKey,
+  isAnime,
 }: HevcPlayerProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   // Start index skips a probe-dead default (the probes already condemned it —
@@ -475,8 +483,11 @@ export function HevcPlayer({
 
   // Sidecar subtitles belong to one episode — drop them when the media changes.
   // Source fallbacks within the same episode keep them (they re-merge per prepare).
+  /** JustAnime auto-attached sidecar key (reset per episode like the player's own). */
+  const attachedAnimeSubKeyRef = useRef("");
   useEffect(() => {
     adapterRef.current?.clearExternalSubtitles?.();
+    attachedAnimeSubKeyRef.current = "";
   }, [mediaType, tmdbId, season, episode]);
 
   // Auto-attach a cached online subtitle once playback starts (per episode).
@@ -509,6 +520,196 @@ export function HevcPlayer({
     })();
   }, [hasStarted, subtitleOnlineSearch]);
 
+  // A REAL source change — user pick, chain fallback, or a sub↔dub toggle —
+  // re-prepares the native player, which DROPS every registered sidecar. Clear
+  // the once-guard so auto-attach re-adds for the new source. Index-only remaps
+  // (links-refresh migration) keep the same URL and must not touch it. Declared
+  // BEFORE the auto-attach effect so both run in the same commit, reset first.
+  useEffect(() => {
+    if (migrationRemapRef.current) return;
+    const url =
+      links && links.length > 0 ? (links[activeLinkIndex]?.url ?? null) : null;
+    if (
+      url &&
+      url !== currentSourceUrlRef.current &&
+      attachedAnimeSubKeyRef.current
+    ) {
+      attachedAnimeSubKeyRef.current = "";
+      console.log(
+        `[Anime][sub] source switched to ${url.slice(0, 44)} — once-guard reset`,
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [links, activeLinkIndex]);
+
+  // JustAnime: auto-attach the session's sidecar caption once playback starts
+  // (default captions ON, audio toggle proof). Downloaded to a local file
+  // because addExternalSubtitle can't send the vtt's Referer header. Every
+  // source switch / sub↔dub toggle re-prepares the native source and drops
+  // previously-registered sidecars — and upstream flags captions inconsistently
+  // (dub tracks ship WITHOUT the `default` flag). So prefer the default-flagged
+  // caption, else the first one when the source is a JustAnime link, else the
+  // first caption in the pool (animegg mp4s carry none of their own). It runs
+  // the candidate chain and waits for readyToPlay on slow mp4s so captions land
+  // on any server — all off the playback path, so attaching never blocks video.
+  useEffect(() => {
+    if (!hasStarted) return;
+    const link = links && links.length > 0 ? links[activeLinkIndex] : undefined;
+    if (!link) return;
+    const activeAudio = link._meta?.audio ?? "";
+    const isJustAnime = (l: StreamLink) =>
+      (l._meta?.source ?? "").includes("justanime");
+    const prefer = (l: StreamLink) => {
+      const subs = l._meta?.subtitles;
+      if (!subs || subs.length === 0) return undefined;
+      const def = subs.find((s) => s.default);
+      if (def) return def;
+      // Dub sidecars are unflagged — but movie sidecars (way2movies) are too,
+      // and must stay untouched. Only auto-pick the first for JustAnime.
+      return isJustAnime(l) ? subs[0] : undefined;
+    };
+    const ownDef = prefer(link);
+    // Candidate chain: the active source's caption first, then every pool
+    // caption in rank order, deduped by vtt URL. A dead vtt (403 / html error
+    // page) falls through to the next server's — captions apply no matter
+    // which server actually hosts them.
+    const candidates = new Map<
+      string,
+      { link: StreamLink; def: NonNullable<ReturnType<typeof prefer>> }
+    >();
+    if (ownDef) candidates.set(ownDef.url, { link, def: ownDef });
+    for (const l of links ?? []) {
+      const d = prefer(l);
+      if (d && !candidates.has(d.url)) {
+        candidates.set(d.url, { link: l, def: d });
+      }
+    }
+    if (candidates.size === 0) return;
+    const ordered = Array.from(candidates.values());
+    const key = `${link.url}|${activeAudio}|${ordered[0].def.url}`;
+    if (attachedAnimeSubKeyRef.current === key) return;
+    attachedAnimeSubKeyRef.current = key;
+    console.log(
+      `[Anime][sub] auto-attach → ${ordered[0].def.lang} (${ordered.length} candidate vtts)`,
+    );
+    (async () => {
+      const targetUrl = link.url;
+      // Downloads run off the playback path (each bounded to 10s) — captions
+      // never block video, which seeds from the first frame regardless.
+      let file: AnimeSubtitleFile | undefined;
+      let from: StreamLink | undefined;
+      for (const { link: cl, def: cd } of ordered) {
+        try {
+          const f = await downloadAnimeSubtitle(cd.url, cl.headers, cd.lang);
+          console.log(
+            `[Anime][sub] downloaded ${f.uri} from ${cl._meta?.source ?? "?"} (${cd.url.slice(0, 44)})`,
+          );
+          file = f;
+          from = cl;
+          break;
+        } catch (error) {
+          console.warn(
+            `[Anime][sub] download failed for ${cd.url.slice(0, 56)} (${cl._meta?.source ?? "?"}): ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+      if (!file || !from) {
+        console.warn(
+          `[Anime][sub] no downloadable caption in pool (${targetUrl.slice(0, 44)})`,
+        );
+        return;
+      }
+      if ((links?.[activeLinkIndex]?.url ?? null) !== targetUrl) {
+        console.log(
+          `[Anime][sub] attach superseded before attach — source changed (${targetUrl.slice(0, 44)})`,
+        );
+        return;
+      }
+      const uri = file.uri;
+      const mimeType = file.mimeType;
+      const language = file.language;
+      const label = file.label;
+      const srcLabel = from._meta?.source ?? "?";
+      const attemptOnce = async (): Promise<boolean> => {
+        const track = await adapterRef.current?.addExternalSubtitle?.(
+          uri,
+          mimeType,
+          language,
+          label,
+        );
+        if (track) {
+          autoAttachedSubtitleRef.current = uri;
+          console.log(
+            `[Anime][sub] attached ${uri} as track ${track} (source ${srcLabel})`,
+          );
+          return true;
+        }
+        return false;
+      };
+      if (await attemptOnce()) return;
+      // The merged sidecar child only exists once the main media is ready —
+      // slow mp4s (animegg) open in 10-60s, far past addExternalSubtitle's
+      // ~5s poll. Don't keep re-preparing (each one restarts the load):
+      // wait for readyToPlay, then either select the already-registered child
+      // directly (no re-prepare) or do one final re-add.
+      console.log(
+        `[Anime][sub] sidecar pending — waiting for readyToPlay (${targetUrl.slice(0, 44)})`,
+      );
+      const ready = await new Promise<boolean>((resolve) => {
+        let settled = false;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        let off2: (() => void) | null = null;
+        const finish = (ok: boolean) => {
+          if (settled) return;
+          settled = true;
+          if (timer) clearTimeout(timer);
+          off2?.();
+          resolve(ok);
+        };
+        off2 =
+          adapterRef.current?.onStatusChange?.((status) => {
+            if (status === "readyToPlay") finish(true);
+          }) ?? null;
+        timer = setTimeout(
+          () => finish(false),
+          getPlayerTuning().switchTimeoutMs,
+        );
+      });
+      if (!ready) {
+        console.warn(
+          `[Anime][sub] attach unresolvable — ${targetUrl.slice(0, 44)} never became ready (${getPlayerTuning().switchTimeoutMs}ms)`,
+        );
+        return;
+      }
+      // The chain may have condemned this source while we waited.
+      if ((links?.[activeLinkIndex]?.url ?? null) !== targetUrl) {
+        console.log(
+          `[Anime][sub] attach superseded — source changed while waiting (${targetUrl.slice(0, 44)})`,
+        );
+        return;
+      }
+      // The first addExternalSubtitle may already have registered the child
+      // (its poll just gave up too early). Select it directly.
+      const existing = adapterRef.current
+        ?.getSubtitleTracks?.()
+        .find((t) => t.id.includes("sidecar"));
+      if (existing) {
+        adapterRef.current?.setSubtitleTrack?.(existing.id);
+        autoAttachedSubtitleRef.current = uri;
+        console.log(
+          `[Anime][sub] attached ${uri} as track ${existing.id} (recovered after readyToPlay)`,
+        );
+        return;
+      }
+      if (await attemptOnce()) return;
+      console.warn(
+        `[Anime][sub] attach unresolvable after readyToPlay: ${uri}`,
+      );
+    })();
+  }, [hasStarted, links, activeLinkIndex]);
+
   const isMultiLink = !!links && links.length > 1;
 
   // Resolve the current video URL from either links array or single URL
@@ -522,6 +723,23 @@ export function HevcPlayer({
 
   // Reset all tracking when media / links change
   useEffect(() => {
+    // Diagnostic: what the source selector actually has, per audio track.
+    if (links && links.length > 0) {
+      let sub = 0;
+      let dub = 0;
+      let other = 0;
+      const firsts: string[] = [];
+      for (const l of links) {
+        const a = l._meta?.audio;
+        if (a === "sub") sub++;
+        else if (a === "dub") dub++;
+        else other++;
+        if (firsts.length < 6) firsts.push(`${a ?? "?"}:${l.quality ?? "?"}`);
+      }
+      console.log(
+        `[HevcPlayer] links → ${links.length} rows (sub=${sub} dub=${dub}${other ? ` other=${other}` : ""}) [${firsts.join(" | ")}]`,
+      );
+    }
     // A links refresh while something is already playing (racing prefetch vs
     // watch-screen fetch produces a second ranking): if the playing source
     // still exists in the new ranking, remap to it and keep playing — a
@@ -712,8 +930,7 @@ export function HevcPlayer({
       {
         const fromProvider =
           links?.[activeIndexRef.current]?._meta?.providerId ?? "unknown";
-        const toProvider =
-          links?.[toIndex]?._meta?.providerId ?? fromProvider;
+        const toProvider = links?.[toIndex]?._meta?.providerId ?? fromProvider;
         emitProviderSwitch(fromProvider, toProvider, reason);
       }
       setActiveLinkIndex(toIndex);
@@ -766,7 +983,12 @@ export function HevcPlayer({
             console.log(
               `[Flow] chain exhausted — returning to last working source #${rescue}`,
             );
-            beginSwitch(rescue, true, `Returning to source ${rescue + 1}`, "timeout");
+            beginSwitch(
+              rescue,
+              true,
+              `Returning to source ${rescue + 1}`,
+              "timeout",
+            );
           } else {
             setSwitchInfo(null);
             fireExhausted();
@@ -874,7 +1096,12 @@ export function HevcPlayer({
           console.log(
             `[Flow] probes exhausted — returning to last working source #${rescue}`,
           );
-          beginSwitch(rescue, true, `Returning to source ${rescue + 1}`, "dead");
+          beginSwitch(
+            rescue,
+            true,
+            `Returning to source ${rescue + 1}`,
+            "dead",
+          );
         } else {
           console.log(`[Flow] all ${links.length} probes dead — embed handoff`);
           setSwitchInfo(null);
@@ -966,7 +1193,7 @@ export function HevcPlayer({
     const activeLink = links[activeIndexRef.current];
     if (activeLink && !prevalidatedResultsRef.current?.get(activeLink.url)) {
       pending++;
-      validateStreamUrl(activeLink.url)
+      validateStreamUrl(activeLink.url, activeLink.headers)
         .then((result) => {
           pending--;
           applyOutcome(activeIndexRef.current, result);
@@ -1013,7 +1240,7 @@ export function HevcPlayer({
     const runNext = (): Promise<void> => {
       if (cursor >= todo.length) return Promise.resolve();
       const { url, idx } = todo[cursor++];
-      return validateStreamUrl(url)
+      return validateStreamUrl(url, links[idx]?.headers)
         .then((result) => {
           if (cancelled) return;
           setLinkOutcome(idx, result.outcome);
@@ -1539,6 +1766,7 @@ export function HevcPlayer({
             mediaType,
             season,
             episode,
+            isAnime,
             currentTime: time,
             duration: dur,
             percent: time / dur,
@@ -1557,6 +1785,7 @@ export function HevcPlayer({
     mediaType,
     season,
     episode,
+    isAnime,
     startAt,
     introSegments,
     nextEpisode,
@@ -1976,6 +2205,7 @@ export function HevcPlayer({
           mediaType,
           season,
           episode,
+          isAnime,
           currentTime: time,
           duration: dur,
           percent: time / dur,
@@ -2010,7 +2240,16 @@ export function HevcPlayer({
     stopWatchSession("close");
     adapter.destroy();
     onClose();
-  }, [tmdbId, mediaType, season, episode, isFullscreen, onClose, adapter, player]);
+  }, [
+    tmdbId,
+    mediaType,
+    season,
+    episode,
+    isFullscreen,
+    onClose,
+    adapter,
+    player,
+  ]);
 
   // ── Keep screen awake ──
   useEffect(() => {
@@ -2071,10 +2310,17 @@ export function HevcPlayer({
   const sourceSummary = currentLink?.quality
     ? currentLink.quality
     : providerDisplayName
-      ? [containerLabel, activeLanguages.length > 0 ? activeLanguages[0].toUpperCase() : null]
+      ? [
+          containerLabel,
+          activeLanguages.length > 0 ? activeLanguages[0].toUpperCase() : null,
+        ]
           .filter(Boolean)
           .join(" · ") || providerDisplayName
-      : [currentLink?.quality, containerLabel, activeLanguages.length > 0 ? activeLanguages[0].toUpperCase() : null]
+      : [
+          currentLink?.quality,
+          containerLabel,
+          activeLanguages.length > 0 ? activeLanguages[0].toUpperCase() : null,
+        ]
           .filter(Boolean)
           .join(" · ");
 
@@ -2172,9 +2418,7 @@ export function HevcPlayer({
               }
             : undefined
         }
-        onSourcePicker={
-          isMultiLink ? openStreamPicker : undefined
-        }
+        onSourcePicker={isMultiLink ? openStreamPicker : undefined}
         onToggleFullscreen={toggleFullscreen}
         onClose={handleClose}
         hideBack={!!onFullscreenChange}
@@ -2239,9 +2483,7 @@ export function HevcPlayer({
           onPrimary={retryCurrentLink}
           secondaryLabel={isMultiLink ? "Choose source" : undefined}
           secondaryIcon="server-outline"
-          onSecondary={
-            isMultiLink ? openStreamPicker : undefined
-          }
+          onSecondary={isMultiLink ? openStreamPicker : undefined}
           tertiaryLabel={onTryProvider ? "Try Another Server" : undefined}
           tertiaryIcon="swap-horizontal-outline"
           onTertiary={onTryProvider}
@@ -2259,9 +2501,7 @@ export function HevcPlayer({
           onPrimary={recheckAllSources}
           secondaryLabel="Choose manually"
           secondaryIcon="list-outline"
-          onSecondary={
-            isMultiLink ? openStreamPicker : undefined
-          }
+          onSecondary={isMultiLink ? openStreamPicker : undefined}
           tertiaryLabel={onTryProvider ? "Try Another Server" : undefined}
           tertiaryIcon="swap-horizontal-outline"
           onTertiary={onTryProvider}

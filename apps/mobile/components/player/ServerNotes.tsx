@@ -24,9 +24,8 @@ const SERVER_NOTES: Record<string, ServerNote> = {
     title: "Using Source 1",
     icon: "film-outline",
     lines: [
-      "Best for multi-language content with Hindi/Tamil/Telugu audio.",
-      "Supports subtitle selection via the player's built-in controls.",
-      "If the player doesn't load, try switching to another source.",
+      "Best for multi-language content with English/Hindi/Tamil audio.",
+      "Use cloud icon on top right to switch language/video",
     ],
   },
   peachify: {

@@ -11,7 +11,7 @@
  *  - live probe status: ✓ verified / ? unverified / ✕ failed (confirmed only)
  */
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -141,6 +141,23 @@ export function StreamPickerSheet({
   onClose,
 }: StreamPickerSheetProps) {
   const [languageFilter, setLanguageFilter] = useState<LanguageFilter>("all");
+
+  // Diagnostic: what the source selector lists every time it opens.
+  useEffect(() => {
+    if (!visible) return;
+    let sub = 0;
+    let dub = 0;
+    let other = 0;
+    for (const l of links) {
+      const a = l._meta?.audio;
+      if (a === "sub") sub++;
+      else if (a === "dub") dub++;
+      else other++;
+    }
+    console.log(
+      `[Picker] open — ${links.length} rows (sub=${sub} dub=${dub}${other ? ` other=${other}` : ""})`,
+    );
+  }, [visible, links]);
 
   // Language chips only for languages actually present in the list
   const availableLanguages = useMemo(() => {

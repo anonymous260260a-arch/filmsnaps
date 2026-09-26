@@ -27,6 +27,19 @@ export interface StreamLink {
     isWebReady: boolean;
     sizeBytes?: number;
     providerId?: string;
+    /**
+     * Sidecar subtitles for this stream. `default === true` flags the track
+     * the upstream calls "captions" — the player auto-attaches it (default
+     * subtitles ON for anime). Absent `default` = optional track only.
+     */
+    subtitles?: { lang: string; url: string; default?: boolean }[];
+    /**
+     * Upstream skip segments as [start, end] seconds (JustAnime per-episode
+     * `intro` / `outro`). Players prefer these over locally-detected introdb
+     * segments for the title.
+     */
+    intro?: [number, number] | null;
+    outro?: [number, number] | null;
   };
 }
 

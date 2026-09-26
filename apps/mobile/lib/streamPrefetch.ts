@@ -40,10 +40,7 @@ import {
   notePipelineSettled,
   notePipelineStart,
 } from "./watchPerfMismatch";
-import {
-  trackProviderFetchResult,
-  trackProviderProbe,
-} from "./telemetry";
+import { trackProviderFetchResult, trackProviderProbe } from "./telemetry";
 import { bucketQuality } from "./telemetry/types";
 
 /** [watchperf] — how the pipeline that feeds the player was obtained. */
@@ -242,7 +239,7 @@ function rankOptionsMatch(
 /** Direct providers for the chain: preferred id first, then registry order. */
 function buildProviderChain(preferred: string): string[] {
   const directIds = getEnabledProviders()
-    .filter((p) => isDirectProvider(p))
+    .filter((p) => isDirectProvider(p) && !p.animeOnly)
     .map((p) => p.id);
   const rest = directIds.filter((id) => id !== preferred);
   return [preferred, ...rest];
@@ -308,7 +305,9 @@ export function peekPrefetchStreams(
   }
 
   // Resolved pointer: chain won under a different provider than the caller asked for.
-  const resolved = CACHE.get(getResolvedKey(tmdbId, mediaType, season, episode));
+  const resolved = CACHE.get(
+    getResolvedKey(tmdbId, mediaType, season, episode),
+  );
   if (
     resolved &&
     !resolved.empty &&
@@ -416,6 +415,23 @@ export async function prefetchStreams(
     options.providerId,
   );
   const rankOptions = normalizeOptions(options);
+  // Anime-only providers (justanime) fetch via the MAL-keyed anime pipeline,
+  // never the generic [Flow] pipeline here — the generic resolver has no MAL
+  // context, so it would build broken URLs (404), then chain into hdhub/falix
+  // for an anime title and write a useless `:resolved` pointer. Bail out
+  // before any cache write, join, or network so anime tiles warm nothing.
+  if (getProvider(rankOptions.providerId)?.animeOnly) {
+    console.log(
+      `[Flow] pipeline ${getCacheKey(
+        tmdbId,
+        mediaType,
+        season,
+        episode,
+        rankOptions.providerId,
+      )}: ${rankOptions.providerId} is anime-only — generic pipeline skipped (no MAL context)`,
+    );
+    return null;
+  }
   const reportMeta = (mode: PipelineFeedMeta["mode"], startedAt: number) => {
     options.onPipelineMeta?.({
       mode,
@@ -440,11 +456,17 @@ export async function prefetchStreams(
   if (!options.force) {
     // Exact key (positive or negative).
     const cached = CACHE.get(cacheKey);
-    if (cached && Date.now() < cached.expiresAt && rankOptionsMatch(cached, rankOptions)) {
+    if (
+      cached &&
+      Date.now() < cached.expiresAt &&
+      rankOptionsMatch(cached, rankOptions)
+    ) {
       if (cached.empty) {
         // Locked/empty hit: still allow chain when not locked.
         if (options.lockProvider) {
-          console.log(`[Flow] pipeline ${cacheKey}: cache HIT — empty (negative)`);
+          console.log(
+            `[Flow] pipeline ${cacheKey}: cache HIT — empty (negative)`,
+          );
           reportMeta("hit", cached.pipelineStartedAt ?? cached.prefetchedAt);
           return null;
         }
@@ -459,7 +481,9 @@ export async function prefetchStreams(
     }
 
     // Resolved pointer covers cross-id hits after a chain win.
-    const resolved = CACHE.get(getResolvedKey(tmdbId, mediaType, season, episode));
+    const resolved = CACHE.get(
+      getResolvedKey(tmdbId, mediaType, season, episode),
+    );
     if (
       resolved &&
       !resolved.empty &&
@@ -514,9 +538,7 @@ export async function prefetchStreams(
           // when it yields ≥1 unverified link; a null/empty early settles to
           // the full pipeline result.
           const winner = await Promise.race([
-            early.promise.then((r) =>
-              r && r.links.length > 0 ? r : null,
-            ),
+            early.promise.then((r) => (r && r.links.length > 0 ? r : null)),
             existing.then(() => null),
           ]);
           if (winner) return winner;
@@ -669,10 +691,7 @@ async function runPipeline(
     );
   };
 
-  const storeWinner = (
-    providerId: string,
-    result: StreamCacheResult,
-  ): void => {
+  const storeWinner = (providerId: string, result: StreamCacheResult): void => {
     const providerKey = providerKeyFor(providerId);
     storeSuccess(providerKey, result, rankFor(providerId), pipelineStartedAt);
     if (providerKey !== cacheKey) {
@@ -822,7 +841,9 @@ async function runSingleProvider(
       mediaType,
       linkCount: rawLinks.length,
       fetchMs,
-      chosenQualityBucket: champion ? bucketQuality(effectiveQuality(champion)) : undefined,
+      chosenQualityBucket: champion
+        ? bucketQuality(effectiveQuality(champion))
+        : undefined,
     });
 
     // D4/E2: hand the SAME validationResults map the head walk will fill —
@@ -912,10 +933,7 @@ async function graceDeliverHead(
 
     const t0 = Date.now();
     const probe = validateStreamUrl(link.url, link.headers);
-    const settled = await Promise.race([
-      probe,
-      sleep(EAGER_VERDICT_GRACE_MS),
-    ]);
+    const settled = await Promise.race([probe, sleep(EAGER_VERDICT_GRACE_MS)]);
     const waited = Date.now() - t0;
 
     if (settled == null) {
