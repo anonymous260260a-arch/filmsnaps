@@ -32,6 +32,7 @@
     "build:desktop": "cd apps/desktop && pnpm build",
     "dist:desktop": "cd apps/desktop && pnpm dist",
     "typecheck:desktop": "cd apps/desktop && pnpm typecheck",
+    "eas-build-pre-install": "node scripts/eas-build-pre-install.mjs",
     "prepare": "husky"
   },
   "devDependencies": {
