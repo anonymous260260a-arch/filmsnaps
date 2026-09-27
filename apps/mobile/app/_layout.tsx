@@ -40,11 +40,7 @@ import {
 import { DownloadToastView } from "../components/DownloadToast";
 import LegalGate from "../components/LegalGate";
 import { colors } from "../theme/colors";
-import {
-  launchNow,
-  markLaunch,
-  logLaunchSummary,
-} from "../lib/launchMetrics";
+import { launchNow, markLaunch, logLaunchSummary } from "../lib/launchMetrics";
 import {
   setTelemetryGate,
   refreshConnectionClass,
@@ -120,16 +116,21 @@ const cacheRestorePromise = persistPromise
     // Skip network work when there is nothing cached to prefetch from.
     try {
       const data = queryClient.getQueryData(["movies", "trending"]) as
-        | { results?: Array<{ backdrop_path?: string | null; poster_path?: string | null }> }
+        | {
+            results?: Array<{
+              backdrop_path?: string | null;
+              poster_path?: string | null;
+            }>;
+          }
         | undefined;
       const results = data?.results ?? [];
       if (results.length > 0) {
         const hero = results.find((r) => r.backdrop_path) ?? results[0];
         if (hero?.backdrop_path) {
           // Same URL as Hero.tsx render path (HERO_BACKDROP_SIZE = w1280).
-          ExpoImage.prefetch(getImageUrl(hero.backdrop_path, HERO_BACKDROP_SIZE)).catch(
-            () => {},
-          );
+          ExpoImage.prefetch(
+            getImageUrl(hero.backdrop_path, HERO_BACKDROP_SIZE),
+          ).catch(() => {});
         }
         results.slice(0, 4).forEach((r) => {
           if (r.poster_path) {
@@ -356,7 +357,18 @@ function AppContent() {
   const pathname = usePathname();
   const lastScreenRef = useRef<string | null>(null);
   useEffect(() => {
-    let screen: "home" | "detail_movie" | "detail_tv" | "watch" | "search" | "library" | "history" | "saved" | "settings" | null = null;
+    let screen:
+      | "home"
+      | "detail_movie"
+      | "detail_tv"
+      | "watch"
+      | "search"
+      | "library"
+      | "history"
+      | "saved"
+      | "settings"
+      | "download"
+      | null = null;
     if (pathname.startsWith("/movie/")) screen = "detail_movie";
     else if (pathname.startsWith("/tv/")) screen = "detail_tv";
     else if (pathname.startsWith("/watch/")) screen = "watch";
@@ -364,8 +376,14 @@ function AppContent() {
     else if (pathname.startsWith("/saved")) screen = "saved";
     else if (pathname.startsWith("/search")) screen = "search";
     else if (pathname.startsWith("/library")) screen = "library";
+    else if (pathname.startsWith("/download")) screen = "download";
     else if (pathname.startsWith("/settings")) screen = "settings";
-    else if (pathname === "/" || pathname === "" || pathname.startsWith("/(tabs)/")) screen = "home";
+    else if (
+      pathname === "/" ||
+      pathname === "" ||
+      pathname.startsWith("/(tabs)/")
+    )
+      screen = "home";
     if (screen && screen !== lastScreenRef.current) {
       lastScreenRef.current = screen;
       trackScreenView({ screen });

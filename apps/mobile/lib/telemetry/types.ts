@@ -25,12 +25,19 @@ export type TelemetryEventName =
   | "download_event"
   | "feature_used"
   | "network_speed"
-  | "boundary_error";
+  | "boundary_error"
+  | "watch_opened"
+  | "seek_latency"
+  | "exit_during_switch";
 
 export type LinkCountBucket = "<5" | "5-15" | "16-30" | "30+";
 export type FetchOutcome = "ok" | "empty" | "fail";
 export type ProbeVerdict = "valid" | "dead" | "unverified";
-export type SwitchReason = "dead-head" | "manual-pick" | "exhausted" | "auto-fallback";
+export type SwitchReason =
+  | "dead-head"
+  | "manual-pick"
+  | "exhausted"
+  | "auto-fallback";
 export type HandoffUsed = "used" | "none";
 export type EagerVerdict = "verified" | "unverified" | "none";
 export type ColdStartReasonTelemetry = "warm" | "stale" | "no-cache";
@@ -63,7 +70,12 @@ export type QualityBucket = "480p" | "720p" | "1080p" | "4k" | "unknown";
 /** E1/E8 — sustained connection speed bucketed by achievable max quality. */
 export type MbpsBucket = "<2" | "2-5" | "5-15" | "15+";
 /** E5 — download lifecycle stage (E5 gated until F10 fix ships). */
-export type DownloadStage = "started" | "completed" | "failed" | "cancelled" | "retried";
+export type DownloadStage =
+  | "started"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "retried";
 /** E5 — coarse downloadable failure class. */
 export type DownloadFailureClass =
   | "http"
@@ -88,8 +100,22 @@ export type FeatureName =
   | "mode_toggle_movie_tv"
   | "bookmark_save"
   | "trailer_open"
-  | "share_used";
+  | "share_used"
+  | "episode_manual_pick"
+  | "server_manual_pick"
+  | "watch_opened"
+  | "hub_tab_changed"
+  | "hub_collapse_toggled"
+  | "audio_track_pick"
+  | "captions_enabled"
+  | "captions_disabled"
+  | "caption_sync"
+  | "caption_autosync"
+  | "screen_fit_contain"
+  | "screen_fit_cover"
+  | "screen_fit_fill";
 /** E6 — usable context enum (same-class details for a few features). */
+/** P4 — the screen the app was on when the session ended. */
 export type FeatureContext =
   | "settings"
   | "search"
@@ -111,7 +137,8 @@ export type ScreenName =
   | "library"
   | "history"
   | "saved"
-  | "settings";
+  | "settings"
+  | "download";
 /** P2 — search query length bucket (chars). */
 export type QueryLengthBucket = "0-3" | "4-10" | "11-25" | "26+";
 /** The user's audio-language preference used to rank sources. */
@@ -150,6 +177,8 @@ export const EVENT_DIMS: Record<TelemetryEventName, readonly string[]> = {
     "gaveUp",
     "qualityBucket",
     "capBucket",
+    "watchedPctBucket",
+    "resumeCorrection",
   ],
   provider_switch: ["from", "to", "reason"],
   app_launch: [
@@ -159,27 +188,16 @@ export const EVENT_DIMS: Record<TelemetryEventName, readonly string[]> = {
     "prefAudioLang",
     "otaApplied",
   ],
-  buffer_stall: [
-    "positionMs",
-    "durationMs",
-    "providerId",
-    "mediaType",
-    "prefAudioLang",
-  ],
+  buffer_stall: ["positionMs", "durationMs", "providerId", "mediaType"],
   player_start: [
     "outcome",
     "intentToFirstFrameMs",
     "providerId",
     "mediaType",
-    "prefAudioLang",
+    "seekLatencyMs",
   ],
-  player_error: [
-    "errorClass",
-    "surface",
-    "providerId",
-    "mediaType",
-    "prefAudioLang",
-  ],
+  seek_latency: ["latencyMs", "kind", "providerId", "mediaType"],
+  player_error: ["errorClass", "surface", "providerId", "mediaType"],
   screen_view: ["screen"],
   search_performed: [
     "queryLengthBucket",
@@ -190,7 +208,13 @@ export const EVENT_DIMS: Record<TelemetryEventName, readonly string[]> = {
     "mode",
     "retriedAfterFail",
   ],
-  session_end: ["durationMs", "eventCount", "providerSwitches", "prefAudioLang"],
+  session_end: [
+    "durationMs",
+    "eventCount",
+    "providerSwitches",
+    "prefAudioLang",
+    "lastScreen",
+  ],
   download_event: [
     "stage",
     "provider",
@@ -198,7 +222,9 @@ export const EVENT_DIMS: Record<TelemetryEventName, readonly string[]> = {
     "failureClass",
     "mediaType",
   ],
-  feature_used: ["feature", "context"],
+  feature_used: ["feature", "context", "fromTab", "surface"],
+  exit_during_switch: ["surface", "switchKind"],
+  watch_opened: ["surface"],
   network_speed: ["mbpsBucket", "connectionClass", "latencyBucket"],
   boundary_error: ["errorClass"],
 } as const;
@@ -232,7 +258,19 @@ export interface WatchEndDims {
   gaveUp?: boolean;
   qualityBucket?: QualityBucket;
   capBucket?: QualityBucket;
+  /** Completion curve: % of media actually watched (duration-aware). */
+  watchedPctBucket?: WatchedPctBucket;
+  /** Resume correction fired (startAt was wrong and we re-seeked). */
+  resumeCorrection?: boolean;
 }
+
+export type WatchedPctBucket =
+  | "0-5"
+  | "5-25"
+  | "25-50"
+  | "50-75"
+  | "75-90"
+  | "90-100";
 
 export interface ProviderSwitchDims {
   from: string;
@@ -286,6 +324,8 @@ export interface SessionEndDims {
   durationMs: number;
   eventCount: number;
   providerSwitches: number;
+  /** Screen enum the user was on when the session ended ("" if unknown). */
+  lastScreen?: string;
 }
 
 export interface DownloadEventDims {
@@ -324,7 +364,9 @@ export interface TelemetryEnvelope {
 
 /** Whitelist dims for a name (server mirrors this). */
 export function allowedDims(name: string): readonly string[] | null {
-  return (EVENT_DIMS as Record<string, readonly string[] | undefined>)[name] ?? null;
+  return (
+    (EVENT_DIMS as Record<string, readonly string[] | undefined>)[name] ?? null
+  );
 }
 
 /** Drop any dim not on the whitelist for this event name. */
@@ -335,7 +377,11 @@ export function scrub(env: TelemetryEnvelope): TelemetryEnvelope | null {
   for (const key of allow) {
     const v = env.dims[key];
     if (v === undefined) continue;
-    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+    if (
+      typeof v === "string" ||
+      typeof v === "number" ||
+      typeof v === "boolean"
+    ) {
       dims[key] = v;
     }
   }
@@ -410,7 +456,9 @@ export function bucketQuality(q?: string | null): QualityBucket {
  * quality tier the connection can realistically sustain. Mirrors
  * getMaxQualityForSpeed in networkSpeedTest.ts so the bucket reads as the cap.
  */
-export function bucketCappedQuality(mbps: number | undefined | null): QualityBucket {
+export function bucketCappedQuality(
+  mbps: number | undefined | null,
+): QualityBucket {
   if (mbps == null || Number.isNaN(mbps)) return "unknown";
   if (mbps < 2) return "480p";
   if (mbps < 5) return "720p";
