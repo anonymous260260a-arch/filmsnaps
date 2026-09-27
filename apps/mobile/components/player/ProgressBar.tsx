@@ -203,7 +203,6 @@ export function ProgressBar({
     setIsScrubbing(false);
     onScrubEndRef.current?.();
     if (hasDurationRef.current && Number.isFinite(t)) {
-      console.log(`[Bar] commitSeek ${t.toFixed(1)}s`);
       onSeekRef.current(t);
     }
   }, []);
