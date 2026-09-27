@@ -1,0 +1,30 @@
+-- 002_session_dims.sql
+--
+-- No DDL change is required: session_end's new `lastScreen` dimension lives
+-- inside dims_json (already indexed queries use json_extract at read time).
+-- This migration exists to document the dashboard contract:
+--
+--   GET /api/telemetry/dashboard?days=7|30|90&from=YYYY-MM-DD&to=YYYY-MM-DD&event=<name>
+--   Header: x-dashboard-token (required when TELEMETRY_DASHBOARD_TOKEN is set)
+--
+-- New client events since 001:
+--   watch_opened        dims: { surface: "direct" | "embed" }
+--   seek_latency        dims: { latencyMs, kind: double_tap|buttons|scrub|resume,
+--                               providerId?, mediaType? }
+--   exit_during_switch  dims: { surface, switchKind: auto-fallback|manual-pick }
+--   session_end         dims: { durationMs, eventCount, providerSwitches,
+--                               prefAudioLang, lastScreen? }
+--   feature_used        dims extended: + fromTab?, + surface?
+--     new feature names: watch_opened, hub_tab_changed, hub_collapse_toggled,
+--     audio_track_pick, captions_enabled, captions_disabled, caption_sync,
+--     caption_autosync, screen_fit_contain|cover|fill, episode_manual_pick,
+--     server_manual_pick
+--   watch_end           dims extended: + watchedPctBucket?, + resumeCorrection?
+--
+-- Data-quality corrections vs 001:
+--   prefAudioLang removed from buffer_stall / player_start / player_error
+--   (was constant-per-user noise duplicated from settings; retained once on
+--   app_launch and on watch_end / session_end where splits are meaningful).
+--
+-- Retention stays 365 days per 001_telemetry.sql.
+SELECT 1;

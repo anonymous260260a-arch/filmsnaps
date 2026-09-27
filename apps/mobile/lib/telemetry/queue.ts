@@ -33,6 +33,7 @@ let appStateSub: { remove: () => void } | null = null;
 
 // P3 — per foreground-session counters for session_end (reset on background).
 let sessionStartedAt = Date.now();
+let lastScreenSeen = "";
 let sessionEventCount = 0;
 let sessionProviderSwitches = 0;
 
@@ -149,6 +150,11 @@ export function enqueue(
 
   // P3 — count for session_end (provider_switch idents itself by name).
   sessionEventCount += 1;
+  // P4 — lastScreen = last *place* the user was on. screen_view is the
+  // primary signal; download_event keeps the downloader screen visible
+  // (unmapped routes like /download/[...id] emit no screen_view).
+  if (name === "screen_view") lastScreenSeen = String(dims.screen ?? "");
+  else if (name === "download_event") lastScreenSeen = "download";
   if (name === "provider_switch") sessionProviderSwitches += 1;
 
   queue.push(env);
@@ -168,11 +174,13 @@ export function getSessionSnapshot(): {
   durationMs: number;
   eventCount: number;
   providerSwitches: number;
+  lastScreen: string;
 } {
   return {
     durationMs: Date.now() - sessionStartedAt,
     eventCount: sessionEventCount,
     providerSwitches: sessionProviderSwitches,
+    lastScreen: lastScreenSeen,
   };
 }
 
@@ -194,7 +202,9 @@ export async function flushNow(): Promise<void> {
       // One retry then discard this batch (never unbounded re-queue).
       const retried = await postBatch(batch);
       if (!retried) {
-        console.log(`[Telemetry] batch discarded after retry n=${batch.length}`);
+        console.log(
+          `[Telemetry] batch discarded after retry n=${batch.length}`,
+        );
       }
     }
   } finally {

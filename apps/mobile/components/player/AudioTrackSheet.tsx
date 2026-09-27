@@ -14,11 +14,15 @@ import {
   Modal,
   FlatList,
   StyleSheet,
+  useWindowDimensions,
+  Animated,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
 import type { PlayerAdapter } from "./types";
 import { audioTrackTitle } from "../../lib/audioLanguage";
+import { trackFeatureUsed } from "../../lib/telemetry";
+import { useBottomSheetEntrance } from "./useBottomSheetEntrance";
 
 interface AudioTrackSheetProps {
   visible: boolean;
@@ -34,22 +38,29 @@ export function AudioTrackSheet({
   onSelectTrack,
   onClose,
 }: AudioTrackSheetProps) {
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
   const tracks = player.getAudioTracks();
   const selectedId = player.getSelectedAudioTrackId?.() ?? null;
+  const { mounted, backdrop, translateY } = useBottomSheetEntrance(visible);
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <TouchableOpacity
-        style={styles.overlay}
-        activeOpacity={1}
-        onPress={onClose}
-      >
-        <View style={styles.sheet}>
+    <Modal visible={mounted} transparent onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <Animated.View style={[styles.backdrop, { opacity: backdrop }]}>
+          <TouchableOpacity
+            style={styles.backdropTouch}
+            activeOpacity={1}
+            onPress={onClose}
+          />
+        </Animated.View>
+        <Animated.View
+          style={[
+            styles.sheet,
+            isLandscape && styles.sheetLandscape,
+            { transform: [{ translateY }] },
+          ]}
+        >
           <View style={styles.header}>
             <Text style={styles.headerTitle}>Audio track</Text>
             <TouchableOpacity
@@ -78,6 +89,12 @@ export function AudioTrackSheet({
                   style={[styles.trackItem, isSelected && styles.trackSelected]}
                   onPress={() => {
                     player.setAudioTrack(item.id);
+                    // Telemetry hygiene: the sheet only opens when the file
+                    // genuinely has 2+ tracks, but guard here too so a stale
+                    // single-track render can never fire a false pick event.
+                    if (tracks.length > 1) {
+                      trackFeatureUsed("audio_track_pick", "player");
+                    }
                     onSelectTrack?.();
                     onClose();
                   }}
@@ -133,8 +150,8 @@ export function AudioTrackSheet({
               </Text>
             </View>
           )}
-        </View>
-      </TouchableOpacity>
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
@@ -142,8 +159,14 @@ export function AudioTrackSheet({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
     justifyContent: "flex-end",
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  backdropTouch: {
+    flex: 1,
   },
   sheet: {
     backgroundColor: colors.bgElevated,
@@ -151,6 +174,15 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 16,
     maxHeight: "60%",
     paddingBottom: 32,
+  },
+  sheetLandscape: {
+    width: 440,
+    alignSelf: "center",
+    maxHeight: "92%",
+    marginBottom: 12,
+    borderRadius: 16,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
   },
   header: {
     flexDirection: "row",

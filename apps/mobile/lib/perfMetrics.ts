@@ -27,6 +27,17 @@
 
 import { resolveCapBucket, trackPlayerStart, trackWatchEnd } from "./telemetry";
 import { bucketQuality } from "./telemetry/types";
+import type { WatchedPctBucket } from "./telemetry/types";
+
+/** P5 — completion-curve bucket (percent of media watched). */
+function bucketWatchedPct(pct: number): WatchedPctBucket {
+  if (pct < 5) return "0-5";
+  if (pct < 25) return "5-25";
+  if (pct < 50) return "25-50";
+  if (pct < 75) return "50-75";
+  if (pct < 90) return "75-90";
+  return "90-100";
+}
 
 /** Parse "movie:123" / "tv:456:s1e2" session keys for watch_end dims. */
 function parseSessionKey(
@@ -108,6 +119,9 @@ export interface PerfSession {
   container?: string;
   /** E2 eager handoff verdict for watch_end telemetry. */
   bestValidated?: boolean;
+  /** P5 — completion curve + resume-correction dims for watch_end. */
+  watchedPct?: number;
+  resumeCorrection?: boolean;
 }
 
 const RECENT: PerfSession[] = [];
@@ -200,6 +214,9 @@ export function adoptPendingSession(key: string): PerfSessionTracker | null {
 export class PerfSessionTracker {
   private session: PerfSession | null = null;
   private rebufferStartedAt: number | null = null;
+  /** P5 — completion curve + resume-correction dims for watch_end. */
+  watchedPct?: number;
+  resumeCorrection?: boolean;
   private firstFrameLogged = false;
   /** Outcome to stamp on the open segment when the next source opens. */
   private pendingSegmentOutcome: SourceOutcome | null = null;
@@ -324,9 +341,11 @@ export class PerfSessionTracker {
   ) {
     if (!this.session) return;
     if (partial.handoff !== undefined) this.session.handoff = partial.handoff;
-    if (partial.provider !== undefined) this.session.provider = partial.provider;
+    if (partial.provider !== undefined)
+      this.session.provider = partial.provider;
     if (partial.codec !== undefined) this.session.codec = partial.codec;
-    if (partial.container !== undefined) this.session.container = partial.container;
+    if (partial.container !== undefined)
+      this.session.container = partial.container;
     if (partial.bestValidated !== undefined)
       this.session.bestValidated = partial.bestValidated;
   }
@@ -336,15 +355,20 @@ export class PerfSessionTracker {
     if (label === "handoff" && typeof data.used === "boolean") {
       this.session.handoff = data.used ? "used" : "none";
     }
-    if (label === "providerSyncResolve" && typeof data.providerId === "string") {
+    if (
+      label === "providerSyncResolve" &&
+      typeof data.providerId === "string"
+    ) {
       this.session.provider = data.providerId;
     }
     if (label === "providerAsyncFlip" && typeof data.to === "string") {
       this.session.provider = data.to;
     }
-    if (typeof data.provider === "string") this.session.provider = data.provider;
+    if (typeof data.provider === "string")
+      this.session.provider = data.provider;
     if (typeof data.codec === "string") this.session.codec = data.codec;
-    if (typeof data.container === "string") this.session.container = data.container;
+    if (typeof data.container === "string")
+      this.session.container = data.container;
   }
 
   /** Mid-play stall began (buffering after first frames). */
@@ -374,9 +398,11 @@ export class PerfSessionTracker {
    * Session over (player closed / back) — flush stall + open source segment,
    * print [watchperf] + END, archive. NEVER called on a source switch.
    */
-  close() {
+  close(nowPct?: number, resumeCorrection?: boolean) {
     const s = this.session;
     if (!s) return;
+    if (nowPct != null) s.watchedPct = nowPct;
+    if (resumeCorrection != null) s.resumeCorrection = resumeCorrection;
     if (this.rebufferStartedAt != null) {
       s.stallMs += Date.now() - this.rebufferStartedAt;
       this.rebufferStartedAt = null;
@@ -412,7 +438,8 @@ export class PerfSessionTracker {
     // E1 — the segment that actually framed (if any) sets the qualityBucket;
     // otherwise fall back to the last attempted source's tier.
     const framed = s.sourceSegments.find((seg) => seg.framed);
-    const quality = framed?.quality ?? s.sourceSegments[s.sourceSegments.length - 1]?.quality;
+    const quality =
+      framed?.quality ?? s.sourceSegments[s.sourceSegments.length - 1]?.quality;
 
     const base = {
       providerId: s.provider ?? "unknown",
@@ -429,25 +456,37 @@ export class PerfSessionTracker {
       reachedFirstFrame: firstFrameMs != null,
       gaveUp: firstFrameMs == null && !this.erroredOut,
       qualityBucket: bucketQuality(quality),
+      ...(s.watchedPct != null
+        ? { watchedPctBucket: bucketWatchedPct(s.watchedPct) }
+        : {}),
+      ...(s.resumeCorrection != null
+        ? { resumeCorrection: s.resumeCorrection }
+        : {}),
     } as const;
 
     // E3 — resolve the connection cap the same way the selector does.
-    void resolveCapBucket().then((capBucket) => {
-      trackWatchEnd({ ...base, capBucket });
-    }).catch(() => {
-      trackWatchEnd(base);
-    });
+    void resolveCapBucket()
+      .then((capBucket) => {
+        trackWatchEnd({ ...base, capBucket });
+      })
+      .catch(() => {
+        trackWatchEnd(base);
+      });
   }
 
   /** P1 — player_start (whether the watch intent produced a frame). */
-  private emitPlayerStart(s: PerfSession, firstFrameMs: number | undefined): void {
+  private emitPlayerStart(
+    s: PerfSession,
+    firstFrameMs: number | undefined,
+  ): void {
     const parsed = parseSessionKey(s.key);
     if (!parsed) return;
-    const outcome = firstFrameMs != null
-      ? "first_frame"
-      : this.erroredOut
-        ? "error"
-        : "gave_up";
+    const outcome =
+      firstFrameMs != null
+        ? "first_frame"
+        : this.erroredOut
+          ? "error"
+          : "gave_up";
     trackPlayerStart({
       outcome,
       intentToFirstFrameMs: firstFrameMs ?? Date.now() - s.startedAt,
@@ -480,7 +519,9 @@ export class PerfSessionTracker {
    */
   private logWatchPerf(s: PerfSession) {
     const intent =
-      this.at(s, "intentTap") ?? this.at(s, "detailsTap") ?? this.at(s, "watchEntry");
+      this.at(s, "intentTap") ??
+      this.at(s, "detailsTap") ??
+      this.at(s, "watchEntry");
     const entry = this.at(s, "watchEntry");
     const feed = this.at(s, "pipelineFeed");
     const ready = this.at(s, "linksSet") ?? this.at(s, "links");
@@ -491,7 +532,8 @@ export class PerfSessionTracker {
     const total = frame ?? Date.now() - s.startedAt;
     const srcLine = s.sourceSegments
       .map((seg, i) => {
-        const status = seg.closeAtMs != null ? (seg.outcome ?? "closed") : "open";
+        const status =
+          seg.closeAtMs != null ? (seg.outcome ?? "closed") : "open";
         const t = seg.closeAtMs ?? seg.openAtMs;
         return `src${i}=${status}@${t}ms`;
       })
@@ -525,14 +567,16 @@ export class PerfSessionTracker {
   private logTotal() {
     const s = this.session;
     if (!s) return;
-    const links = s.stages.find((x) => x.label === "links")?.atMs
-      ?? s.stages.find((x) => x.label === "linksSet")?.atMs;
+    const links =
+      s.stages.find((x) => x.label === "links")?.atMs ??
+      s.stages.find((x) => x.label === "linksSet")?.atMs;
     const player = s.stages.find((x) => x.label === "player")?.atMs;
     const ff = s.stages.find((x) => x.label === "firstFrame")?.atMs;
     // E1: after a source switch the session is the SAME — links/player/firstFrame
     // all stay populated; fallbacks + open segment give the switch context.
-    const openSeg = s.sourceSegments.find((g) => g.closeAtMs == null)
-      ?? s.sourceSegments[s.sourceSegments.length - 1];
+    const openSeg =
+      s.sourceSegments.find((g) => g.closeAtMs == null) ??
+      s.sourceSegments[s.sourceSegments.length - 1];
     const segNote = openSeg
       ? ` src${s.sourceSegments.indexOf(openSeg)}@${openSeg.openAtMs}ms`
       : "";

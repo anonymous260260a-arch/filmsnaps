@@ -1,415 +1,317 @@
 /**
- * PlayerSettingsSheet — YouTube-style bottom sheet for player controls.
+ * PlayerSettingsSheet — the ⋮ menu of the direct-player chrome.
  *
- * Allows users to change playback speed (0.25x - 2.0x), switch audio tracks,
- * select subtitles, or change stream quality/source.
+ * One screen, four rows, no sub-navigation:
+ *  - Playback speed (inline selected-state, no drill-down)
+ *  - Preferred audio language
+ *  - Screen fit (contain / fill / stretch) — inline, no drill-down
+ *  - Lock controls (landscape/fullscreen only — mirrors the top-bar lock
+ *    button as its a11y-reachable alternative)
+ *
+ * Audio tracks, subtitles and source quality moved to dedicated top-bar
+ * buttons (one tap, no menu) — this sheet holds only global preferences.
  */
 
-import React, { useState } from "react";
+import React from "react";
 import {
   View,
   Text,
   TouchableOpacity,
   Modal,
-  StyleSheet,
   ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  Animated,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
 import { useSettings } from "../../lib/settings";
 import type { PlayerAdapter } from "./types";
 import { trackFeatureUsed } from "../../lib/telemetry";
+import { useBottomSheetEntrance } from "./useBottomSheetEntrance";
 
 interface PlayerSettingsSheetProps {
   visible: boolean;
   player: PlayerAdapter;
-  sourceLabel?: string;
-  onOpenAudioSheet: () => void;
-  onOpenSubtitleSheet: () => void;
-  onOpenSourcePicker?: () => void;
+  /** Fullscreen/landscape — enables the lock row (a11y alternative to the button). */
+  isFullscreen: boolean;
+  currentSpeed: number;
+  onSelectSpeed: (speed: number) => void;
+  screenFit: "contain" | "cover" | "fill";
+  onSelectFit: (fit: "contain" | "cover" | "fill") => void;
+  lockAvailable: boolean;
+  isLocked: boolean;
+  onLock: () => void;
   onClose: () => void;
 }
 
-const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+const SPEED_OPTIONS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+
+const FIT_OPTIONS: {
+  value: "contain" | "cover" | "fill";
+  label: string;
+  hint: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}[] = [
+  {
+    value: "contain",
+    label: "Fit",
+    hint: "Whole picture",
+    icon: "resize-outline",
+  },
+  {
+    value: "cover",
+    label: "Fill",
+    hint: "Crops edges",
+    icon: "scan-outline",
+  },
+  {
+    value: "fill",
+    label: "Stretch",
+    hint: "May distort",
+    icon: "expand-outline",
+  },
+];
 
 const LANGUAGE_OPTIONS: {
   value: "auto" | "multi" | "hindi" | "english";
   label: string;
-  hint: string;
 }[] = [
-  {
-    value: "auto",
-    label: "Auto",
-    hint: "Multi audio, then Hindi, then English",
-  },
-  {
-    value: "multi",
-    label: "Multi audio",
-    hint: "Multiple audio tracks preferred",
-  },
-  { value: "hindi", label: "Hindi", hint: "Hindi audio when available" },
-  { value: "english", label: "English", hint: "English audio when available" },
+  { value: "auto", label: "Auto" },
+  { value: "multi", label: "Multi audio" },
+  { value: "hindi", label: "Hindi" },
+  { value: "english", label: "English" },
 ];
 
 export function PlayerSettingsSheet({
   visible,
   player,
-  sourceLabel,
-  onOpenAudioSheet,
-  onOpenSubtitleSheet,
-  onOpenSourcePicker,
+  isFullscreen,
+  currentSpeed,
+  onSelectSpeed,
+  screenFit,
+  onSelectFit,
+  lockAvailable,
+  isLocked,
+  onLock,
   onClose,
 }: PlayerSettingsSheetProps) {
-  const [currentView, setCurrentView] = useState<"menu" | "speed" | "language">(
-    "menu",
-  );
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
   const { settings, updateSetting } = useSettings();
-  const currentRate = player.getPlaybackRate();
+  const { mounted, backdrop, translateY } = useBottomSheetEntrance(visible);
 
   const handleSelectSpeed = (speed: number) => {
-    player.setPlaybackRate(speed);
-    trackFeatureUsed("speed_changed", "player");
-    setCurrentView("menu");
+    onSelectSpeed(speed);
     onClose();
   };
 
-  const speedLabel = currentRate === 1.0 ? "Normal" : `${currentRate}x`;
+  const handleSelectLanguage = (
+    value: "auto" | "multi" | "hindi" | "english",
+  ) => {
+    updateSetting("preferredAudioLanguage", value);
+    // Telemetry hygiene: only a real CHANGE is a feature event. Tapping the
+    // already-selected chip is a no-op — counting it inflated "prefAudioLang"
+    // style data (user "changed" language N times without changing anything).
+    if (value !== settings.preferredAudioLanguage) {
+      trackFeatureUsed("audio_manual_override", "player");
+    }
+  };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={() => {
-        setCurrentView("menu");
-        onClose();
-      }}
-    >
-      <TouchableOpacity
-        style={styles.overlay}
-        activeOpacity={1}
-        onPress={() => {
-          setCurrentView("menu");
-          onClose();
-        }}
-      >
-        <View style={styles.sheet} onStartShouldSetResponder={() => true}>
+    <Modal visible={mounted} transparent onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <Animated.View style={[styles.backdrop, { opacity: backdrop }]}>
+          <TouchableOpacity
+            style={styles.backdropTouch}
+            activeOpacity={1}
+            onPress={onClose}
+          />
+        </Animated.View>
+        <Animated.View
+          style={[
+            styles.sheet,
+            isLandscape && styles.sheetLandscape,
+            { transform: [{ translateY }] },
+          ]}
+          onStartShouldSetResponder={() => true}
+        >
           {/* Header */}
           <View style={styles.header}>
-            {currentView !== "menu" ? (
-              <TouchableOpacity
-                onPress={() => setCurrentView("menu")}
-                style={styles.backButton}
-                activeOpacity={0.7}
-                accessibilityRole="button"
-                accessibilityLabel="Back to settings menu"
-              >
-                <Ionicons
-                  name="arrow-back"
-                  size={20}
-                  color={colors.textPrimary}
-                />
-                <Text style={styles.headerTitle}>
-                  {currentView === "speed"
-                    ? "Playback Speed"
-                    : "Audio Language"}
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              <Text style={styles.headerTitle}>Playback Settings</Text>
-            )}
-
+            <View style={styles.headerGrip} />
+            <Text style={styles.headerTitle}>Playback settings</Text>
             <TouchableOpacity
-              onPress={() => {
-                setCurrentView("menu");
-                onClose();
-              }}
-              activeOpacity={0.7}
+              onPress={onClose}
+              style={styles.closeButton}
+              activeOpacity={0.6}
               accessibilityRole="button"
               accessibilityLabel="Close settings"
             >
-              <Ionicons name="close" size={24} color={colors.textSecondary} />
+              <Ionicons name="close" size={22} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
-          {/* Body Content */}
-          <ScrollView contentContainerStyle={styles.content}>
-            {currentView === "menu" ? (
-              <>
-                {/* ── Playback section ── */}
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionHeaderText}>Playback</Text>
-                </View>
-
-                {/* Speed Option */}
-                <TouchableOpacity
-                  style={styles.menuItem}
-                  onPress={() => setCurrentView("speed")}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Playback speed"
-                >
-                  <View style={styles.menuItemLeft}>
+          <ScrollView
+            contentContainerStyle={styles.content}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* ── Screen fit ── */}
+            <View style={styles.rowHeader}>
+              <Ionicons name="albums-outline" size={16} color={colors.gold} />
+              <Text style={styles.rowHeaderText}>Screen fit</Text>
+            </View>
+            <View style={styles.fitRow}>
+              {FIT_OPTIONS.map((option) => {
+                const isSelected = screenFit === option.value;
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[styles.fitCard, isSelected && styles.fitCardActive]}
+                    onPress={() => {
+                      if (!isSelected) {
+                        trackFeatureUsed(
+                          `screen_fit_${option.value}` as any,
+                          "player",
+                        );
+                      }
+                      onSelectFit(option.value);
+                    }}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Screen fit ${option.label}`}
+                    accessibilityHint={option.hint}
+                    accessibilityState={{ selected: isSelected }}
+                  >
                     <Ionicons
-                      name="speedometer-outline"
+                      name={option.icon}
                       size={20}
-                      color={colors.gold}
+                      color={isSelected ? colors.gold : colors.textSecondary}
                     />
-                    <Text style={styles.menuItemText}>Playback speed</Text>
-                  </View>
-                  <View style={styles.menuItemRight}>
-                    <Text style={styles.menuItemValue}>{speedLabel}</Text>
-                    <Ionicons
-                      name="chevron-forward"
-                      size={18}
-                      color={colors.textTertiary}
-                    />
-                  </View>
-                </TouchableOpacity>
-
-                <View style={styles.separator} />
-
-                {/* Audio Language Option */}
-                <TouchableOpacity
-                  style={styles.menuItem}
-                  onPress={() => setCurrentView("language")}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Preferred audio language"
-                >
-                  <View style={styles.menuItemLeft}>
-                    <Ionicons
-                      name="language-outline"
-                      size={20}
-                      color={colors.gold}
-                    />
-                    <Text style={styles.menuItemText}>Audio language</Text>
-                  </View>
-                  <View style={styles.menuItemRight}>
-                    <Text style={styles.menuItemValue}>
-                      {LANGUAGE_OPTIONS.find(
-                        (o) => o.value === settings.preferredAudioLanguage,
-                      )?.label ?? "Auto"}
+                    <Text
+                      style={[
+                        styles.fitLabel,
+                        isSelected && styles.fitLabelActive,
+                      ]}
+                    >
+                      {option.label}
                     </Text>
-                    <Ionicons
-                      name="chevron-forward"
-                      size={18}
-                      color={colors.textTertiary}
-                    />
-                  </View>
-                </TouchableOpacity>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
 
-                {/* ── Media section ── */}
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionHeaderText}>Media</Text>
-                </View>
+            <View style={styles.divider} />
 
-                {/* Audio Track Option — A2: keep reachable but disabled when ≤1 track */}
-                {(() => {
-                  const trackCount = player.getAudioTracks().length;
-                  if (trackCount <= 1) {
-                    return (
-                      <View
-                        style={[styles.menuItem, styles.menuItemDisabled]}
-                        accessibilityElementsHidden={false}
-                        accessible
-                        accessibilityLabel="Audio track, only one audio track available"
-                      >
-                        <View style={styles.menuItemLeft}>
-                          <Ionicons
-                            name="musical-notes-outline"
-                            size={20}
-                            color={colors.textTertiary}
-                          />
-                          <Text
-                            style={[
-                              styles.menuItemText,
-                              { color: colors.textTertiary },
-                            ]}
-                          >
-                            Audio track
-                          </Text>
-                        </View>
-                        <Text style={styles.menuItemHint}>
-                          Only one audio track
-                        </Text>
-                      </View>
-                    );
-                  }
-                  return (
-                    <TouchableOpacity
-                      style={styles.menuItem}
-                      onPress={() => {
-                        onClose();
-                        onOpenAudioSheet();
-                      }}
-                      activeOpacity={0.7}
-                      accessibilityRole="button"
-                      accessibilityLabel="Audio tracks"
-                    >
-                      <View style={styles.menuItemLeft}>
-                        <Ionicons
-                          name="musical-notes-outline"
-                          size={20}
-                          color={colors.gold}
-                        />
-                        <Text style={styles.menuItemText}>Audio track</Text>
-                      </View>
-                      <Ionicons
-                        name="chevron-forward"
-                        size={18}
-                        color={colors.textTertiary}
-                      />
-                    </TouchableOpacity>
-                  );
-                })()}
-
-                <View style={styles.separator} />
-
-                {/* Subtitles Option */}
-                <TouchableOpacity
-                  style={styles.menuItem}
-                  onPress={() => {
-                    onClose();
-                    onOpenSubtitleSheet();
-                  }}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Subtitles"
-                >
-                  <View style={styles.menuItemLeft}>
-                    <Ionicons
-                      name="text-outline"
-                      size={20}
-                      color={colors.gold}
-                    />
-                    <Text style={styles.menuItemText}>Subtitles</Text>
-                  </View>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={18}
-                    color={colors.textTertiary}
-                  />
-                </TouchableOpacity>
-
-                {/* Source Quality Option */}
-                {onOpenSourcePicker && sourceLabel && (
-                  <>
-                    <View style={styles.separator} />
-                    <TouchableOpacity
-                      style={styles.menuItem}
-                      onPress={() => {
-                        onClose();
-                        onOpenSourcePicker();
-                        trackFeatureUsed("quality_manual_override", "player");
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <View style={styles.menuItemLeft}>
-                        <Ionicons
-                          name="server-outline"
-                          size={20}
-                          color={colors.gold}
-                        />
-                        <Text style={styles.menuItemText}>
-                          Quality / Server
-                        </Text>
-                      </View>
-                      <View style={styles.menuItemRight}>
-                        <Text style={styles.menuItemValue}>{sourceLabel}</Text>
-                        <Ionicons
-                          name="chevron-forward"
-                          size={18}
-                          color={colors.textTertiary}
-                        />
-                      </View>
-                    </TouchableOpacity>
-                  </>
-                )}
-              </>
-            ) : currentView === "speed" ? (
-              /* Speed Selection List */
-              SPEED_OPTIONS.map((speed) => {
-                const isSelected = currentRate === speed;
+            {/* ── Playback speed ── */}
+            <View style={styles.rowHeader}>
+              <Ionicons
+                name="speedometer-outline"
+                size={16}
+                color={colors.gold}
+              />
+              <Text style={styles.rowHeaderText}>Speed</Text>
+            </View>
+            <View style={styles.chipRow}>
+              {SPEED_OPTIONS.map((speed) => {
+                const isSelected = Math.abs(currentSpeed - speed) < 0.01;
                 return (
                   <TouchableOpacity
                     key={speed}
-                    style={[
-                      styles.speedOption,
-                      isSelected && styles.optionSelected,
-                    ]}
+                    style={[styles.chip, isSelected && styles.chipActive]}
                     onPress={() => handleSelectSpeed(speed)}
                     activeOpacity={0.7}
                     accessibilityRole="button"
                     accessibilityLabel={`Playback speed ${speed === 1.0 ? "normal" : `${speed}x`}`}
+                    accessibilityState={{ selected: isSelected }}
                   >
                     <Text
                       style={[
-                        styles.speedOptionText,
-                        isSelected && styles.speedOptionSelected,
+                        styles.chipText,
+                        isSelected && styles.chipTextActive,
                       ]}
                     >
-                      {speed === 1.0 ? "Normal" : `${speed}x`}
+                      {speed === 1.0 ? "1×" : `${speed}×`}
                     </Text>
-                    {isSelected && (
-                      <Ionicons
-                        name="checkmark-circle"
-                        size={20}
-                        color={colors.gold}
-                      />
-                    )}
                   </TouchableOpacity>
                 );
-              })
-            ) : (
-              /* Audio Language Selection List */
-              LANGUAGE_OPTIONS.map((option) => {
+              })}
+            </View>
+
+            <View style={styles.divider} />
+
+            {/* ── Preferred audio language ── */}
+            <View style={styles.rowHeader}>
+              <Ionicons name="language-outline" size={16} color={colors.gold} />
+              <Text style={styles.rowHeaderText}>Preferred audio</Text>
+            </View>
+            <View style={styles.chipRow}>
+              {LANGUAGE_OPTIONS.map((option) => {
                 const isSelected =
                   settings.preferredAudioLanguage === option.value;
                 return (
                   <TouchableOpacity
                     key={option.value}
-                    style={[
-                      styles.speedOption,
-                      isSelected && styles.optionSelected,
-                    ]}
-                    onPress={() => {
-                      updateSetting("preferredAudioLanguage", option.value);
-                      trackFeatureUsed("audio_manual_override", "player");
-                      setCurrentView("menu");
-                      onClose();
-                    }}
+                    style={[styles.chip, isSelected && styles.chipActive]}
+                    onPress={() => handleSelectLanguage(option.value)}
                     activeOpacity={0.7}
                     accessibilityRole="button"
-                    accessibilityLabel={`Preferred audio language: ${option.label}`}
+                    accessibilityLabel={`Preferred audio language ${option.label}`}
+                    accessibilityState={{ selected: isSelected }}
                   >
-                    <View style={styles.languageOptionTextWrap}>
-                      <Text
-                        style={[
-                          styles.speedOptionText,
-                          isSelected && styles.speedOptionSelected,
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
-                      <Text style={styles.languageOptionHint}>
-                        {option.hint}
-                      </Text>
-                    </View>
-                    {isSelected && (
-                      <Ionicons
-                        name="checkmark-circle"
-                        size={20}
-                        color={colors.gold}
-                      />
-                    )}
+                    <Text
+                      style={[
+                        styles.chipText,
+                        isSelected && styles.chipTextActive,
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
                   </TouchableOpacity>
                 );
-              })
+              })}
+            </View>
+
+            {/* ── Lock (landscape/fullscreen only) ── */}
+            {lockAvailable && (
+              <>
+                <View style={styles.divider} />
+                <TouchableOpacity
+                  style={styles.lockRow}
+                  onPress={() => {
+                    onLock();
+                    onClose();
+                  }}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Lock controls"
+                  accessibilityHint="Prevents accidental touches while the phone is in a pocket or pouch"
+                  disabled={isLocked}
+                >
+                  <View style={styles.lockRowLeft}>
+                    <Ionicons
+                      name="lock-closed-outline"
+                      size={18}
+                      color={colors.gold}
+                    />
+                    <Text style={styles.lockRowText}>Lock screen</Text>
+                  </View>
+                  {isLocked ? (
+                    <Text style={styles.lockRowValue}>Locked</Text>
+                  ) : (
+                    <Ionicons
+                      name="chevron-forward"
+                      size={18}
+                      color={colors.textTertiary}
+                    />
+                  )}
+                </TouchableOpacity>
+              </>
             )}
+
+            <View style={styles.footerSpace} />
           </ScrollView>
-        </View>
-      </TouchableOpacity>
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
@@ -417,118 +319,156 @@ export function PlayerSettingsSheet({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.65)",
     justifyContent: "flex-end",
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  backdropTouch: {
+    flex: 1,
   },
   sheet: {
     backgroundColor: colors.bgElevated,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    maxHeight: "70%",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "65%",
     paddingBottom: 24,
   },
-  sectionHeader: {
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 6,
-    backgroundColor: colors.bgSubtle,
-  },
-  sectionHeaderText: {
-    color: colors.gold,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
+  sheetLandscape: {
+    width: 460,
+    alignSelf: "center",
+    maxHeight: "92%",
+    marginBottom: 12,
+    borderRadius: 20,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
   },
   header: {
-    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.zinc800,
+    paddingTop: 8,
+    paddingBottom: 4,
+    position: "relative",
   },
-  backButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+  headerGrip: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.zinc600,
+    marginBottom: 8,
   },
   headerTitle: {
     color: colors.textPrimary,
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: "700",
   },
-  content: {
-    paddingVertical: 8,
+  closeButton: {
+    position: "absolute",
+    right: 8,
+    top: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  menuItem: {
+  content: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+  },
+  rowHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 10,
+  },
+  rowHeaderText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+  fitRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  fitCard: {
+    flex: 1,
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: colors.bgSurface,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  fitCardActive: {
+    backgroundColor: colors.goldBadge,
+    borderColor: "rgba(212,162,55,0.45)",
+  },
+  fitLabel: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  fitLabelActive: {
+    color: colors.gold,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: colors.zinc800,
+    marginVertical: 16,
+  },
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  chip: {
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: colors.bgSurface,
+    minHeight: 36,
+    justifyContent: "center",
+  },
+  chipActive: {
+    backgroundColor: colors.goldBadge,
+    borderWidth: 1,
+    borderColor: "rgba(212,162,55,0.45)",
+  },
+  chipText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  chipTextActive: {
+    color: colors.gold,
+    fontWeight: "700",
+  },
+  lockRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 14,
+    paddingVertical: 6,
   },
-  menuItemDisabled: {
-    opacity: 0.7,
-  },
-  menuItemHint: {
-    color: colors.textTertiary,
-    fontSize: 12,
-    fontWeight: "500",
-    flexShrink: 1,
-    textAlign: "right",
-  },
-  menuItemLeft: {
+  lockRowLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 14,
+    gap: 10,
   },
-  menuItemRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  menuItemText: {
+  lockRowText: {
     color: colors.textPrimary,
     fontSize: 15,
     fontWeight: "600",
   },
-  menuItemValue: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    fontWeight: "500",
-  },
-  separator: {
-    height: 1,
-    backgroundColor: colors.zinc800,
-    marginHorizontal: 20,
-  },
-  speedOption: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-  },
-  optionSelected: {
-    backgroundColor: colors.goldBadge,
-  },
-  speedOptionText: {
-    color: colors.textSecondary,
-    fontSize: 15,
-    fontWeight: "500",
-  },
-  speedOptionSelected: {
-    color: colors.gold,
-    fontWeight: "700",
-  },
-  languageOptionTextWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  languageOptionHint: {
+  lockRowValue: {
     color: colors.textTertiary,
-    fontSize: 12,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  footerSpace: {
+    height: 8,
   },
 });

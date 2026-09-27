@@ -1,32 +1,48 @@
 /**
- * ProgressBar — Gesture-based video seek bar with Reanimated SharedValues & Picture Preview.
+ * ProgressBar — YouTube-style gesture seek bar with buffered fill, skip-window
+ * notch and a time bubble. UI-thread scrubbing via Reanimated shared values.
  *
- * Runs smooth UI-thread progress rendering, gesture scrubbing with instant response,
- * clamped floating 16:9 video thumbnail preview card, and zero stutter.
+ * Improvements over the old bar:
+ * - Tap anywhere seeks there (full-bleed hit area; gutters clamp to 0%/100%).
+ * - Drag follows the finger; touching near the thumb keeps the grab offset.
+ * - Buffered range rendered as a dim gold fill behind the playhead (expo-video
+ *   exposes player.bufferedPosition; the adapter surfaces it).
+ * - Intro skip window drawn as a subtle notch on the track (teaches the user
+ *   where the intro is; pairs with the floating Skip button).
+ * - Scrub feedback is a clamped time bubble — the previous static-backdrop
+ *   "preview card" showed an image unrelated to the target time.
+ * - Duration-0 links disable scrubbing instead of dividing by zero.
  */
 
 import React, { useCallback, useRef, useEffect, useState } from "react";
-import { View, Text, StyleSheet, LayoutChangeEvent, Image } from "react-native";
+import { View, Text, StyleSheet, LayoutChangeEvent } from "react-native";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   useAnimatedReaction,
   withSpring,
   withTiming,
+  withSequence,
+  withDelay,
   runOnJS,
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { LinearGradient } from "expo-linear-gradient";
-import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
+import type { IntroDbResponse } from "../../lib/introDetect";
 
-const BAR_HEIGHT = 44; // Vertical touch target >= 44dp
+const BAR_HEIGHT = 44; // ≥44dp touch target
 const THUMB_SIZE = 14;
-const THUMB_SIZE_ACTIVE = 20;
-const TRACK_HEIGHT_NORMAL = 4;
+const THUMB_SIZE_ACTIVE = 18;
+const TRACK_HEIGHT_NORMAL = 3.5;
 const TRACK_HEIGHT_ACTIVE = 6;
-const PREVIEW_WIDTH = 114;
-const PREVIEW_HEIGHT = 64;
+const BUBBLE_WIDTH = 88;
+// Visual gutter: the track ends this far from the screen edge so the thumb
+// never clips off-phone — while the GESTURE area stays full-bleed, so the
+// gutters are live (tap/drag there clamps to 0% / 100%).
+const VISUAL_INSET = 10;
+// Touch within this distance of the thumb drags it relatively (grab feel);
+// touching anywhere else jumps the playhead straight to the finger.
+const GRAB_RADIUS = 16;
 
 // YouTube-style intent detection: a touch on the bar only becomes a scrub
 // once it moves HORIZONTALLY. Vertical-first movement (Android gesture-nav
@@ -36,10 +52,38 @@ const PREVIEW_HEIGHT = 64;
 const VERTICAL_FAIL_PX = 12;
 const HORIZONTAL_ACTIVATE_PX = 8;
 
+/** Map playhead fraction → thumb x in full-bleed bar coordinates. */
+function fractionToX(fraction: number, width: number): number {
+  "worklet";
+  const trackW = Math.max(0, width - VISUAL_INSET * 2);
+  const f = Math.min(1, Math.max(0, fraction));
+  return VISUAL_INSET + f * trackW;
+}
+
+/** Map a touch x (full-bleed) → fraction, clamped to the visual track. */
+function xToFraction(x: number, width: number): number {
+  "worklet";
+  const trackW = Math.max(0, width - VISUAL_INSET * 2);
+  if (trackW <= 0) return 0;
+  return Math.min(1, Math.max(0, (x - VISUAL_INSET) / trackW));
+}
+
+/** Clamp a touch x to the visual track span (gutters → 0% / 100%). */
+function clampToTrack(x: number, width: number): number {
+  "worklet";
+  const maxX = Math.max(VISUAL_INSET, width - VISUAL_INSET);
+  return Math.min(maxX, Math.max(VISUAL_INSET, x));
+}
+
 interface ProgressBarProps {
   currentTime: number;
   duration: number;
-  backdropUrl?: string;
+  /** False when the backend never reports a duration — times render, scrubbing is off. */
+  hasDuration?: boolean;
+  /** Seconds of buffered-ahead content (0 hides the fill). */
+  bufferedPosition?: number;
+  /** introdb segments — draws the intro skip window notch on the track. */
+  introSegments?: IntroDbResponse | null;
   onSeek: (time: number) => void;
   onScrubStart?: () => void;
   onScrubEnd?: () => void;
@@ -59,7 +103,9 @@ function formatTime(seconds: number): string {
 export function ProgressBar({
   currentTime,
   duration,
-  backdropUrl,
+  hasDuration = true,
+  bufferedPosition = 0,
+  introSegments = null,
   onSeek,
   onScrubStart,
   onScrubEnd,
@@ -72,306 +118,300 @@ export function ProgressBar({
   const thumbX = useSharedValue(0);
   const thumbScale = useSharedValue(1);
   const isDraggingSV = useSharedValue(false);
-  const panStartX = useSharedValue(0);
+  /** Touch-offset preserved when grabbing the thumb (0 = jump to finger). */
+  const grabOffsetSV = useSharedValue(0);
+  /** Touch-down X (view coords) — captured from touch events, which carry
+   *  fresh motion data, rather than the discrete gesture's end payload. */
+  const touchXSV = useSharedValue(-1);
   const currentTimeSV = useSharedValue(0);
   const durationSV = useSharedValue(0);
+  const bufferedSV = useSharedValue(0);
+  /** True between pan activation and finalize — guards the fail path. */
+  const activatedSV = useSharedValue(false);
 
-  // Refs mirror latest prop values for JS thread callbacks
+  // Refs mirror latest prop/callback values for the JS-thread callbacks
   const onSeekRef = useRef(onSeek);
   const onScrubStartRef = useRef(onScrubStart);
   const onScrubEndRef = useRef(onScrubEnd);
-  const durationRef = useRef(duration);
-
+  const hasDurationRef = useRef(hasDuration);
   useEffect(() => {
     onSeekRef.current = onSeek;
-  }, [onSeek]);
-  useEffect(() => {
     onScrubStartRef.current = onScrubStart;
-  }, [onScrubStart]);
-  useEffect(() => {
     onScrubEndRef.current = onScrubEnd;
-  }, [onScrubEnd]);
+    hasDurationRef.current = hasDuration;
+  }, [onSeek, onScrubStart, onScrubEnd, hasDuration]);
+
+  // Intro notch geometry (fractions 0–1). Only when a usable intro exists and
+  // duration is known. getActiveSkipSegment upstream prefers recap over intro
+  // for the Skip button; the notch simply marks the intro window when present.
+  const intro = introSegments?.intro ?? null;
+  const notch =
+    hasDuration && intro && duration > 0 && intro.end_sec > intro.start_sec
+      ? {
+          start: Math.max(0, intro.start_sec / duration),
+          width: Math.min(1, (intro.end_sec - intro.start_sec) / duration),
+        }
+      : null;
+
+  // Mirror props into shared values
   useEffect(() => {
-    durationRef.current = duration;
-  }, [duration]);
+    currentTimeSV.value = currentTime;
+    durationSV.value = duration;
+  }, [currentTime, duration, currentTimeSV, durationSV]);
 
-  // Keep SharedValues in sync with incoming props
   useEffect(() => {
-    if (Number.isFinite(currentTime) && currentTime >= 0) {
-      currentTimeSV.value = currentTime;
-    }
-    if (Number.isFinite(duration) && duration > 0) {
-      durationSV.value = duration;
-    }
+    bufferedSV.value = bufferedPosition;
+  }, [bufferedPosition, bufferedSV]);
 
-    // If user is not currently scrubbing, update thumb position immediately
-    if (
-      !isDraggingSV.value &&
-      duration > 0 &&
-      trackWidthSV.value > 0 &&
-      Number.isFinite(currentTime)
-    ) {
-      const pct = Math.max(0, Math.min(1, currentTime / duration));
-      thumbX.value = pct * trackWidthSV.value;
-    }
-  }, [currentTime, duration]);
-
-  const updateScrubTextJS = useCallback((pct: number) => {
-    const dur = durationRef.current;
-    if (dur > 0 && Number.isFinite(pct)) {
-      const clampedPct = Math.max(0, Math.min(1, pct));
-      const targetTime = clampedPct * dur;
-      setScrubTimeText(formatTime(targetTime));
-    }
-  }, []);
-
-  const handleCommitSeekJS = useCallback((pct: number) => {
-    const dur = durationRef.current;
-    if (dur > 0 && Number.isFinite(pct)) {
-      const clampedPct = Math.max(0, Math.min(1, pct));
-      const seekTime = clampedPct * dur;
-      onSeekRef.current(seekTime);
-    }
-  }, []);
-
-  const handleScrubStateJS = useCallback((scrubbing: boolean) => {
-    setIsScrubbing(scrubbing);
-    if (scrubbing) {
-      onScrubStartRef.current?.();
-    } else {
-      onScrubEndRef.current?.();
-    }
-  }, []);
-
-  const logScrubJS = useCallback((msg: string) => {}, []);
-
-  // Measure container layout width
-  const handleLayout = useCallback((e: LayoutChangeEvent) => {
-    const width = e.nativeEvent.layout.width;
-    if (width > 0) {
-      trackWidthSV.value = width;
-      const dur = durationRef.current;
-      if (
-        !isDraggingSV.value &&
-        dur > 0 &&
-        Number.isFinite(currentTimeSV.value)
-      ) {
-        const pct = Math.max(0, Math.min(1, currentTimeSV.value / dur));
-        thumbX.value = pct * width;
-      }
-    }
-  }, []);
-
-  // Sync thumb position during video playback via Reanimated reaction
+  // Track the playhead while not scrubbing (UI thread); freeze while scrubbing.
   useAnimatedReaction(
-    () => ({
-      time: currentTimeSV.value,
-      dur: durationSV.value,
-      w: trackWidthSV.value,
-      dragging: isDraggingSV.value,
-    }),
-    (curr) => {
-      if (
-        !curr.dragging &&
-        curr.dur > 0 &&
-        curr.w > 0 &&
-        Number.isFinite(curr.time) &&
-        curr.time >= 0
-      ) {
-        const pct = Math.max(0, Math.min(1, curr.time / curr.dur));
-        thumbX.value = pct * curr.w;
+    () => (durationSV.value > 0 ? currentTimeSV.value / durationSV.value : 0),
+    (fraction, prev) => {
+      if (isDraggingSV.value) return;
+      if (fraction !== prev) {
+        thumbX.value = fractionToX(fraction, trackWidthSV.value);
       }
     },
+    [],
   );
 
-  // --- Pan gesture: drag the thumb across the timeline (manual activation) ---
-  // Nothing happens on touch-down — the scrub (preview card, thumb jump,
-  // seek on release) only exists once the touch proves horizontal intent.
-  const touchStartX = useSharedValue(0);
-  const touchStartY = useSharedValue(0);
-  const touchDownX = useSharedValue(0);
-  const tapStartY = useSharedValue(0);
-
-  const panGesture = Gesture.Pan()
-    .hitSlop({ top: 16, bottom: 16, left: 20, right: 20 })
-    .manualActivation(true)
-    .onTouchesDown((e) => {
-      const t = e.allTouches[0];
-      if (!t) return;
-      touchStartX.value = t.absoluteX;
-      touchStartY.value = t.absoluteY;
-      touchDownX.value = t.x;
-    })
-    .onTouchesMove((e, s) => {
-      const t = e.allTouches[0];
-      if (!t) return;
-      const dx = Math.abs(t.absoluteX - touchStartX.value);
-      const dy = Math.abs(t.absoluteY - touchStartY.value);
-      if (dy > VERTICAL_FAIL_PX && dy > dx) {
-        runOnJS(logScrubJS)(
-          `vertical move (${dy.toFixed(0)}px) — gesture failed, no seek`,
+  const trackLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      const w = e.nativeEvent.layout.width;
+      if (w !== trackWidthSV.value) {
+        trackWidthSV.value = w;
+        // Re-project the thumb on rotation/resize
+        thumbX.value = fractionToX(
+          durationSV.value > 0 ? currentTimeSV.value / durationSV.value : 0,
+          w,
         );
-        s.fail();
-        return;
       }
-      if (dx > HORIZONTAL_ACTIVATE_PX && dx >= dy) {
-        const width = trackWidthSV.value;
-        if (width <= 0) {
-          s.fail();
-          return;
-        }
-        isDraggingSV.value = true;
-        runOnJS(handleScrubStateJS)(true);
-        // Thumb jumps to the original touch point and follows the finger
-        const startX = Math.max(0, Math.min(width, touchDownX.value));
-        panStartX.value = startX;
-        thumbX.value = startX;
-        thumbScale.value = withSpring(THUMB_SIZE_ACTIVE / THUMB_SIZE, {
+    },
+    [trackWidthSV, durationSV, currentTimeSV, thumbX],
+  );
+
+  const updateScrubTimeText = useCallback((t: number) => {
+    setScrubTimeText(formatTime(t));
+  }, []);
+
+  const beginScrubJS = useCallback(() => {
+    setIsScrubbing(true);
+    onScrubStartRef.current?.();
+  }, []);
+
+  const commitSeek = useCallback((t: number) => {
+    setIsScrubbing(false);
+    onScrubEndRef.current?.();
+    if (hasDurationRef.current && Number.isFinite(t)) {
+      onSeekRef.current(t);
+    }
+  }, []);
+
+  // Tap-to-seek: a touch that never becomes a horizontal drag seeks to its
+  // position (YouTube-style). Generous maxDuration means hold-then-release
+  // still seeks; maxDistance keeps real swipes from ever counting as taps
+  // while tolerating finger jitter. Race order matters: Tap only activates
+  // on finger-up, so an 8px horizontal drag activates the Pan first and
+  // cancels the Tap. The touch X comes from onTouchesDown (fresh motion
+  // data) with the end payload as fallback, and every computed value is
+  // NaN-guarded — a bad number here used to seek(NaN), which the adapter
+  // silently drops while the time display resets to 0:00.
+  const tapGesture = Gesture.Tap()
+    .maxDistance(25)
+    .maxDuration(6000)
+    .onTouchesDown((e) => {
+      const t0 = e.allTouches[0] ?? e.changedTouches[0];
+      if (t0 && Number.isFinite(t0.x)) {
+        touchXSV.value = t0.x;
+      }
+    })
+    .onEnd((e, success) => {
+      if (!success) return;
+      if (durationSV.value <= 0) return;
+      const w = trackWidthSV.value;
+      if (w <= 0) return;
+      const rawX =
+        touchXSV.value >= 0 && Number.isFinite(touchXSV.value)
+          ? touchXSV.value
+          : e.x;
+      if (!Number.isFinite(rawX)) return;
+      const x = clampToTrack(rawX, w);
+      thumbX.value = x;
+      // Brief YouTube-style thumb pop so the tap reads as a seek, not a touch.
+      thumbScale.value = withSequence(
+        withSpring(THUMB_SIZE_ACTIVE / THUMB_SIZE, {
           damping: 14,
           stiffness: 350,
-        });
-        runOnJS(updateScrubTextJS)(startX / width);
-        runOnJS(logScrubJS)(`scrub activated (${dx.toFixed(0)}px horizontal)`);
-        s.activate();
+        }),
+        withDelay(200, withSpring(1, { damping: 14, stiffness: 350 })),
+      );
+      const t = xToFraction(x, w) * durationSV.value;
+      if (!Number.isFinite(t)) return;
+      runOnJS(commitSeek)(t);
+    });
+
+  const panGesture = Gesture.Pan()
+    .activeOffsetX(HORIZONTAL_ACTIVATE_PX)
+    .failOffsetY(VERTICAL_FAIL_PX)
+    .onTouchesDown(() => {
+      activatedSV.value = false;
+    })
+    // onStart fires only when the pan ACTIVATES (horizontal intent) — a
+    // vertical-first touch (gesture-nav swipe) fails the gesture and must
+    // never open the scrub UI.
+    .onStart((e) => {
+      activatedSV.value = true;
+      const w = trackWidthSV.value;
+      // YouTube grab semantics: touching ON the thumb keeps the touch's
+      // relative offset; touching anywhere else jumps the thumb to the finger.
+      const anchorX =
+        Number.isFinite(e.x) && e.x > 0
+          ? e.x
+          : touchXSV.value >= 0
+            ? touchXSV.value
+            : -1;
+      grabOffsetSV.value =
+        anchorX >= 0 && Math.abs(thumbX.value - anchorX) <= GRAB_RADIUS
+          ? thumbX.value - anchorX
+          : 0;
+      // Jump + bubble text at ACTIVATION — a drag can activate and end with
+      // zero onUpdate frames, which used to leave the bubble at 0:00 and
+      // commit the untouched playhead (seek-to-current = no visible change).
+      if (anchorX >= 0 && w > 0 && durationSV.value > 0) {
+        const next = clampToTrack(anchorX + grabOffsetSV.value, w);
+        thumbX.value = next;
+        runOnJS(updateScrubTimeText)(xToFraction(next, w) * durationSV.value);
       }
+      runOnJS(beginScrubJS)();
+      isDraggingSV.value = true;
+      thumbScale.value = withSpring(THUMB_SIZE_ACTIVE / THUMB_SIZE, {
+        damping: 14,
+        stiffness: 350,
+      });
     })
     .onUpdate((e) => {
-      const width = trackWidthSV.value;
-      if (width <= 0) return;
-
-      const newX = Math.max(
-        0,
-        Math.min(width, panStartX.value + e.translationX),
-      );
-      thumbX.value = newX;
-      runOnJS(updateScrubTextJS)(newX / width);
+      if (durationSV.value <= 0) return;
+      const w = trackWidthSV.value;
+      if (w <= 0) return;
+      const next = clampToTrack(e.x + grabOffsetSV.value, w);
+      thumbX.value = next;
+      const t = xToFraction(next, w) * durationSV.value;
+      runOnJS(updateScrubTimeText)(t);
     })
-    .onFinalize((_e, success) => {
-      thumbScale.value = withSpring(1.0, { damping: 14, stiffness: 350 });
-      // Only an ACTIVATED scrub commits a seek. Failed touches (taps,
-      // vertical swipes, system-navigation steals) land here too and must
-      // leave the timeline untouched.
-      if (!success || !isDraggingSV.value) {
-        isDraggingSV.value = false;
-        return;
-      }
-      const width = trackWidthSV.value;
+    // onFinalize covers both end AND fail — the only safe cleanup point.
+    .onFinalize(() => {
+      if (!activatedSV.value) return; // failed gesture: nothing was scrubbing
       isDraggingSV.value = false;
-      if (width > 0) {
-        runOnJS(handleCommitSeekJS)(thumbX.value / width);
-      }
-      runOnJS(handleScrubStateJS)(false);
+      thumbScale.value = withSpring(1, { damping: 14, stiffness: 350 });
+      const w = trackWidthSV.value;
+      const t =
+        w > 0 && durationSV.value > 0
+          ? xToFraction(thumbX.value, w) * durationSV.value
+          : 0;
+      runOnJS(commitSeek)(t);
     });
 
-  // --- Tap gesture: instant jump to a location on the timeline ---
-  const tapGesture = Gesture.Tap()
-    .hitSlop({ top: 16, bottom: 16, left: 20, right: 20 })
-    .onTouchesDown((e) => {
-      const t = e.allTouches[0];
-      if (t) tapStartY.value = t.absoluteY;
-    })
-    .onEnd((e) => {
-      const width = trackWidthSV.value;
-      if (width <= 0) return;
-      // A fast vertical swipe can complete as a "tap" before the movement
-      // registers — reject any tap whose touch travelled vertically.
-      if (Math.abs(e.absoluteY - tapStartY.value) > VERTICAL_FAIL_PX) {
-        runOnJS(logScrubJS)("tap rejected — vertical travel");
-        return;
-      }
-      const targetX = Math.max(0, Math.min(width, e.x));
-      thumbX.value = targetX;
-      runOnJS(handleCommitSeekJS)(targetX / width);
-      runOnJS(logScrubJS)(
-        `tap seek to ${((targetX / width) * 100).toFixed(0)}%`,
-      );
-    });
+  const composedGesture = Gesture.Race(tapGesture, panGesture);
 
-  const composedGesture = Gesture.Race(panGesture, tapGesture);
-
-  const thumbAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: thumbX.value - THUMB_SIZE / 2 },
-      { scale: thumbScale.value },
-    ],
+  const thumbStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: thumbX.value }, { scale: thumbScale.value }],
   }));
 
-  const trackProgressStyle = useAnimatedStyle(() => {
-    const width = trackWidthSV.value;
-    const progressWidth =
-      width > 0 ? Math.max(0, Math.min(width, thumbX.value)) : thumbX.value;
+  const progressStyle = useAnimatedStyle(() => {
+    const trackW = Math.max(0, trackWidthSV.value - VISUAL_INSET * 2);
+    if (trackW <= 0) return { width: 0 };
     return {
-      width: progressWidth,
+      width: Math.max(0, Math.min(trackW, thumbX.value - VISUAL_INSET)),
     };
+  });
+
+  const bufferedStyle = useAnimatedStyle(() => {
+    const trackW = Math.max(0, trackWidthSV.value - VISUAL_INSET * 2);
+    if (durationSV.value <= 0 || trackW <= 0) return { width: 0 };
+    const f = Math.min(1, Math.max(0, bufferedPosition / durationSV.value));
+    return { width: f * trackW };
   });
 
   const trackHeightStyle = useAnimatedStyle(() => ({
     height: withTiming(
       isDraggingSV.value ? TRACK_HEIGHT_ACTIVE : TRACK_HEIGHT_NORMAL,
-      {
-        duration: 150,
-      },
+      { duration: 150 },
     ),
   }));
 
-  const previewCardStyle = useAnimatedStyle(() => {
+  const bubbleStyle = useAnimatedStyle(() => {
     const width = trackWidthSV.value || 0;
-    const halfPreview = PREVIEW_WIDTH / 2;
-    // Keep preview card clamped inside screen/track boundaries
+    const halfBubble = BUBBLE_WIDTH / 2;
+    const minX = VISUAL_INSET + halfBubble;
+    const maxX = Math.max(minX, width - VISUAL_INSET - halfBubble);
     const clampedX =
-      width > 0
-        ? Math.max(halfPreview, Math.min(width - halfPreview, thumbX.value))
-        : halfPreview;
-
+      width > 0 ? Math.max(minX, Math.min(maxX, thumbX.value)) : minX;
     return {
-      transform: [{ translateX: clampedX - halfPreview }],
+      transform: [{ translateX: clampedX - halfBubble }],
       opacity: withTiming(isDraggingSV.value ? 1 : 0, { duration: 150 }),
     };
   });
 
   return (
     <View style={styles.container}>
-      {/* Floating 16:9 Scrub Picture Preview Card */}
+      {/* Time bubble — replaces the old static-backdrop "preview" card */}
       {isScrubbing && (
         <Animated.View
-          style={[styles.previewContainer, previewCardStyle]}
+          style={[styles.bubble, bubbleStyle]}
           pointerEvents="none"
         >
-          <View style={styles.previewCard}>
-            {backdropUrl ? (
-              <Image
-                source={{ uri: backdropUrl }}
-                style={styles.previewBackdropImage}
-                resizeMode="cover"
-              />
-            ) : (
-              <View style={styles.previewBackdropFallback} />
-            )}
-            <LinearGradient
-              colors={["transparent", "rgba(0,0,0,0.4)", "rgba(0,0,0,0.92)"]}
-              style={styles.previewGradientOverlay}
-            />
-            <View style={styles.previewTimeBadge}>
-              <Ionicons
-                name="play"
-                size={9}
-                color={colors.gold}
-                style={styles.previewIcon}
-              />
-              <Text style={styles.previewTimeText}>{scrubTimeText}</Text>
-            </View>
-          </View>
-          <View style={styles.previewArrow} />
+          <Text style={styles.bubbleText}>{scrubTimeText}</Text>
         </Animated.View>
       )}
 
       <GestureDetector gesture={composedGesture}>
-        <Animated.View style={styles.trackContainer} onLayout={handleLayout}>
-          <Animated.View style={[styles.trackBackground, trackHeightStyle]} />
+        <Animated.View
+          style={styles.barHit}
+          onLayout={trackLayout}
+          collapsable={false}
+        >
+          <View style={styles.trackRow} pointerEvents="none">
+            {/* Base track */}
+            <Animated.View style={[styles.track, trackHeightStyle]} />
+            {/* Buffered fill */}
+            <Animated.View
+              style={[
+                styles.layer,
+                styles.buffered,
+                bufferedStyle,
+                trackHeightStyle,
+              ]}
+            />
+            {/* Intro notch — only when a usable segment + known duration */}
+            {notch && (
+              <View
+                style={[
+                  styles.layer,
+                  styles.notch,
+                  {
+                    left: `${notch.start * 100}%`,
+                    width: `${Math.max(0.5, notch.width * 100)}%`,
+                  },
+                ]}
+              />
+            )}
+            {/* Played fill */}
+            <Animated.View
+              style={[
+                styles.layer,
+                styles.progress,
+                progressStyle,
+                trackHeightStyle,
+              ]}
+            />
+          </View>
+          {/* Thumb — centered on the track row, projected by thumbX */}
           <Animated.View
-            style={[styles.trackProgress, trackProgressStyle, trackHeightStyle]}
-          />
-          <Animated.View style={[styles.thumb, thumbAnimatedStyle]} />
+            style={[styles.thumbWrap, thumbStyle]}
+            pointerEvents="none"
+          >
+            <View style={styles.thumbInner} />
+          </Animated.View>
         </Animated.View>
       </GestureDetector>
     </View>
@@ -380,110 +420,81 @@ export function ProgressBar({
 
 const styles = StyleSheet.create({
   container: {
-    width: "100%",
-    paddingHorizontal: 16,
-    justifyContent: "center",
+    alignSelf: "stretch",
+    paddingVertical: 4,
+    // Full-bleed so the gesture area reaches the phone edges (the gutters
+    // clamp to 0%/100%); the visible track is inset via styles.trackRow so
+    // the thumb never clips off-screen at 0%/100%.
   },
-  previewContainer: {
+  bubble: {
     position: "absolute",
-    top: -(PREVIEW_HEIGHT + 14),
-    left: 16,
-    width: PREVIEW_WIDTH,
+    top: -30,
+    left: 0,
+    width: BUBBLE_WIDTH,
     alignItems: "center",
-    zIndex: 30,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: "rgba(0,0,0,0.85)",
+    zIndex: 5,
   },
-  previewCard: {
-    width: PREVIEW_WIDTH,
-    height: PREVIEW_HEIGHT,
-    backgroundColor: "rgba(18, 18, 24, 0.98)",
-    borderColor: "rgba(212, 162, 55, 0.85)",
-    borderWidth: 1.5,
-    borderRadius: 8,
-    overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.65,
-    shadowRadius: 6,
-    elevation: 9,
-  },
-  previewBackdropImage: {
-    ...StyleSheet.absoluteFillObject,
-    width: "100%",
-    height: "100%",
-  },
-  previewBackdropFallback: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(26, 26, 34, 0.95)",
-  },
-  previewGradientOverlay: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  previewTimeBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(10, 10, 14, 0.85)",
-    paddingHorizontal: 7,
-    paddingVertical: 2.5,
-    borderRadius: 5,
-    marginBottom: 5,
-    borderWidth: 0.5,
-    borderColor: "rgba(212, 162, 55, 0.5)",
-  },
-  previewIcon: {
-    marginRight: 3,
-  },
-  previewTimeText: {
-    color: colors.gold,
-    fontSize: 11,
+  bubbleText: {
+    color: colors.textPrimary,
+    fontSize: 12,
     fontWeight: "700",
     fontVariant: ["tabular-nums"],
-    letterSpacing: 0.5,
   },
-  previewArrow: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 6,
-    borderRightWidth: 6,
-    borderTopWidth: 6,
-    borderLeftColor: "transparent",
-    borderRightColor: "transparent",
-    borderTopColor: "rgba(212, 162, 55, 0.85)",
-    marginTop: -0.5,
-  },
-  trackContainer: {
+  barHit: {
     height: BAR_HEIGHT,
     justifyContent: "center",
-    width: "100%",
   },
-  trackBackground: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    height: TRACK_HEIGHT_NORMAL,
-    backgroundColor: "rgba(255, 255, 255, 0.22)",
+  trackRow: {
+    ...StyleSheet.absoluteFillObject,
+    // Visual inset (gesture space stays full-bleed — see container).
+    left: VISUAL_INSET,
+    right: VISUAL_INSET,
+    justifyContent: "center",
+  },
+  track: {
     borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.22)",
   },
-  trackProgress: {
+  layer: {
     position: "absolute",
     left: 0,
-    height: TRACK_HEIGHT_NORMAL,
+    top: "50%",
+    marginTop: -TRACK_HEIGHT_ACTIVE / 2,
+  },
+  buffered: {
+    borderRadius: 3,
+    backgroundColor: "rgba(212,162,55,0.30)",
+  },
+  notch: {
+    height: TRACK_HEIGHT_NORMAL + 2,
+    borderRadius: 2,
+    backgroundColor: "rgba(212,162,55,0.22)",
+    top: "50%",
+    marginTop: -(TRACK_HEIGHT_NORMAL + 2) / 2,
+  },
+  progress: {
+    borderRadius: 3,
     backgroundColor: colors.gold,
-    borderRadius: 3,
   },
-  thumb: {
+  thumbWrap: {
     position: "absolute",
     left: 0,
+    top: "50%",
+    marginTop: -THUMB_SIZE / 2,
+    marginLeft: -THUMB_SIZE / 2,
     width: THUMB_SIZE,
     height: THUMB_SIZE,
     borderRadius: THUMB_SIZE / 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  thumbInner: {
+    width: THUMB_SIZE - 4,
+    height: THUMB_SIZE - 4,
+    borderRadius: (THUMB_SIZE - 4) / 2,
     backgroundColor: colors.gold,
-    top: (BAR_HEIGHT - THUMB_SIZE) / 2,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.6,
-    shadowRadius: 4,
-    elevation: 5,
   },
 });

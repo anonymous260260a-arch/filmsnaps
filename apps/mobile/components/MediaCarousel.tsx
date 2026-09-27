@@ -40,11 +40,7 @@ const MediaCarouselRow = React.memo(function MediaCarouselRow({
 }) {
   return (
     <View style={{ width: itemWidth(width), marginRight: ITEM_GAP }}>
-      <MediaCard
-        item={item}
-        onPress={onItemPress}
-        onPressIn={onItemPressIn}
-      />
+      <MediaCard item={item} onPress={onItemPress} onPressIn={onItemPressIn} />
     </View>
   );
 });
@@ -130,7 +126,7 @@ export function MediaCarousel({
           initialNumToRender={4}
           maxToRenderPerBatch={4}
           windowSize={5}
-          removeClippedSubviews
+          removeClippedSubviews={false}
         />
       </GestureDetector>
     </View>

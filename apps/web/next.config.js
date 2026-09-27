@@ -1,4 +1,9 @@
 /** @type {import('next').NextConfig} */
+// Local dev: bind Cloudflare resources (D1 TELEMETRY_DB etc.) via the
+// OpenNext platform proxy — required for getCloudflareContext() in dev.
+// No-op in production builds (the Worker provides real bindings).
+require("@opennextjs/cloudflare").initOpenNextCloudflareForDev();
+
 const IS_DESKTOP = process.env.BUILD_FOR_DESKTOP === "true";
 
 const nextConfig = {

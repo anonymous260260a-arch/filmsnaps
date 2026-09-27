@@ -15,14 +15,18 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_WEB_URL": "https://filmsnaps1.anonymous260260a.workers.dev"
+        "EXPO_PUBLIC_WEB_URL": "https://filmsnaps1.anonymous260260a.workers.dev",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true",
+        "SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD": "true"
       }
     },
     "production": {
       "autoIncrement": true,
       "channel": "production",
       "env": {
-        "EXPO_PUBLIC_WEB_URL": "https://filmsnaps1.anonymous260260a.workers.dev"
+        "EXPO_PUBLIC_WEB_URL": "https://filmsnaps1.anonymous260260a.workers.dev",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true",
+        "SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD": "true"
       }
     }
   },

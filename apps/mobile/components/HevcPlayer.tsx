@@ -61,6 +61,7 @@ import {
   type ValidationResult,
 } from "../lib/streamValidator";
 import { getPlayerTuning, headersForUrl } from "../lib/playerConfig";
+import { useSettings } from "../lib/settings";
 import { clearPrefetchCache } from "../lib/streamPrefetch";
 import {
   downloadAnimeSubtitle,
@@ -83,6 +84,7 @@ import {
   trackBufferStall,
   trackFeatureUsed,
   trackPlayerError,
+  trackExitDuringSwitch,
 } from "../lib/telemetry";
 import { setPlayerStruggling } from "expo-subtitle-sync";
 import {
@@ -139,6 +141,18 @@ interface HevcPlayerProps {
   onFullscreenChange?: (isFullscreen: boolean) => void;
   /** Host-driven fullscreen (watch page overlay button) — mirrors it internally. */
   externalFullscreen?: boolean;
+  /** Registers a getter the host can call to inspect/select HEVC sources
+   *  (powers the watch page's hub Sources tab without duplicating state). */
+  onRegisterSourceApi?: (
+    api: {
+      getLinks: () => StreamLink[];
+      getActiveIndex: () => number;
+      getStatuses: () => Record<number, ProbeOutcome>;
+      getRecommendedIndex: () => number;
+      getLastUsedIndex: () => number | undefined;
+      select: (index: number) => void;
+    } | null,
+  ) => void;
   onClose: () => void;
   /** Called when all direct links are exhausted. Host switches to next provider. */
   onExhausted?: () => void;
@@ -307,6 +321,7 @@ export function HevcPlayer({
   providerDisplayName,
   onFullscreenChange,
   externalFullscreen,
+  onRegisterSourceApi,
   onClose,
   onExhausted,
   onTryProvider,
@@ -317,6 +332,8 @@ export function HevcPlayer({
   earlyPlayerKey,
   isAnime,
 }: HevcPlayerProps) {
+  const { settings } = useSettings();
+  const screenFit = settings.playerScreenFit ?? "contain";
   const [isFullscreen, setIsFullscreen] = useState(false);
   // Start index skips a probe-dead default (the probes already condemned it —
   // playing it first is how "best badge on a failed URL" happened).
@@ -330,6 +347,10 @@ export function HevcPlayer({
   const openStreamPicker = useCallback(() => {
     setStreamPickerMounted(true);
     setShowStreamPicker(true);
+    trackFeatureUsed("quality_manual_override", "player", {
+      fromTab: "player_pill",
+      surface: "direct",
+    });
   }, []);
   /** Non-null while a source switch is in flight (auto-fallback or user pick). */
   const [switchInfo, setSwitchInfo] = useState<SwitchInfo | null>(null);
@@ -346,6 +367,8 @@ export function HevcPlayer({
   const lastSavedPositionRef = useRef(0);
   /** startAt value the resume correction has been checked for. */
   const resumeAppliedRef = useRef(-1);
+  /** P5 — resume correction fired this session (watch_end dim). */
+  const resumeCorrectedRef = useRef(false);
 
   const adapterRef = useRef<PlayerAdapter | null>(null);
   const failedLinksRef = useRef<Set<number>>(new Set());
@@ -463,6 +486,15 @@ export function HevcPlayer({
   }
   /** Episode identity — a change here drops carried-over playback position. */
   const lastEpKeyRef = useRef(`${season ?? ""}:${episode ?? ""}`);
+  /**
+   * Season/episode of the source actually PLAYING — progress saves must key
+   * off this, never the latest props. On next-episode the props flip BEFORE
+   * the refetched links arrive; a save in that window would write the old
+   * episode's near-end position under the new episode's key (the rare "next
+   * episode opens at its end" bug).
+   */
+  const playSeasonRef = useRef(season);
+  const playEpisodeRef = useRef(episode);
 
   /** Subtitle sync offsets persist per series (not per episode). */
   const subtitleKey = tmdbId ? `${mediaType}:${tmdbId}` : null;
@@ -803,6 +835,8 @@ export function HevcPlayer({
     const epKey = `${season ?? ""}:${episode ?? ""}`;
     if (lastEpKeyRef.current !== epKey) {
       lastEpKeyRef.current = epKey;
+      playSeasonRef.current = season;
+      playEpisodeRef.current = episode;
       lastPlaybackTimeRef.current = 0;
       resumeAppliedRef.current = -1;
     }
@@ -1302,6 +1336,11 @@ export function HevcPlayer({
 
   // Track continuous playback position across source switches and seeking
   const lastPlaybackTimeRef = useRef(startAt);
+  // Episode identity the applied source belongs to. The setup factory below
+  // runs DURING render (useVideoPlayer → useReleasingSharedObject useMemo),
+  // before the links effect resets lastPlaybackTimeRef — so the carry read
+  // must be keyed or a cross-episode switch seeks to the old episode's time.
+  const sourceEpKeyRef = useRef(`${season ?? ""}:${episode ?? ""}`);
 
   // Create video player — immediate (no gating). D3: when details held a warm
   // player for this key, ADOPT it (hookPlayer is still constructed so hook
@@ -1329,8 +1368,12 @@ export function HevcPlayer({
       allowSkippingMediaCodecFlush: true,
     };
     playerInstance.bufferOptions = bufferProfile;
+    const factoryEpKey = `${season ?? ""}:${episode ?? ""}`;
     const initialTime =
-      lastPlaybackTimeRef.current > 0 ? lastPlaybackTimeRef.current : startAt;
+      sourceEpKeyRef.current === factoryEpKey && lastPlaybackTimeRef.current > 0
+        ? lastPlaybackTimeRef.current
+        : startAt;
+    sourceEpKeyRef.current = factoryEpKey;
     if (initialTime > 0) {
       playerInstance.currentTime = initialTime;
     }
@@ -1395,9 +1438,22 @@ export function HevcPlayer({
     const uri = videoSource?.uri ?? null;
     if (!uri || uri === lastExternalUriRef.current) return;
     lastExternalUriRef.current = uri;
-    externalPlayer.replaceAsync(videoSource).catch((e) => {
-      console.log(`[HevcPlayer] early-player replaceAsync failed: ${e}`);
-    });
+    externalPlayer
+      .replaceAsync(videoSource)
+      .then(() => {
+        // replace() does not re-apply our position logic. The links effect
+        // (declared earlier) has already reset lastPlaybackTimeRef on a
+        // cross-episode switch, so this lands on the gated seed or 0; a
+        // same-episode source switch keeps its carried position.
+        const t =
+          lastPlaybackTimeRef.current > 0
+            ? lastPlaybackTimeRef.current
+            : startAt;
+        if (t > 0) externalPlayer.currentTime = t;
+      })
+      .catch((e) => {
+        console.log(`[HevcPlayer] early-player replaceAsync failed: ${e}`);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoSource, externalPlayer]);
 
@@ -1616,8 +1672,10 @@ export function HevcPlayer({
       if (!a) return;
       const tracks = a.getAudioTracks();
       if (tracks.length <= 1) {
-        // Single track (or metadata not parsed yet) — keep polling briefly.
-        if (++attempts < 10) timer = setTimeout(tryApply, 600);
+        // Genuinely single-track file — nothing to auto-select. Stop polling
+        // immediately and stay SILENT: no log, no toast. (Before, we polled
+        // 10× even for one-track files and "auto-selected" the file's only
+        // track — exactly the false telemetry signal we must not emit.)
         return;
       }
       const pick = pickPreferredTrack(tracks, preferredLanguage);
@@ -1728,6 +1786,7 @@ export function HevcPlayer({
           resumeAppliedRef.current = startAt;
           if (time < Math.min(5, startAt * 0.5)) {
             adapter.seek(startAt);
+            resumeCorrectedRef.current = true;
           }
         }
 
@@ -1764,8 +1823,8 @@ export function HevcPlayer({
           saveProgress({
             tmdbId,
             mediaType,
-            season,
-            episode,
+            season: playSeasonRef.current,
+            episode: playEpisodeRef.current,
             isAnime,
             currentTime: time,
             duration: dur,
@@ -2121,6 +2180,27 @@ export function HevcPlayer({
     },
     [activeLinkIndex, beginSwitch],
   );
+  // ── Source inspection/selection API for the host (watch page hub) ──
+  const sourceApiRef = useRef(onRegisterSourceApi);
+  useEffect(() => {
+    sourceApiRef.current = onRegisterSourceApi;
+  }, [onRegisterSourceApi]);
+  // handleSelectSource ref — the registration effect below runs before the
+  // handler's declaration site in source order, so route through a ref.
+  const handleSelectSourceRef = useRef<((idx: number) => void) | null>(null);
+  handleSelectSourceRef.current = handleSelectSource;
+  useEffect(() => {
+    sourceApiRef.current?.({
+      getLinks: () => links ?? [],
+      getActiveIndex: () => activeIndexRef.current,
+      getStatuses: () => linkStatuses,
+      getRecommendedIndex: () => selection.index,
+      getLastUsedIndex: () => lastWorkingIndex,
+      select: (idx: number) => handleSelectSourceRef.current?.(idx),
+    });
+    return () => sourceApiRef.current?.(null);
+    // Re-register when any inspected value changes so the hub sees fresh data.
+  }, [links, linkStatuses, selection.index, lastWorkingIndex]);
 
   // ── Live language re-selection ──
   // The "Best" badge is NOT computed here — it mirrors the chain head (what
@@ -2160,19 +2240,21 @@ export function HevcPlayer({
   }, [preferredLanguage, links]);
 
   // ── Fullscreen toggle ──
-  const toggleFullscreen = useCallback(async () => {
+  // State FIRST, orientation lock second (non-blocking). Awaiting the lock
+  // before flipping let the screen rotate while the host's directFullscreen
+  // was still false: the hub stayed mounted, the host box collapsed to
+  // screen − hub, and the bottom bar/column overflowed off-screen. A rejected
+  // lock also stranded the flags mid-transition. The lock is advisory here —
+  // the host effect issues the same one with a catch.
+  const toggleFullscreen = useCallback(() => {
     const next = !isFullscreen;
-    if (next) {
-      await ScreenOrientation.lockAsync(
-        ScreenOrientation.OrientationLock.LANDSCAPE,
-      );
-    } else {
-      await ScreenOrientation.lockAsync(
-        ScreenOrientation.OrientationLock.PORTRAIT,
-      );
-    }
     setIsFullscreen(next);
     onFullscreenChange?.(next);
+    ScreenOrientation.lockAsync(
+      next
+        ? ScreenOrientation.OrientationLock.LANDSCAPE
+        : ScreenOrientation.OrientationLock.PORTRAIT_UP,
+    ).catch(() => {});
   }, [isFullscreen, onFullscreenChange]);
 
   // Host-driven fullscreen (the watch-page overlay's expand button) — apply the
@@ -2185,7 +2267,7 @@ export function HevcPlayer({
       ScreenOrientation.lockAsync(
         externalFullscreen
           ? ScreenOrientation.OrientationLock.LANDSCAPE
-          : ScreenOrientation.OrientationLock.PORTRAIT,
+          : ScreenOrientation.OrientationLock.PORTRAIT_UP,
       ).catch(() => {});
       return externalFullscreen;
     });
@@ -2203,8 +2285,8 @@ export function HevcPlayer({
         await saveProgress({
           tmdbId,
           mediaType,
-          season,
-          episode,
+          season: playSeasonRef.current,
+          episode: playEpisodeRef.current,
           isAnime,
           currentTime: time,
           duration: dur,
@@ -2217,8 +2299,8 @@ export function HevcPlayer({
 
     if (isFullscreen) {
       await ScreenOrientation.lockAsync(
-        ScreenOrientation.OrientationLock.PORTRAIT,
-      );
+        ScreenOrientation.OrientationLock.PORTRAIT_UP,
+      ).catch(() => {});
     }
 
     if (switchTimeoutRef.current) clearTimeout(switchTimeoutRef.current);
@@ -2234,7 +2316,13 @@ export function HevcPlayer({
     try {
       player.pause();
     } catch {}
-    perfRef.current?.close();
+    // P5 — completion curve + resume-correction dims for watch_end.
+    perfRef.current?.close(
+      current && current.getDuration() > 0
+        ? (current.getCurrentTime() / current.getDuration()) * 100
+        : undefined,
+      resumeCorrectedRef.current || undefined,
+    );
     setActivePerfSession(null);
     perfRef.current = null;
     stopWatchSession("close");
@@ -2281,6 +2369,16 @@ export function HevcPlayer({
       setActivePerfSession(null);
       perfRef.current = null;
       stopWatchSession("unmount");
+      // P5 — impatience signal: session ended while a source switch was
+      // still in flight (never produced frames before the user left).
+      if (switchInfoRef.current) {
+        trackExitDuringSwitch({
+          surface: "direct",
+          switchKind: switchInfoRef.current.auto
+            ? "auto-fallback"
+            : "manual-pick",
+        });
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2354,162 +2452,188 @@ export function HevcPlayer({
 
   return (
     <View style={styles.container}>
-      <StatusBar hidden={isFullscreen} />
+      <StatusBar hidden={isFullscreen} barStyle="light-content" />
 
-      {/* Video surface — loader only here, doesn't block overlay/back button */}
-      <View
-        style={[styles.videoContainer, isFullscreen && styles.videoFullscreen]}
-      >
-        <VideoView
-          style={styles.video}
-          player={player}
-          nativeControls={false}
-          allowsPictureInPicture={false}
-          fullscreenOptions={{ enable: false }}
-        />
+      {/* ── Player area: video + overlay + page cards (flex:1 above the strip) ── */}
+      <View style={styles.playerArea}>
+        {/* Video surface — fills the box (fixed 50% of screen in portrait,
+          full screen in fullscreen); the video letterboxes INSIDE the surface
+          via contentFit. The surface is 100%×100% from first paint — nothing
+          about this layout changes when metadata or frames arrive → no jump.
+          The overlay lives inside this box so the progress bar is pinned to
+          its bottom edge. */}
+        <View
+          style={[
+            styles.videoContainer,
+            isFullscreen && styles.videoFullscreen,
+          ]}
+        >
+          <VideoView
+            style={styles.video}
+            player={player}
+            nativeControls={false}
+            allowsPictureInPicture={false}
+            fullscreenOptions={{ enable: false }}
+            contentFit={screenFit}
+          />
+
+          {/* Controls overlay (also carries the switching pill + buffering spinner) */}
+          <PlayerOverlay
+            player={adapter}
+            title={title}
+            backdropUrl={backdropUrl}
+            isFullscreen={isFullscreen}
+            sourceLabel={sourceSummary || currentLink?.quality}
+            isStreamLoading={!hasStarted}
+            switchingLabel={switchInfo ? switchingLabel : null}
+            overlaySuppressed={!!streamError || exhausted}
+            loadingDetail={loadingDetail}
+            introSegments={introSegments}
+            skipLabel={skipSegment?.label}
+            onSkipSegment={
+              skipSegment
+                ? () => adapterRef.current?.seek(skipSegment.endSec)
+                : undefined
+            }
+            onAudioTrackSelected={() => {
+              userAudioTouchedRef.current = true;
+            }}
+            subtitleKey={subtitleKey ?? undefined}
+            subtitleOnlineSearch={subtitleOnlineSearch}
+            autoSync={
+              subtitleKey
+                ? {
+                    contentId: subtitleKey,
+                    sourceInfo: () => {
+                      const s = autoSyncSourceRef.current;
+                      const duration = adapter.getDuration?.() ?? 0;
+                      const c = s.container;
+                      const mapped:
+                        | "mp4"
+                        | "mkv"
+                        | "webm"
+                        | "mov"
+                        | "m4v"
+                        | "other" =
+                        c === "unknown" || c === "mpegts" ? "other" : c;
+                      return {
+                        uri: s.uri,
+                        headers: s.headers,
+                        container: mapped,
+                        durationSec: duration > 0 ? duration : 0,
+                        kind: s.uri.startsWith("http") ? "remote" : "local",
+                      };
+                    },
+                    getDefaultSubtitleUri: () =>
+                      autoAttachedSubtitleRef.current,
+                  }
+                : undefined
+            }
+            onSourcePicker={
+              links && links.length >= 1 ? openStreamPicker : undefined
+            }
+            onToggleFullscreen={toggleFullscreen}
+            onClose={handleClose}
+            hideBack={false}
+          />
+
+          {/* Auto-switch / aspect toast — never intercepts touches */}
+          {autoToast && (
+            <View style={styles.autoToast} pointerEvents="none">
+              <Ionicons name="checkmark-circle" size={14} color={colors.gold} />
+              <Text style={styles.autoToastText}>{autoToast}</Text>
+            </View>
+          )}
+
+          {/* Next-episode card — button near the end, countdown at natural end */}
+          {nextUp &&
+            nextEpisode &&
+            onNextEpisode &&
+            !exhausted &&
+            !streamError && (
+              <View style={styles.nextUpWrap} pointerEvents="box-none">
+                <View style={styles.nextUpCard}>
+                  <TouchableOpacity
+                    style={styles.nextUpMain}
+                    onPress={() => goNextEpisode()}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      countdownActive
+                        ? `Next episode in ${nextCountdown} seconds`
+                        : "Play next episode"
+                    }
+                  >
+                    <Ionicons
+                      name="play-skip-forward-outline"
+                      size={15}
+                      color={colors.gold}
+                    />
+                    <Text style={styles.nextUpText}>
+                      {countdownActive
+                        ? `Next Episode in ${nextCountdown}s`
+                        : "Next Episode"}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.nextUpCancel}
+                    onPress={cancelAutoNext}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel auto-advance"
+                  >
+                    <Ionicons
+                      name="close"
+                      size={16}
+                      color={colors.textSecondary}
+                    />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+          {/* Error cards — rendered above the controls overlay; the overlay is
+          suppressed while a card is up so nothing covers them */}
+          {streamError && !exhausted && (
+            <ErrorCard
+              icon="alert-circle-outline"
+              title={streamError.title}
+              detail={streamError.detail}
+              primaryLabel="Retry"
+              primaryIcon="refresh-outline"
+              onPrimary={retryCurrentLink}
+              secondaryLabel={isMultiLink ? "Choose source" : undefined}
+              secondaryIcon="server-outline"
+              onSecondary={isMultiLink ? openStreamPicker : undefined}
+              tertiaryLabel={onTryProvider ? "Try Another Server" : undefined}
+              tertiaryIcon="swap-horizontal-outline"
+              onTertiary={onTryProvider}
+            />
+          )}
+
+          {/* All sources exhausted — offer re-check instead of a dead end */}
+          {exhausted && (
+            <ErrorCard
+              icon="cloud-offline-outline"
+              title={`All ${links?.length ?? 0} sources failed`}
+              detail="None of the available streams responded. The links may have expired — re-checking often finds fresh ones."
+              primaryLabel="Re-check all sources"
+              primaryIcon="refresh-outline"
+              onPrimary={recheckAllSources}
+              secondaryLabel="Choose manually"
+              secondaryIcon="list-outline"
+              onSecondary={isMultiLink ? openStreamPicker : undefined}
+              tertiaryLabel={onTryProvider ? "Try Another Server" : undefined}
+              tertiaryIcon="swap-horizontal-outline"
+              onTertiary={onTryProvider}
+            />
+          )}
+        </View>
       </View>
 
-      {/* Controls overlay (also carries the switching pill + buffering spinner) */}
-      <PlayerOverlay
-        player={adapter}
-        title={title}
-        backdropUrl={backdropUrl}
-        isFullscreen={isFullscreen}
-        sourceLabel={sourceSummary || currentLink?.quality}
-        isStreamLoading={!hasStarted}
-        switchingLabel={switchInfo ? switchingLabel : null}
-        overlaySuppressed={!!streamError || exhausted}
-        loadingDetail={loadingDetail}
-        skipLabel={skipSegment?.label}
-        onSkipSegment={
-          skipSegment
-            ? () => adapterRef.current?.seek(skipSegment.endSec)
-            : undefined
-        }
-        onAudioTrackSelected={() => {
-          userAudioTouchedRef.current = true;
-        }}
-        subtitleKey={subtitleKey ?? undefined}
-        subtitleOnlineSearch={subtitleOnlineSearch}
-        autoSync={
-          subtitleKey
-            ? {
-                contentId: subtitleKey,
-                sourceInfo: () => {
-                  const s = autoSyncSourceRef.current;
-                  const duration = adapter.getDuration?.() ?? 0;
-                  const c = s.container;
-                  const mapped:
-                    | "mp4"
-                    | "mkv"
-                    | "webm"
-                    | "mov"
-                    | "m4v"
-                    | "other" = c === "unknown" || c === "mpegts" ? "other" : c;
-                  return {
-                    uri: s.uri,
-                    headers: s.headers,
-                    container: mapped,
-                    durationSec: duration > 0 ? duration : 0,
-                    kind: s.uri.startsWith("http") ? "remote" : "local",
-                  };
-                },
-                getDefaultSubtitleUri: () => autoAttachedSubtitleRef.current,
-              }
-            : undefined
-        }
-        onSourcePicker={isMultiLink ? openStreamPicker : undefined}
-        onToggleFullscreen={toggleFullscreen}
-        onClose={handleClose}
-        hideBack={!!onFullscreenChange}
-      />
-
-      {/* Auto-switch / aspect toast — never intercepts touches */}
-      {autoToast && (
-        <View style={styles.autoToast} pointerEvents="none">
-          <Ionicons name="checkmark-circle" size={14} color={colors.gold} />
-          <Text style={styles.autoToastText}>{autoToast}</Text>
-        </View>
-      )}
-
-      {/* Next-episode card — button near the end, countdown at natural end */}
-      {nextUp && nextEpisode && onNextEpisode && !exhausted && !streamError && (
-        <View style={styles.nextUpWrap} pointerEvents="box-none">
-          <View style={styles.nextUpCard}>
-            <TouchableOpacity
-              style={styles.nextUpMain}
-              onPress={() => goNextEpisode()}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel={
-                countdownActive
-                  ? `Next episode in ${nextCountdown} seconds`
-                  : "Play next episode"
-              }
-            >
-              <Ionicons
-                name="play-skip-forward-outline"
-                size={15}
-                color={colors.gold}
-              />
-              <Text style={styles.nextUpText}>
-                {countdownActive
-                  ? `Next Episode in ${nextCountdown}s`
-                  : "Next Episode"}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.nextUpCancel}
-              onPress={cancelAutoNext}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Cancel auto-advance"
-            >
-              <Ionicons name="close" size={16} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      {/* Error cards — rendered above the controls overlay; the overlay is
-          suppressed while a card is up so nothing covers them */}
-      {streamError && !exhausted && (
-        <ErrorCard
-          icon="alert-circle-outline"
-          title={streamError.title}
-          detail={streamError.detail}
-          primaryLabel="Retry"
-          primaryIcon="refresh-outline"
-          onPrimary={retryCurrentLink}
-          secondaryLabel={isMultiLink ? "Choose source" : undefined}
-          secondaryIcon="server-outline"
-          onSecondary={isMultiLink ? openStreamPicker : undefined}
-          tertiaryLabel={onTryProvider ? "Try Another Server" : undefined}
-          tertiaryIcon="swap-horizontal-outline"
-          onTertiary={onTryProvider}
-        />
-      )}
-
-      {/* All sources exhausted — offer re-check instead of a dead end */}
-      {exhausted && (
-        <ErrorCard
-          icon="cloud-offline-outline"
-          title={`All ${links?.length ?? 0} sources failed`}
-          detail="None of the available streams responded. The links may have expired — re-checking often finds fresh ones."
-          primaryLabel="Re-check all sources"
-          primaryIcon="refresh-outline"
-          onPrimary={recheckAllSources}
-          secondaryLabel="Choose manually"
-          secondaryIcon="list-outline"
-          onSecondary={isMultiLink ? openStreamPicker : undefined}
-          tertiaryLabel={onTryProvider ? "Try Another Server" : undefined}
-          tertiaryIcon="swap-horizontal-outline"
-          onTertiary={onTryProvider}
-        />
-      )}
-
-      {/* Stream picker (only when multiple links) — FIX 6: deferred until first open */}
-      {isMultiLink && streamPickerMounted && (
+      {/* Stream picker — ANY link count (single link still gets probe
+          status + retest). Deferred until first open. */}
+      {streamPickerMounted && links && links.length > 0 && (
         <StreamPickerSheet
           visible={showStreamPicker}
           links={links}
@@ -2617,14 +2741,22 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.playerBg,
   },
+  playerArea: {
+    flex: 1,
+  },
   videoContainer: {
     ...StyleSheet.absoluteFillObject,
+    // Nothing may paint past the video box — the chrome is pinned INSIDE it,
+    // so a short box can never push the bar off-screen.
+    overflow: "hidden",
   },
   video: {
     width: "100%",
     height: "100%",
   },
+
   videoFullscreen: {
+    ...StyleSheet.absoluteFillObject,
     width: "100%",
     height: "100%",
     transform: [],

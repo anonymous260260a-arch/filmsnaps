@@ -61,7 +61,13 @@ let cachedPrefAudioLang: PrefAudioLang = "auto";
 
 function appVersion(): string {
   if (cachedAppVersion) return cachedAppVersion;
-  cachedAppVersion = Constants.expoConfig?.version || "0.0.0";
+  // nativeApplicationVersion = the versionName actually installed on the
+  // device (expoConfig.version is the JS-bundle-time value and can drift
+  // from installed builds after an OTA/standalone mismatch).
+  cachedAppVersion =
+    (Constants.nativeApplicationVersion as string | null) ||
+    Constants.expoConfig?.version ||
+    "0.0.0";
   return cachedAppVersion;
 }
 
@@ -94,7 +100,12 @@ export function setDeviceTier(tier: DeviceTier): void {
  * enum only — never free text. Call on settings load and on change.
  */
 export function setPrefAudioLang(value: PrefAudioLang): void {
-  if (value === "multi" || value === "hindi" || value === "english" || value === "auto") {
+  if (
+    value === "multi" ||
+    value === "hindi" ||
+    value === "english" ||
+    value === "auto"
+  ) {
     cachedPrefAudioLang = value;
   }
 }
@@ -122,7 +133,9 @@ export function resolveCapBucket(): Promise<QualityBucket> {
 }
 
 /** T2 — provider_fetch at FETCH completion (and optional head-probe fields). */
-export async function trackProviderFetch(dims: ProviderFetchDims): Promise<void> {
+export async function trackProviderFetch(
+  dims: ProviderFetchDims,
+): Promise<void> {
   const payload: Record<string, string | number | boolean> = {
     providerId: dims.providerId,
     tmdbId: dims.tmdbId,
@@ -212,13 +225,22 @@ export function trackWatchEnd(
   };
   // E1 — enriched difficulty + outcome signals (optional dims, whitelisted).
   if (dims.stallMs !== undefined) payload.stallMs = bucketStallMs(dims.stallMs);
-  if (dims.rebufferCount !== undefined) payload.rebufferCount = dims.rebufferCount;
+  if (dims.rebufferCount !== undefined)
+    payload.rebufferCount = dims.rebufferCount;
   if (dims.reachedFirstFrame !== undefined) {
     payload.reachedFirstFrame = dims.reachedFirstFrame;
   }
   if (dims.gaveUp !== undefined) payload.gaveUp = dims.gaveUp;
-  if (dims.qualityBucket !== undefined) payload.qualityBucket = dims.qualityBucket;
+  if (dims.qualityBucket !== undefined)
+    payload.qualityBucket = dims.qualityBucket;
   if (dims.capBucket !== undefined) payload.capBucket = dims.capBucket;
+  // P5 — completion curve + resume correction (whitelisted; server mirrors).
+  if (dims.watchedPctBucket !== undefined) {
+    payload.watchedPctBucket = dims.watchedPctBucket;
+  }
+  if (dims.resumeCorrection !== undefined) {
+    payload.resumeCorrection = dims.resumeCorrection;
+  }
   enqueue("watch_end", payload, baseEnvelope());
 }
 
@@ -264,7 +286,6 @@ export function trackBufferStall(dims: BufferStallDims): void {
       durationMs: bucketStallMs(dims.durationMs),
       providerId: dims.providerId,
       mediaType: dims.mediaType,
-      prefAudioLang: cachedPrefAudioLang,
     },
     baseEnvelope(),
   );
@@ -279,7 +300,6 @@ export function trackPlayerStart(dims: PlayerStartDims): void {
       intentToFirstFrameMs: bucketFetchMs(dims.intentToFirstFrameMs),
       providerId: dims.providerId,
       mediaType: dims.mediaType,
-      prefAudioLang: cachedPrefAudioLang,
     },
     baseEnvelope(),
   );
@@ -294,7 +314,6 @@ export function trackPlayerError(dims: PlayerErrorDims): void {
       ...(dims.surface === undefined ? {} : { surface: dims.surface }),
       providerId: dims.providerId,
       mediaType: dims.mediaType,
-      prefAudioLang: cachedPrefAudioLang,
     },
     baseEnvelope(),
   );
@@ -325,6 +344,54 @@ export function trackSearchPerformed(dims: SearchPerformedDims): void {
   );
 }
 
+/** P4 — watch-page opened: the top of the playback funnel (direct vs embed). */
+// Dedupe guard: dev StrictMode remounts the watch route twice → one event.
+let lastWatchOpenedAt = 0;
+export function trackWatchOpened(dims: { surface: "direct" | "embed" }): void {
+  const now = Date.now();
+  if (now - lastWatchOpenedAt < 1000) return;
+  lastWatchOpenedAt = now;
+  enqueue("watch_opened", { surface: dims.surface }, baseEnvelope());
+}
+
+/**
+ * P5 — seek latency: time from a user seek REQUEST (double-tap, ±10 button,
+ * or scrub release) to the playhead actually landing on target. This is the
+ * metric that validates the optimistic-seek/seek-lock UX work.
+ */
+export function trackSeekLatency(dims: {
+  latencyMs: number;
+  kind: "double_tap" | "buttons" | "scrub" | "resume";
+  providerId?: string;
+  mediaType?: "movie" | "tv";
+}): void {
+  enqueue(
+    "seek_latency",
+    {
+      latencyMs: bucketFetchMs(dims.latencyMs),
+      kind: dims.kind,
+      ...(dims.providerId ? { providerId: dims.providerId } : {}),
+      ...(dims.mediaType ? { mediaType: dims.mediaType } : {}),
+    },
+    baseEnvelope(),
+  );
+}
+
+/**
+ * P5 — the user left the app while a source switch was still in flight —
+ * an impatience/satisfaction signal for the switching experience.
+ */
+export function trackExitDuringSwitch(dims: {
+  surface: "direct" | "embed";
+  switchKind: "auto-fallback" | "manual-pick";
+}): void {
+  enqueue(
+    "exit_during_switch",
+    { surface: dims.surface, switchKind: dims.switchKind },
+    baseEnvelope(),
+  );
+}
+
 /** P3 — one session_end per foreground app session (AppState background). */
 export function trackSessionEnd(dims: SessionEndDims): void {
   enqueue(
@@ -334,6 +401,7 @@ export function trackSessionEnd(dims: SessionEndDims): void {
       eventCount: dims.eventCount,
       providerSwitches: dims.providerSwitches,
       prefAudioLang: cachedPrefAudioLang,
+      ...(dims.lastScreen ? { lastScreen: dims.lastScreen } : {}),
     },
     baseEnvelope(),
   );
@@ -366,9 +434,7 @@ export function trackDownloadEvent(dims: DownloadEventDims): void {
       ...(dims.failureClass === undefined
         ? {}
         : { failureClass: dims.failureClass }),
-      ...(dims.mediaType === undefined
-        ? {}
-        : { mediaType: dims.mediaType }),
+      ...(dims.mediaType === undefined ? {} : { mediaType: dims.mediaType }),
     },
     baseEnvelope(),
   );
@@ -381,10 +447,16 @@ export function trackDownloadEvent(dims: DownloadEventDims): void {
 export function trackFeatureUsed(
   feature: FeatureName,
   context: FeatureContext = "player",
+  extra?: { fromTab?: string; surface?: "direct" | "embed" },
 ): void {
   enqueue(
     "feature_used",
-    { feature, context },
+    {
+      feature,
+      context,
+      ...(extra?.fromTab ? { fromTab: extra.fromTab } : {}),
+      ...(extra?.surface ? { surface: extra.surface } : {}),
+    },
     baseEnvelope(),
   );
 }
@@ -410,11 +482,7 @@ export function trackNetworkSpeed(dims: NetworkSpeedDims): void {
  * No file/line/stack is ever emitted here.
  */
 export function trackBoundaryError(dims: BoundaryErrorDims): void {
-  enqueue(
-    "boundary_error",
-    { errorClass: dims.errorClass },
-    baseEnvelope(),
-  );
+  enqueue("boundary_error", { errorClass: dims.errorClass }, baseEnvelope());
 }
 
 export type {

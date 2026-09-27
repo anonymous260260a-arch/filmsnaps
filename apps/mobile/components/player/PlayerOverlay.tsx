@@ -1,14 +1,15 @@
 /**
- * PlayerOverlay — YouTube-style interaction state machine & controls overlay.
+ * PlayerOverlay — modern direct-player controls chrome over the gesture layer.
  *
  * Features:
  * - Interaction state machine: WATCHING, CONTROLS_VISIBLE, SEEKING, MENU_OPEN, BUFFERING, PAUSED.
  * - Single tap vs Double tap disambiguation via RNGH Gesture.Exclusive.
- * - Single tap toggles controls overlay visibility without accidental seeking.
- * - Double tap left/right (40% zones) triggers cumulative seeking (-10s, -20s, +10s, +20s).
- * - Long press (300ms) triggers temporary 2x playback speed with top pill indicator.
- * - Zero haptics across all interactions.
- * - LinearGradient top and bottom shadow fades for 100% legibility.
+ * - Double tap left/right (40% zones) cumulative seeking, long-press 2x hold.
+ * - Top bar: close · title · AUDIO · SOURCE · SUBS · FULLSCREEN (portrait) / ⋮ (fullscreen).
+ * - Lock is fullscreen/landscape-only (pocket-watch scenario) with a11y alternative via ⋮.
+ * - ⋮ menu sheet: playback speed, audio language, screen fit.
+ * - Zero layout jump: buffering spinner replaces the play icon in place.
+ * - LinearGradient top/bottom scrims; all fades use shared constants.
  */
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
@@ -19,6 +20,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Dimensions,
+  useWindowDimensions,
 } from "react-native";
 import Animated, {
   useSharedValue,
@@ -28,7 +30,11 @@ import Animated, {
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { LinearGradient } from "expo-linear-gradient";
-import { Ionicons, MaterialIcons } from "@expo/vector-icons";
+import {
+  Ionicons,
+  MaterialIcons,
+  MaterialCommunityIcons,
+} from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "../../theme/colors";
@@ -41,9 +47,15 @@ import type { AutoSyncSourceInfo } from "./AutoSyncButton";
 import { PlayerSettingsSheet } from "./PlayerSettingsSheet";
 import { DoubleTapRippleOverlay } from "./DoubleTapRippleOverlay";
 import { audioTrackTitle, audioChipLabel } from "../../lib/audioLanguage";
-import { trackFeatureUsed } from "../../lib/telemetry";
+import { trackFeatureUsed, trackSeekLatency } from "../../lib/telemetry";
+import { useSettings } from "../../lib/settings";
+import type { IntroDbResponse } from "../../lib/introDetect";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
+
+/** Single source of truth for chrome motion — replaces the 180/220/250/300 zoo. */
+const CHROME_FADE_MS = 200;
+const CHROME_AUTO_HIDE_MS = 3000;
 
 export type OverlayState =
   | "WATCHING"
@@ -69,6 +81,8 @@ interface PlayerOverlayProps {
   overlaySuppressed?: boolean;
   /** Detail line under the buffering spinner (which source, verified count). */
   loadingDetail?: string;
+  /** introdb segments for this episode — draws the skip window notch on the track. */
+  introSegments?: IntroDbResponse | null;
   /** Non-null inside a Skip Intro/Recap window — shows the skip button. */
   skipLabel?: string | null;
   onSkipSegment?: () => void;
@@ -90,6 +104,8 @@ interface PlayerOverlayProps {
   onClose: () => void;
   /** Embedded mode: hide the back button — the host watch page provides close. */
   hideBack?: boolean;
+  /** Announcements for TalkBack/VoiceOver (source switched, resumed, etc). */
+  liveAnnouncement?: string | null;
 }
 
 function formatTime(seconds: number): string {
@@ -113,6 +129,7 @@ export function PlayerOverlay({
   switchingLabel = null,
   overlaySuppressed = false,
   loadingDetail = "",
+  introSegments = null,
   skipLabel = null,
   onSkipSegment,
   onAudioTrackSelected,
@@ -123,8 +140,10 @@ export function PlayerOverlay({
   onToggleFullscreen,
   onClose,
   hideBack = false,
+  liveAnnouncement = null,
 }: PlayerOverlayProps) {
   const insets = useSafeAreaInsets();
+  const { settings, updateSetting } = useSettings();
   const [isPaused, setIsPaused] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   // Ref mirror of the displayed position. Seek gestures (double-tap, ±10s
@@ -138,6 +157,7 @@ export function PlayerOverlay({
     setCurrentTime(t);
   }, []);
   const [duration, setDuration] = useState(0);
+  const [bufferedPosition, setBufferedPosition] = useState(0);
   const [isBuffering, setIsBuffering] = useState(true);
   const [showRemainingTime, setShowRemainingTime] = useState(false);
 
@@ -146,12 +166,22 @@ export function PlayerOverlay({
   const [showSubtitleSheet, setShowSubtitleSheet] = useState(false);
   const [showSettingsSheet, setShowSettingsSheet] = useState(false);
 
-  // CC button beside fullscreen: show when there's anything to pick
-  // (embedded tracks or online search); gold while a track is active.
+  // ── Chrome context ──
+  const audioTracks = player.getAudioTracks();
+  const selectedAudioId = player.getSelectedAudioTrackId?.() ?? null;
+  const selectedAudio = audioTracks.find((t) => t.id === selectedAudioId);
+  const audioChip = selectedAudio
+    ? audioChipLabel(
+        audioTrackTitle(
+          selectedAudio,
+          audioTracks.findIndex((t) => t.id === selectedAudioId),
+        ),
+      )
+    : null;
   const subtitleTracks = player.getSubtitleTracks();
-  const subtitleButtonVisible =
-    subtitleTracks.length > 0 || !!subtitleOnlineSearch;
   const subtitleSelected = player.getSelectedSubtitleTrackId?.() != null;
+  /** Lock is a pocket-watching feature — it only exists in fullscreen/landscape. */
+  const lockAvailable = isFullscreen;
 
   // Freeze time-driven re-renders while a sheet is open: the sheets sit on
   // top, and 4 Hz state updates under a Modal made the sheet feel laggy.
@@ -159,6 +189,17 @@ export function PlayerOverlay({
   const anySheetOpenRef = useRef(false);
   anySheetOpenRef.current =
     showAudioSheet || showSubtitleSheet || showSettingsSheet;
+
+  // Latest source-picker opener for the pill's RNGH tap gesture (ref so the
+  // gesture closure never goes stale).
+  const onSourcePickerRef = useRef(onSourcePicker);
+  useEffect(() => {
+    onSourcePickerRef.current = onSourcePicker;
+  }, [onSourcePicker]);
+
+  const onSourcePickerRefCurrentOpen = useCallback(() => {
+    onSourcePickerRef.current?.();
+  }, []);
 
   const closeAudioSheet = useCallback(() => setShowAudioSheet(false), []);
   const closeSubtitleSheet = useCallback(() => setShowSubtitleSheet(false), []);
@@ -177,6 +218,8 @@ export function PlayerOverlay({
 
   // 2X Speed Hold state
   const [is2xSpeedActive, setIs2xSpeedActive] = useState(false);
+  const is2xSpeedActiveRef = useRef(false);
+  is2xSpeedActiveRef.current = is2xSpeedActive;
 
   // Control lock (pocket viewing) — freezes every gesture; only the unlock
   // affordance stays tappable.
@@ -208,8 +251,22 @@ export function PlayerOverlay({
   const seekHoldLogRef = useRef(false);
   const seekLockTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // P5 — seek-latency stopwatch: starts when a seek is requested, stops when
+  // the seek-lock releases (playhead landed) or the 6s safety fires.
+  const seekStartedAtRef = useRef<number | null>(null);
+  const seekKindRef = useRef<"double_tap" | "buttons" | "scrub" | "resume">(
+    "buttons",
+  );
+
   const releaseSeekLock = useCallback(() => {
     isSeekLockedRef.current = false;
+    if (seekStartedAtRef.current != null) {
+      trackSeekLatency({
+        latencyMs: Date.now() - seekStartedAtRef.current,
+        kind: seekKindRef.current,
+      });
+      seekStartedAtRef.current = null;
+    }
     setIsBuffering(false);
     if (seekLockTimeoutRef.current) {
       clearTimeout(seekLockTimeoutRef.current);
@@ -217,22 +274,27 @@ export function PlayerOverlay({
     }
   }, []);
 
-  const acquireSeekLock = useCallback((seekTime: number) => {
-    isSeekLockedRef.current = true;
-    targetSeekTimeRef.current = seekTime;
-    seekHoldLogRef.current = false;
-    applyTime(seekTime);
-    setIsBuffering(true);
+  const acquireSeekLock = useCallback(
+    (seekTime: number, kind?: typeof seekKindRef.current) => {
+      isSeekLockedRef.current = true;
+      seekStartedAtRef.current = Date.now();
+      if (kind) seekKindRef.current = kind;
+      targetSeekTimeRef.current = seekTime;
+      seekHoldLogRef.current = false;
+      applyTime(seekTime);
+      setIsBuffering(true);
 
-    if (seekLockTimeoutRef.current) clearTimeout(seekLockTimeoutRef.current);
-    // Safety release after 6s in case remote network stream takes time to buffer new chunk
-    seekLockTimeoutRef.current = setTimeout(() => {
-      isSeekLockedRef.current = false;
-      setIsBuffering(false);
-    }, 6000);
-  }, []);
+      if (seekLockTimeoutRef.current) clearTimeout(seekLockTimeoutRef.current);
+      // Safety release after 6s in case remote network stream takes time to buffer new chunk
+      seekLockTimeoutRef.current = setTimeout(() => {
+        isSeekLockedRef.current = false;
+        setIsBuffering(false);
+      }, 6000);
+    },
+    [],
+  );
 
-  // ── Auto-hide timer control (2.8s) ──
+  // ── Auto-hide timer control ──
   const scheduleAutoHide = useCallback(() => {
     if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
 
@@ -243,13 +305,17 @@ export function PlayerOverlay({
         !showSubtitleSheet &&
         !showSettingsSheet
       ) {
-        overlayOpacity.value = withTiming(0, { duration: 250 }, (finished) => {
-          if (finished) {
-            runOnJS(setOverlayState)("WATCHING");
-          }
-        });
+        overlayOpacity.value = withTiming(
+          0,
+          { duration: CHROME_FADE_MS },
+          (finished) => {
+            if (finished) {
+              runOnJS(setOverlayState)("WATCHING");
+            }
+          },
+        );
       }
-    }, 2800);
+    }, CHROME_AUTO_HIDE_MS);
   }, [
     player,
     showAudioSheet,
@@ -260,7 +326,7 @@ export function PlayerOverlay({
 
   const resetInteractionTimer = useCallback(() => {
     if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
-    overlayOpacity.value = withTiming(1, { duration: 180 });
+    overlayOpacity.value = withTiming(1, { duration: CHROME_FADE_MS });
     setOverlayState((prev) =>
       prev === "WATCHING" ? "CONTROLS_VISIBLE" : prev,
     );
@@ -287,11 +353,11 @@ export function PlayerOverlay({
     if (isLockedRef.current) return; // controls stay hidden while locked
     if (isPaused) {
       setOverlayState("PAUSED");
-      overlayOpacity.value = withTiming(1, { duration: 180 });
+      overlayOpacity.value = withTiming(1, { duration: CHROME_FADE_MS });
       if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
     } else if (showAudioSheet || showSubtitleSheet || showSettingsSheet) {
       setOverlayState("MENU_OPEN");
-      overlayOpacity.value = withTiming(1, { duration: 180 });
+      overlayOpacity.value = withTiming(1, { duration: CHROME_FADE_MS });
       if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
     } else {
       setOverlayState("CONTROLS_VISIBLE");
@@ -306,6 +372,18 @@ export function PlayerOverlay({
     scheduleAutoHide,
   ]);
 
+  // Orientation change: entering fullscreen ALWAYS reveals the chrome — the
+  // user just made a deliberate display change and must see the bar in the
+  // new geometry. (Before, a stale WATCHING state kept the bar hidden in
+  // fullscreen until a manual tap.) Exiting shows it too, since the layout
+  // changed under it.
+  useEffect(() => {
+    if (isLockedRef.current) return;
+    setOverlayState("CONTROLS_VISIBLE");
+    overlayOpacity.value = withTiming(1, { duration: CHROME_FADE_MS });
+    scheduleAutoHide();
+  }, [isFullscreen, overlayOpacity, scheduleAutoHide]);
+
   // ── Subscribe to player events with Seek Lock filter ──
   useEffect(() => {
     const unsubs = [
@@ -313,6 +391,10 @@ export function PlayerOverlay({
         if (anySheetOpenRef.current) return;
         if (Number.isFinite(dur) && dur > 0) {
           setDuration(dur);
+        }
+        const buffered = player.getBufferedPosition?.();
+        if (typeof buffered === "number" && Number.isFinite(buffered)) {
+          setBufferedPosition(buffered);
         }
         if (isSeekLockedRef.current) {
           const target = targetSeekTimeRef.current;
@@ -341,6 +423,14 @@ export function PlayerOverlay({
     return () => unsubs.forEach((u) => u());
   }, [player, releaseSeekLock, applyTime]);
 
+  // Unlock automatically when leaving fullscreen — lock is landscape-only and
+  // must never persist into portrait where its button wouldn't be reachable.
+  useEffect(() => {
+    if (!isFullscreen && isLockedRef.current) {
+      setIsLocked(false);
+    }
+  }, [isFullscreen]);
+
   useEffect(() => {
     return () => {
       if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
@@ -351,15 +441,20 @@ export function PlayerOverlay({
   }, []);
 
   // ── 2X Speed hold callbacks ──
+  // Remember the user's chosen rate — releasing the hold restores THEIR
+  // speed (e.g. 1.25×), not a hardcoded 1.0.
+  const rateBefore2xRef = useRef(1.0);
   const handleStart2xSpeed = useCallback(() => {
     if (isLockedRef.current) return;
+    rateBefore2xRef.current = player.getPlaybackRate();
     player.setPlaybackRate(2.0);
     setIs2xSpeedActive(true);
     trackFeatureUsed("speed_2x_hold", "player");
   }, [player]);
 
   const handleStop2xSpeed = useCallback(() => {
-    player.setPlaybackRate(1.0);
+    if (!is2xSpeedActiveRef.current) return; // failed/aborted hold — no-op
+    player.setPlaybackRate(rateBefore2xRef.current || 1.0);
     setIs2xSpeedActive(false);
   }, [player]);
 
@@ -384,7 +479,7 @@ export function PlayerOverlay({
         Math.min(duration > 0 ? duration : 99999, current + delta),
       );
 
-      acquireSeekLock(newTarget);
+      acquireSeekLock(newTarget, "double_tap");
 
       // Debounce the native seek so rapid taps (+10s, +20s, +30s) don't trigger repeated buffer aborts
       if (seekDebounceTimer.current) clearTimeout(seekDebounceTimer.current);
@@ -415,15 +510,19 @@ export function PlayerOverlay({
   const handleSingleTap = useCallback(() => {
     if (isLockedRef.current) return;
     if (overlayState === "WATCHING") {
-      overlayOpacity.value = withTiming(1, { duration: 200 });
+      overlayOpacity.value = withTiming(1, { duration: CHROME_FADE_MS });
       setOverlayState("CONTROLS_VISIBLE");
       scheduleAutoHide();
     } else {
-      overlayOpacity.value = withTiming(0, { duration: 220 }, (finished) => {
-        if (finished) {
-          runOnJS(setOverlayState)("WATCHING");
-        }
-      });
+      overlayOpacity.value = withTiming(
+        0,
+        { duration: CHROME_FADE_MS },
+        (finished) => {
+          if (finished) {
+            runOnJS(setOverlayState)("WATCHING");
+          }
+        },
+      );
       if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
     }
   }, [overlayState, overlayOpacity, scheduleAutoHide]);
@@ -433,18 +532,22 @@ export function PlayerOverlay({
     setIsLocked(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
-    overlayOpacity.value = withTiming(0, { duration: 200 }, (finished) => {
-      if (finished) {
-        runOnJS(setOverlayState)("WATCHING");
-      }
-    });
+    overlayOpacity.value = withTiming(
+      0,
+      { duration: CHROME_FADE_MS },
+      (finished) => {
+        if (finished) {
+          runOnJS(setOverlayState)("WATCHING");
+        }
+      },
+    );
     trackFeatureUsed("lock", "player");
   }, [overlayOpacity]);
 
   const handleUnlock = useCallback(() => {
     setIsLocked(false);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    overlayOpacity.value = withTiming(1, { duration: 180 });
+    overlayOpacity.value = withTiming(1, { duration: CHROME_FADE_MS });
     setOverlayState("CONTROLS_VISIBLE");
     scheduleAutoHide();
   }, [overlayOpacity, scheduleAutoHide]);
@@ -498,6 +601,15 @@ export function PlayerOverlay({
     exclusiveTapGesture,
   );
 
+  // Source pill tap — RNGH Tap over the gesture surface so the pill is
+  // reliably tappable while the full-screen tap gestures are active.
+  const tapOpenSourceGesture = Gesture.Tap()
+    .numberOfTaps(1)
+    .onEnd(() => {
+      runOnJS(resetInteractionTimer)();
+      runOnJS(onSourcePickerRefCurrentOpen)();
+    });
+
   // ── Control Actions ──
   const togglePlayPause = useCallback(() => {
     if (player.isPaused()) {
@@ -514,7 +626,7 @@ export function PlayerOverlay({
       ? targetSeekTimeRef.current
       : currentTimeRef.current;
     const target = Math.min(duration > 0 ? duration : 99999, current + 10);
-    acquireSeekLock(target);
+    acquireSeekLock(target, "buttons");
     player.seek(target);
     resetInteractionTimer();
   }, [player, duration, acquireSeekLock, resetInteractionTimer]);
@@ -524,14 +636,14 @@ export function PlayerOverlay({
       ? targetSeekTimeRef.current
       : currentTimeRef.current;
     const target = Math.max(0, current - 10);
-    acquireSeekLock(target);
+    acquireSeekLock(target, "buttons");
     player.seek(target);
     resetInteractionTimer();
   }, [player, acquireSeekLock, resetInteractionTimer]);
 
   const handleSeek = useCallback(
     (time: number) => {
-      acquireSeekLock(time);
+      acquireSeekLock(time, "scrub");
       player.seek(time);
       resetInteractionTimer();
     },
@@ -552,8 +664,18 @@ export function PlayerOverlay({
     opacity: overlayOpacity.value,
   }));
 
-  const paddingTop = isFullscreen ? 8 : insets.top;
-  const paddingBottom = isFullscreen ? 8 : insets.bottom;
+  // In portrait the video extends under the status bar (flush-top, YouTube-
+  // style), so chrome clears it; in fullscreen the OS bar is hidden, but the
+  // system nav/gesture area can still overlap the bottom in landscape — keep
+  // whatever inset exists and always retain an 8dp floor so the timeline can
+  // never sit under system UI. Physical landscape adds a fixed lift: its
+  // bottom inset is often ~0 (gesture nav), which left the progress bar
+  // hugging the screen edge.
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isLandscape = windowWidth > windowHeight;
+  const paddingTop = Math.max(insets.top, isFullscreen ? 8 : 0);
+  const paddingBottom =
+    Math.max(insets.bottom, isFullscreen ? 8 : 0) + (isLandscape ? 36 : 0);
 
   const formattedCurrentTime = formatTime(currentTime);
   const formattedDuration = formatTime(duration);
@@ -564,6 +686,53 @@ export function PlayerOverlay({
     : `${formattedCurrentTime} / ${formattedDuration}`;
 
   const isControlsVisible = overlayState !== "WATCHING";
+
+  // Duration-0 guard: some direct links never expose duration; the bar would
+  // divide by zero and the scrub math is meaningless. Show a static time only.
+  const hasDuration = Number.isFinite(duration) && duration > 0;
+
+  // ── Sheet openers (close-then-open keeps one Modal at a time) ──
+  const openAudioSheet = useCallback(() => {
+    setShowSettingsSheet(false);
+    setShowAudioSheet(true);
+  }, []);
+  const openSubtitleSheet = useCallback(() => {
+    setShowSettingsSheet(false);
+    setShowSubtitleSheet(true);
+  }, []);
+
+  const screenFit = settings.playerScreenFit ?? "contain";
+
+  const fitOptions: {
+    value: "contain" | "cover" | "fill";
+    label: string;
+    hint: string;
+  }[] = [
+    {
+      value: "contain",
+      label: "Fit to screen",
+      hint: "Full picture, black bars if needed",
+    },
+    { value: "cover", label: "Fill screen", hint: "Crops the edges slightly" },
+    { value: "fill", label: "Stretch", hint: "Fills the screen, may distort" },
+  ];
+  const fitLabel =
+    fitOptions.find((o) => o.value === screenFit)?.label ?? "Fit to screen";
+
+  const handleSelectFit = useCallback(
+    (value: "contain" | "cover" | "fill") => {
+      updateSetting("playerScreenFit", value);
+    },
+    [updateSetting],
+  );
+
+  const handleSelectSpeed = useCallback(
+    (speed: number) => {
+      player.setPlaybackRate(speed);
+      trackFeatureUsed("speed_changed", "player");
+    },
+    [player],
+  );
 
   return (
     <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
@@ -585,16 +754,19 @@ export function PlayerOverlay({
           {/* 2X Speed Indicator Pill */}
           {is2xSpeedActive && (
             <View
-              style={[styles.speed2xPill, { top: paddingTop + 16 }]}
+              style={[styles.speed2xPill, { top: paddingTop + 8 }]}
               pointerEvents="none"
             >
-              <Ionicons name="flash" size={13} color={colors.gold} />
-              <Text style={styles.speed2xText}>2X SPEED</Text>
+              <Ionicons name="flash" size={12} color={colors.gold} />
+              <Text style={styles.speed2xText}>2× speed</Text>
             </View>
           )}
 
-          {/* Center loading states — mutually exclusive, always unobstructed:
-              switching pill while changing sources, plain spinner otherwise */}
+          {/* Center loading states — mutually exclusive, never double up:
+              - switching pill while changing sources (most specific)
+              - big spinner + detail only during INITIAL load (no controls yet)
+              - mid-play stalls use the in-place spinner in the play button —
+                no takeover, ±10 stays live */}
           {switchingLabel ? (
             <View style={styles.switchingOverlay} pointerEvents="none">
               <View style={styles.switchingPill}>
@@ -604,7 +776,7 @@ export function PlayerOverlay({
                 </Text>
               </View>
             </View>
-          ) : isBuffering ? (
+          ) : isStreamLoading ? (
             <View style={styles.bufferingIndicator} pointerEvents="none">
               <ActivityIndicator size="large" color={colors.gold} />
               {loadingDetail ? (
@@ -615,29 +787,41 @@ export function PlayerOverlay({
         </View>
       </GestureDetector>
 
+      {/* ── A11y live region — announces playback state changes ── */}
+      <View style={styles.a11yLive} accessibilityLiveRegion="polite">
+        {liveAnnouncement ? (
+          <Text style={styles.a11yHiddenText}>{liveAnnouncement}</Text>
+        ) : null}
+        {switchingLabel ? (
+          <Text style={styles.a11yHiddenText}>{switchingLabel}</Text>
+        ) : null}
+      </View>
+
       {/* ── Controls Overlay (Layer 3) ── */}
       {isControlsVisible && !overlaySuppressed && (
         <Animated.View
           style={[styles.controlsOverlay, animatedOverlayStyle]}
-          pointerEvents={isControlsVisible ? "box-none" : "none"}
+          pointerEvents="box-none"
         >
-          {/* Top Bar Area — contains back/title on left, and source/audio/settings on top right */}
+          {/* Top bar — soft gradient scrim, icons only, no boxes */}
           <LinearGradient
-            colors={["rgba(0,0,0,0.85)", "rgba(0,0,0,0.4)", "transparent"]}
+            colors={["rgba(0,0,0,0.72)", "rgba(0,0,0,0.35)", "transparent"]}
             style={[styles.topBarGradient, { paddingTop: paddingTop + 8 }]}
             pointerEvents="box-none"
           >
             <View style={styles.topBar}>
-              {!hideBack && !isFullscreen && (
+              {/* Top-left: always close (fullscreen exit lives bottom-right,
+                    so there is exactly one fullscreen button on screen) */}
+              {!hideBack && (
                 <TouchableOpacity
                   onPress={onClose}
                   style={styles.iconButton}
-                  activeOpacity={0.7}
+                  activeOpacity={0.6}
                   accessibilityRole="button"
                   accessibilityLabel="Close player"
                 >
                   <Ionicons
-                    name="chevron-back"
+                    name="chevron-down"
                     size={24}
                     color={colors.textPrimary}
                   />
@@ -651,189 +835,181 @@ export function PlayerOverlay({
               ) : null}
 
               <View style={styles.topRightRow}>
-                {onSourcePicker && sourceLabel && (
+                {/* Audio — direct access when the file has multiple tracks */}
+                {audioTracks.length > 1 && (
                   <TouchableOpacity
-                    onPress={onSourcePicker}
-                    style={styles.sourcePill}
-                    activeOpacity={0.7}
+                    onPress={openAudioSheet}
+                    style={styles.iconButton}
+                    activeOpacity={0.6}
                     accessibilityRole="button"
-                    accessibilityLabel={`Current source: ${sourceLabel}. Open source list`}
+                    accessibilityLabel={
+                      audioChip
+                        ? `Audio tracks, currently ${audioChip}`
+                        : "Audio tracks"
+                    }
                   >
                     <Ionicons
-                      name="server-outline"
-                      size={12}
-                      color={colors.gold}
+                      name="musical-notes-outline"
+                      size={21}
+                      color={colors.textPrimary}
                     />
-                    <Text style={styles.sourcePillText} numberOfLines={1}>
-                      {sourceLabel}
-                    </Text>
+                    {audioChip ? (
+                      <View style={styles.iconBadge}>
+                        <Text style={styles.iconBadgeText}>{audioChip}</Text>
+                      </View>
+                    ) : null}
                   </TouchableOpacity>
                 )}
 
-                {/* A1/A2: audio chrome — icon + short chip; hidden when ≤1 track */}
-                {(() => {
-                  const audioTracks = player.getAudioTracks();
-                  if (audioTracks.length <= 1) return null;
-                  const selectedId =
-                    player.getSelectedAudioTrackId?.() ?? null;
-                  const selectedIdx = Math.max(
-                    0,
-                    audioTracks.findIndex((t) => t.id === selectedId),
-                  );
-                  const selected =
-                    audioTracks.find((t) => t.id === selectedId) ??
-                    audioTracks[selectedIdx];
-                  const chip = selected
-                    ? audioChipLabel(audioTrackTitle(selected, selectedIdx))
-                    : null;
-                  return (
-                    <TouchableOpacity
-                      onPress={() => setShowAudioSheet(true)}
-                      style={styles.audioButton}
-                      activeOpacity={0.7}
-                      accessibilityRole="button"
-                      accessibilityLabel={
-                        chip
-                          ? `Audio tracks, currently ${chip}`
-                          : "Audio tracks"
-                      }
-                    >
+                {/* Source pill — RNGH tap so it stays responsive over the
+                    full-screen tap-gesture surface below. */}
+                {onSourcePicker && sourceLabel && (
+                  <GestureDetector gesture={tapOpenSourceGesture}>
+                    <Animated.View style={styles.sourcePill}>
                       <Ionicons
-                        name="musical-notes-outline"
-                        size={20}
-                        color={colors.textPrimary}
+                        name="layers-outline"
+                        size={14}
+                        color={colors.gold}
                       />
-                      {chip ? (
-                        <View style={styles.audioChip}>
-                          <Text style={styles.audioChipText}>{chip}</Text>
-                        </View>
-                      ) : null}
-                    </TouchableOpacity>
-                  );
-                })()}
+                      <Text style={styles.sourcePillText} numberOfLines={1}>
+                        {sourceLabel}
+                      </Text>
+                    </Animated.View>
+                  </GestureDetector>
+                )}
 
+                {/* ⋮ menu — speed / audio language / screen fit (landscape: + lock) */}
                 <TouchableOpacity
                   onPress={() => setShowSettingsSheet(true)}
                   style={styles.iconButton}
-                  activeOpacity={0.7}
+                  activeOpacity={0.6}
                   accessibilityRole="button"
-                  accessibilityLabel="Playback settings"
+                  accessibilityLabel="More playback options"
                 >
                   <Ionicons
-                    name="options-outline"
+                    name="ellipsis-vertical"
                     size={20}
                     color={colors.textPrimary}
                   />
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  onPress={handleLock}
-                  style={styles.iconButton}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Lock controls"
-                >
-                  <Ionicons
-                    name="lock-closed-outline"
-                    size={18}
-                    color={colors.textPrimary}
-                  />
-                </TouchableOpacity>
+                {/* Lock — landscape/fullscreen only (pocket watching), also
+                    reachable from the ⋮ menu as the a11y alternative */}
+                {lockAvailable && !isLocked && (
+                  <TouchableOpacity
+                    onPress={handleLock}
+                    style={styles.iconButton}
+                    activeOpacity={0.6}
+                    accessibilityRole="button"
+                    accessibilityLabel="Lock controls"
+                  >
+                    <Ionicons
+                      name="lock-closed-outline"
+                      size={20}
+                      color={colors.textPrimary}
+                    />
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           </LinearGradient>
 
-          {/* Center Playback Area — hidden while the stream is loading so the
-              buffering/switching indicator is never covered by buttons */}
-          {!isStreamLoading && (
-            <View style={styles.centerControls} pointerEvents="box-none">
-              <TouchableOpacity
-                onPress={seekBackward}
-                style={styles.seekButton}
-                activeOpacity={0.75}
-                accessibilityRole="button"
-                accessibilityLabel="Rewind 10 seconds"
-              >
-                <MaterialIcons
-                  name="replay-10"
-                  size={38}
-                  color={colors.textPrimary}
-                />
-              </TouchableOpacity>
+          {/* Center Playback Area — the container is the column's flex:1
+              spacer, so it must NEVER unmount: unmounting collapsed the
+              column and parked the bottom bar directly under the top bar
+              (~20% down) until the first frame arrived. Buttons stay hidden
+              while the stream loads so the buffering indicator is never
+              covered. */}
+          <View style={styles.centerControls} pointerEvents="box-none">
+            {!isStreamLoading && (
+              <>
+                <TouchableOpacity
+                  onPress={seekBackward}
+                  style={styles.seekButton}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Rewind 10 seconds"
+                >
+                  <MaterialIcons
+                    name="replay-10"
+                    size={38}
+                    color={colors.textPrimary}
+                  />
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                onPress={togglePlayPause}
-                style={styles.playButton}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel={isPaused ? "Play" : "Pause"}
-              >
-                <View style={styles.playButtonInner}>
-                  {isBuffering ? (
-                    <ActivityIndicator size="small" color="#0B0B0E" />
-                  ) : (
-                    <Ionicons
-                      name={isPaused ? "play" : "pause"}
-                      size={36}
-                      color="#0B0B0E"
-                      style={{ marginLeft: isPaused ? 4 : 0 }}
-                    />
-                  )}
-                </View>
-              </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={togglePlayPause}
+                  style={styles.playButton}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel={isPaused ? "Play" : "Pause"}
+                >
+                  <View style={styles.playButtonInner}>
+                    {isBuffering ? (
+                      <ActivityIndicator size="small" color="#0B0B0E" />
+                    ) : (
+                      <Ionicons
+                        name={isPaused ? "play" : "pause"}
+                        size={34}
+                        color="#0B0B0E"
+                        style={{ marginLeft: isPaused ? 4 : 0 }}
+                      />
+                    )}
+                  </View>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                onPress={seekForward}
-                style={styles.seekButton}
-                activeOpacity={0.75}
-                accessibilityRole="button"
-                accessibilityLabel="Forward 10 seconds"
-              >
-                <MaterialIcons
-                  name="forward-10"
-                  size={38}
-                  color={colors.textPrimary}
-                />
-              </TouchableOpacity>
-            </View>
-          )}
+                <TouchableOpacity
+                  onPress={seekForward}
+                  style={styles.seekButton}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Forward 10 seconds"
+                >
+                  <MaterialIcons
+                    name="forward-10"
+                    size={38}
+                    color={colors.textPrimary}
+                  />
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
 
-          {/* Bottom Area — YouTube-style: time + fullscreen ABOVE the timeline */}
+          {/* Bottom area — title time row, then the timeline */}
           <LinearGradient
-            colors={["transparent", "rgba(0,0,0,0.55)", "rgba(0,0,0,0.92)"]}
+            colors={["transparent", "rgba(0,0,0,0.45)", "rgba(0,0,0,0.88)"]}
             style={[
               styles.bottomBarGradient,
-              { paddingBottom: paddingBottom + 8 },
+              { paddingBottom: paddingBottom + 10 },
             ]}
             pointerEvents="box-none"
           >
-            {/* Time + Fullscreen row */}
+            {/* Time row (duration-0 safe: times render, bar stays put) */}
             <View style={styles.timeRow}>
               <TouchableOpacity
                 onPress={() => setShowRemainingTime((prev) => !prev)}
                 activeOpacity={0.7}
                 accessibilityRole="button"
-                accessibilityLabel="Toggle remaining time display"
+                accessibilityLabel={`Time display, currently shows ${showRemainingTime ? "remaining" : "elapsed"} time. Activate to ${showRemainingTime ? "show elapsed" : "show remaining"} time`}
+                accessibilityState={{ selected: showRemainingTime }}
               >
                 <Text style={styles.timeText}>{timeDisplayStr}</Text>
               </TouchableOpacity>
 
-              <View
-                style={{ flexDirection: "row", gap: 8, alignItems: "center" }}
-              >
-                {subtitleButtonVisible && (
+              {/* Bottom-right: CC + fullscreen (proper corner-bracket icons) */}
+              <View style={styles.bottomRightRow}>
+                {(subtitleTracks.length > 0 || !!subtitleOnlineSearch) && (
                   <TouchableOpacity
-                    onPress={() => {
-                      setShowSubtitleSheet(true);
-                    }}
+                    onPress={openSubtitleSheet}
                     style={styles.iconButton}
-                    activeOpacity={0.7}
+                    activeOpacity={0.6}
                     accessibilityRole="button"
                     accessibilityLabel="Subtitles"
+                    accessibilityState={{ selected: subtitleSelected }}
                   >
                     <Ionicons
                       name="logo-closed-captioning"
-                      size={20}
+                      size={22}
                       color={
                         subtitleSelected ? colors.gold : colors.textPrimary
                       }
@@ -843,15 +1019,17 @@ export function PlayerOverlay({
                 <TouchableOpacity
                   onPress={onToggleFullscreen}
                   style={styles.iconButton}
-                  activeOpacity={0.7}
+                  activeOpacity={0.6}
                   accessibilityRole="button"
                   accessibilityLabel={
                     isFullscreen ? "Exit fullscreen" : "Enter fullscreen"
                   }
                 >
-                  <Ionicons
-                    name={isFullscreen ? "contract-outline" : "expand-outline"}
-                    size={20}
+                  <MaterialCommunityIcons
+                    name={
+                      isFullscreen ? "arrow-collapse-all" : "arrow-expand-all"
+                    }
+                    size={22}
                     color={colors.textPrimary}
                   />
                 </TouchableOpacity>
@@ -862,7 +1040,9 @@ export function PlayerOverlay({
             <ProgressBar
               currentTime={currentTime}
               duration={duration}
-              backdropUrl={backdropUrl}
+              hasDuration={hasDuration}
+              bufferedPosition={bufferedPosition}
+              introSegments={introSegments}
               onSeek={handleSeek}
               onScrubStart={handleScrubStart}
               onScrubEnd={handleScrubEnd}
@@ -874,16 +1054,16 @@ export function PlayerOverlay({
       {/* Skip Intro/Recap — stays tappable even when the controls are hidden */}
       {skipLabel && onSkipSegment && !overlaySuppressed && !isLocked && (
         <TouchableOpacity
-          style={[styles.skipSegmentBtn, { bottom: paddingBottom + 96 }]}
+          style={[styles.skipSegmentBtn, { bottom: paddingBottom + 112 }]}
           onPress={() => {
             trackFeatureUsed("skip_intro", "player");
             onSkipSegment();
           }}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityLabel={skipLabel}
         >
-          <Ionicons name="play-skip-forward" size={15} color={colors.gold} />
+          <Ionicons name="play-forward" size={14} color={colors.gold} />
           <Text style={styles.skipSegmentText}>{skipLabel}</Text>
         </TouchableOpacity>
       )}
@@ -893,11 +1073,11 @@ export function PlayerOverlay({
         <TouchableOpacity
           style={styles.unlockButton}
           onPress={handleUnlock}
-          activeOpacity={0.7}
+          activeOpacity={0.6}
           accessibilityRole="button"
-          accessibilityLabel="Unlock controls"
+          accessibilityLabel="Unlock controls. Screen is locked for pocket viewing"
         >
-          <Ionicons name="lock-open-outline" size={18} color={colors.gold} />
+          <Ionicons name="lock-open" size={19} color={colors.gold} />
         </TouchableOpacity>
       )}
 
@@ -919,10 +1099,14 @@ export function PlayerOverlay({
       <PlayerSettingsSheet
         visible={showSettingsSheet}
         player={player}
-        sourceLabel={sourceLabel}
-        onOpenAudioSheet={() => setShowAudioSheet(true)}
-        onOpenSubtitleSheet={() => setShowSubtitleSheet(true)}
-        onOpenSourcePicker={onSourcePicker}
+        isFullscreen={isFullscreen}
+        currentSpeed={player.getPlaybackRate()}
+        onSelectSpeed={handleSelectSpeed}
+        screenFit={screenFit}
+        onSelectFit={handleSelectFit}
+        lockAvailable={lockAvailable}
+        isLocked={isLocked}
+        onLock={handleLock}
         onClose={closeSettingsSheet}
       />
     </View>
@@ -936,89 +1120,96 @@ const styles = StyleSheet.create({
   },
   controlsOverlay: {
     ...StyleSheet.absoluteFillObject,
-    justifyContent: "space-between",
+    // Strict column flow: top bar → center (flex:1) → bottom bar. The center
+    // controls are then mathematically centered BETWEEN the bars (the old
+    // absoluteFill centering ignored bar heights and sat visually low in
+    // fullscreen), and the bottom bar can never be pushed off-screen.
+    flexDirection: "column",
     zIndex: 20,
   },
   topBarGradient: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingHorizontal: 8,
+    paddingBottom: 20,
   },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: 2,
   },
   iconButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "rgba(0,0,0,0.35)",
     alignItems: "center",
     justifyContent: "center",
+  },
+  iconBadge: {
+    position: "absolute",
+    right: 2,
+    bottom: 0,
+    backgroundColor: colors.goldBadge,
+    borderRadius: 4,
+    paddingHorizontal: 3,
+    paddingVertical: 1,
+  },
+  iconBadgeText: {
+    color: colors.gold,
+    fontSize: 9,
+    fontWeight: "800",
   },
   title: {
     flex: 1,
     color: colors.textPrimary,
     fontSize: 14,
     fontWeight: "600",
-    marginHorizontal: 12,
+    marginHorizontal: 10,
   },
   topRightRow: {
     flexDirection: "row",
-    gap: 8,
+    gap: 2,
     alignItems: "center",
     marginLeft: "auto",
   },
   sourcePill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    borderRadius: 14,
+    gap: 5,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    borderRadius: 999,
     paddingHorizontal: 10,
-    height: 28,
-    borderWidth: 1,
-    borderColor: "rgba(212,162,55,0.3)",
+    height: 30,
   },
   sourcePillText: {
     color: colors.gold,
-    fontSize: 11,
-    fontWeight: "600",
-    maxWidth: 75,
+    fontSize: 11.5,
+    fontWeight: "700",
+    maxWidth: 78,
   },
   centerControls: {
-    ...StyleSheet.absoluteFillObject,
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 36,
+    gap: 40,
   },
   seekButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "rgba(14, 14, 18, 0.55)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.12)",
+    width: 54,
+    height: 54,
+    borderRadius: 27,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
-    shadowRadius: 4,
-    elevation: 4,
   },
   playButton: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     backgroundColor: colors.gold,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: colors.gold,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 12,
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
     elevation: 8,
   },
   playButtonInner: {
@@ -1026,18 +1217,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   bottomBarGradient: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingTop: 8,
+    paddingTop: 10,
   },
   timeRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 16,
-    marginBottom: 6,
+    marginBottom: 2,
+  },
+  bottomRightRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
   timeText: {
     color: colors.textPrimary,
@@ -1054,12 +1246,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: "rgba(0,0,0,0.8)",
-    borderRadius: 16,
+    backgroundColor: "rgba(0,0,0,0.75)",
+    borderRadius: 999,
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: colors.borderSubtle,
+    paddingVertical: 9,
     maxWidth: "86%",
   },
   switchingText: {
@@ -1078,24 +1268,17 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    backgroundColor: "rgba(14, 14, 17, 0.92)",
-    borderColor: "rgba(212, 162, 55, 0.5)",
-    borderWidth: 1,
-    paddingHorizontal: 14,
+    gap: 5,
+    backgroundColor: "rgba(0,0,0,0.72)",
+    paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 20,
+    borderRadius: 999,
     zIndex: 40,
-    shadowColor: colors.gold,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
   },
   speed2xText: {
     color: colors.gold,
     fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0.5,
+    fontWeight: "700",
   },
   loadingDetail: {
     color: colors.textSecondary,
@@ -1110,14 +1293,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "rgba(14, 14, 17, 0.92)",
-    borderColor: "rgba(212, 162, 55, 0.4)",
-    borderWidth: 1,
+    backgroundColor: "rgba(0,0,0,0.72)",
     borderRadius: 999,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 9,
     zIndex: 40,
-    elevation: 8,
   },
   skipSegmentText: {
     color: colors.gold,
@@ -1126,37 +1306,25 @@ const styles = StyleSheet.create({
   },
   unlockButton: {
     position: "absolute",
-    top: 70,
-    right: 16,
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    top: 56,
+    right: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(14, 14, 17, 0.6)",
-    borderWidth: 1,
-    borderColor: "rgba(212, 162, 55, 0.4)",
+    backgroundColor: "rgba(0,0,0,0.5)",
     zIndex: 40,
-    elevation: 8,
   },
-  audioButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 8,
+  a11yLive: {
+    position: "absolute",
+    width: 1,
+    height: 1,
+    opacity: 0,
+    overflow: "hidden",
   },
-  audioChip: {
-    backgroundColor: colors.goldBadge,
-    borderRadius: 4,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-  },
-  audioChipText: {
-    color: colors.gold,
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 0.4,
+  a11yHiddenText: {
+    fontSize: 1,
+    color: "transparent",
   },
 });

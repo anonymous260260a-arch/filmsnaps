@@ -41,7 +41,11 @@ apps/desktop/release/
 # custom scripts (repo-root only — anchored so it does NOT swallow nested
 # scripts/ dirs like packages/shared/scripts (fix-dist-imports.mjs) or
 # apps/desktop/scripts, which EAS/Netlify archive walkers would drop)
-/scripts/
+# /scripts/* instead of /scripts/ so the single tracked file below can be
+# re-included (git cannot re-include a path inside an excluded directory);
+# everything else in here stays local-only.
+/scripts/*
+!/scripts/eas-build-pre-install.mjs
 
 # IDE / AI
 .bolt/
@@ -97,3 +101,8 @@ apps/feedback/.wrangler
 _rp.json
 _rs.sig
 expertResponseFiles_TEMP/
+
+# local tool artifacts
+.freebuff/
+androidx/
+apps/web/.wrangler/
