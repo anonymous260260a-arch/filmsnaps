@@ -97,3 +97,8 @@ apps/feedback/.wrangler
 _rp.json
 _rs.sig
 expertResponseFiles_TEMP/
+
+# local tool artifacts
+.freebuff/
+androidx/
+apps/web/.wrangler/
