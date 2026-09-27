@@ -1,0 +1,3 @@
+# Patch files must stay byte-identical (LF) — a CRLF checkout breaks
+# pnpm install's patch application against pristine packages.
+*.patch -text
