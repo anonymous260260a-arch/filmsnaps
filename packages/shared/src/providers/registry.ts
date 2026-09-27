@@ -19,15 +19,16 @@ export type AppMode = MediaType; // 'movie_tv' | 'anime'
  * To hide the real provider name: set `displayName` (shown in UI instead of `name').
  *
  * Enabled servers: nxsha, peachify, screenscape, zxcstream, cinemaos,
- * falix (download-only), direct, videasy, vidnest, megaplay (anime-only).
+ * falix (download-only), direct, videasy, vidnest, justanime (mobile anime
+ * direct), megaplay (anime-only embed).
  */
 export const PROVIDERS: ProviderDefinition[] = [
-  // ── Server 1 (DISABLED — behind Cloudflare, proxy unreliable) ──
+  // ── Server 1  ──
   {
     id: "nxsha",
     name: "Nxsha",
     displayName: "Source 1",
-    mediaTypes: ["movie_tv", "anime"], // Hybrid — carries some anime
+    mediaTypes: ["movie_tv", "anime"], // carries some anime
     note: "Multi-lang · Fast · Sometimes gets down",
     baseUrl: "https://web.nxsha.app",
     embed: {
@@ -167,11 +168,11 @@ export const PROVIDERS: ProviderDefinition[] = [
 
     // Hidden from the web picker (mobile + desktop show all enabled).
     platforms: ["mobile"],
-    // V6: Next.js app (serves /_next/static) — same disable-devtool neutralization
+    // Next.js app (serves /_next/static) — same disable-devtool neutralization
     // interference as peachify. Disable the doc-start devblock so the type=4
     // warning loop stops; native video detection still finds the stream.
     reactSafe: true,
-    // Expert fix (2026-08-15): inject the surgical console.log mask at
+    // inject the surgical console.log mask at
     // document_start to defeat disable-devtool's FuncToString (type=4) false
     // positive (Android WebView native console-serialization bridge). With this
     // in place, full RN injection (guard + scriptlets + bridge + progress) is
@@ -831,6 +832,84 @@ export const PROVIDERS: ProviderDefinition[] = [
     },
     allowedOrigins: ["https://streamguide.cfd"],
   },
+  // ── JustAnime (anime-only direct · MAL-keyed · mobile) ──────
+  // Direct playback backed by core.justanime.to's scraper API, one request per
+  // server+audio track returning HLS/mp4 + vtt subtitle sidecars. Keyed by MAL
+  // id (the {episode} in the URL is MAL-relative, NOT TMDB-seasonal). Mobile
+  // only: the media/CDN requests require a Referer that a browser can't attach,
+  // so web/desktop default anime sessions to the megaplay embed instead.
+  // The API request itself needs Referer/Origin https://justanime.to — wired
+  // as streamSources[].headers (no `selection` — the mobile anime pipeline
+  // ranks this pool with its own lightweight ranker, not the movie/TV one).
+  {
+    id: "justanime",
+    name: "JustAnime",
+    displayName: "JustAnime",
+    note: "Anime · 3 servers",
+    type: "direct",
+    order: 29,
+    platforms: ["mobile"],
+    mediaTypes: ["anime"],
+    animeOnly: true,
+    baseUrl: "",
+    embed: {
+      movie: () => "",
+      tv: () => "",
+    },
+    streamSources: [
+      {
+        id: "justanime-megaplay",
+        adapter: "justanime",
+        apiBase: "https://core.justanime.to",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 12000,
+        headers: {
+          Referer: "https://justanime.to",
+          Origin: "https://justanime.to",
+        },
+        urlTemplate:
+          "https://core.justanime.to/api/watch/{malId}/episode/1/megaplay",
+        urlTemplateTv:
+          "https://core.justanime.to/api/watch/{malId}/episode/{episode}/megaplay",
+      },
+      {
+        id: "justanime-zokoanime",
+        adapter: "justanime",
+        apiBase: "https://core.justanime.to",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 12000,
+        headers: {
+          Referer: "https://justanime.to",
+          Origin: "https://justanime.to",
+        },
+        urlTemplate:
+          "https://core.justanime.to/api/watch/{malId}/episode/1/zokoanime",
+        urlTemplateTv:
+          "https://core.justanime.to/api/watch/{malId}/episode/{episode}/zokoanime",
+      },
+      {
+        id: "justanime-animegg",
+        adapter: "justanime",
+        apiBase: "https://core.justanime.to",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 12000,
+        headers: {
+          Referer: "https://justanime.to",
+          Origin: "https://justanime.to",
+        },
+        urlTemplate:
+          "https://core.justanime.to/api/watch/{malId}/episode/1/animegg",
+        urlTemplateTv:
+          "https://core.justanime.to/api/watch/{malId}/episode/{episode}/animegg",
+      },
+    ],
+  },
   // ── MegaPlay (anime-only · MAL/AniList-keyed) ───────────────
   // URL shapes: /stream/mal/<malId>/<ep>/<sub|dub> and /stream/ani/<anilistId>/...
   // Keyed by MyAnimeList/AniList IDs, NOT TMDB. `animeOnly` keeps it out of
@@ -899,8 +978,18 @@ export const PLATFORM_DEFAULT_PROVIDER_IDS = {
 
 export type { ProviderPlatform };
 
-/** Anime sessions always default to the dedicated anime-only source. */
-export const ANIME_DEFAULT_PROVIDER_ID = "megaplay";
+/** Anime sessions default to a dedicated anime-only source — but WHICH one
+ *  depends on what the platform can actually play. Desktops/browsers cannot
+ *  attach a Referer to media requests, so they keep the megaplay embed;
+ *  mobile plays justanime's header-gated HLS/mp4 natively. */
+export const ANIME_DEFAULT_PROVIDER_IDS = {
+  mobile: "justanime",
+  web: "megaplay",
+  desktop: "megaplay",
+} as const;
+
+/** Back-compat: web/desktop anime default (all platforms prior to v2026.09). */
+export const ANIME_DEFAULT_PROVIDER_ID = ANIME_DEFAULT_PROVIDER_IDS.web;
 
 /**
  * Resolve the default provider for a platform.
@@ -911,7 +1000,7 @@ export function getDefaultProviderId(
   opts: { anime?: boolean } = {},
 ): string {
   return opts.anime
-    ? ANIME_DEFAULT_PROVIDER_ID
+    ? ANIME_DEFAULT_PROVIDER_IDS[platform]
     : PLATFORM_DEFAULT_PROVIDER_IDS[platform];
 }
 

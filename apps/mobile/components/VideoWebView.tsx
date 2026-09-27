@@ -25,8 +25,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   getNonAnimeProviders,
-  getEnabledProviders,
-  filterAnimeProviders,
   getProvidersForMode,
   getProvider,
   isDirectProvider,
@@ -57,6 +55,11 @@ import type { IntroDbResponse } from "../lib/introDetect";
 import { tmdbApi } from "../lib/api";
 import { getNextEpisode } from "../lib/tvUtils";
 import { prefetchStreams, getPrefetchAgeMs } from "../lib/streamPrefetch";
+import {
+  prefetchAnimeStreams,
+  peekAnimeStreams,
+} from "../lib/animeStreamPrefetch";
+import { ANIME_PROVIDER_ID } from "../lib/anime/streams";
 import { resolvePlaybackProviderId } from "../lib/resolvePlaybackProvider";
 import { getPlayerTuning } from "../lib/playerConfig";
 import { clearAllState, getConfigVersion } from "../modules/player-webview";
@@ -588,6 +591,10 @@ interface VideoWebViewProps {
   animeMalId?: number;
   animeAnilistId?: number | null;
   animeAudio?: "sub" | "dub";
+  /** The watch page mirrors overlay sub/dub toggles up here so the direct
+   *  anime pipeline (whose picker/source list is filtered by THIS audio) can
+   *  re-publish for the other track. */
+  onAnimeAudioChange?: (next: "sub" | "dub") => void;
   /** Title for the native player's top bar (direct provider). */
   title?: string;
   /** Resume position in seconds for the native player (direct provider). */
@@ -595,6 +602,10 @@ interface VideoWebViewProps {
   /** Direct (native) player state — rendered in the player area when the
    *  "direct" server is selected. */
   directStream?: DirectStreamState;
+  /** Upstream intro/outro skip segments for the native direct player
+   *  (JustAnime). Supersedes the introdb fetch for anime sessions — the API
+   *  already returns per-episode timestamps, so we skip our own detection. */
+  nativeIntroSegments?: IntroDbResponse | null;
   /** Fired when the user switches to the direct server (load links if needed). */
   onDirectSelected?: (providerId: string) => void;
   /** Fired on "Retry" inside the direct player area. */
@@ -619,9 +630,11 @@ export function VideoWebView({
   animeMalId,
   animeAnilistId,
   animeAudio = "sub",
+  onAnimeAudioChange,
   title = "",
   startAt: startAtProp = 0,
   directStream,
+  nativeIntroSegments,
   onDirectSelected,
   onDirectRetry,
   onDirectEpisodeChange,
@@ -827,7 +840,11 @@ export function VideoWebView({
     // id "direct" (Direct-Play, never wired) — drop it so Direct isn't listed twice.
     const embeds = (
       isAnime
-        ? filterAnimeProviders(getEnabledProviders())
+        ? // Anime-capable servers in picker order. Unlike the movie/TV allowlist
+          // this honors each provider's mediaTypes, so the JustAnime direct
+          // source (anime-only, mobile, type "direct") is included as the last
+          // native server alongside the nxsha/screenscape/megaplay embeds.
+          getProvidersForMode("anime")
         : getNonAnimeProviders()
     ).filter((p) => p.id !== "direct");
     // HDHub direct only for movie/TV — anime uses its own direct sources.
@@ -904,32 +921,28 @@ export function VideoWebView({
 
   // ── MegaPlay sub/dub preference (persisted, per-title) ──
   // MegaPlay's embed honors opts.audio (/stream/<space>/<id>/<ep>/<sub|dub>).
-  // We remember the last choice per TMDB id so re-opening the same anime keeps
-  // it. Defaults to the prop (usually "sub").
+  // The ROUTE owns the pref (megaplay:audio:<id>): it reads it on open before
+  // the first source plays and passes the effective track down via animeAudio,
+  // and this toggle pushes changes back up through onAnimeAudioChange. Keeping
+  // `audio` mirrored to the prop means the toggle can never disagree with what
+  // the player actually opened with.
   const [audio, setAudio] = useState<"sub" | "dub">(animeAudio ?? "sub");
   const audioPrefKey = useMemo(
     () => (id != null ? `megaplay:audio:${id}` : null),
     [id],
   );
   useEffect(() => {
-    if (!audioPrefKey) return;
-    let alive = true;
-    AsyncStorage.getItem(audioPrefKey)
-      .then((v) => {
-        if (alive && (v === "sub" || v === "dub")) setAudio(v);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [audioPrefKey]);
+    setAudio(animeAudio ?? "sub");
+  }, [animeAudio]);
   const changeAudio = useCallback(
     (next: "sub" | "dub") => {
+      console.log(`[Anime][audio] overlay toggle → ${next}`);
       setAudio(next);
       if (audioPrefKey)
         AsyncStorage.setItem(audioPrefKey, next).catch(() => {});
+      onAnimeAudioChange?.(next);
     },
-    [audioPrefKey],
+    [audioPrefKey, onAnimeAudioChange],
   );
 
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -1548,7 +1561,16 @@ export function VideoWebView({
     const skipIntro = currentProvider
       ? isSkipIntroEnabled(currentProvider)
       : false;
-    if (type !== "tv" || !currentSeason || !currentEpisode || !skipIntro) {
+    // Anime carries its own intro/outro data (JustAnime per-episode timestamps,
+    // and embed players like megaplay show their own skip button) — introdb is
+    // never consulted for anime sessions.
+    if (
+      type !== "tv" ||
+      !currentSeason ||
+      !currentEpisode ||
+      !skipIntro ||
+      isAnime
+    ) {
       setIntroSegments(null);
       return;
     }
@@ -1610,6 +1632,16 @@ export function VideoWebView({
     };
   }, [type, id, currentSeason, currentEpisode, currentProvider]);
 
+  // ── Anime direct: upstream intro/outro override ──
+  // JustAnime returns per-episode intro/outro timestamps, so for the native
+  // direct surface we substitute them for introdb (gate above skips anime).
+  // Non-direct anime (megaplay embed) keeps null — the embed shows its own
+  // skip button and we must not inject ours.
+  useEffect(() => {
+    if (!isTV || !isDirect || !nativeIntroSegments) return;
+    setIntroSegments(nativeIntroSegments);
+  }, [isTV, isDirect, nativeIntroSegments]);
+
   // ── Direct TV: next-episode info + links prefetch ──
   // Resolves the next episode once per episode change so the HEVC player can
   // show the countdown card, and prefetches its links (cache TTL covers the
@@ -1650,6 +1682,17 @@ export function VideoWebView({
           `[VideoWebView] Direct next episode resolved: S${nextSeason}E${nextEp} (prefetching links)`,
         );
         // FIX 1: next-episode prefetch must use the provider watch will open.
+        // Anime stays on JustAnime's own cache (MAL-relative episode); the
+        // movie/TV path resolves the provider watch would open instead.
+        if (!cancelled && isAnime) {
+          const r = resolveShow(id, nextSeason, nextEp);
+          if (!r.ok) return;
+          void prefetchAnimeStreams(r.malId, r.episode, audio, {
+            providerId: ANIME_PROVIDER_ID,
+            trigger: "next-episode",
+          }).catch(() => {});
+          return;
+        }
         void resolvePlaybackProviderId({
           mediaType: "tv",
           tmdbId: parseInt(id, 10),
@@ -2032,70 +2075,92 @@ export function VideoWebView({
       !nextEpRewarmDoneRef.current &&
       directNextEp
     ) {
-      const age = getPrefetchAgeMs(
-        parseInt(id, 10),
-        "tv",
-        directNextEp.season,
-        directNextEp.episode,
-        {
-          providerId: provider?.id,
-        },
-      );
-      if (age !== null && age >= 40 * 60 * 1000) {
-        nextEpRewarmDoneRef.current = true;
-        console.log(
-          `[VideoWebView] FIX 11 re-warm next-ep S${directNextEp.season}E${directNextEp.episode} (age=${Math.round(age / 1000)}s)`,
+      if (isAnime) {
+        // Anime streams live in their own cache (no age lookup) — a miss or
+        // negative entry is re-warmed once per episode key.
+        if (!nextEpRewarmDoneRef.current) {
+          const r = resolveShow(id, directNextEp.season, directNextEp.episode);
+          if (
+            r.ok &&
+            peekAnimeStreams(r.malId, r.episode, audio, ANIME_PROVIDER_ID) ===
+              null
+          ) {
+            nextEpRewarmDoneRef.current = true;
+            console.log(
+              `[VideoWebView] anime re-warm next-ep S${directNextEp.season}E${directNextEp.episode} (cache miss)`,
+            );
+            void prefetchAnimeStreams(r.malId, r.episode, audio, {
+              providerId: ANIME_PROVIDER_ID,
+              trigger: "next-episode",
+            }).catch(() => {});
+          }
+        }
+      } else {
+        const age = getPrefetchAgeMs(
+          parseInt(id, 10),
+          "tv",
+          directNextEp.season,
+          directNextEp.episode,
+          {
+            providerId: provider?.id,
+          },
         );
-        void resolvePlaybackProviderId({
-          mediaType: "tv",
-          tmdbId: parseInt(id, 10),
-          savedServer: settingsRef.current.defaultServer,
-        })
-          .then((nextProviderId) => {
-            if (!nextProviderId) return;
-            return prefetchStreams(
-              parseInt(id, 10),
-              "tv",
-              directNextEp.season,
-              directNextEp.episode,
-              {
-                cellularMaxMB: settingsRef.current.cellularMaxMB,
-                maxQuality: settingsRef.current.maxQuality,
-                preferredAudioLanguage:
-                  settingsRef.current.preferredAudioLanguage,
-                providerId: nextProviderId,
-                trigger: "next-episode",
-                force: true,
-              },
-            );
+        if (age !== null && age >= 40 * 60 * 1000) {
+          nextEpRewarmDoneRef.current = true;
+          console.log(
+            `[VideoWebView] FIX 11 re-warm next-ep S${directNextEp.season}E${directNextEp.episode} (age=${Math.round(age / 1000)}s)`,
+          );
+          void resolvePlaybackProviderId({
+            mediaType: "tv",
+            tmdbId: parseInt(id, 10),
+            savedServer: settingsRef.current.defaultServer,
           })
-          .catch(() => {});
-      } else if (age === null) {
-        // Miss (expired/evicted) — also re-warm once.
-        nextEpRewarmDoneRef.current = true;
-        void resolvePlaybackProviderId({
-          mediaType: "tv",
-          tmdbId: parseInt(id, 10),
-          savedServer: settingsRef.current.defaultServer,
-        })
-          .then((nextProviderId) => {
-            if (!nextProviderId) return;
-            return prefetchStreams(
-              parseInt(id, 10),
-              "tv",
-              directNextEp.season,
-              directNextEp.episode,
-              {
-                cellularMaxMB: settingsRef.current.cellularMaxMB,
-                maxQuality: settingsRef.current.maxQuality,
-                preferredAudioLanguage:
-                  settingsRef.current.preferredAudioLanguage,
-                providerId: nextProviderId,
-                trigger: "next-episode",
-              },
-            );
+            .then((nextProviderId) => {
+              if (!nextProviderId) return;
+              return prefetchStreams(
+                parseInt(id, 10),
+                "tv",
+                directNextEp.season,
+                directNextEp.episode,
+                {
+                  cellularMaxMB: settingsRef.current.cellularMaxMB,
+                  maxQuality: settingsRef.current.maxQuality,
+                  preferredAudioLanguage:
+                    settingsRef.current.preferredAudioLanguage,
+                  providerId: nextProviderId,
+                  trigger: "next-episode",
+                  force: true,
+                },
+              );
+            })
+            .catch(() => {});
+        } else if (age === null) {
+          // Miss (expired/evicted) — also re-warm once.
+          nextEpRewarmDoneRef.current = true;
+          void resolvePlaybackProviderId({
+            mediaType: "tv",
+            tmdbId: parseInt(id, 10),
+            savedServer: settingsRef.current.defaultServer,
           })
-          .catch(() => {});
+            .then((nextProviderId) => {
+              if (!nextProviderId) return;
+              return prefetchStreams(
+                parseInt(id, 10),
+                "tv",
+                directNextEp.season,
+                directNextEp.episode,
+                {
+                  cellularMaxMB: settingsRef.current.cellularMaxMB,
+                  maxQuality: settingsRef.current.maxQuality,
+                  preferredAudioLanguage:
+                    settingsRef.current.preferredAudioLanguage,
+                  providerId: nextProviderId,
+                  trigger: "next-episode",
+                },
+              );
+            })
+            .catch(() => {});
+        }
       }
     }
 
@@ -2466,12 +2531,15 @@ export function VideoWebView({
               lastWorkingIndex={directStream.lastWorkingIndex}
               preferredLanguage={settings.preferredAudioLanguage ?? "auto"}
               providerDisplayName={
-                currentProvider ? getProviderDisplayName(currentProvider) : undefined
+                currentProvider
+                  ? getProviderDisplayName(currentProvider)
+                  : undefined
               }
               tmdbId={id}
               mediaType={type}
               season={isTV ? currentSeason : undefined}
               episode={isTV ? currentEpisode : undefined}
+              isAnime={isAnime}
               startAt={
                 startAtTime > 0
                   ? startAtTime

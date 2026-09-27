@@ -8,7 +8,7 @@
  *   - route UI pieces: components/watch/WatchRouteUI
  *   - the player itself: VideoWebView (embed + unified direct) / HevcPlayer
  */
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, StatusBar, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useSafeNavigation } from "@/lib/navigation";
@@ -16,24 +16,30 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { VideoWebView } from "../../components/VideoWebView";
 import { HevcPlayer } from "../../components/HevcPlayer";
 import { isDirectVideoUrl } from "../../lib/hevc";
+import {
+  resolveShow,
+  resolveMovie,
+  resolveShowIds,
+} from "../../lib/anime/resolve";
+import {
+  ANIME_PROVIDER_ID,
+  introDbFromUpstream,
+} from "../../lib/anime/streams";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useAnimeDirectPipeline } from "../../hooks/useAnimeDirectPipeline";
 import { useSettings } from "../../lib/settings";
-import {
-  getProvider,
-  isDirectProvider,
-} from "@filmsnaps/shared";
+import { getProvider, isDirectProvider } from "@filmsnaps/shared";
 import { getLastProvider, saveLastProvider } from "../../lib/lastProvider";
-import {
-  resolvePlaybackProviderIdTiered,
-} from "../../lib/resolvePlaybackProvider";
-import {
-  markWatchEntry,
-  markPerfStage,
-} from "../../lib/perfMetrics";
+import { resolvePlaybackProviderIdTiered } from "../../lib/resolvePlaybackProvider";
+import { markWatchEntry, markPerfStage } from "../../lib/perfMetrics";
 import {
   noteWatchSyncResolve,
   noteProviderAsyncFlip,
 } from "../../lib/watchPerfMismatch";
-import { takeEarlyPlayer, releaseEarlyPlayer } from "../../lib/earlyPlayerHolder";
+import {
+  takeEarlyPlayer,
+  releaseEarlyPlayer,
+} from "../../lib/earlyPlayerHolder";
 import type { VideoPlayer } from "expo-video";
 import { LanguagePromptSheet } from "../../components/player/LanguagePromptSheet";
 import { useDirectStreamPipeline } from "../../hooks/useDirectStreamPipeline";
@@ -71,7 +77,16 @@ export default function WatchScreen() {
   const id = segments[1];
   const season = segments[2] ? Number(segments[2]) : undefined;
   const episode = segments[3] ? Number(segments[3]) : undefined;
-  const isAnime = params.isAnime === "1";
+  // Anime auto-detect: watch opens that omit ?isAnime= (legacy/poisoned movie-TB
+  // Continue Watching rows, historical bookmarks) still route to the JustAnime
+  // direct surface when the TMDB twin is anime-mapped — the same detection the
+  // movie/tv detail pages already apply to their Watch CTAs.
+  const animeMapped = React.useMemo(() => {
+    if (id == null) return false;
+    if (type === "tv") return resolveShowIds(id) != null;
+    return resolveMovie(id) != null;
+  }, [type, id]);
+  const isAnime = params.isAnime === "1" || (!params.isAnime && animeMapped);
 
   // FIX 9: stamp watchEntry on the details-started perf session (if any).
   useEffect(() => {
@@ -159,7 +174,55 @@ export default function WatchScreen() {
       : 0;
   const animeMalId = params.mid ? Number(params.mid) : undefined;
   const animeAnilistId = params.aid ? Number(params.aid) : undefined;
-  const animeAudio = params.audio === "dub" ? "dub" : "sub";
+  // Live sub/dub state — ONE source of truth shared with the player's toggle.
+  // An explicit route param wins; otherwise we seed from the persisted
+  // per-title pref (megaplay:audio:<id>) so the FIRST source the player opens
+  // already matches what the toggle shows (the toggle remembers the last
+  // session's choice, and the player must start with that same track).
+  const explicitAudio =
+    params.audio === "dub" ? "dub" : params.audio === "sub" ? "sub" : undefined;
+  const [animeAudio, setAnimeAudio] = useState<"sub" | "dub">(
+    explicitAudio ?? "sub",
+  );
+  // True once the effective audio is known — immediate for explicit params,
+  // after the AsyncStorage read otherwise. The anime pipeline is gated on it so
+  // a switch from sub→dub right after mount can never happen.
+  const [audioPrefSettled, setAudioPrefSettled] = useState<boolean>(
+    explicitAudio != null,
+  );
+  useEffect(() => {
+    if (explicitAudio != null) return;
+    const key = id != null ? `megaplay:audio:${id}` : null;
+    if (!key) {
+      setAudioPrefSettled(true);
+      return;
+    }
+    let alive = true;
+    AsyncStorage.getItem(key)
+      .then((v) => {
+        if (!alive) return;
+        if (v === "sub" || v === "dub") {
+          console.log(`[Anime][watch] audio pref → ${v} (last session)`);
+          setAnimeAudio(v);
+        }
+        setAudioPrefSettled(true);
+      })
+      .catch(() => {
+        if (alive) setAudioPrefSettled(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [id, explicitAudio]);
+  const handleAnimeAudioChange = useCallback(
+    (next: "sub" | "dub") => {
+      console.log(`[Anime][watch] audio → ${next} (propagating to pipeline)`);
+      setAnimeAudio(next);
+      if (id != null)
+        AsyncStorage.setItem(`megaplay:audio:${id}`, next).catch(() => {});
+    },
+    [id],
+  );
 
   // Determine if this is a direct video playback (HEVC/Falix/Direct provider).
   // Direct-ness comes from the registry's `type: "direct"` — never id matching.
@@ -173,12 +236,14 @@ export default function WatchScreen() {
   // route param immediately, else after the capped lastProvider read.
   // Manual server pick and chain-head sync are layered on top.
   const [pickedProvider, setPickedProvider] = useState<string | null>(null);
-  const [headProviderOverride, setHeadProviderOverride] = useState<string | null>(null);
+  const [headProviderOverride, setHeadProviderOverride] = useState<
+    string | null
+  >(null);
   const userPickedProviderRef = useRef(false);
   const activeDirectProvider =
     pickedProvider ??
     headProviderOverride ??
-    (providerReady ? provider : routeProvider ?? null);
+    (providerReady ? provider : (routeProvider ?? null));
 
   // D1: ASYNC_FLIP only if the resolved provider itself changed after a prior
   // non-null resolve (should not happen — resolution is once when ready).
@@ -212,11 +277,121 @@ export default function WatchScreen() {
   settingsRef.current = settings;
   const languageAnswered = settings.hasAnsweredLanguagePrompt;
 
+  // ── Anime (JustAnime) direct pipeline ──
+  // Independent of the movie/TV pipeline above: anime caches and ranks in a
+  // separate module, keyed by the MAL-relative (cour-corrected) target for the
+  // current TMDB (season, episode). Anime movies have no episodes — resolveMovie
+  // → MAL episode 1. The episode-override state follows in-player episode picker
+  // changes (onDirectEpisodeChange) so the target re-resolves per episode.
+  const [animeEpOverride, setAnimeEpOverride] = useState<{
+    season?: number;
+    episode?: number;
+  }>({});
+  const curAnimeSeason = animeEpOverride.season ?? season;
+  const curAnimeEpisode = animeEpOverride.episode ?? episode;
+  const animeResolved = React.useMemo(() => {
+    if (!isAnime || id == null) return undefined;
+    if (type === "tv") {
+      if (curAnimeSeason == null || curAnimeEpisode == null) {
+        // Anime opened without an episode (anime-form feed link, CW re-open):
+        // default to the lowest-MAL candidate at episode 1 — the same target the
+        // embed pipeline resolves (/stream/mal/{id}/1/sub) — so the JustAnime
+        // direct surface still engages instead of falling to the embed.
+        if (animeMalId != null) {
+          return {
+            malId: animeMalId,
+            anilistId: animeAnilistId ?? null,
+            episode: 1,
+          };
+        }
+        const ids = resolveShowIds(id);
+        if (ids)
+          return { malId: ids.malId, anilistId: ids.anilistId, episode: 1 };
+        return undefined;
+      }
+      const r = resolveShow(id, curAnimeSeason, curAnimeEpisode);
+      if (r.ok) {
+        return { malId: r.malId, anilistId: r.anilistId, episode: r.episode };
+      }
+      // The TMDB twin map can hard-miss popular multi-split shows (no single
+      // season-aligned candidate). Feed / CW always carry the MAL id + AniList
+      // id explicitly for exactly this — fall back to those. The MAL-rel
+      // episode is then the raw TMDB episode (no cour offset to apply).
+      console.log(
+        `[Anime][watch] resolveShow ${id} S${curAnimeSeason}E${curAnimeEpisode} MISS (${r.reason}/${r.candidates}); falling back to mid=${animeMalId ?? "none"}`,
+      );
+      return animeMalId != null
+        ? {
+            malId: animeMalId,
+            anilistId: animeAnilistId ?? null,
+            episode: curAnimeEpisode,
+          }
+        : undefined;
+    }
+    const m = resolveMovie(id);
+    if (m) return { malId: m.malId, anilistId: m.anilistId, episode: 1 };
+    return animeMalId != null
+      ? { malId: animeMalId, anilistId: animeAnilistId ?? null, episode: 1 }
+      : undefined;
+  }, [
+    isAnime,
+    type,
+    id,
+    curAnimeSeason,
+    curAnimeEpisode,
+    animeMalId,
+    animeAnilistId,
+  ]);
+  const animeActive =
+    isAnime &&
+    activeDirectProvider === ANIME_PROVIDER_ID &&
+    providerReady &&
+    animeResolved != null &&
+    languageAnswered;
+  const animeDirect = useAnimeDirectPipeline({
+    enabled: animeActive && audioPrefSettled,
+    malId: animeResolved?.malId,
+    episode: animeResolved?.episode,
+    audio: animeAudio,
+    providerId: ANIME_PROVIDER_ID,
+  });
+  // When JustAnime settles empty (no direct links, no error), drop the user
+  // onto the dedicated anime embed (MegaPlay) so playback keeps working with
+  // zero interaction. A MANUAL pick of JustAnime after this stays on the unified
+  // direct surface instead (Retry + auto-fallback to the next server).
+  const animeSettledEmpty =
+    animeActive &&
+    animeDirect.attempted &&
+    !animeDirect.loading &&
+    animeDirect.links.length === 0 &&
+    !userPickedProviderRef.current;
+  // JustAnime ships per-episode intro/outro timestamps in its API — convert
+  // the head link's upstream segments into the native skip-button shape so we
+  // never consult introdb for anime (see VideoWebView gate).
+  const animeIntroSegments = React.useMemo(
+    () =>
+      isAnime && animeDirect.links.length > 0
+        ? introDbFromUpstream(
+            animeDirect.links[0]._meta,
+            curAnimeSeason ?? 1,
+            curAnimeEpisode ?? 1,
+          )
+        : null,
+    [isAnime, animeDirect.links, curAnimeSeason, curAnimeEpisode],
+  );
+  useEffect(() => {
+    console.log(
+      `[Anime][watch] ${type}/${id} cur=S${curAnimeSeason ?? "?"}E${curAnimeEpisode ?? "?"} isAnime=${isAnime} → ${animeResolved ? `malId=${animeResolved.malId} e${animeResolved.episode}` : "MISS"} provider=${activeDirectProvider ?? "none"} active=${animeActive ? "YES" : "no"} settledEmpty=${animeSettledEmpty ? "YES" : "no"}`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animeResolved, animeActive, animeSettledEmpty, activeDirectProvider]);
+
   const direct = useDirectStreamPipeline({
     id,
     type,
-    isDirectPlayback: isDirectPlayback && !!activeDirectProvider && providerReady,
-    provider: activeDirectProvider ?? undefined,
+    isDirectPlayback:
+      isDirectPlayback && !!activeDirectProvider && providerReady,
+    provider: isAnime ? undefined : (activeDirectProvider ?? undefined),
     languageAnswered,
     initialSeason: season,
     initialEpisode: episode,
@@ -234,12 +409,22 @@ export default function WatchScreen() {
   };
 
   // Remember which direct provider actually served this title — CW and the
-  // details page restore it on the next visit.
+  // details page restore it on the next visit. Anime served via JustAnime uses
+  // its own pipeline, so include its link count here.
   useEffect(() => {
     if (!isDirectPlayback || !id || !activeDirectProvider) return;
-    if (direct.links.length === 0) return;
+    const served = isAnime ? animeDirect.links.length : direct.links.length;
+    if (served === 0) return;
     saveLastProvider(type, id, activeDirectProvider).catch(() => {});
-  }, [isDirectPlayback, id, type, activeDirectProvider, direct.links.length]);
+  }, [
+    isDirectPlayback,
+    isAnime,
+    id,
+    type,
+    activeDirectProvider,
+    direct.links.length,
+    animeDirect.links.length,
+  ]);
 
   // Sync head provider when the chain head belongs to a different provider.
   // This covers: CW promoted a way2movies link, HDHub failed and fallback
@@ -327,7 +512,36 @@ export default function WatchScreen() {
         <ActivityIndicator size="large" color={colors.gold} />
       </BackdropGate>
     );
-  } else if (isDirectPlayback && activeDirectProvider && activeDirectProvider !== "falix") {
+  } else if (animeSettledEmpty) {
+    // JustAnime found no streams — drop to the dedicated anime embed (MegaPlay)
+    // so the user still gets a working player without touching the picker.
+    console.log(
+      `[Anime][watch] settledEmpty → megaplay embed fallback (malId=${animeResolved?.malId ?? "?"} e${animeResolved?.episode ?? "?"})`,
+    );
+    content = (
+      <VideoWebView
+        type={type}
+        id={id}
+        season={season}
+        episode={episode}
+        initialProvider="megaplay"
+        backdropUrl={backdropUrl}
+        isAnime={isAnime}
+        animeMalId={animeResolved ? animeResolved.malId : animeMalId}
+        animeAnilistId={
+          animeResolved ? animeResolved.anilistId : (animeAnilistId ?? null)
+        }
+        animeAudio={animeAudio}
+        onAnimeAudioChange={handleAnimeAudioChange}
+        onClose={() => nav.goBack({ fallback: "/(tabs)" })}
+        onDirectSelected={handleDirectSelected}
+      />
+    );
+  } else if (
+    isDirectPlayback &&
+    activeDirectProvider &&
+    activeDirectProvider !== "falix"
+  ) {
     if (!languageAnswered) {
       // First run — ask the user their preferred audio language before
       // ranking anything. The answer feeds the very first selection.
@@ -356,25 +570,43 @@ export default function WatchScreen() {
           initialProvider={activeDirectProvider}
           backdropUrl={backdropUrl}
           isAnime={isAnime}
-          animeMalId={animeMalId}
-          animeAnilistId={animeAnilistId}
+          animeMalId={animeResolved ? animeResolved.malId : animeMalId}
+          animeAnilistId={
+            animeResolved ? animeResolved.anilistId : (animeAnilistId ?? null)
+          }
           animeAudio={animeAudio}
+          onAnimeAudioChange={handleAnimeAudioChange}
           title={title}
           startAt={startAt}
           onClose={() => nav.goBack({ fallback: "/(tabs)" })}
           directStream={{
-            links: direct.links,
-            bestIndex: direct.bestIndex,
-            prevalidated: direct.prevalidated,
-            selectionReason: direct.selectionReason,
-            lastWorkingIndex: direct.lastWorkingIndex,
-            loading: direct.loading,
-            error: direct.error,
-            stageMessage: direct.stageMessage,
+            links: isAnime ? animeDirect.links : direct.links,
+            bestIndex: isAnime ? animeDirect.bestIndex : direct.bestIndex,
+            prevalidated: isAnime
+              ? animeDirect.prevalidated
+              : direct.prevalidated,
+            selectionReason: isAnime
+              ? animeDirect.selectionReason
+              : direct.selectionReason,
+            lastWorkingIndex: isAnime
+              ? animeDirect.lastWorkingIndex
+              : direct.lastWorkingIndex,
+            loading: isAnime ? animeDirect.loading : direct.loading,
+            error: isAnime ? animeDirect.error : direct.error,
+            stageMessage: isAnime
+              ? animeDirect.stageMessage
+              : direct.stageMessage,
           }}
           onDirectSelected={handleDirectSelected}
-          onDirectRetry={direct.refetch}
+          onDirectRetry={isAnime ? animeDirect.refetch : direct.refetch}
+          nativeIntroSegments={animeIntroSegments}
           onDirectEpisodeChange={(s, e) => {
+            // Anime episodes are MAL-resolved per TMDB (s, e) — just record the
+            // new position; the target re-resolves and the anime pipeline refetches.
+            if (isAnime) {
+              setAnimeEpOverride({ season: s, episode: e });
+              return;
+            }
             direct.setSeason(s);
             direct.setEpisode(e);
           }}
@@ -419,6 +651,7 @@ export default function WatchScreen() {
         animeMalId={animeMalId}
         animeAnilistId={animeAnilistId}
         animeAudio={animeAudio}
+        onAnimeAudioChange={handleAnimeAudioChange}
         onClose={() => nav.goBack({ fallback: "/(tabs)" })}
       />
     );
