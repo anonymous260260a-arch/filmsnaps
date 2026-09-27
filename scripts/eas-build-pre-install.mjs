@@ -35,4 +35,6 @@ if (existsSync(pnpmStoreDir)) {
   }
 }
 
-console.log("[eas-build-pre-install] cleared stale expo-video copies for a clean patch apply");
+console.log(
+  "[eas-build-pre-install] cleared stale expo-video copies for a clean patch apply",
+);
