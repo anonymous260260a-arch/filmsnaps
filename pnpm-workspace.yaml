@@ -8,3 +8,9 @@ allowBuilds:
   workerd: true
 patchedDependencies:
   expo-video@55.0.18: patches/expo-video@55.0.18.patch
+# node-linker=hoisted never records applied-patch state in .modules.yaml, so
+# every repeat install re-applies the patch in place over the already-patched
+# copy and hard-fails (ERR_PNPM_PATCH_FAILED) — locally and on EAS after the
+# first install. The re-apply failure is harmless (the copy is already
+# patched); ignore it so repeat installs succeed.
+ignorePatchFailures: true
