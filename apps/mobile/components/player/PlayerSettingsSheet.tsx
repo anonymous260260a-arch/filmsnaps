@@ -21,12 +21,14 @@ import {
   ScrollView,
   StyleSheet,
   useWindowDimensions,
+  Animated,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
 import { useSettings } from "../../lib/settings";
 import type { PlayerAdapter } from "./types";
 import { trackFeatureUsed } from "../../lib/telemetry";
+import { useBottomSheetEntrance } from "./useBottomSheetEntrance";
 
 interface PlayerSettingsSheetProps {
   visible: boolean;
@@ -97,6 +99,7 @@ export function PlayerSettingsSheet({
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
   const { settings, updateSetting } = useSettings();
+  const { mounted, backdrop, translateY } = useBottomSheetEntrance(visible);
 
   const handleSelectSpeed = (speed: number) => {
     onSelectSpeed(speed);
@@ -116,19 +119,21 @@ export function PlayerSettingsSheet({
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <TouchableOpacity
-        style={styles.overlay}
-        activeOpacity={1}
-        onPress={onClose}
-      >
-        <View
-          style={[styles.sheet, isLandscape && styles.sheetLandscape]}
+    <Modal visible={mounted} transparent onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <Animated.View style={[styles.backdrop, { opacity: backdrop }]}>
+          <TouchableOpacity
+            style={styles.backdropTouch}
+            activeOpacity={1}
+            onPress={onClose}
+          />
+        </Animated.View>
+        <Animated.View
+          style={[
+            styles.sheet,
+            isLandscape && styles.sheetLandscape,
+            { transform: [{ translateY }] },
+          ]}
           onStartShouldSetResponder={() => true}
         >
           {/* Header */}
@@ -305,8 +310,8 @@ export function PlayerSettingsSheet({
 
             <View style={styles.footerSpace} />
           </ScrollView>
-        </View>
-      </TouchableOpacity>
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
@@ -314,8 +319,14 @@ export function PlayerSettingsSheet({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.55)",
     justifyContent: "flex-end",
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  backdropTouch: {
+    flex: 1,
   },
   sheet: {
     backgroundColor: colors.bgElevated,

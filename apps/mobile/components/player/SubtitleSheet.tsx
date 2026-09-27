@@ -32,6 +32,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
+import { useBottomSheetEntrance } from "./useBottomSheetEntrance";
 import type { PlayerAdapter } from "./types";
 import {
   getSubtitleOffset,
@@ -62,6 +63,9 @@ import {
   mimeTypeForFormat,
   writeShiftedSubtitleFile,
 } from "../../lib/subtitleSync/applySync";
+
+/** Touchable that accepts Animated styles (translateY entrance). */
+const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
 
 interface SubtitleSheetProps {
   visible: boolean;
@@ -207,6 +211,7 @@ function SubtitleSheetInner({
   const [fineTuneOpen, setFineTuneOpen] = useState(false);
   const externalFileRef = React.useRef<Map<string, string>>(new Map());
   const autoExpandedOnline = useRef(false);
+  const { mounted, backdrop, translateY } = useBottomSheetEntrance(visible);
 
   useEffect(() => {
     if (!visible) return;
@@ -643,19 +648,21 @@ function SubtitleSheetInner({
   })();
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <TouchableOpacity
-        style={styles.overlay}
-        activeOpacity={1}
-        onPress={onClose}
-      >
-        <TouchableOpacity
-          style={[styles.sheet, isLandscape && styles.sheetLandscape]}
+    <Modal visible={mounted} transparent onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <Animated.View style={[styles.backdrop, { opacity: backdrop }]}>
+          <TouchableOpacity
+            style={styles.backdropTouch}
+            activeOpacity={1}
+            onPress={onClose}
+          />
+        </Animated.View>
+        <AnimatedTouchable
+          style={[
+            styles.sheet,
+            isLandscape && styles.sheetLandscape,
+            { transform: [{ translateY }] },
+          ]}
           activeOpacity={1}
           onPress={() => {}}
         >
@@ -936,8 +943,8 @@ function SubtitleSheetInner({
                 </View>
               )}
           </ScrollView>
-        </TouchableOpacity>
-      </TouchableOpacity>
+        </AnimatedTouchable>
+      </View>
     </Modal>
   );
 }
@@ -945,8 +952,14 @@ function SubtitleSheetInner({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
     justifyContent: "flex-end",
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  backdropTouch: {
+    flex: 1,
   },
   sheet: {
     backgroundColor: colors.bgElevated,

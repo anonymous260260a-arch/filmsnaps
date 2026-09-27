@@ -20,9 +20,11 @@ import {
   FlatList,
   StyleSheet,
   useWindowDimensions,
+  Animated,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
+import { useBottomSheetEntrance } from "./useBottomSheetEntrance";
 import {
   parseLinkLanguages,
   getLanguageSection,
@@ -144,6 +146,7 @@ export function StreamPickerSheet({
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
   const [languageFilter, setLanguageFilter] = useState<LanguageFilter>("all");
+  const { mounted, backdrop, translateY } = useBottomSheetEntrance(visible);
 
   // Diagnostic: what the source selector lists every time it opens.
   useEffect(() => {
@@ -231,18 +234,22 @@ export function StreamPickerSheet({
   }, [links, languageFilter, preferredLanguage, linkStatuses]);
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <TouchableOpacity
-        style={styles.overlay}
-        activeOpacity={1}
-        onPress={onClose}
-      >
-        <View style={[styles.sheet, isLandscape && styles.sheetLandscape]}>
+    <Modal visible={mounted} transparent onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <Animated.View style={[styles.backdrop, { opacity: backdrop }]}>
+          <TouchableOpacity
+            style={styles.backdropTouch}
+            activeOpacity={1}
+            onPress={onClose}
+          />
+        </Animated.View>
+        <Animated.View
+          style={[
+            styles.sheet,
+            isLandscape && styles.sheetLandscape,
+            { transform: [{ translateY }] },
+          ]}
+        >
           {/* Header — S2: match embed sheet title + subtitle */}
           <View style={styles.header}>
             <View style={styles.headerTitleWrap}>
@@ -441,8 +448,8 @@ export function StreamPickerSheet({
               </View>
             }
           />
-        </View>
-      </TouchableOpacity>
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
@@ -450,8 +457,14 @@ export function StreamPickerSheet({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
     justifyContent: "flex-end",
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  backdropTouch: {
+    flex: 1,
   },
   sheet: {
     backgroundColor: colors.bgElevated,
