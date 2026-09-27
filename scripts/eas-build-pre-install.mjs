@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+console.log(`[eas-build-pre-install] cwd=${process.cwd()} root=${repoRoot}`);
 
 const staleTargets = [
   "node_modules/expo-video",
