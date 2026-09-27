@@ -404,16 +404,14 @@ export function EpisodeRail({
             <FlatList
               ref={episodeListRef}
               data={episodes}
-              keyExtractor={(ep: any, index: number) =>
-                String(ep.id ?? index)
-              }
+              keyExtractor={(ep: any, index: number) => String(ep.id ?? index)}
               className="flex-1 px-4 pt-3"
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 24 }}
               initialNumToRender={10}
               maxToRenderPerBatch={8}
               windowSize={7}
-              removeClippedSubviews
+              removeClippedSubviews={false}
               getItemLayout={(_, index) => ({
                 length: EPISODE_ROW_HEIGHT,
                 offset: EPISODE_ROW_HEIGHT * index,

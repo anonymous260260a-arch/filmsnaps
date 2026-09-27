@@ -120,14 +120,16 @@ export function BackdropGate({
           contentFit="cover"
           blurRadius={12}
           style={StyleSheet.absoluteFill}
-          transition={200}
+          transition={0}
         />
       ) : null}
       <View
-        style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(7,7,8,0.72)" }]}
+        style={[
+          StyleSheet.absoluteFill,
+          { backgroundColor: "rgba(7,7,8,0.72)" },
+        ]}
       />
       {children}
     </View>
   );
 }
-

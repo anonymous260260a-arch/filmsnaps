@@ -387,7 +387,7 @@ export function PlayerHub({
                 initialNumToRender={8}
                 maxToRenderPerBatch={8}
                 windowSize={7}
-                removeClippedSubviews
+                removeClippedSubviews={false}
                 getItemLayout={(_, index) => ({
                   length: EPISODE_ROW_HEIGHT,
                   offset: EPISODE_ROW_HEIGHT * index,

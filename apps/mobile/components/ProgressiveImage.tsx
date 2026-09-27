@@ -4,12 +4,14 @@ import { Image, ImageContentFit } from "expo-image";
 import { colors } from "../theme/colors";
 
 /**
- * Cross-fading image wrapper with disk cache and blurhash placeholder.
+ * Image wrapper with disk cache and blurhash placeholder.
  *
  * - `expo-image` provides automatic memory + disk caching (`cachePolicy="memory-disk"`).
  *   TMDB image URLs are content-addressed (immutable per image), so indefinite
  *   disk caching is correct and safe — no TTL needed.
- * - 200ms crossfade transition from blurhash → loaded image.
+ * - No crossfade transition: expo-image 55 on Android can leave the view at
+ *   opacity 0 (black image) when a navigation transition interrupts the
+ *   cross-fade (fixed upstream in 56.0.10/56.0.11, not available on SDK 55).
  * - Dark placeholder background (#070708 default) eliminates white flash on initial render.
  *
  * Interface is identical to the old React Native `<Image>` wrapper, so all 11
@@ -38,7 +40,7 @@ export function ProgressiveImage({
         source={{ uri }}
         style={{ flex: 1, width: "100%", height: "100%" }}
         contentFit={contentFit}
-        transition={200}
+        transition={0}
         cachePolicy="memory-disk"
         blurRadius={blurRadius}
       />

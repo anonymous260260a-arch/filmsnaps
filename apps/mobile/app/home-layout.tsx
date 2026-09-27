@@ -308,7 +308,7 @@ export default function HomeLayoutScreen() {
           borderWidth: 0.5,
           borderColor: colors.border,
         }}
-        removeClippedSubviews
+        removeClippedSubviews={false}
         initialNumToRender={12}
         maxToRenderPerBatch={12}
         windowSize={7}

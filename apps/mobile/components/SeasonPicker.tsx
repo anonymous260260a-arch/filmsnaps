@@ -336,7 +336,7 @@ export function SeasonPicker({
             initialNumToRender={10}
             maxToRenderPerBatch={8}
             windowSize={7}
-            removeClippedSubviews
+            removeClippedSubviews={false}
             getItemLayout={(_, index) => ({
               length: EPISODE_ROW_HEIGHT,
               offset: (EPISODE_ROW_HEIGHT + 8) * index,
@@ -360,7 +360,9 @@ export function SeasonPicker({
                   onPress={() => {
                     const base = `/watch/tv/${tmdbId}/${selectedSeason}/${epNum}`;
                     const qs =
-                      progress && progress.percent > 0 && progress.percent < 0.95
+                      progress &&
+                      progress.percent > 0 &&
+                      progress.percent < 0.95
                         ? `?t=${Math.floor(progress.currentTime)}&backdrop=${backdropPath || ""}`
                         : `?backdrop=${backdropPath || ""}`;
                     nav.push(`${base}${qs}`);
@@ -377,169 +379,169 @@ export function SeasonPicker({
                     borderColor: colors.borderSubtle,
                   }}
                 >
-                {/* 16:9 Thumbnail container */}
-                <View
-                  style={{
-                    width: THUMB_W,
-                    height: THUMB_H,
-                    borderRadius: 8,
-                    overflow: "hidden",
-                    backgroundColor: colors.bgElevated,
-                    position: "relative",
-                  }}
-                >
-                  {stillUri ? (
-                    <ProgressiveImage
-                      uri={stillUri}
-                      style={{
-                        width: THUMB_W,
-                        height: THUMB_H,
-                        borderRadius: 8,
-                      }}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <View
-                      style={{
-                        width: THUMB_W,
-                        height: THUMB_H,
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <Ionicons
-                        name="tv-outline"
-                        size={16}
-                        color={colors.textTertiary}
+                  {/* 16:9 Thumbnail container */}
+                  <View
+                    style={{
+                      width: THUMB_W,
+                      height: THUMB_H,
+                      borderRadius: 8,
+                      overflow: "hidden",
+                      backgroundColor: colors.bgElevated,
+                      position: "relative",
+                    }}
+                  >
+                    {stillUri ? (
+                      <ProgressiveImage
+                        uri={stillUri}
+                        style={{
+                          width: THUMB_W,
+                          height: THUMB_H,
+                          borderRadius: 8,
+                        }}
+                        resizeMode="cover"
                       />
-                    </View>
-                  )}
-
-                  {/* Progress bar at bottom of thumbnail */}
-                  {progress && progress.percent > 0 && (
-                    <View
-                      style={{
-                        position: "absolute",
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: 2.5,
-                        backgroundColor: "rgba(0,0,0,0.6)",
-                      }}
-                    >
+                    ) : (
                       <View
                         style={{
-                          width: `${Math.round(progress.percent * 100)}%`,
-                          height: "100%",
-                          backgroundColor:
-                            progress.percent >= 0.95
-                              ? colors.successGreen
-                              : colors.gold,
+                          width: THUMB_W,
+                          height: THUMB_H,
+                          alignItems: "center",
+                          justifyContent: "center",
                         }}
-                      />
-                    </View>
-                  )}
-                </View>
+                      >
+                        <Ionicons
+                          name="tv-outline"
+                          size={16}
+                          color={colors.textTertiary}
+                        />
+                      </View>
+                    )}
 
-                {/* Episode info */}
-                <View className="flex-1 ml-3 justify-center">
-                  <Text
-                    style={{
-                      fontSize: 10,
-                      fontFamily: "Inter_600SemiBold",
-                      color: colors.gold,
-                      letterSpacing: 0.5,
-                    }}
-                  >
-                    EPISODE {epNum}
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      fontFamily: "Inter_600SemiBold",
-                      color: colors.textPrimary,
-                      marginTop: 2,
-                    }}
-                    numberOfLines={1}
-                  >
-                    {episode.name || `Episode ${epNum}`}
-                  </Text>
+                    {/* Progress bar at bottom of thumbnail */}
+                    {progress && progress.percent > 0 && (
+                      <View
+                        style={{
+                          position: "absolute",
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          height: 2.5,
+                          backgroundColor: "rgba(0,0,0,0.6)",
+                        }}
+                      >
+                        <View
+                          style={{
+                            width: `${Math.round(progress.percent * 100)}%`,
+                            height: "100%",
+                            backgroundColor:
+                              progress.percent >= 0.95
+                                ? colors.successGreen
+                                : colors.gold,
+                          }}
+                        />
+                      </View>
+                    )}
+                  </View>
 
-                  {episode.runtime ? (
+                  {/* Episode info */}
+                  <View className="flex-1 ml-3 justify-center">
                     <Text
                       style={{
                         fontSize: 10,
-                        color: colors.textTertiary,
-                        fontFamily: "Inter_400Regular",
+                        fontFamily: "Inter_600SemiBold",
+                        color: colors.gold,
+                        letterSpacing: 0.5,
+                      }}
+                    >
+                      EPISODE {epNum}
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: 13,
+                        fontFamily: "Inter_600SemiBold",
+                        color: colors.textPrimary,
                         marginTop: 2,
                       }}
+                      numberOfLines={1}
                     >
-                      {formatRuntime(episode.runtime)}
+                      {episode.name || `Episode ${epNum}`}
                     </Text>
-                  ) : null}
-                </View>
 
-                {/* Actions: Download */}
-                <View
-                  className="flex-row items-center"
-                  style={{ marginLeft: 6 }}
-                >
-                  {dlStatus === "completed" ? (
-                    <View
-                      style={{
-                        width: 32,
-                        height: 32,
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <Ionicons
-                        name="checkmark-circle"
-                        size={18}
-                        color={colors.successGreen}
-                      />
-                    </View>
-                  ) : dlStatus === "downloading" || dlStatus === "pending" ? (
-                    <View
-                      style={{
-                        width: 32,
-                        height: 32,
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <Ionicons
-                        name="cloud-download"
-                        size={16}
-                        color={colors.gold}
-                      />
-                    </View>
-                  ) : (
-                    <TouchableOpacity
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        handleEpisodeDownload(epNum);
-                      }}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      accessibilityLabel={`Download episode ${epNum}`}
-                      style={{
-                        width: 32,
-                        height: 32,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        borderRadius: 16,
-                        backgroundColor: "rgba(255,255,255,0.06)",
-                      }}
-                    >
-                      <Ionicons
-                        name="download-outline"
-                        size={15}
-                        color={colors.textSecondary}
-                      />
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </TouchableOpacity>
+                    {episode.runtime ? (
+                      <Text
+                        style={{
+                          fontSize: 10,
+                          color: colors.textTertiary,
+                          fontFamily: "Inter_400Regular",
+                          marginTop: 2,
+                        }}
+                      >
+                        {formatRuntime(episode.runtime)}
+                      </Text>
+                    ) : null}
+                  </View>
+
+                  {/* Actions: Download */}
+                  <View
+                    className="flex-row items-center"
+                    style={{ marginLeft: 6 }}
+                  >
+                    {dlStatus === "completed" ? (
+                      <View
+                        style={{
+                          width: 32,
+                          height: 32,
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <Ionicons
+                          name="checkmark-circle"
+                          size={18}
+                          color={colors.successGreen}
+                        />
+                      </View>
+                    ) : dlStatus === "downloading" || dlStatus === "pending" ? (
+                      <View
+                        style={{
+                          width: 32,
+                          height: 32,
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <Ionicons
+                          name="cloud-download"
+                          size={16}
+                          color={colors.gold}
+                        />
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          handleEpisodeDownload(epNum);
+                        }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityLabel={`Download episode ${epNum}`}
+                        style={{
+                          width: 32,
+                          height: 32,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          borderRadius: 16,
+                          backgroundColor: "rgba(255,255,255,0.06)",
+                        }}
+                      >
+                        <Ionicons
+                          name="download-outline"
+                          size={15}
+                          color={colors.textSecondary}
+                        />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </TouchableOpacity>
               );
             }}
           />
