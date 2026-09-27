@@ -135,6 +135,10 @@ export const GRANDFATHER_LEGACY_ANALYTICS = false;
 
 // ── Single lazy preload ──
 
+// Module-level "last known settings". Seeded by the single preload read and
+// kept fresh by every write below, so a SettingsProvider REMOUNT in the same
+// JS runtime (Android activity recreation with the process kept alive) always
+// initializes from the latest values — never a stale pre-accept snapshot.
 let preloadedSettings: AppSettings | null = null;
 let preloadDone = false;
 let preloadStarted = false;
@@ -325,6 +329,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       const prev = settingsRef.current;
       const next = { ...prev, [key]: value };
       settingsRef.current = next;
+      preloadedSettings = next;
       setSettings(next);
       const logLegalTransition =
         key === "legalAccepted" && !!value && !prev.legalAccepted;
@@ -335,6 +340,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
   const resetSettings = useCallback(async () => {
     settingsRef.current = DEFAULT_SETTINGS;
+    preloadedSettings = DEFAULT_SETTINGS;
     setSettings(DEFAULT_SETTINGS);
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS));
