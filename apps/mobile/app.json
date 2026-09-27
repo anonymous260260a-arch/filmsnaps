@@ -2,7 +2,7 @@
   "expo": {
     "name": "FilmSnaps",
     "slug": "filmsnaps",
-    "version": "2.2.1",
+    "version": "2.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "filmsnaps",
@@ -74,6 +74,6 @@
       },
       "feedbackUrl": "https://filmsnaps-feedback.anonymous260260a.workers.dev"
     },
-    "runtimeVersion": "61.0.0"
+    "runtimeVersion": "62.0.0"
   }
 }

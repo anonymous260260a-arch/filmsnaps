@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "2.3.0",
+      "date": "2026-09-27",
+      "releaseNotes": "Anime goes direct: watch anime through the new JustAnime source streamed straight to your device — sub and dub tracks with built-in subtitles, smart server ranking that picks the fastest working source, and automatic fallback when one fails. Player redesign: a new episode panel that jumps straight to the episode you're watching, a YouTube-style progress bar with tap-to-seek and precise drag scrubbing, a screen-fit setting, and cleaner controls in landscape. Fixes: the next episode now resumes at the right timestamp instead of the previous episode's end, seeking stays accurate, and sheets open and close with smooth animations.",
+      "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.3.0/filmsnaps-v2.3.0.apk",
+      "size": "~125 MB"
+    },
+    {
       "version": "2.2.1",
       "date": "2026-09-13",
       "releaseNotes": "Stream stability fixes: playback recovers automatically when a source dies mid-stream, server switching no longer hangs on slow sources, and the Falix fallback now kicks in reliably when direct sources fail. Progress bar fixes: seeking stays accurate on HEVC and MKV streams — the scrubber no longer jumps or stalls near the end, and buffered-range display matches real playback position. Smarter sources: faster stream validation with fewer falsely-dead servers, better next-episode prefetch, and improved source switching when your pick fails. Anime feeds now fall back across four providers automatically if one goes down.",
