@@ -165,8 +165,10 @@ export function EventTrend({ daily, onPick }: EventTrendProps) {
                 fill={getColor(series)}
                 fillOpacity={0.45}
                 activeDot={{
-                  onClick: (e, payload) => {
-                    const eventDate = payload?.payload?.date;
+                  onClick: (event) => {
+                    const eventDate = (
+                      event as unknown as { payload?: { date?: string } }
+                    ).payload?.date;
                     if (eventDate && series !== "other") {
                       onPick(series, eventDate);
                     }
