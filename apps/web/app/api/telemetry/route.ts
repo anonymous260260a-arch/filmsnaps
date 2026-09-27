@@ -44,6 +44,8 @@ const EVENT_DIMS: Record<string, readonly string[]> = {
     "gaveUp",
     "qualityBucket",
     "capBucket",
+    "watchedPctBucket",
+    "resumeCorrection",
   ],
   provider_switch: ["from", "to", "reason"],
   app_launch: [
@@ -53,27 +55,15 @@ const EVENT_DIMS: Record<string, readonly string[]> = {
     "prefAudioLang",
     "otaApplied",
   ],
-  buffer_stall: [
-    "positionMs",
-    "durationMs",
-    "providerId",
-    "mediaType",
-    "prefAudioLang",
-  ],
+  buffer_stall: ["positionMs", "durationMs", "providerId", "mediaType"],
   player_start: [
     "outcome",
     "intentToFirstFrameMs",
     "providerId",
     "mediaType",
-    "prefAudioLang",
+    "seekLatencyMs",
   ],
-  player_error: [
-    "errorClass",
-    "surface",
-    "providerId",
-    "mediaType",
-    "prefAudioLang",
-  ],
+  player_error: ["errorClass", "surface", "providerId", "mediaType"],
   screen_view: ["screen"],
   search_performed: [
     "queryLengthBucket",
@@ -84,7 +74,13 @@ const EVENT_DIMS: Record<string, readonly string[]> = {
     "mode",
     "retriedAfterFail",
   ],
-  session_end: ["durationMs", "eventCount", "providerSwitches", "prefAudioLang"],
+  session_end: [
+    "durationMs",
+    "eventCount",
+    "providerSwitches",
+    "prefAudioLang",
+    "lastScreen",
+  ],
   download_event: [
     "stage",
     "provider",
@@ -92,7 +88,10 @@ const EVENT_DIMS: Record<string, readonly string[]> = {
     "failureClass",
     "mediaType",
   ],
-  feature_used: ["feature", "context"],
+  feature_used: ["feature", "context", "fromTab", "surface"],
+  exit_during_switch: ["surface", "switchKind"],
+  seek_latency: ["latencyMs", "kind", "providerId", "mediaType"],
+  watch_opened: ["surface"],
   network_speed: ["mbpsBucket", "connectionClass", "latencyBucket"],
   boundary_error: ["errorClass"],
 };
@@ -141,7 +140,9 @@ function sanitizeEvent(raw: unknown): Record<string, unknown> | null {
     typeof e.deviceTier === "string" ? e.deviceTier.slice(0, 16) : "unknown";
 
   const rawDims =
-    e.dims && typeof e.dims === "object" ? (e.dims as Record<string, unknown>) : {};
+    e.dims && typeof e.dims === "object"
+      ? (e.dims as Record<string, unknown>)
+      : {};
   const dims: Record<string, string | number | boolean> = {};
   let n = 0;
   for (const key of allow) {
