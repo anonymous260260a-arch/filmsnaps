@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Dimensions,
+  useWindowDimensions,
   Animated,
   Platform,
   Modal,
@@ -68,6 +69,7 @@ import { PlayerControlOverlay } from "./player/PlayerControlOverlay";
 import { EpisodeRail } from "./player/EpisodeRail";
 import { ServerPickerSheet } from "./player/ServerPickerSheet";
 import { ServerNotes } from "./player/ServerNotes";
+import { PlayerHub } from "./player/PlayerHub";
 import { HevcPlayer } from "./HevcPlayer";
 import type { VideoPlayer } from "expo-video";
 import type { StreamLink } from "./player/streamTypes";
@@ -646,8 +648,12 @@ export function VideoWebView({
   const { settings, updateSetting } = useSettings();
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
-  const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } =
-    Dimensions.get("window");
+  const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = useWindowDimensions();
+  // Physically landscape (rotation without the fullscreen button): the
+  // 50%-of-height box would be ~180px — SHORTER than the player chrome —
+  // so the progress bar overflowed past the screen. Landscape always gets
+  // the full-height box.
+  const isPhysicalLandscape = SCREEN_WIDTH > SCREEN_HEIGHT;
   const webViewRef = useRef<PlayerWebViewRef>(null);
   // Ad-suppression spray (expert V4 §4A): timers for the onLoadingStart
   // re-injection retries. The bundle's boot guard makes re-injection
@@ -663,9 +669,31 @@ export function VideoWebView({
     currentTime: number;
     duration: number;
     percent: number;
-  }>({ currentTime: 0, duration: 0, percent: 0 });
+    /** Episode identity the position belongs to — save guards compare it. */
+    episodeKey: string;
+  }>({
+    currentTime: 0,
+    duration: 0,
+    percent: 0,
+    episodeKey: buildEpisodeKey(type, id, season ?? 1, episode ?? 1),
+  });
   const startAtRef = useRef<number>(0);
-  const [startAtTime, setStartAtTime] = useState<number>(0);
+  /**
+   * Per-episode seeded resume, KEYED by episode. In the window between an
+   * episode flip and its async getProgress seed resolving, the previous
+   * episode's value is still in state — consumers must check the key or the
+   * new episode gets seeked to the old one's timestamp (the "next episode
+   * races to its end" bug: fetch/cache can beat the seed read).
+   */
+  const [startAtSeed, setStartAtSeed] = useState<{
+    key: string;
+    seconds: number;
+  }>(() => ({
+    key: buildEpisodeKey(type, id, season ?? 1, episode ?? 1),
+    seconds: 0,
+  }));
+  /** Episode whose seed ran — lets the effect drop the carried seek early. */
+  const seededEpKeyRef = useRef<string | null>(null);
   /**
    * The URL-param `startAt` (startAtProp) is only meaningful for the episode
    * the watch page was OPENED with. Once the per-episode seed effect has run
@@ -1086,6 +1114,16 @@ export function VideoWebView({
   const [showEpPicker, setShowEpPicker] = useState(false);
   // FIX 6: EpisodeRail mounts on first open only.
   const [epRailMounted, setEpRailMounted] = useState(false);
+  // HEVC source inspection API (registered by HevcPlayer) — powers the hub's
+  // Sources tab (list + select) without duplicating player state here.
+  const [directSourceApi, setDirectSourceApi] = useState<{
+    getLinks: () => any[];
+    getActiveIndex: () => number;
+    getStatuses: () => Record<number, any>;
+    getRecommendedIndex: () => number;
+    getLastUsedIndex: () => number | undefined;
+    select: (index: number) => void;
+  } | null>(null);
   const openEpPicker = useCallback(() => {
     setEpRailMounted(true);
     setShowEpPicker(true);
@@ -1175,6 +1213,20 @@ export function VideoWebView({
     [type, id, currentSeason, currentEpisode],
   );
 
+  /**
+   * startAt actually handed to the native player: ONLY a seed belonging to
+   * the currently selected episode may cross the boundary — otherwise pass 0
+   * instead of seeking the new episode to the old one's timestamp.
+   */
+  const startAtForPlayer =
+    startAtSeed.key === episodeKey
+      ? startAtSeed.seconds > 0
+        ? startAtSeed.seconds
+        : startAtPropUsedRef.current
+          ? 0
+          : startAtProp
+      : 0;
+
   // ── Auto-resume on OPEN (mount only) ──
   // When the show first opens, land the user on the most-relevant episode
   // (the one getResumePoint picks — last watched / next after a completed one).
@@ -1224,6 +1276,16 @@ export function VideoWebView({
   // from 0). engine.setEpisode also opens a 10 s settle window for
   // resume:'none' providers so an unpredictable self-resume can't fight us.
   useEffect(() => {
+    // Episode changed → zero the carried seek IMMEDIATELY (before the async
+    // read below) so an embed injection racing this seed can never consume
+    // the previous episode's position (startAtRef feeds cf:content-ready).
+    if (
+      seededEpKeyRef.current !== null &&
+      seededEpKeyRef.current !== episodeKey
+    ) {
+      startAtRef.current = 0;
+    }
+    seededEpKeyRef.current = episodeKey;
     let cancelled = false;
     (async () => {
       try {
@@ -1253,7 +1315,7 @@ export function VideoWebView({
         ) {
           resumeSeconds = resume.currentTime;
           startAtRef.current = resumeSeconds;
-          setStartAtTime(resumeSeconds);
+          setStartAtSeed({ key: episodeKey, seconds: resumeSeconds });
           const mins = Math.floor(resumeSeconds / 60);
           const secs = Math.floor(resumeSeconds % 60);
           setResumeChipText(
@@ -1267,7 +1329,7 @@ export function VideoWebView({
           // ep 2" bug).
           resumeSeconds = 0;
           startAtRef.current = 0;
-          setStartAtTime(0);
+          setStartAtSeed({ key: episodeKey, seconds: 0 });
         }
         // (Re)create the engine state for this episode with the resume point.
         // From here on the URL-param startAt is retired for this session —
@@ -1485,7 +1547,10 @@ export function VideoWebView({
   const watchUrl = useMemo(() => {
     if (isDirect) return ""; // native player — no embed URL
     if (!currentProvider) return "";
-    const startAt = startAtTime > 0 ? startAtTime : undefined;
+    const startAt =
+      startAtSeed.key === episodeKey && startAtSeed.seconds > 0
+        ? startAtSeed.seconds
+        : undefined;
     const isAnimeProvider = isAnime && currentProvider.animeOnly;
     // MegaPlay is MAL/AniList-keyed with a MAL-relative episode; other anime
     // providers (nxsha) are TMDB-keyed, so they take the raw TMDB id/episode.
@@ -1521,7 +1586,8 @@ export function VideoWebView({
     id,
     currentSeason,
     currentEpisode,
-    startAtTime,
+    startAtSeed,
+    episodeKey,
     animeResolved,
     audio,
   ]);
@@ -1726,7 +1792,9 @@ export function VideoWebView({
     restorePortrait();
     const prog = progressRef.current;
 
-    if (prog.currentTime > 5) {
+    // Identity guard: right after an episode flip progressRef still describes
+    // the PREVIOUS episode — never persist it under the new episode's key.
+    if (prog.episodeKey === episodeKey && prog.currentTime > 5) {
       saveProgress({
         tmdbId: id,
         mediaType: type,
@@ -1751,6 +1819,7 @@ export function VideoWebView({
     isTV,
     currentSeason,
     currentEpisode,
+    episodeKey,
   ]);
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Periodic force-save (every 10s) Ã¢â€â‚¬Ã¢â€â‚¬
@@ -1758,7 +1827,7 @@ export function VideoWebView({
     const intervalId = setInterval(() => {
       const prog = progressRef.current;
 
-      if (prog.currentTime > 5) {
+      if (prog.episodeKey === episodeKey && prog.currentTime > 5) {
         saveProgress({
           tmdbId: id,
           mediaType: type,
@@ -1775,14 +1844,14 @@ export function VideoWebView({
       }
     }, 10000);
     return () => clearInterval(intervalId);
-  }, [id, type, providerId, isTV, currentSeason, currentEpisode]);
+  }, [id, type, providerId, isTV, currentSeason, currentEpisode, episodeKey]);
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Save progress on app background (user switches apps, receives call) Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "background" || state === "inactive") {
         const prog = progressRef.current;
-        if (prog.currentTime > 5) {
+        if (prog.episodeKey === episodeKey && prog.currentTime > 5) {
           saveProgress({
             tmdbId: id,
             mediaType: type,
@@ -1800,7 +1869,16 @@ export function VideoWebView({
       }
     });
     return () => sub.remove();
-  }, [id, type, isAnime, providerId, isTV, currentSeason, currentEpisode]);
+  }, [
+    id,
+    type,
+    isAnime,
+    providerId,
+    isTV,
+    currentSeason,
+    currentEpisode,
+    episodeKey,
+  ]);
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Save progress on unmount Ã¢â€â‚¬Ã¢â€â‚¬
   const unmountSavedRef = useRef(false);
@@ -1814,7 +1892,7 @@ export function VideoWebView({
       unmountSavedRef.current = true;
       const prog = progressRef.current;
 
-      if (prog.currentTime > 5) {
+      if (prog.episodeKey === episodeKey && prog.currentTime > 5) {
         saveProgress({
           tmdbId: id,
           mediaType: type,
@@ -1830,7 +1908,16 @@ export function VideoWebView({
         }).catch((err: unknown) => console.warn("Unmount save failed", err));
       }
     };
-  }, [id, type, isAnime, providerId, isTV, currentSeason, currentEpisode]);
+  }, [
+    id,
+    type,
+    isAnime,
+    providerId,
+    isTV,
+    currentSeason,
+    currentEpisode,
+    episodeKey,
+  ]);
 
   // ── Next-Episode button: now event-driven from the PlaybackEngine (see
   // updateOverlaysFromEngine). The old 2 s poll is removed — the engine only
@@ -1896,7 +1983,7 @@ export function VideoWebView({
     const latestTime = (progressRef.current as any).currentTime ?? 0;
     if (latestTime > 5) {
       startAtRef.current = latestTime;
-      setStartAtTime(latestTime);
+      setStartAtSeed({ key: episodeKey, seconds: latestTime });
     }
 
     // clearAllState is no longer needed â€” native destroys old WebView.
@@ -2024,17 +2111,27 @@ export function VideoWebView({
       currentTime: state.currentTime,
       duration: state.duration,
       percent: state.percent,
+      episodeKey: state.episodeKey,
     };
 
     const provider = providerRef.current;
     const isTV = typeRef.current === "tv";
     const id = idRef.current;
+    // Identity guard — in the flip→seed window the engine state still
+    // describes the PREVIOUS episode; never persist it under the new key.
+    const currentKey = buildEpisodeKey(
+      typeRef.current,
+      idRef.current,
+      seasonRef.current,
+      episodeRef.current,
+    );
 
     // (2) Throttled save (replaces the per-message applyProgress save path).
     const now = Date.now();
     const pctDiff = state.percent - lastSavePctRef.current;
     const threshold = state.percent > 0.9 ? 0.02 : 0.05;
     if (
+      state.episodeKey === currentKey &&
       state.currentTime > 5 &&
       (pctDiff >= threshold || state.percent >= 0.95) &&
       now - lastSaveAtRef.current > 3000
@@ -2055,7 +2152,12 @@ export function VideoWebView({
         completed: state.percent >= 0.95,
       }).catch(() => {});
     }
-    if (isTV && prevPctRef.current < 0.95 && state.percent >= 0.95) {
+    if (
+      state.episodeKey === currentKey &&
+      isTV &&
+      prevPctRef.current < 0.95 &&
+      state.percent >= 0.95
+    ) {
       markCompleted(
         id,
         "tv",
@@ -2248,9 +2350,11 @@ export function VideoWebView({
   return (
     <View className="flex-1 bg-black">
       {/* ── Controls overlay — same top bar / source pill for every provider.
-          Suppressed when direct provider (HEVC) is in fullscreen mode so
-          HevcPlayer's native YouTube-style controls overlay takes over cleanly. ── */}
-      {!(isDirect && directFullscreen) && (
+          Direct provider (HEVC): fully suppressed — HevcPlayer's native
+          PlayerOverlay owns ALL chrome (close, fullscreen, source, audio,
+          subs) in both portrait and fullscreen, so there is exactly one
+          control layer over the direct player. ── */}
+      {!isDirect && (
         <PlayerControlOverlay
           isFullscreen={isDirect ? directFullscreen : isFullscreen}
           isTV={isTV}
@@ -2410,23 +2514,36 @@ export function VideoWebView({
       {/* ── Player area ── */}
       <View
         style={
-          isDirect && directFullscreen
+          (isDirect && directFullscreen) || isPhysicalLandscape
             ? { flex: 1 }
             : !isFullscreen
               ? {
+                  // Direct/nxsha: portrait window, flush to the top. FIXED
+                  // 50% of screen — the video letterboxes inside it, so the
+                  // box never resizes on load or rotation (no jump).
+                  // SCREEN_* come from useWindowDimensions() → rotation-reactive.
                   height:
                     providerId === "nxsha" || isDirect
-                      ? SCREEN_HEIGHT * 0.38
+                      ? SCREEN_HEIGHT * 0.5
                       : SCREEN_HEIGHT * 0.68,
                   justifyContent: "center",
-                  marginTop: insets.top + 40,
+                  // Direct: flush to the very top (YouTube-style) — the video
+                  // extends under the status bar; its overlay handles insets.
+                  marginTop: isDirect ? 0 : insets.top + 40,
                 }
               : { flex: 1 }
         }
       >
         {isDirect ? (
-          /* ── Direct (native) player — no WebView, no security waterfall ── */
-          directStream?.loading ? (
+          /* ── Direct (native) player — no WebView, no security waterfall ──
+             Loading precedence is preserved, but an EMPTY, error-less state
+             is "still connecting" (pipeline not started yet / in flight) —
+             never the red error card. Only a set `error` shows the card, so
+             the "No streams available" flash before "Contacting …" is gone. */
+          directStream?.loading ||
+          (directStream &&
+            !directStream.error &&
+            directStream.links.length === 0) ? (
             <View className="flex-1 items-center justify-center">
               <ActivityIndicator size="large" color={colors.gold} />
               <Text
@@ -2460,8 +2577,7 @@ export function VideoWebView({
                 </TouchableOpacity>
               )}
             </View>
-          ) : directStream &&
-            (directStream.error || directStream.links.length === 0) ? (
+          ) : directStream?.error ? (
             <View className="flex-1 items-center justify-center px-8">
               <View
                 className="w-16 h-16 rounded-2xl items-center justify-center mb-5 border"
@@ -2522,7 +2638,7 @@ export function VideoWebView({
                 </TouchableOpacity>
               </View>
             </View>
-          ) : directStream ? (
+          ) : directStream && directStream.links.length > 0 ? (
             <HevcPlayer
               links={directStream.links}
               defaultIndex={directStream.bestIndex}
@@ -2540,13 +2656,7 @@ export function VideoWebView({
               season={isTV ? currentSeason : undefined}
               episode={isTV ? currentEpisode : undefined}
               isAnime={isAnime}
-              startAt={
-                startAtTime > 0
-                  ? startAtTime
-                  : startAtPropUsedRef.current
-                    ? 0
-                    : startAtProp
-              }
+              startAt={startAtForPlayer}
               introSegments={isTV ? introSegments : null}
               nextEpisode={isTV ? directNextEp : null}
               onNextEpisode={(s, e) => {
@@ -2558,6 +2668,7 @@ export function VideoWebView({
               }}
               onFullscreenChange={applyDirectFullscreen}
               externalFullscreen={directFullscreen}
+              onRegisterSourceApi={setDirectSourceApi}
               onClose={handleClose}
               onExhausted={tryNextProvider}
               onTryProvider={openServerPicker}
@@ -3079,12 +3190,31 @@ export function VideoWebView({
         )}
       </View>
 
-      {/* Per-server usage notes (hidden in fullscreen; none for the direct provider) */}
-      {!isFullscreen && !directFullscreen && settings.showServerNotes && (
-        <ServerNotes
-          providerId={providerId}
-          show={!isFullscreen}
-          onDismiss={() => updateSetting("showServerNotes", false)}
+      {/* ── Tabbed hub below the direct player (portrait): Episodes + Servers ──
+          Page-level chrome only — the HEVC stream/source selector stays in
+          the player chrome. Hidden in fullscreen, in landscape (the box needs
+          the full screen height there — a hub below it left a box shorter
+          than the player chrome and clipped the timeline) and for embed
+          providers (which keep their own sheets/notes layout). */}
+      {isDirect && !directFullscreen && !isPhysicalLandscape && (
+        <PlayerHub
+          showEpisodes={isTV}
+          tvId={isTV ? id : null}
+          currentSeason={currentSeason}
+          currentEpisode={currentEpisode}
+          onSelectEpisode={(s, e) => {
+            if (s !== currentSeason || e !== currentEpisode) {
+              setCurrentSeason(s);
+              setCurrentEpisode(e);
+              onDirectEpisodeChange?.(s, e);
+            }
+          }}
+          providers={providers}
+          currentProviderId={providerId}
+          getProviderName={getProviderDisplayName}
+          onSelectProvider={switchProvider}
+          directActive={isDirect}
+          sourceApi={directSourceApi}
         />
       )}
     </View>

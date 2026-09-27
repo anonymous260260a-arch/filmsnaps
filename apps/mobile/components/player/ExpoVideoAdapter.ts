@@ -95,7 +95,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
         // No frames exist before the source is actually open — suppress
         // pre-ready positions (e.g. the preset resume point while still
         // loading) so a dead source can never look like one that plays.
-        if (this.player.status !== "readyToPlay") return;
+        if (this.player?.status !== "readyToPlay") return;
         const time = Number.isFinite(update.currentTime)
           ? Math.max(0, update.currentTime)
           : 0;
@@ -106,8 +106,8 @@ export class ExpoVideoAdapter implements PlayerAdapter {
           // means the seek has resolved only if it satisfies isSeekResolved(time).
           // Suppresses transient 0s, 0.14s, 0.17s pre-seek residue while buffering.
           if (
-            this.player.status === "readyToPlay" &&
-            this.player.playing &&
+            this.player?.status === "readyToPlay" &&
+            this.player?.playing &&
             this.isSeekResolved(time)
           ) {
             this._isSeeking = false;
@@ -177,23 +177,26 @@ export class ExpoVideoAdapter implements PlayerAdapter {
         if (
           status.status === "readyToPlay" &&
           !this._isSeeking &&
-          Number.isFinite(this.player.currentTime) &&
-          this.player.currentTime > 0
+          Number.isFinite(this.player?.currentTime) &&
+          this.player?.currentTime > 0
         ) {
-          const time = this.player.currentTime;
+          const time = this.player?.currentTime;
           const dur = this.getDuration();
           this.timeListeners.forEach((l) => l(time, dur));
         }
 
         // Track if metadata is available (duration > 0 means metadata parsed)
-        if (Number.isFinite(this.player.duration) && this.player.duration > 0) {
+        if (
+          Number.isFinite(this.player?.duration) &&
+          this.player?.duration > 0
+        ) {
           this.metadataLoaded = true;
         }
 
         // Track progress (currentTime > 0 means frames are decoding)
         if (
-          Number.isFinite(this.player.currentTime) &&
-          this.player.currentTime > 0
+          Number.isFinite(this.player?.currentTime) &&
+          this.player?.currentTime > 0
         ) {
           this.lastProgressTime = Date.now();
         }
@@ -206,8 +209,8 @@ export class ExpoVideoAdapter implements PlayerAdapter {
           this.lastProgressTime = Date.now();
 
           const dur = this.getDuration();
-          const time = Number.isFinite(this.player.currentTime)
-            ? Math.max(0, this.player.currentTime)
+          const time = Number.isFinite(this.player?.currentTime)
+            ? Math.max(0, this.player?.currentTime)
             : 0;
 
           if (dur > 0) {
@@ -294,8 +297,8 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       if (this.destroyed) return;
 
       const dur = this.getDuration();
-      const time = Number.isFinite(this.player.currentTime)
-        ? Math.max(0, this.player.currentTime)
+      const time = Number.isFinite(this.player?.currentTime)
+        ? Math.max(0, this.player?.currentTime)
         : 0;
 
       // Sync duration & progress if player is now populated
@@ -325,7 +328,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
         this.errorListeners.forEach((l) => l(currentErr));
       }
 
-      const status = this.player.status;
+      const status = this.player?.status;
 
       // Watchdog timeout for dead or stalling connections (hung sockets / throttled mirrors)
       // 1. If probe-validated, allow 10s for heavy container headers before fallback.
@@ -335,7 +338,8 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       if (status === "loading") {
         if (
           !this.metadataLoaded &&
-          (!Number.isFinite(this.player.duration) || this.player.duration <= 0)
+          (!Number.isFinite(this.player?.duration) ||
+            this.player?.duration <= 0)
         ) {
           if (this.stuckSince === 0) {
             this.stuckSince = Date.now();
@@ -372,8 +376,8 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       const dur = this.getDuration();
       if (dur > 0) {
         this.metadataLoaded = true;
-        const time = Number.isFinite(this.player.currentTime)
-          ? Math.max(0, this.player.currentTime)
+        const time = Number.isFinite(this.player?.currentTime)
+          ? Math.max(0, this.player?.currentTime)
           : 0;
 
         this.timeListeners.forEach((l) => l(time, dur));
@@ -468,8 +472,8 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   private maybeEmitEnded(): boolean {
     if (this.endedEmitted || this.destroyed || this._userPaused) return false;
     const dur = this.getDuration();
-    const time = Number.isFinite(this.player.currentTime)
-      ? this.player.currentTime
+    const time = Number.isFinite(this.player?.currentTime)
+      ? this.player?.currentTime
       : 0;
     if (dur > 0 && time >= dur - 1) {
       this.endedEmitted = true;
@@ -504,28 +508,28 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   /** Internal auto-resume — logs a reason so a background-resume bug can be
    *  traced to its exact call site ([FS-BG] diagnosis). */
   private resumePlay(reason: string) {
-    this.player.play();
+    this.player?.play();
   }
 
   setAppBackgrounded(backgrounded: boolean) {
     this._appBackgrounded = backgrounded;
     // Entering background while the player is still playing — the AppState
     // pause raced ahead of the native transition. Stop it here.
-    if (backgrounded && this.player.playing) {
+    if (backgrounded && this.player?.playing) {
       this.pause();
     }
   }
 
   play() {
     this._userPaused = false;
-    this.player.play();
+    this.player?.play();
     this.playPauseListeners.forEach((l) => l(false));
     this.bufferingListeners.forEach((l) => l(false));
   }
 
   pause() {
     this._userPaused = true;
-    this.player.pause();
+    this.player?.pause();
     this.playPauseListeners.forEach((l) => l(true));
     // A paused player is not buffering. Without this, a pause landing while a
     // stall's buffering(true) is pending (e.g. the background pause squashing
@@ -555,7 +559,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     this.timeListeners.forEach((l) => l(clamped, dur));
 
     try {
-      this.player.currentTime = clamped;
+      if (this.player) this.player.currentTime = clamped;
     } catch (e) {
       console.warn("[ExpoVideoAdapter] seek error:", e);
     }
@@ -573,6 +577,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
         !this.destroyed
       ) {
         if (
+          this.player &&
           this.player.status === "readyToPlay" &&
           Math.abs(this.player.currentTime - clamped) > 15
         ) {
@@ -589,8 +594,8 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       // Only clear if a newer seek hasn't superseded this one
       if (this._seekGeneration !== myGeneration) return;
       this._isSeeking = false;
-      const actualTime = Number.isFinite(this.player.currentTime)
-        ? this.player.currentTime
+      const actualTime = Number.isFinite(this.player?.currentTime)
+        ? this.player?.currentTime
         : clamped;
       const resolvedTime = this.isSeekResolved(actualTime)
         ? actualTime
@@ -608,7 +613,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
         );
       }
 
-      if (!this._userPaused && !this.player.playing) {
+      if (!this._userPaused && !this.player?.playing) {
         this.resumePlay("seek-safety");
       }
     }, 5000);
@@ -616,31 +621,40 @@ export class ExpoVideoAdapter implements PlayerAdapter {
 
   setVolume(volume: number) {
     this._volume = Math.max(0, Math.min(1, volume));
-    this.player.volume = this._volume;
+    if (this.player) this.player.volume = this._volume;
   }
 
   setMuted(muted: boolean) {
     this._isMuted = muted;
-    this.player.muted = muted;
+    if (this.player) this.player.muted = muted;
   }
 
   setPlaybackRate(rate: number) {
     this._rate = rate;
-    this.player.playbackRate = rate;
+    // Null-safe post-destroy (2x-hold finalize can outlive the adapter).
+    if (this.player) this.player.playbackRate = rate;
   }
 
   getCurrentTime(): number {
     if (this._isSeeking && this._targetSeekTime > 0) {
       return this._targetSeekTime;
     }
-    return Number.isFinite(this.player.currentTime)
-      ? this.player.currentTime
+    return Number.isFinite(this.player?.currentTime)
+      ? this.player?.currentTime
       : 0;
   }
 
   getDuration(): number {
-    return Number.isFinite(this.player.duration) && this.player.duration > 0
-      ? this.player.duration
+    return Number.isFinite(this.player?.duration) && this.player?.duration > 0
+      ? this.player?.duration
+      : 0;
+  }
+
+  /** Seconds of buffered-ahead content (expo-video bufferedPosition). */
+  getBufferedPosition(): number {
+    return Number.isFinite(this.player.bufferedPosition) &&
+      this.player.bufferedPosition > 0
+      ? this.player.bufferedPosition
       : 0;
   }
 
@@ -661,7 +675,11 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   }
 
   getAudioTracks(): AudioTrackInfo[] {
-    const tracks = this.player.availableAudioTracks;
+    // Null-safe: destroy() clears this.player, but listeners/chrome can call
+    // this until the new adapter lands — crashed the player UI with
+    // "Cannot read property 'availableAudioTracks' of null".
+    const tracks = this.player?.availableAudioTracks;
+    if (!tracks) return [];
     return tracks.map((t) => ({
       id: t.id ?? t.language ?? "unknown",
       label: t.label || t.language || "Audio Track",
@@ -670,15 +688,15 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   }
 
   setAudioTrack(trackId: string) {
-    const tracks = this.player.availableAudioTracks;
-    const match = tracks.find((t) => (t.id ?? t.language) === trackId);
-    if (match) {
+    const tracks = this.player?.availableAudioTracks;
+    const match = tracks?.find((t) => (t.id ?? t.language) === trackId);
+    if (match && this.player) {
       this.player.audioTrack = match;
     }
   }
 
   getSelectedAudioTrackId(): string | null {
-    const t = this.player.audioTrack;
+    const t = this.player?.audioTrack;
     return t ? (t.id ?? t.language ?? null) : null;
   }
 
@@ -686,10 +704,13 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     // [SubPerf] This read synchronizes with the (busy) main thread — if it's
     // slow it will show up here on render paths.
     const t0 = Date.now();
-    const tracks = this.player.availableSubtitleTracks;
+    // Null-safe: chrome can read tracks after destroy() nulled this.player —
+    // this was the "availableSubtitleTracks of null" ErrorBoundary crash.
+    const tracks = this.player?.availableSubtitleTracks;
     const dt = Date.now() - t0;
     if (dt > 30) {
     }
+    if (!tracks) return [];
     return tracks.map((t) => {
       const id = t.id ?? t.language ?? "off";
       // Sidecar tracks merged via MergingMediaSource report ids like
@@ -709,6 +730,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   }
 
   setSubtitleTrack(trackId: string) {
+    if (!this.player) return;
     if (trackId === "off") {
       this.subtitleEnabledAt = 0;
       this.player.subtitleTrack = null;
@@ -723,7 +745,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   getSelectedSubtitleTrackId(): string | null {
     // [SubPerf] Same main-thread synchronization risk as getSubtitleTracks.
     const t0 = Date.now();
-    const current = this.player.subtitleTrack;
+    const current = this.player?.subtitleTrack;
     const dt = Date.now() - t0;
     if (dt > 30) {
     }

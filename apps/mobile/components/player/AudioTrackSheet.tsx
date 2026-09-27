@@ -14,11 +14,13 @@ import {
   Modal,
   FlatList,
   StyleSheet,
+  useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
 import type { PlayerAdapter } from "./types";
 import { audioTrackTitle } from "../../lib/audioLanguage";
+import { trackFeatureUsed } from "../../lib/telemetry";
 
 interface AudioTrackSheetProps {
   visible: boolean;
@@ -34,6 +36,8 @@ export function AudioTrackSheet({
   onSelectTrack,
   onClose,
 }: AudioTrackSheetProps) {
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
   const tracks = player.getAudioTracks();
   const selectedId = player.getSelectedAudioTrackId?.() ?? null;
 
@@ -49,7 +53,7 @@ export function AudioTrackSheet({
         activeOpacity={1}
         onPress={onClose}
       >
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, isLandscape && styles.sheetLandscape]}>
           <View style={styles.header}>
             <Text style={styles.headerTitle}>Audio track</Text>
             <TouchableOpacity
@@ -78,6 +82,12 @@ export function AudioTrackSheet({
                   style={[styles.trackItem, isSelected && styles.trackSelected]}
                   onPress={() => {
                     player.setAudioTrack(item.id);
+                    // Telemetry hygiene: the sheet only opens when the file
+                    // genuinely has 2+ tracks, but guard here too so a stale
+                    // single-track render can never fire a false pick event.
+                    if (tracks.length > 1) {
+                      trackFeatureUsed("audio_track_pick", "player");
+                    }
                     onSelectTrack?.();
                     onClose();
                   }}
@@ -151,6 +161,15 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 16,
     maxHeight: "60%",
     paddingBottom: 32,
+  },
+  sheetLandscape: {
+    width: 440,
+    alignSelf: "center",
+    maxHeight: "92%",
+    marginBottom: 12,
+    borderRadius: 16,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
   },
   header: {
     flexDirection: "row",

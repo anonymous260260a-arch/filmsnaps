@@ -49,6 +49,7 @@ import {
   saveSubtitleChoice,
   clearSubtitleChoice,
 } from "../../lib/subtitleCache";
+import { trackFeatureUsed } from "../../lib/telemetry";
 import { AutoSyncButton, type AutoSyncSourceInfo } from "./AutoSyncButton";
 import {
   registerWatchApplyHandler,
@@ -319,6 +320,10 @@ function SubtitleSheetInner({
   const selectTrack = (trackId: string) => {
     player.setSubtitleTrack(trackId);
     setSelectedId(trackId === "off" ? null : trackId);
+    trackFeatureUsed(
+      trackId === "off" ? "captions_disabled" : "captions_enabled",
+      "player",
+    );
     if (trackId === "off" && onlineSearch) {
       clearSubtitleChoice(onlineSearch);
     }
@@ -529,6 +534,7 @@ function SubtitleSheetInner({
   const applySync = (next: number) => {
     setSyncSeconds(next);
     syncSecondsRef.current = next;
+    trackFeatureUsed("caption_sync", "player");
     if (storageKey) persistSubtitleOffset(storageKey, next);
     if (sidecarTarget()) {
       if (sidecarRewriteTimer.current)
@@ -593,6 +599,7 @@ function SubtitleSheetInner({
     if (storageKey) {
       setAutoSyncPrefs(storageKey, { autoOffsetMs: offsetMs, autoScale: 1 });
     }
+    trackFeatureUsed("caption_autosync", "player");
   };
 
   useEffect(() => {

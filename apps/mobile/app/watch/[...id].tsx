@@ -50,7 +50,11 @@ import {
   InvalidWatchScreen,
 } from "../../components/watch/WatchRouteUI";
 import { colors } from "../../theme/colors";
-import { trackFeatureUsed, trackPlayerError } from "../../lib/telemetry";
+import {
+  trackFeatureUsed,
+  trackPlayerError,
+  trackWatchOpened,
+} from "../../lib/telemetry";
 
 export default function WatchScreen() {
   const nav = useSafeNavigation();
@@ -223,6 +227,18 @@ export default function WatchScreen() {
     },
     [id],
   );
+
+  // P4 — watch-page funnel: one watch_opened per mount (direct vs embed is
+  // the first split of "did the user reach playback").
+  useEffect(() => {
+    const providerDef0 = getProvider(provider ?? "");
+    const direct =
+      (providerDef0 ? isDirectProvider(providerDef0) : false) ||
+      isDirectVideoUrl(videoUrl || "") ||
+      !!fileUri;
+    trackWatchOpened({ surface: direct ? "direct" : "embed" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Determine if this is a direct video playback (HEVC/Falix/Direct provider).
   // Direct-ness comes from the registry's `type: "direct"` — never id matching.

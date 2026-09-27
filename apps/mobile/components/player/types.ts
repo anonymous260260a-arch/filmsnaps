@@ -15,6 +15,8 @@ export interface PlayerAdapter {
   setPlaybackRate(rate: number): void;
   getCurrentTime(): number;
   getDuration(): number;
+  /** Seconds of buffered-ahead content, if the backend exposes it (optional). */
+  getBufferedPosition?(): number;
   isPaused(): boolean;
   isMuted(): boolean;
   getVolume(): number;

@@ -66,6 +66,10 @@ export interface AppSettings {
   maxQuality: string | null;
   /** Stream selector: preferred audio language ("auto" = Multi > Hindi > English) */
   preferredAudioLanguage: "auto" | "multi" | "hindi" | "english";
+  /** Player video scaling for the direct (HEVC) player — persist a global
+   *  preference; "contain" never crops, so it is the safe default. Values
+   *  mirror expo-video's VideoContentFit ("fill" is labeled "Stretch" in UI). */
+  playerScreenFit: "contain" | "cover" | "fill";
   /** Whether the first-run language prompt has been answered */
   hasAnsweredLanguagePrompt: boolean;
   /** Background speed test: enabled (non-blocking, cached) */
@@ -115,6 +119,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   cellularMaxMB: 3000,
   maxQuality: null,
   preferredAudioLanguage: "auto",
+  playerScreenFit: "contain",
   hasAnsweredLanguagePrompt: false,
   enableSpeedTest: true,
   analyticsEnabled: true,
@@ -144,9 +149,7 @@ let readCount = 0;
 function doRead(): Promise<AppSettings> {
   readCount += 1;
   const n = readCount;
-  console.log(
-    `[Settings] getItem #${n} called at t=${launchNow()}ms`,
-  );
+  console.log(`[Settings] getItem #${n} called at t=${launchNow()}ms`);
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<AppSettings>((resolve) => {

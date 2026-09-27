@@ -19,6 +19,7 @@ import {
   Modal,
   FlatList,
   StyleSheet,
+  useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
@@ -140,6 +141,8 @@ export function StreamPickerSheet({
   onSelect,
   onClose,
 }: StreamPickerSheetProps) {
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
   const [languageFilter, setLanguageFilter] = useState<LanguageFilter>("all");
 
   // Diagnostic: what the source selector lists every time it opens.
@@ -239,7 +242,7 @@ export function StreamPickerSheet({
         activeOpacity={1}
         onPress={onClose}
       >
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, isLandscape && styles.sheetLandscape]}>
           {/* Header — S2: match embed sheet title + subtitle */}
           <View style={styles.header}>
             <View style={styles.headerTitleWrap}>
@@ -456,6 +459,15 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 16,
     maxHeight: "68%",
     paddingBottom: 32,
+  },
+  sheetLandscape: {
+    width: 520,
+    alignSelf: "center",
+    maxHeight: "92%",
+    marginBottom: 12,
+    borderRadius: 16,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
   },
   header: {
     flexDirection: "row",
