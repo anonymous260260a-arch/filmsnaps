@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { desktopSkip } from "../../desktop-skip";
 import {
   buildStreamSourceUrl,
+  buildStreamSourceBody,
   cleanStreamUrl,
   extractSource,
   getProvider,
@@ -42,6 +43,39 @@ export const revalidate = 1;
 
 const HDHUB_API_BASE = "https://hdhub.thevolecitor.qzz.io";
 
+// ── Upstream reuse ────────────────────────────────────────────────
+
+/**
+ * IMDB resolution per TMDB id — the id never changes, so one lookup serves
+ * every route hit (detail page, download page, retry) for the session.
+ */
+const IMDB_TTL_MS = 24 * 60 * 60 * 1000;
+const imdbCache = new Map<string, { imdb: string; at: number }>();
+
+/**
+ * Raw HDHub payloads keyed by the exact upstream URL.
+ *
+ * The detail/watch pages and the download page hit this route with different
+ * query params (`fallback=none`, different user-agents) but the same HDHub
+ * URL — one upstream fetch serves them all, so opening the download screen
+ * never re-queries HDHub for a title the player already resolved. The cache
+ * stores the un-sorted streams (priority depends on the caller's platform)
+ * and re-runs parsing per request.
+ */
+const HDHUB_TTL_MS = 45 * 60 * 1000;
+const HDHUB_MAX_ENTRIES = 8;
+type RawStream = {
+  name: string;
+  description: string;
+  url?: string;
+  externalUrl?: string;
+  behaviorHints?: { notWebReady?: boolean; videoSize?: number };
+};
+const hdhubPayloads = new Map<
+  string,
+  { streams: RawStream[]; maxAge: number; at: number }
+>();
+
 /**
  * Convert TMDB ID → IMDB ID by querying the local TMDB proxy route
  * (/api/tmdb/[...tmdb]/route.ts), which adds the API key server-side.
@@ -54,6 +88,10 @@ async function resolveImdbId(
   // If the input already looks like an IMDB ID (starts with "tt"), return it directly
   const idStr = String(tmdbId);
   if (/^tt\d+$/i.test(idStr)) return idStr;
+
+  const key = `${mediaType}/${idStr}`;
+  const hit = imdbCache.get(key);
+  if (hit && Date.now() - hit.at < IMDB_TTL_MS) return hit.imdb;
 
   try {
     // Use the internal TMDB proxy route — avoids exposing API key to client
@@ -77,7 +115,9 @@ async function resolveImdbId(
     if (!res.ok) return null;
 
     const data = (await res.json()) as { imdb_id?: string | null };
-    return data.imdb_id || null;
+    const imdb = data.imdb_id || "";
+    if (imdb) imdbCache.set(key, { imdb, at: Date.now() });
+    return imdb || null;
   } catch {
     return null;
   }
@@ -178,8 +218,22 @@ export async function GET(request: NextRequest) {
         async (source, ctx) => {
           const url = buildStreamSourceUrl(source, ctx);
           if (!url) throw new Error(`source ${source.id} has no urlTemplate`);
+          // POST-only upstreams (bing → api.bingr.one) send their JSON body
+          // from the declarative templates; mobile never builds these (its
+          // picker hides web-only direct providers).
+          const isPost = source.method === "POST";
+          const body = isPost ? buildStreamSourceBody(source, ctx) : null;
+          if (isPost && !body) {
+            throw new Error(`source ${source.id} has no bodyTemplate`);
+          }
           const res = await fetch(url, {
-            headers: { Accept: "application/json", ...(source.headers ?? {}) },
+            method: source.method ?? "GET",
+            headers: {
+              Accept: "application/json",
+              ...(isPost ? { "Content-Type": "application/json" } : {}),
+              ...(source.headers ?? {}),
+            },
+            body: body ?? undefined,
             signal: AbortSignal.timeout(source.timeoutMs ?? 8000),
           });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -232,35 +286,56 @@ export async function GET(request: NextRequest) {
   const isWindows = /Windows/.test(userAgent);
 
   try {
-    const response = await fetch(apiUrl, {
-      headers: {
-        Accept: "application/json",
-      },
-      signal: AbortSignal.timeout(15000),
-    });
+    // Same URL the detail/watch page already pulled — reuse it so the
+    // download page doesn't pay for a second HDHub round-trip.
+    const cached = hdhubPayloads.get(apiUrl);
+    const fresh = cached && Date.now() - cached.at < HDHUB_TTL_MS;
+    if (cached && !fresh) hdhubPayloads.delete(apiUrl);
 
-    if (!response.ok) {
-      return NextResponse.json(
-        {
-          error: `HDHub API returned ${response.status}: ${response.statusText}`,
+    let streams: RawStream[];
+    let cacheMaxAge: number;
+    if (cached && fresh) {
+      streams = cached.streams;
+      cacheMaxAge = cached.maxAge;
+    } else {
+      const response = await fetch(apiUrl, {
+        headers: {
+          Accept: "application/json",
         },
-        { status: response.status },
-      );
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (!response.ok) {
+        return NextResponse.json(
+          {
+            error: `HDHub API returned ${response.status}: ${response.statusText}`,
+          },
+          { status: response.status },
+        );
+      }
+
+      const rawData: { streams?: RawStream[]; cacheMaxAge?: number } =
+        await response.json();
+      streams = rawData.streams ?? [];
+      cacheMaxAge = rawData.cacheMaxAge ?? 300;
+
+      if (streams && streams.length > 0) {
+        hdhubPayloads.delete(apiUrl);
+        hdhubPayloads.set(apiUrl, {
+          streams,
+          maxAge: cacheMaxAge,
+          at: Date.now(),
+        });
+        while (hdhubPayloads.size > HDHUB_MAX_ENTRIES) {
+          const oldest = hdhubPayloads.keys().next().value;
+          if (oldest === undefined) break;
+          hdhubPayloads.delete(oldest);
+        }
+      }
     }
 
-    const rawData: {
-      streams: Array<{
-        name: string;
-        description: string;
-        url?: string;
-        externalUrl?: string;
-        behaviorHints?: { notWebReady?: boolean; videoSize?: number };
-      }>;
-      cacheMaxAge: number;
-    } = await response.json();
-
     // Filter + parse streams via the shared HDHub parser
-    const parsed = rawData.streams
+    const parsed = streams
       .filter((stream) => stream.url || stream.externalUrl) // has SOMETHING
       .map((stream) => ({ raw: stream, parsed: parseStreamEntry(stream) }))
       // Filter: exclude external links (donation/discord)
@@ -305,8 +380,11 @@ export async function GET(request: NextRequest) {
     });
 
     // ── Falix fallback: when HDHub gives ≤3 playable links, supplement from falix ──
+    // `fallback=none` opts out entirely — the /download/hdhub page must only
+    // offer HDHub files, so a falix link surfacing there would be mislabelled.
+    const allowFallback = searchParams.get("fallback") !== "none";
     const playableCount = links.filter((l) => !l._meta?.isDownloadOnly).length;
-    if (playableCount <= 3) {
+    if (allowFallback && playableCount <= 3) {
       try {
         const falixLinks = await fetchFalixLinks(
           tmdbId,
@@ -338,7 +416,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(data, {
       headers: {
-        "Cache-Control": `public, max-age=${rawData.cacheMaxAge || 300}, s-maxage=${rawData.cacheMaxAge || 300}`,
+        "Cache-Control": `public, max-age=${cacheMaxAge || 300}, s-maxage=${cacheMaxAge || 300}`,
       },
     });
   } catch (error: any) {

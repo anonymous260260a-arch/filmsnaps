@@ -31,6 +31,12 @@ interface ServerOption {
 
 const SERVERS: ServerOption[] = [
   {
+    key: "hdhub",
+    label: "HDHub",
+    desc: "Direct CDN files · Multiple sizes & qualities",
+    badge: "Recommended",
+  },
+  {
     key: "falix",
     label: "Falix Direct",
     desc: "Direct MP4 & HEVC files · Fastest download",

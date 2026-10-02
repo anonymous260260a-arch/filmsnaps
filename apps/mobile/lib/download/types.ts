@@ -14,7 +14,7 @@ export type DownloadStatus =
   | "cancelled" // User-cancelled, partial file cleaned
   | "retrying"; // In retry backoff — will auto-resume
 
-export type DownloadServer = "falix" | "nxsha" | "alt-dl";
+export type DownloadServer = "hdhub" | "falix" | "nxsha" | "alt-dl";
 export type MediaType = "movie" | "tv";
 
 /** What callers provide when enqueuing a download */
@@ -160,6 +160,7 @@ export const QUALITY_TO_SERVER: Record<DownloadQuality, DownloadServer> = {
 };
 
 export const SERVER_TO_QUALITY: Record<DownloadServer, DownloadQuality> = {
+  hdhub: "hd",
   nxsha: "hd",
   "alt-dl": "standard",
   falix: "small",
