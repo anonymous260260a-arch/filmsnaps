@@ -15,7 +15,11 @@ import {
   TouchableOpacity,
   Image,
 } from "react-native";
-import Animated, { FadeInDown, FadeOutUp, LinearTransition } from "react-native-reanimated";
+import Animated, {
+  FadeInDown,
+  FadeOutUp,
+  LinearTransition,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useSafeNavigation } from "@/lib/navigation";
 import { Ionicons } from "@expo/vector-icons";
@@ -46,7 +50,11 @@ import {
   markContentReady,
   runAfterContentReady,
 } from "../../lib/runAfterContentReady";
-import { launchNow, markLaunch, logLaunchSummary } from "../../lib/launchMetrics";
+import {
+  launchNow,
+  markLaunch,
+  logLaunchSummary,
+} from "../../lib/launchMetrics";
 import { heroHeightForWidth } from "../../components/heroLayout";
 import { getImageUrl, PROVIDERS } from "@filmsnaps/shared";
 import { useFocusEffect } from "expo-router";
@@ -58,7 +66,11 @@ import {
   dismissAnnouncement,
 } from "../../lib/announcements";
 import { AnnouncementBanner } from "../../components/AnnouncementBanner";
-import { openDetail, prepareDetail, toDetailNavItem } from "../../lib/openDetail";
+import {
+  openDetail,
+  prepareDetail,
+  toDetailNavItem,
+} from "../../lib/openDetail";
 import { beginIntentTap } from "../../lib/perfMetrics";
 import { trackFeatureUsed } from "../../lib/telemetry";
 import { useRouter } from "expo-router";
@@ -130,10 +142,8 @@ export default function HomeScreen() {
   settingsRef.current = settings;
 
   // ── History — subscribe to the local-first singleton (no local load state). ──
-  const {
-    entries: storeHistory,
-    isHydrated: historyHydrated,
-  } = useWatchHistory(settings.mode === "anime" ? "anime" : "movie_tv");
+  const { entries: storeHistory, isHydrated: historyHydrated } =
+    useWatchHistory(settings.mode === "anime" ? "anime" : "movie_tv");
   const historyEntries = useMemo(
     () => storeHistory.slice(0, 6),
     [storeHistory],
@@ -194,52 +204,52 @@ export default function HomeScreen() {
       return;
     // FIX 1: CW stream prefetch only after content ready + 2s.
     cwScheduledRef.current = true;
-      runAfterContentReady(2000, () => {
-        if (cwPrefetchedRef.current) return;
-        cwPrefetchedRef.current = true;
-        for (const entry of cwHistoryRef.current.slice(0, 2)) {
-          const p = entry.latest;
-          const tmdbIdNum = parseInt(p.tmdbId);
-          if (Number.isNaN(tmdbIdNum)) continue;
-          const prefetch = (season?: number, episode?: number) => {
-            // FIX 1: CW must pass the same provider id watch will open with.
-            void resolvePlaybackProviderId({
-              mediaType: p.mediaType,
-              tmdbId: tmdbIdNum,
-              savedServer: settingsRef.current.defaultServer,
+    runAfterContentReady(2000, () => {
+      if (cwPrefetchedRef.current) return;
+      cwPrefetchedRef.current = true;
+      for (const entry of cwHistoryRef.current.slice(0, 2)) {
+        const p = entry.latest;
+        const tmdbIdNum = parseInt(p.tmdbId);
+        if (Number.isNaN(tmdbIdNum)) continue;
+        const prefetch = (season?: number, episode?: number) => {
+          // FIX 1: CW must pass the same provider id watch will open with.
+          void resolvePlaybackProviderId({
+            mediaType: p.mediaType,
+            tmdbId: tmdbIdNum,
+            savedServer: settingsRef.current.defaultServer,
+          })
+            .then((providerId) => {
+              if (!providerId) return;
+              return prefetchStreams(tmdbIdNum, p.mediaType, season, episode, {
+                cellularMaxMB: settingsRef.current.cellularMaxMB,
+                maxQuality: settingsRef.current.maxQuality,
+                preferredAudioLanguage:
+                  settingsRef.current.preferredAudioLanguage,
+                providerId,
+                trigger: "home-cw",
+              });
             })
-              .then((providerId) => {
-                if (!providerId) return;
-                return prefetchStreams(tmdbIdNum, p.mediaType, season, episode, {
-                  cellularMaxMB: settingsRef.current.cellularMaxMB,
-                  maxQuality: settingsRef.current.maxQuality,
-                  preferredAudioLanguage:
-                    settingsRef.current.preferredAudioLanguage,
-                  providerId,
-                  trigger: "home-cw",
-                });
-              })
-              .catch(() => {});
-          };
-          // Finished the latest episode? Warm the NEXT one — that's what the
-          // user will actually play from this card (season rollover aware).
-          // Fully-watched titles stay in CW for exactly this reason.
-          if (
-            entry.fullyWatched &&
-            p.mediaType === "tv" &&
-            p.season &&
-            p.episode
-          ) {
-            getNextEpisode(p.tmdbId, p.season, p.episode)
-              .then(({ nextSeason, nextEpisode, hasNext }) => {
-                if (hasNext) prefetch(nextSeason, nextEpisode);
-              })
-              .catch(() => {});
-          } else {
-            prefetch(p.season, p.episode);
-          }
+            .catch(() => {});
+        };
+        // Finished the latest episode? Warm the NEXT one — that's what the
+        // user will actually play from this card (season rollover aware).
+        // Fully-watched titles stay in CW for exactly this reason.
+        if (
+          entry.fullyWatched &&
+          p.mediaType === "tv" &&
+          p.season &&
+          p.episode
+        ) {
+          getNextEpisode(p.tmdbId, p.season, p.episode)
+            .then(({ nextSeason, nextEpisode, hasNext }) => {
+              if (hasNext) prefetch(nextSeason, nextEpisode);
+            })
+            .catch(() => {});
+        } else {
+          prefetch(p.season, p.episode);
         }
-      });
+      }
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeHistory, settingsLoaded]);
 
@@ -342,7 +352,10 @@ export default function HomeScreen() {
 
   const handleMoviePressIn = useCallback(
     (item: Movie) => {
-      const navItem = toDetailNavItem(item, item.media_type === "tv" ? "tv" : "movie");
+      const navItem = toDetailNavItem(
+        item,
+        item.media_type === "tv" ? "tv" : "movie",
+      );
       if (navItem) prepareDetail(navItem, "home", queryClient, router);
     },
     [queryClient, router],
@@ -350,7 +363,10 @@ export default function HomeScreen() {
 
   const handleMoviePress = useCallback(
     (item: Movie) => {
-      const navItem = toDetailNavItem(item, item.media_type === "tv" ? "tv" : "movie");
+      const navItem = toDetailNavItem(
+        item,
+        item.media_type === "tv" ? "tv" : "movie",
+      );
       if (!navItem) return;
       openDetail(navItem, "home", { queryClient, router, nav });
     },
@@ -441,11 +457,11 @@ export default function HomeScreen() {
           );
 
         case "more-like-this":
-          return moreLikeThis?.length > 0 ? (
+          return (moreLikeThis?.length ?? 0) > 0 ? (
             <DeferredContent fallback={null} delayMs={200}>
               <MediaCarousel
                 title={SECTION_CONFIG["more-like-this"].label}
-                data={moreLikeThis}
+                data={moreLikeThis ?? []}
                 onItemPress={handleMoviePress}
                 onItemPressIn={handleMoviePressIn}
               />
@@ -878,7 +894,9 @@ export default function HomeScreen() {
             /* ── Remaining TMDB sections ordered by settings.homeRowOrder
                 (Continue Watching is included in homeRowOrder, so it renders
                 via the switch below — no separate block needed). ── */
-            orderedSections.map((id) => <View key={id}>{renderSection(id)}</View>)
+            orderedSections.map((id) => (
+              <View key={id}>{renderSection(id)}</View>
+            ))
           )}
         </Animated.View>
       </ScrollView>

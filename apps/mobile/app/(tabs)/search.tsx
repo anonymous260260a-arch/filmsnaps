@@ -35,6 +35,7 @@ import {
 } from "../../hooks/useTMDB";
 import { tmdbApi } from "../../lib/api";
 import { filterTmdbAnime } from "../../lib/tmdb";
+import { rankSearchResults } from "../../lib/searchRank";
 import { MediaCard } from "../../components/MediaCard";
 import { ProgressiveImage } from "../../components/ProgressiveImage";
 import type { Movie } from "@filmsnaps/shared";
@@ -314,10 +315,10 @@ export default function SearchScreen() {
           ? 0
           : Date.now() - searchStartMsRef.current;
       searchStartMsRef.current = 0;
-      const retriedAfterFail =
-        !failed && failedSearchQueryRef.current === q;
+      const retriedAfterFail = !failed && failedSearchQueryRef.current === q;
       if (failed) failedSearchQueryRef.current = q;
-      else if (failedSearchQueryRef.current === q) failedSearchQueryRef.current = "";
+      else if (failedSearchQueryRef.current === q)
+        failedSearchQueryRef.current = "";
       trackSearchPerformed({
         queryLengthBucket: bucketQueryLength(q.trim().length),
         resultsCountBucket: bucketLinkCount(resultsCount),
@@ -334,10 +335,12 @@ export default function SearchScreen() {
   useEffect(() => {
     if (!isSearching) return;
     if (!searchResult.data?.results) return;
-    const next = searchResult.data.results.filter(
-      (item: any) => item.media_type === "movie" || item.media_type === "tv",
-    );
-    const clean = filterTmdbAnime(next);
+    // Re-rank BEFORE accumulating: title match dominates, junk (no art, no
+    // votes) drops, people split into their own lane. This is what makes
+    // "search gives bad results" go away — TMDB's raw order interleaves
+    // partial matches with the obvious hit.
+    const ranked = rankSearchResults(debouncedQuery, searchResult.data.results);
+    const clean = filterTmdbAnime(ranked.titles as any[]);
     if (clean.length) {
       appendUnique(clean);
       saveRecentSearch(debouncedQuery);
@@ -505,7 +508,10 @@ export default function SearchScreen() {
   const handleItemPressIn = useCallback(
     (item: Movie) => {
       const mediaType = (item as any)._mediaType || item.media_type || "movie";
-      const navItem = toDetailNavItem(item, mediaType === "tv" ? "tv" : "movie");
+      const navItem = toDetailNavItem(
+        item,
+        mediaType === "tv" ? "tv" : "movie",
+      );
       if (navItem) prepareDetail(navItem, "search", queryClient, router);
     },
     [queryClient, router],
@@ -516,7 +522,10 @@ export default function SearchScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       if (query.trim()) saveRecentSearch(query.trim());
       const mediaType = (item as any)._mediaType || item.media_type || "movie";
-      const navItem = toDetailNavItem(item, mediaType === "tv" ? "tv" : "movie");
+      const navItem = toDetailNavItem(
+        item,
+        mediaType === "tv" ? "tv" : "movie",
+      );
       if (navItem) openDetail(navItem, "search", { queryClient, router, nav });
     },
     [nav, router, queryClient, query, saveRecentSearch],
@@ -560,7 +569,11 @@ export default function SearchScreen() {
       if (tmdbShowId != null) {
         openDetail(
           toDetailNavItem(
-            { id: tmdbShowId, media_type: "tv", title: item.titleEnglish || item.title },
+            {
+              id: tmdbShowId,
+              media_type: "tv",
+              title: item.titleEnglish || item.title,
+            },
             "tv",
           )!,
           "search",
@@ -569,7 +582,11 @@ export default function SearchScreen() {
       } else if (tmdbMovieId != null) {
         openDetail(
           toDetailNavItem(
-            { id: tmdbMovieId, media_type: "movie", title: item.titleEnglish || item.title },
+            {
+              id: tmdbMovieId,
+              media_type: "movie",
+              title: item.titleEnglish || item.title,
+            },
             "movie",
           )!,
           "search",

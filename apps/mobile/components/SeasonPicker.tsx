@@ -48,6 +48,9 @@ interface SeasonPickerProps {
   title?: string;
   posterPath?: string | null;
   downloadSummary?: MediaDownloadSummary;
+  /** Active-chip hairline color — the title's faded accent (phase 2).
+   *  Omit for the brand-gold default. */
+  activeHairline?: string | null;
 }
 
 const COLLAPSE_THRESHOLD = 8;
@@ -73,6 +76,7 @@ export function SeasonPicker({
   title: showTitle,
   posterPath,
   downloadSummary,
+  activeHairline,
 }: SeasonPickerProps) {
   const nav = useSafeNavigation();
   const [selectedSeason, setSelectedSeason] = useState<number>(
@@ -223,7 +227,9 @@ export function SeasonPicker({
                   ? colors.gold
                   : "rgba(14, 14, 17, 0.75)",
                 borderWidth: 0.5,
-                borderColor: isActive ? colors.gold : colors.borderSubtle,
+                borderColor: isActive
+                  ? (activeHairline ?? colors.gold)
+                  : colors.borderSubtle,
                 flexDirection: "row",
                 alignItems: "center",
                 gap: 5,

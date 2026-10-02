@@ -27,6 +27,10 @@ interface MediaCardProps {
  * - Press animation: spring scale 1.0 -> 0.96
  * - Subtle border highlight to define dark covers
  * - Rating star inline with title
+ *
+ * The phase-2 per-card tile tint was REMOVED after on-device review: cards
+ * stay on the neutral elevated surface (rows read cleaner, and per-item
+ * color now lives only where the artwork is).
  */
 export function MediaCard({
   item,
