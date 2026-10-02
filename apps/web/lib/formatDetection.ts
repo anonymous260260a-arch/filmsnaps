@@ -465,6 +465,59 @@ export function isH264Encoding(name: string): boolean {
   return !isHevcEncoding(name);
 }
 
+/**
+ * Codec string a modern Chromium/Safari <video> decodes in hardware for this
+ * container. Movi routes such sources to its wrapped native <video> engine
+ * (engine="native …") instead of the FFmpeg-WASM demuxer + WebCodecs canvas
+ * pipeline — same UI, but decode and present happen in the browser's media
+ * stack: no WASM memory copies, no JS frame pump, no main-thread contention
+ * with React. The movi engine stays the fallback for anything else (MKV,
+ * HEVC, AV1, MPEG-TS…).
+ */
+export function isBrowserNativeCodec(format: DetectedFormat): boolean {
+  switch (format.type) {
+    case "mp4":
+      // Entries carrying _meta never name the codec in `type` — the Direct
+      // pipeline maps hevc→"mkv" before this runs, so what reaches here under
+      // mp4 is H.264/AVC.
+      return true;
+    case "webm":
+      return true;
+    default:
+      // hls / dash / mkv / avi / mpegts / unknown → movi engine
+      return false;
+  }
+}
+
+/**
+ * True when playing this link on the web would lead with the WASM engine and
+ * likely drop to FFmpeg-WASM *software* decode (stutter city on 1080p):
+ * HEVC and AV1 have no hardware WebCodecs decode on many machines, and .avi
+ * carries legacy codecs (XviD/DivX/MPEG-4 Part 2) no browser decodes in hw.
+ * H.264/VP9 in mp4/webm/hls/mkv stay false — WebCodecs or the MSE/hls.js
+ * path decodes those in hardware.
+ *
+ * Purely static (URL + label metadata, zero network) so the source ranker can
+ * demote these links before anything plays. The demotion lives in
+ * DirectVideoPlayer (web-only) — mobile's HEVC pipeline decodes in hardware
+ * and must not inherit this penalty.
+ */
+export function linkNeedsSoftwareDecode(link: {
+  url: string;
+  name: string;
+  quality: string;
+  _meta?: { codec?: string };
+}): boolean {
+  const codec = (link._meta?.codec ?? "").toLowerCase();
+  if (codec === "hevc" || codec === "av1") return true;
+  const path = link.url.split("?")[0];
+  if (/\.avi$/i.test(path)) return true;
+  const text = `${link.name} ${link.quality} ${path}`;
+  return /\bx?265\b|h\.?265|hevc|10[\s._-]?bit|\bav1\b|av01|xvid|divx/i.test(
+    text,
+  );
+}
+
 // ── Decoder selection ─────────────────────────────────────────────────
 
 export type DecoderType = "movi" | "mpv" | "unsupported";

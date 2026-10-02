@@ -25,12 +25,28 @@ declare module "react" {
         objectfit?: string;
         startat?: number | string;
         buffersize?: number | string;
+        /** Target prefetch window in MB (HTTP + encrypted sources). */
+        buffersize?: number | string;
+        /** Stall sound+picture together (default on) — "false" unbinds them so
+         *  the picture keeps presenting through an audio rebuffer. */
+        bindav?: boolean | "false" | "";
         /** Engine priority, space-separated: wasm | shaka | dashjs | hlsjs | native */
         engine?: string;
         /** What to do with a source Movi can't play ("native" → <video>). */
         fallback?: string;
         /** URL of movi.wasm (slim build) — we host it from /public. */
         wasmurl?: string;
+        /** Turn the element's own control bar on/off. */
+        controls?: boolean | "";
+        /** UI theme. */
+        theme?: "dark" | "light";
+        /** One or two CSS colours, space-separated: primary then optional secondary. */
+        themecolor?: string;
+        /** Show the in-player title bar overlay. */
+        showtitle?: boolean | "";
+        /** Title text for that bar — the element strips the attribute so no
+         *  native browser tooltip appears on hover. */
+        title?: string;
         /** Disable the element's built-in keyboard shortcuts (ours own keys). */
         nohotkeys?: boolean | "";
         /** Switch off individual built-in controls with no<name> tokens. */

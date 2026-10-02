@@ -1,6 +1,7 @@
 import type { Config } from "tailwindcss";
 import tailwindcssAnimate from "tailwindcss-animate";
 import defaultTheme from "tailwindcss/defaultTheme";
+import plugin from "tailwindcss/plugin";
 
 const config: Config = {
   darkMode: ["class"],
@@ -139,7 +140,17 @@ const config: Config = {
       },
     },
   },
-  plugins: [tailwindcssAnimate],
+  plugins: [
+    tailwindcssAnimate,
+    // fullscreen:hidden et al. — a one-off variant for elements that must
+    // disappear while the player is fullscreen (the watch page's film-grain
+    // overlay re-composites its noise texture against every video frame in
+    // fullscreen and costs compositing work on weak GPUs).
+    plugin(({ addVariant }) => {
+      addVariant("fullscreen", ":root:fullscreen &");
+      addVariant("fullscreen-open", "html:fullscreen &");
+    }),
+  ],
 };
 
 export default config;

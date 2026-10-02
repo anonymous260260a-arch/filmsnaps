@@ -13,6 +13,11 @@
  * reserved for the hold-to-2x-speed gesture (see useSpeedBoost). A quick tap
  * of Space with no movement still doesn't toggle playback, matching the
  * "hold" semantics requested; use K for a tap-to-toggle shortcut instead.
+ *
+ * `onFullscreen` (optional) replaces the default `F` behaviour. The default
+ * calls `player.requestFullscreen()`, which targets the media element itself —
+ * on the movi branch that would strand every React overlay living outside the
+ * element. Callers with their own overlay pass a host-level toggle instead.
  */
 
 "use client";
@@ -23,6 +28,7 @@ import type { PlayerAdapter } from "./player-adapters";
 export function useKeyboardShortcuts(
   player: PlayerAdapter,
   enabled: boolean = true,
+  onFullscreen?: () => void,
 ) {
   useEffect(() => {
     if (!enabled) return;
@@ -85,6 +91,10 @@ export function useKeyboardShortcuts(
 
         case "f":
           e.preventDefault();
+          if (onFullscreen) {
+            onFullscreen();
+            break;
+          }
           if (document.fullscreenElement)
             document.exitFullscreen().catch(() => {});
           else player.requestFullscreen();
@@ -97,5 +107,5 @@ export function useKeyboardShortcuts(
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [player, enabled]);
+  }, [player, enabled, onFullscreen]);
 }

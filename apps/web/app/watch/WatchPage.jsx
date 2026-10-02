@@ -49,8 +49,8 @@ function computeInitialEmbedUrl(contentid, plat, providerId, searchParams) {
 /**
  * Default provider — single code path for movie & TV. Delegates to the
  * shared registry's canonical resolver (route param → saved "default server"
- * setting → platform default; desktop → direct, web → screenscape, anime →
- * megaplay). Never hardcode provider ids or precedence here.
+ * setting → platform default; desktop → direct, web → netmirror/way2movies,
+ * anime → megaplay). Never hardcode provider ids or precedence here.
  */
 function pickDefaultProvider({ isDesktop, animeOrigin, meta, routeProvider }) {
   const isAnime = animeOrigin || meta?.genres?.some?.((g) => g.id === 16);

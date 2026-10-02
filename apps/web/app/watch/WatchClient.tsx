@@ -39,8 +39,8 @@ import { getImageUrl } from "@/lib/tmdb";
 import { PlayerProvider, usePlayer } from "@/components/player/PlayerProvider";
 import { isElectronNow } from "@/lib/platform";
 import { ServerPickerSheet } from "@/components/player/ServerPickerSheet";
-import { MobileEpisodeSheet } from "@/components/player/MobileEpisodeSheet";
-import { EpisodeSidebar } from "@/components/player/EpisodeSidebar";
+import { PlayerHub } from "@/components/player/PlayerHub";
+import { useSource } from "@/components/player/SourceContext";
 import { AudioToggle } from "@/components/player/AudioToggle";
 import { useIsDesktop } from "@/hooks/useIsDesktop";
 import { getSettings, setSettings } from "@/hooks/useSettings";
@@ -103,7 +103,14 @@ function WatchClientContent({
 
   const [isPending, startTransition] = useTransition();
   const [seasonData, setSeasonData] = useState(initialSeasonData);
-  const [playerReady, setPlayerReady] = useState(false);
+
+  // ── Below-player hub tab availability ──
+  // The direct player publishes its source list to SourceContext; while an
+  // embed provider is selected (or links haven't loaded) the Sources tab
+  // doesn't exist. A movie with no sources has no tab at all, so the whole
+  // below-video section is dropped rather than reserving an empty grid cell.
+  const source = useSource();
+  const hasHubTabs = plat === "tv" || (source?.links.length ?? 0) > 0;
 
   // ── First-run language prompt (mobile parity) ──
   // The direct player doesn't mount until the user has answered once — the
@@ -148,6 +155,12 @@ function WatchClientContent({
     cpuWarning,
     iframeLoadError,
     setIframeLoadError,
+    // playerReady lives in PlayerProvider, NOT here: MobilePlayerZone,
+    // VideoZone and StuckVideoToast all read it via usePlayer(). A local copy
+    // would leave the context flag false forever, and MobilePlayerZone would
+    // park an opaque "Scanning Projection Room" over a playing embed.
+    playerReady,
+    setPlayerReady,
     mediaType,
     goToNextEpisode,
     goToPrevEpisode,
@@ -488,8 +501,12 @@ function WatchClientContent({
   //
   return (
     <div className="flex flex-col h-[100dvh] w-full overflow-hidden bg-[#070708] text-muted-foreground select-none">
-      {/* Film grain */}
-      <div className="fixed inset-0 pointer-events-none opacity-[0.03] bg-[url('/noise.svg')] mix-blend-overlay -z-10" />
+      {/* Film grain — fullscreen:hidden keeps it off the video while watching.
+          The overlay sits above the player surface, so while fullscreen the
+          browser would re-composite this full-viewport noise texture + blend
+          every single video frame (measurable jank on weak GPUs); outside
+          fullscreen it stays a one-off composite on a static layer. */}
+      <div className="fixed inset-0 pointer-events-none opacity-[0.03] bg-[url('/noise.svg')] mix-blend-overlay -z-10 fullscreen:hidden" />
 
       {/* ── Top bar: back + server (Compact & Clean on Mobile) ── */}
       {!minimal && (
@@ -533,8 +550,16 @@ function WatchClientContent({
 
       {/* ── Main: portrait = flex-col; tablet-landscape = 12-col grid ── */}
       <main className="flex-1 min-h-0 flex flex-col [@media(orientation:landscape)]:sm:grid [@media(orientation:landscape)]:sm:grid-cols-12 [@media(orientation:landscape)]:sm:gap-4 xl:gap-6 xl:max-w-[1700px] xl:mx-auto xl:w-full xl:px-6 xl:py-4 overflow-hidden">
-        {/* ── Video cell (generous height on phone; framed on tablet/desktop) ── */}
-        <section className="shrink-0 w-full [@media(orientation:landscape)]:sm:col-span-7 lg:col-span-8 [@media(orientation:landscape)]:sm:shrink [@media(orientation:landscape)]:sm:h-full flex flex-col justify-center">
+        {/* ── Video cell (generous height on phone; framed on tablet/desktop) ──
+            Span follows the hub: with no below-video panel the cell takes the
+            full 12-col row instead of leaving 5 columns of dead space. */}
+        <section
+          className={`shrink-0 w-full [@media(orientation:landscape)]:sm:shrink [@media(orientation:landscape)]:sm:h-full flex flex-col justify-center ${
+            hasHubTabs
+              ? "[@media(orientation:landscape)]:sm:col-span-7 lg:col-span-8"
+              : "[@media(orientation:landscape)]:sm:col-span-12"
+          }`}
+        >
           <div className="w-full px-0 sm:px-3 [@media(orientation:landscape)]:sm:px-0">
             <MobilePlayerZone
               contentid={contentid}
@@ -561,59 +586,21 @@ function WatchClientContent({
           </div>
         </section>
 
-        {/* ── Below-Video Area: Phone & Tablet Portrait uses MobileEpisodeSheet (TV) or Overview (Movie) ── */}
-        <section className="flex-1 min-h-0 flex flex-col overflow-hidden [@media(orientation:landscape)]:sm:col-span-5 lg:col-span-4 [@media(orientation:landscape)]:sm:h-full">
-          {plat === "tv" ? (
-            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-              {/* Tablet landscape shows EpisodeSidebar; Phone + Tablet Portrait shows MobileEpisodeSheet */}
-              <div className="hidden [@media(orientation:landscape)]:sm:flex flex-col h-full min-h-0">
-                <EpisodeSidebar
-                  seasonData={seasonData}
-                  seasons={initialMeta?.seasons}
-                  onSeasonChange={handleSeasonChange}
-                  title={displayTitle}
-                />
-              </div>
-              <div className="flex-1 min-h-0 flex flex-col [@media(orientation:landscape)]:sm:hidden overflow-hidden">
-                <MobileEpisodeSheet
-                  seasonData={seasonData}
-                  seasons={initialMeta?.seasons}
-                  onSeasonChange={handleSeasonChange}
-                  seriesTitle={displayTitle}
-                  seriesOverview={initialMeta?.overview}
-                />
-              </div>
-            </div>
-          ) : (
-            // ── Movie: Overview ──
-            <div className="flex-1 min-h-0 overflow-y-auto p-4 bg-[#0E0E12] border-t border-white/[0.08] sm:border sm:rounded-2xl space-y-3">
-              <div>
-                <h3 className="text-sm font-bold text-foreground">Overview</h3>
-                {initialMeta?.overview ? (
-                  <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
-                    {initialMeta.overview}
-                  </p>
-                ) : (
-                  <p className="text-xs text-zinc-600 mt-1">
-                    No overview available.
-                  </p>
-                )}
-              </div>
-              {initialMeta?.genres && initialMeta.genres.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 pt-2">
-                  {initialMeta.genres.map((g: any) => (
-                    <span
-                      key={g.id}
-                      className="px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.08] text-[10px] text-zinc-400 font-medium"
-                    >
-                      {g.name}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </section>
+        {/* ── Below-Video Area (<1280px): tabbed hub — Episodes / Sources.
+            Servers stay in the header (ServerPickerSheet), so no Server tab.
+            PlayerHub renders nothing when there is no tab to show (movie on an
+            embed provider), which is why the section itself is conditional. ── */}
+        {hasHubTabs && (
+          <section className="flex-1 min-h-0 flex flex-col overflow-hidden [@media(orientation:landscape)]:sm:col-span-5 lg:col-span-4 [@media(orientation:landscape)]:sm:h-full">
+            <PlayerHub
+              plat={plat}
+              seasonData={seasonData}
+              seasons={initialMeta?.seasons}
+              onSeasonChange={handleSeasonChange}
+              tvId={plat === "tv" ? contentid : null}
+            />
+          </section>
+        )}
       </main>
     </div>
   );

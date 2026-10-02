@@ -14,8 +14,16 @@
  *                            internal escalation; reports standard media
  *                            events so the UI never branches on format)
  *
- * Both engines render through the same PlayerShell/ControlBar + StreamPickerSheet
- * UI, driven by an adapter — identical chrome on desktop app and website.
+ * The two engines deliberately do NOT share chrome:
+ *   - Desktop (mpv)   → PlayerShell/ControlBar + StreamPickerSheet, driven by
+ *                       an adapter (mpv is a black box — nothing renders for us).
+ *   - Web   (movi)    → movi-player's OWN control bar (`controls`): seek bar,
+ *                       audio/CC menus, settings, context menu, hotkeys, PiP.
+ *                       The app only injects what movi cannot know about — a
+ *                       quality chip (addControl, label = current quality)
+ *                       opening the direct-link picker — plus the toasts,
+ *                       keyboard shortcuts (Space/K, ←/→ ±5s), and takes over
+ *                       fullscreen so those React overlays stay visible.
  *
  * Platform-aware sorting: the source LIST prefers x264 over HEVC on Windows
  * (cheaper decode); the engine no longer branches on it.
@@ -47,6 +55,10 @@ import { MoviPlayerAdapter } from "./player-adapters";
 import { MpvPlayerAdapter } from "./MpvPlayerAdapter";
 import { useMpvDesktopShortcuts } from "./useMpvDesktopShortcuts";
 import { StreamPickerSheet } from "./StreamPickerSheet";
+import { useSourcePublisher } from "./SourceContext";
+import { MobilePlayerOverlay } from "./MobilePlayerOverlay";
+import { useIsMobilePlayer } from "./useIsMobilePlayer";
+import { enableMoviLogs, isQoeEnabled, startMoviQoeProbe } from "@/lib/moviLog";
 import { SubtitleSearchSheet } from "./SubtitleSearchSheet";
 import { humanizeError, type ProbeOutcome } from "@/lib/probeStream";
 import {
@@ -63,6 +75,8 @@ import {
   selectDecoder,
   isWindowsPlatform,
   isHevcEncoding,
+  isBrowserNativeCodec,
+  linkNeedsSoftwareDecode,
   type DetectedFormat,
   type DecoderType,
 } from "@/lib/formatDetection";
@@ -163,21 +177,25 @@ function pickPreferredAudioTrack(
 
 /**
  * PlayerToast — top-center confirmation over the video ("Now playing source 2
- * of 5 · 1080p") or a gentle hint (prolonged stall). Shared by the mpv and
- * movi branches so the web player reads exactly like the desktop one.
+ * of 5 · 1080p") or a gentle hint (prolonged stall). `className` nudges it out
+ * of the way of chrome that already owns the top band (movi's title bar).
  */
 function PlayerToast({
   toast,
+  className = "top-4",
 }: {
   toast: { text: string; tone: "gold" | "warn" };
+  className?: string;
 }) {
   return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+    <div
+      className={`absolute ${className} left-1/2 -translate-x-1/2 z-30 pointer-events-none`}
+    >
       <div
-        className={`flex items-center gap-2 rounded-full px-4 py-1.5 border shadow-lg animate-[fadeIn_0.15s_ease-out] ${
+        className={`flex items-center gap-2 rounded-full px-4 py-1.5 border shadow-lg backdrop-blur-md animate-[fadeIn_0.15s_ease-out] ${
           toast.tone === "gold"
-            ? "bg-black/75 border-[#D4A237]/40 text-[#D4A237]"
-            : "bg-black/75 border-amber-400/40 text-amber-300"
+            ? "bg-black/70 border-[#D4A237]/45 text-[#E8C46A]"
+            : "bg-black/70 border-amber-400/45 text-amber-300"
         }`}
       >
         {toast.tone === "gold" ? (
@@ -185,7 +203,7 @@ function PlayerToast({
         ) : (
           <TriangleAlert size={13} className="shrink-0" />
         )}
-        <span className="text-xs font-semibold whitespace-nowrap">
+        <span className="text-xs font-semibold whitespace-nowrap tracking-[0.02em]">
           {toast.text}
         </span>
       </div>
@@ -228,7 +246,24 @@ export function DirectVideoPlayer({
   // The element module (movi-player/element/slim) is code-split — loaded and
   // registered the first time a web session actually needs it.
   const [moviElementReady, setMoviElementReady] = useState(false);
-  // Audio/subtitle tracks from the element, mirrored for the ControlBar menus.
+  // True only while <movi-player> is actually in the DOM. The built-in-chrome
+  // wiring (Sources control + fullscreen handoff) keys off this, because an
+  // error card unmounts the element and a retry mounts it again with no other
+  // dep change to re-trigger an effect.
+  const [moviElAttached, setMoviElAttached] = useState(false);
+  // The same element as state — the mobile overlay listens to its `statechange`
+  // event and writes `objectFit` (screen fit), so it needs the node itself and
+  // must re-run if an error card tears the element down and a retry rebuilds it.
+  const [moviEl, setMoviEl] = useState<HTMLElement | null>(null);
+  // Touch / small-screen chrome. Above 768px with a real pointer nothing here
+  // changes: movi keeps its own control bar and the overlay never renders.
+  const isMobileUi = useIsMobilePlayer();
+  // The element's parent in the web branch — the fullscreen target. Fullscreen
+  // goes here rather than on <movi-player> so the source picker and toasts
+  // (siblings of the element) stay inside the fullscreen subtree.
+  const moviHostRef = useRef<HTMLDivElement>(null);
+  // Audio/subtitle tracks mirrored off the element — drives the preferred-
+  // language auto-pick below (movi's own bar owns the track menus).
   const [moviTracks, setMoviTracks] = useState<{ audio: any[]; sub: any[] }>({
     audio: [],
     sub: [],
@@ -502,10 +537,18 @@ export function DirectVideoPlayer({
 
   // Rank position per link id (from the selector) — drives failover order and
   // row ordering in the source picker.
+  // Software-decode links (HEVC/AV1/AVI — FFmpeg-WASM decode, stutter-prone on
+  // most web setups) are stably demoted behind every hardware link while their
+  // relative order inside each group is preserved. Every consumer of this map
+  // (initial pick, fallback walk, "source N" numbering, picker rows) then
+  // agrees hardware sources lead. Web-only: this component never ships mobile.
   const rankById = useMemo(() => {
     const m = new Map<string, number>();
     if (streamSelection) {
-      streamSelection.sortedLinks.forEach((l, rank) => m.set(l.id, rank));
+      const links = streamSelection.sortedLinks;
+      const hardware = links.filter((l) => !linkNeedsSoftwareDecode(l));
+      const software = links.filter((l) => linkNeedsSoftwareDecode(l));
+      [...hardware, ...software].forEach((l, rank) => m.set(l.id, rank));
     }
     return m;
   }, [streamSelection]);
@@ -549,10 +592,22 @@ export function DirectVideoPlayer({
       }
     }
 
-    // Use smart selection (skipping download-only links)
-    const best = playable(streamSelection.bestIndex)
-      ? streamSelection.bestIndex
-      : firstPlayableByRank();
+    // Use smart selection (skipping download-only links) — unless the
+    // selector's champion needs software decode AND a hardware-decodable
+    // link exists; the demoted rank order then hands back the best hardware
+    // candidate instead (purely a decode-capability swap, same ranks).
+    const selectorPick = streamSelection.bestIndex;
+    const hardwareExists = videoEntries.some(
+      (e, i) => playable(i) && !linkNeedsSoftwareDecode(e),
+    );
+    const selectorPickUsable =
+      playable(selectorPick) &&
+      !(
+        hardwareExists &&
+        videoEntries[selectorPick] &&
+        linkNeedsSoftwareDecode(videoEntries[selectorPick])
+      );
+    const best = selectorPickUsable ? selectorPick : firstPlayableByRank();
     console.log(
       `[Direct] Smart selection: index ${best} (${streamSelection.selectionReason})`,
     );
@@ -621,6 +676,15 @@ export function DirectVideoPlayer({
     videoEntries.length > 0
       ? videoEntries[Math.min(activeLinkIdx, videoEntries.length - 1)]
       : null;
+
+  // [debug] full URL of whatever the player is about to load — fires on every
+  // source switch/failover (movi-player src + mpv path both flow through here).
+  useEffect(() => {
+    if (!currentEntry?.url) return;
+    console.log(
+      `[Direct] playing → ${currentEntry.url} (idx=${activeLinkIdx}, q=${currentEntry.quality ?? "?"})`,
+    );
+  }, [currentEntry?.url, activeLinkIdx, currentEntry?.quality]);
 
   // Expose switching label for PlayerShell overlay — numbered by the link's
   // priority among streamable sources (matches the "Now playing source N" toast)
@@ -868,6 +932,51 @@ export function DirectVideoPlayer({
     }, 12000);
   }, []);
 
+  // ── Publish the source list to SourceContext ──
+  // PlayerHub's Sources tab (below the player, <1280px) reads this instead of
+  // reaching into private player state. `null` while an embed provider is
+  // selected or the API hasn't returned anything playable — the tab hides.
+  const retestSources = useCallback(() => {
+    setLinkStatuses(new Map());
+    probeResolvedRef.current = false;
+    setProbeNonce((n) => n + 1);
+  }, []);
+
+  const sourceState = useMemo(
+    () => ({
+      links: videoEntries,
+      activeIndex: activeLinkIdx,
+      recommendedIndex: streamSelection?.bestIndex,
+      lastUsedIndex,
+      statuses: pickerStatuses,
+      rankById,
+      selectionReason: streamSelection?.selectionReason,
+      select: selectLinkManually,
+      retest: retestSources,
+    }),
+    [
+      videoEntries,
+      activeLinkIdx,
+      streamSelection?.bestIndex,
+      streamSelection?.selectionReason,
+      lastUsedIndex,
+      pickerStatuses,
+      rankById,
+      selectLinkManually,
+      retestSources,
+    ],
+  );
+
+  const publishSource = useSourcePublisher();
+
+  useEffect(() => {
+    publishSource(videoEntries.length > 0 ? sourceState : null);
+  }, [publishSource, sourceState, videoEntries.length]);
+
+  // Unmount (provider switch away from a direct source) must retract the
+  // list, otherwise a stale pane survives the swap to an embed player.
+  useEffect(() => () => publishSource(null), [publishSource]);
+
   // ── 4m. movi-player (web — one engine for every format) ──
   // The element module is code-split and registered on first use; the adapter
   // wraps the DOM element exactly like the old native adapter wrapped <video>.
@@ -875,6 +984,8 @@ export function DirectVideoPlayer({
   // place and the adapter (and its subscriptions) survive.
   const attachMovi = useCallback((el: any) => {
     moviElRef.current = el;
+    setMoviElAttached(!!el);
+    setMoviEl((el ?? null) as HTMLElement | null);
     if (!el) return;
     if (moviAdapterRef.current?.element === el) return;
     moviAdapterRef.current?.destroy();
@@ -886,6 +997,10 @@ export function DirectVideoPlayer({
   useEffect(() => {
     if (decoder !== "movi" || moviElementReady) return;
     let cancelled = false;
+    // The bundled entry points log through `globalThis.__movilog`, which
+    // nothing in the package assigns — the sink has to be installed before
+    // the chunk evaluates, or every `Configured: … hwAccel=…` line is lost.
+    enableMoviLogs();
     import("movi-player/element/slim")
       .then(() => {
         if (!cancelled) setMoviElementReady(true);
@@ -906,6 +1021,233 @@ export function DirectVideoPlayer({
     };
   }, [decoder, moviElementReady]);
 
+  // ── 4m-5. Built-in chrome wiring (web): the quality chip + fullscreen ──
+  // movi's own control bar owns every playback affordance now. Two things it
+  // cannot know about are hooked in here: our direct-link list, and a
+  // fullscreen that keeps our React overlays (picker, toasts) reachable.
+  useEffect(() => {
+    if (decoder !== "movi" || !moviElementReady || !moviElAttached) return;
+    const el = moviElRef.current as any;
+    const host = moviHostRef.current;
+    if (!el?.isConnected || !host) return;
+
+    // The player's keys (F / M / ← / → / ?) and the page's must never both
+    // run on one press — same contract as __fsMpvKeysActive on desktop.
+    (window as any).__fsMoviKeysActive = true;
+
+    // Quality chip in the bar's right-hand capsule (before quality/settings).
+    // No `group` — grouping it with settings buried it; no `icon` either, so
+    // the label renders as visible TEXT like mobile's pill: the CURRENT
+    // quality ("720p"), never the word "Sources".
+    const initialLabel =
+      currentEntry?.quality || currentEntry?.type?.toUpperCase() || "Quality";
+    try {
+      el.addControl?.({
+        id: "direct-sources",
+        label: initialLabel,
+        title: "Choose a different source",
+        side: "right",
+        before: ["quality", "settings"],
+        onSelect: () => setShowPicker(true),
+      });
+    } catch (err) {
+      console.warn("[Direct] could not add the source control:", err);
+    }
+
+    // Shadow-DOM styling pass. Two fixes, both scoped to OUR elements:
+    // 1. The quality chip: movi sizes every .movi-btn as a fixed SQUARE icon
+    //    box (--movi-btn-size) with 2px text padding — "720p" crammed into it
+    //    reads as an afterthought. Re-shape just our control into an
+    //    auto-width pill: gold-tinted, outlined, matched to the capsule.
+    // 2. The unmute pill: mobile web blocks autoplay-with-sound, so movi
+    //    auto-mutes and shows its dark unmute pill top-left (z-index 8) —
+    //    but MobilePlayerOverlay's gesture surface (z-10, a SIBLING above
+    //    the host) swallows every tap on it, so it never dismissed. Raise it
+    //    above our chrome; our bars live top-right/center, the corner is clear.
+    // Removed with the control in cleanup.
+    try {
+      const root = el.shadowRoot as ShadowRoot | null;
+      if (root && !root.querySelector("style[data-fs-quality-chip]")) {
+        const chipStyle = document.createElement("style");
+        chipStyle.setAttribute("data-fs-quality-chip", "");
+        chipStyle.textContent = `
+          .movi-controls-right .movi-custom-btn[data-custom-control="direct-sources"] {
+            width: auto;
+            min-width: var(--movi-btn-size);
+            height: var(--movi-btn-size);
+            box-sizing: border-box;
+            padding: 0 12px;
+            border-radius: 999px;
+            background: rgba(212, 162, 55, 0.12);
+            border: 1px solid rgba(212, 162, 55, 0.40);
+            color: #E8B861;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            justify-content: center;
+          }
+          .movi-controls-right .movi-custom-btn[data-custom-control="direct-sources"]:hover,
+          .movi-controls-right .movi-custom-btn[data-custom-control="direct-sources"]:focus,
+          .movi-controls-right .movi-custom-btn[data-custom-control="direct-sources"]:active {
+            background: rgba(212, 162, 55, 0.20);
+          }
+          .movi-controls-right .movi-custom-btn[data-custom-control="direct-sources"] .movi-custom-btn-text {
+            padding: 0;
+            font-size: 12px;
+            font-weight: 700;
+          }
+          /* Scoped to the controls-less mobile host — on desktop the pill
+             must keep sitting under movi's own title bar. */
+          :host(.movi-no-controls) .movi-unmute-overlay {
+            z-index: 40 !important;
+          }
+        `;
+        root.appendChild(chipStyle);
+      }
+    } catch (err) {
+      console.warn("[Direct] could not style the source chip:", err);
+    }
+
+    // Fullscreen the WRAPPER, not the element. The picker and toasts are
+    // siblings of <movi-player>, so element-fullscreen would strand them
+    // outside the fullscreen subtree; setHostFullscreen() is the element's
+    // documented hook for exactly this, and keeps its bar acting fullscreen.
+    const onFullscreenRequest = (evt: Event) => {
+      // `active` is the CURRENT state: false = asking to enter, true = exit.
+      const leaving = !!(evt as CustomEvent<{ active?: boolean }>).detail
+        ?.active;
+      // No usable Fullscreen API (iOS Safari only fullscreens <video>) — let
+      // the element keep its own pseudo-fullscreen fallback instead of
+      // swallowing the request and leaving the button dead.
+      if (
+        typeof host.requestFullscreen !== "function" ||
+        !document.fullscreenEnabled
+      )
+        return;
+      evt.preventDefault();
+      if (leaving) {
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+        el.setHostFullscreen?.(false);
+      } else if (document.fullscreenElement !== host) {
+        host
+          .requestFullscreen()
+          .then(() => el.setHostFullscreen?.(true))
+          .catch(() => {});
+      }
+    };
+    // Escape or the browser's own exit leaves the wrapper — mirror it back so
+    // the element's fullscreen icon and context menu don't lie about state.
+    const onFullscreenChange = () => {
+      el.setHostFullscreen?.(document.fullscreenElement === host);
+    };
+
+    el.addEventListener("movi-fullscreen-request", onFullscreenRequest);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => {
+      el.removeEventListener("movi-fullscreen-request", onFullscreenRequest);
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+      try {
+        el.removeControl?.("direct-sources");
+      } catch {}
+      try {
+        el.shadowRoot?.querySelector("style[data-fs-quality-chip]")?.remove();
+      } catch {}
+      (window as any).__fsMoviKeysActive = false;
+    };
+  }, [decoder, moviElementReady, moviElAttached]);
+
+  // The chip's label tracks the PLAYING source — addControl only runs on
+  // decoder/attach changes, so a source switch patches the label in place
+  // (updateControl tears the button down and re-renders it with the text).
+  const sourcesBtnLabel =
+    currentEntry?.quality || currentEntry?.type?.toUpperCase() || "Quality";
+  useEffect(() => {
+    if (decoder !== "movi" || !moviElAttached) return;
+    const el = moviElRef.current as any;
+    if (!el?.isConnected) return;
+    try {
+      el.updateControl?.("direct-sources", { label: sourcesBtnLabel });
+    } catch {}
+  }, [decoder, moviElAttached, sourcesBtnLabel]);
+
+  // ── 4m-5b. Keyboard shortcuts (web/movi): Space/K play-pause, ←/→ ±5s ──
+  // movi's own hotkeys only fire while the element holds focus (click the
+  // player once and they work) — and its arrow seek is ±10s. The element is
+  // mounted with fastseek="buttons" on desktop, which switches movi's ARROW
+  // handling off (its keydown case early-breaks WITHOUT preventDefault), so
+  // these window-level bindings are the single owner of arrow seeks at ±5s
+  // whether or not the player is focused. Space/K: movi handles them while
+  // focused (preventDefault → defaultPrevented → we skip); this handler
+  // covers the unfocused case. Page-level shortcuts already defer arrows via
+  // __fsMoviKeysActive (set in 4m-5 above).
+  useEffect(() => {
+    if (
+      decoder !== "movi" ||
+      isMobileUi ||
+      error ||
+      exhausted ||
+      showPicker ||
+      showSubSearch
+    )
+      return;
+    const SEEK_STEP = 5;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.defaultPrevented) return; // movi (or a dialog) already acted
+      const real = e.composedPath()[0];
+      if (
+        real instanceof HTMLElement &&
+        (real.tagName === "INPUT" ||
+          real.tagName === "TEXTAREA" ||
+          real.isContentEditable)
+      )
+        return;
+      const adapter = moviAdapterRef.current;
+      if (!adapter) return;
+      switch (e.key) {
+        case " ":
+        case "k":
+        case "K":
+          if (e.repeat) return;
+          e.preventDefault();
+          if (adapter.isPaused()) adapter.play();
+          else adapter.pause();
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          adapter.seek(Math.max(0, adapter.getCurrentTime() - SEEK_STEP));
+          break;
+        case "ArrowRight": {
+          e.preventDefault();
+          const dur = adapter.getDuration();
+          const next = adapter.getCurrentTime() + SEEK_STEP;
+          adapter.seek(dur > 0 ? Math.min(dur, next) : next);
+          break;
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [decoder, isMobileUi, error, exhausted, showPicker, showSubSearch]);
+
+  // ── 4m-6. QoE probe: is playback choppy because the decoder can't keep up,
+  // or because the main thread is busy? Samples once a second while frames are
+  // actually flowing and prints one `[QoE]` line (see lib/moviLog.ts for how to
+  // read it). Dev-only unless `?movilog` is set — no cost in production.
+  useEffect(() => {
+    if (!isQoeEnabled()) return;
+    if (decoder !== "movi" || !playbackStarted || !moviEl) return;
+    console.info(
+      "[QoE] probe armed",
+      decoder,
+      `attached=${moviEl.isConnected}`,
+      `hasPlayer=${!!(moviEl as any).player}`,
+    );
+    return startMoviQoeProbe(moviEl);
+  }, [decoder, playbackStarted, moviEl]);
+
   // ── 3. Format detection + decoder selection ──
   useEffect(() => {
     if (!currentEntry) {
@@ -921,15 +1263,51 @@ export function DirectVideoPlayer({
       let fmt: DetectedFormat;
 
       if (currentEntry._meta) {
-        const type =
-          currentEntry._meta?.codec === "hevc"
-            ? "mkv"
-            : (currentEntry.type as DetectedFormat["type"]);
+        // `_meta` links carry their container in `type` ("hls", "mp4", "mkv",
+        // …) or as a MIME string ("application/x-mpegurl"). Pass known
+        // containers through instead of collapsing everything except mkv/mp4
+        // to "unknown" — "hls" must stay "hls" or the hlsjs (hardware MSE)
+        // engine branch never fires for adapters that attach _meta (bing,
+        // spacedom, way2movies…), and those links fell back to wasm-first.
+        const codecIsHevc = currentEntry._meta.codec === "hevc";
+        const raw = (currentEntry.type ?? "").toLowerCase();
+        const MIME_TYPES: Record<string, DetectedFormat["type"]> = {
+          "application/x-mpegurl": "hls",
+          "application/dash+xml": "dash",
+          "video/mp4": "mp4",
+          "video/quicktime": "mp4",
+          "video/webm": "webm",
+          "video/x-matroska": "mkv",
+          "video/x-msvideo": "avi",
+        };
+        const KNOWN: DetectedFormat["type"][] = [
+          "mkv",
+          "mp4",
+          "webm",
+          "hls",
+          "dash",
+          "avi",
+          "mpegts",
+        ];
+        const type: DetectedFormat["type"] = codecIsHevc
+          ? "mkv"
+          : (MIME_TYPES[raw] ??
+            (KNOWN.includes(raw as DetectedFormat["type"])
+              ? (raw as DetectedFormat["type"])
+              : "unknown"));
+        const CONTAINERS: Record<string, string> = {
+          mkv: "Matroska",
+          mp4: "MP4",
+          webm: "WebM",
+          hls: "HLS",
+          dash: "DASH",
+          avi: "AVI",
+          mpegts: "MPEG-TS",
+        };
         fmt = {
-          type: type === "mkv" ? "mkv" : type === "mp4" ? "mp4" : "unknown",
-          container:
-            type === "mkv" ? "Matroska" : type === "mp4" ? "MP4" : "unknown",
-          videoCodec: currentEntry._meta.codec === "hevc" ? "hevc" : "h264",
+          type,
+          container: CONTAINERS[type] ?? "unknown",
+          videoCodec: codecIsHevc ? "hevc" : "h264",
           audioCodec: undefined,
           confidence: "high",
         };
@@ -1187,7 +1565,7 @@ export function DirectVideoPlayer({
     };
   }, [mpvAdapter]);
 
-  // ── 4m-4. movi audio/subtitle tracks (for the ControlBar quick menus) ──
+  // ── 4m-4. movi audio/subtitle tracks (preferred-language auto-pick) ──
   useEffect(() => {
     if (decoder !== "movi" || !moviAdapter) return;
     const refresh = () =>
@@ -1224,9 +1602,17 @@ export function DirectVideoPlayer({
     }
     setSwitchInfo(null);
     const n = priorityOfIndex(activeLinkIdx);
-    const quality = videoEntries[activeLinkIdx]?.quality;
+    const entry = videoEntries[activeLinkIdx];
+    const quality = entry?.quality;
+    // Non-blocking software-decode prompt: the ranker already demoted this
+    // source to the back, but a deliberate pick (or a chain with no hardware
+    // links left) can still land on it — say so instead of stuttering silently.
+    const swDecode = entry ? linkNeedsSoftwareDecode(entry) : false;
     showToast(
-      `Now playing source ${n ?? "?"} of ${playableTotal}${quality ? ` · ${quality}` : ""}`,
+      `Now playing source ${n ?? "?"} of ${playableTotal}${quality ? ` · ${quality}` : ""}` +
+        (swDecode ? " — software decode, may stutter" : ""),
+      swDecode ? "warn" : "gold",
+      swDecode ? 6000 : undefined,
     );
     const url = videoEntries[activeLinkIdx]?.url;
     if (!hasPlayedOnceRef.current && url) {
@@ -1392,7 +1778,7 @@ export function DirectVideoPlayer({
   // on its own — a stall is the network's problem to ride out (mpv holds up
   // to 200 MB of readahead). The old behavior force-switched after ~20s of
   // stalls and was the "app breaks the playing video" bug. Now we only
-  // surface a one-time hint so a trapped user knows the Sources button exists.
+  // surface a one-time hint so a trapped user knows another source exists.
   useEffect(() => {
     if (!playbackStarted) return;
 
@@ -1422,11 +1808,7 @@ export function DirectVideoPlayer({
           console.log(
             "[Direct] prolonged stall — showing hint toast (never auto-switching)",
           );
-          showToast(
-            "Still buffering — try another source from Sources",
-            "warn",
-            4200,
-          );
+          showToast("Still buffering — try a different source", "warn", 4200);
         }
       } else {
         stallChecks = Math.max(0, stallChecks - 1);
@@ -1602,7 +1984,7 @@ export function DirectVideoPlayer({
               <RefreshCw size={14} />
               Retry
             </button>
-            {videoEntries.length > 1 && (
+            {videoEntries.length > 0 && (
               <button
                 onClick={() => setShowPicker(true)}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-white/10 text-white/70 text-sm font-semibold hover:bg-white/[0.05] transition-colors"
@@ -1852,11 +2234,20 @@ export function DirectVideoPlayer({
   }
 
   // ── Web engine: movi-player — one path for every format ──
-  // Same chrome as the desktop mpv branch: PlayerShell + ControlBar with
-  // audio/CC quick menus, the source picker, the switching indicator and the
-  // "Now playing source N" toast. The element module is registered lazily
-  // (4m) and the element reloads in place on src changes; the adapter and
-  // its subscriptions survive switches.
+  // On pointer/desktop sizes the element renders its OWN control bar
+  // (`controls`): seek/scrub, volume, speed, audio + subtitle menus, settings,
+  // context menu, hotkeys, PiP, fullscreen. We add only what it cannot know —
+  // the direct-link "Sources" button (4m-5) — and keep the toasts and the
+  // picker sheet as siblings so they ride along with the host fullscreen.
+  //
+  // On touch/small screens (isMobileUi) that bar is switched OFF and
+  // MobilePlayerOverlay takes over every affordance, mirroring the mobile
+  // app's HEVC chrome. Turning `controls` off also flips the host into
+  // `movi-no-controls`, which hides movi's own loading spinner and kills its
+  // pointer events — so the overlay supplies both.
+  //
+  // The element module is registered lazily (4m) and reloads in place on src
+  // changes; the adapter and its subscriptions survive switches.
   if (decoder === "movi") {
     if (!moviElementReady) {
       return (
@@ -1880,49 +2271,171 @@ export function DirectVideoPlayer({
       );
     }
 
+    const sourceLabel =
+      [
+        currentEntry.quality,
+        currentEntry._meta?.codec?.toUpperCase() || currentEntry.type,
+        currentEntry._meta?.source || "",
+      ]
+        .filter(Boolean)
+        .join(" · ") || undefined;
+    // One toast slot: a live "Trying source N" pill while a switch is in
+    // flight, replaced by the "Now playing source N" confirmation once frames
+    // land (which also clears switchInfo).
+    const toast =
+      playerToast ??
+      (switchingLabel ? { text: switchingLabel, tone: "warn" as const } : null);
+
+    // Engine order per source (see the <movi-player> comment block below):
+    // browser-native codecs play through movi's wrapped <video>, adaptive
+    // manifests (HLS/DASH) lead with their dedicated hls.js / dash.js engine
+    // (transmux → MSE → hardware decode), everything else leads with the
+    // WASM/WebCodecs engine. Confidence "low" means detection fell back to
+    // sniffing/extension guesswork — leave movi's own escalation alone rather
+    // than pinning an engine on a guess.
+    const adaptiveEngine: "hlsjs" | "dashjs" | null =
+      detectedFormat != null && detectedFormat.confidence !== "low"
+        ? detectedFormat.type === "hls"
+          ? "hlsjs"
+          : detectedFormat.type === "dash"
+            ? "dashjs"
+            : null
+        : null;
+    const nativeEngineFirst =
+      adaptiveEngine == null &&
+      detectedFormat != null &&
+      isBrowserNativeCodec(detectedFormat) &&
+      detectedFormat.confidence !== "low";
+    const nativeEngineLast =
+      adaptiveEngine == null &&
+      !nativeEngineFirst &&
+      detectedFormat != null &&
+      detectedFormat.confidence !== "low";
+
     return (
-      <PlayerShell
-        player={moviAdapter}
-        sourceLabel={
-          [
-            currentEntry.quality,
-            currentEntry._meta?.codec?.toUpperCase() || currentEntry.type,
-            currentEntry._meta?.source || "",
-          ]
-            .filter(Boolean)
-            .join(" · ") || undefined
-        }
-        switchingLabel={switchingLabel}
-        onSourcePicker={() => setShowPicker(true)}
-        audioTracks={moviTracks.audio}
-        subtitleTracks={moviTracks.sub}
-        currentAudioTrackId={moviAdapter?.getCurrentAudioTrackId() ?? undefined}
-        currentSubtitleTrackId={
-          moviAdapter?.getCurrentSubtitleTrackId() ?? undefined
-        }
-        onAudioTrackChange={(id) => {
-          userAudioTouchedRef.current = true;
-          moviAdapter?.setAudioTrack(id);
-        }}
-        onSubtitleChange={(id) => moviAdapter?.setSubtitleTrack(id ?? null)}
-      >
-        {/* No built-in controls (everything is driven through the adapter) and
-            movi's own hotkeys are off — our shortcuts own the keyboard. The
-            wasmurl asset is copied into /public by scripts/copy-movi-wasm.mjs. */}
+      <div ref={moviHostRef} className="absolute inset-0 select-none bg-black">
+        {/* Built-in UI on desktop. On touch/small screens `controls` is false,
+            so the bar never mounts and the host drops into `movi-no-controls`;
+            MobilePlayerOverlay below is the chrome instead. The wasmurl asset
+            is copied into /public by scripts/copy-movi-wasm.mjs; themecolor
+            carries the app gold into movi's own accent.
+
+            Perf wiring:
+            • engine — browser-native codecs (plain H.264 MP4 / WebM) lead with
+              the wrapped native <video> so decode+present run in the browser's
+              media stack with zero WASM/JS frame pumping. HLS (.m3u8) leads
+              with hls.js and DASH (.mpd) with dash.js: they transmux into MSE
+              and the browser's hardware decoder handles H.264/AAC — wasm-first
+              software-decoded every HLS source and lagged at 720p. `native`
+              covers Safari's built-in HLS; `wasm` stays the last resort (e.g.
+              HEVC-in-HLS if hls.js can't handle it, via movi's engine
+              escalation). Unknown formats (byte-sniff failed) keep the engine
+              list unset so movi's own escalation is untouched.
+            • bindav="false" — on a slow/dead link movi's default pauses the
+              clock with the audio and freezes the PICTURE for up to the full
+              rebuffer (~15s of stillness on the longest stalls). Unbound, the
+              picture keeps playing into the buffer and audio suspends for the
+              gap only — playback feels continuous instead of hard-stalling.
+            • buffersize="200" — 200MB prefetch window (the element default is
+              100MB) rides out long CDN throughput dips without rebuffering.
+            • --movi-* vars — theme the shadow-DOM control bar from outside:
+              gold replaces the stock cyan accent everywhere, the bar/scrim
+              gradients match the app's #070708 black, and the bar tightens
+              from 72px to 64px (buttons 44→40) so it reads as our chrome,
+              not stock movi. themecolor still carries the primary (progress
+              fill, active states); accent/secondary colours had no host
+              wiring before this (accent stayed default cyan).
+          */}
         <movi-player
           ref={attachMovi}
           src={currentEntry.url}
           wasmurl="/movi.wasm"
+          {...(adaptiveEngine
+            ? { engine: `${adaptiveEngine} native wasm` }
+            : nativeEngineFirst
+              ? { engine: "native wasm" }
+              : nativeEngineLast
+                ? { engine: "wasm native" }
+                : null)}
+          bindav="false"
+          buffersize="200"
+          // Desktop: keep movi's on-bar seek buttons but switch its ARROW
+          // hotkeys off (default is all-on with ±10s seeks) — the window-level
+          // handler in 4m-5b owns ← / → at ±5s so the step never depends on
+          // whether the player has focus. Omitted on mobile-UI (default keeps
+          // touch double-tap seeking; nohotkeys already blocks its keys).
+          {...(!isMobileUi ? { fastseek: "buttons" } : null)}
+          controls={!isMobileUi}
           autoplay
           playsinline
           preload="auto"
           objectfit="contain"
-          nohotkeys
-          style={{ width: "100%", height: "100%", display: "block" }}
+          theme="dark"
+          themecolor="#D4A237"
+          showtitle={!isMobileUi}
+          title={sourceLabel}
+          nohotkeys={isMobileUi}
+          style={
+            {
+              width: "100%",
+              height: "100%",
+              display: "block",
+              // Brand theming — inherits into the open shadow root.
+              "--movi-accent": "#E8B861",
+              "--movi-accent-light": "#F2CE86",
+              "--movi-bar-bg":
+                "linear-gradient(to top, rgba(7,7,8,0.94) 0%, rgba(7,7,8,0.55) 45%, transparent 100%)",
+              "--movi-overlay-bg":
+                "linear-gradient(to top, rgba(0,0,0,0.45) 0%, transparent 14%)",
+              "--movi-chrome-bg": "rgba(7,7,8,0.92)",
+              "--movi-glass-bg": "rgba(14,14,16,0.96)",
+              "--movi-controls-group-bg": "rgba(255,255,255,0.07)",
+              "--movi-controls-height": "64px",
+              "--movi-btn-size": "40px",
+              "--movi-progress-height-hover": "7px",
+              "--movi-shadow-glow": "0 0 14px rgba(212,162,55,0.45)",
+              "--movi-radius-surface": "12px",
+              "--movi-radius-panel": "12px",
+            } as React.CSSProperties
+          }
         />
-        {/* Player toast (top-center): source confirmations and gentle hints.
-            Never blocks interaction — failover happens without error cards. */}
-        {playerToast && <PlayerToast toast={playerToast} />}
+        {/* Mobile chrome — a sibling AFTER the element so it paints above.
+            Gated on the element actually being attached: an error card tears
+            the whole subtree down, and remounting must not resurrect a stale
+            overlay. */}
+        {isMobileUi && moviAdapter && moviElAttached && (
+          <MobilePlayerOverlay
+            player={moviAdapter}
+            element={moviEl}
+            hostRef={moviHostRef}
+            sourceLabel={sourceLabel}
+            audioTracks={moviTracks.audio}
+            subtitleTracks={moviTracks.sub}
+            currentAudioTrackId={
+              moviTracks.audio.find((t: { active?: boolean }) => t.active)
+                ?.id ?? null
+            }
+            currentSubtitleTrackId={
+              moviTracks.sub.find((t: { active?: boolean }) => t.active)?.id ??
+              null
+            }
+            onAudioTrackChange={(id) => moviAdapter.setAudioTrack(id)}
+            onSubtitleChange={(id) => moviAdapter.setSubtitleTrack(id)}
+            onSourcePicker={() => setShowPicker(true)}
+            switchingLabel={switchingLabel}
+            isStreamLoading={!playbackStarted}
+          />
+        )}
+        {/* Player toast (top-center): source confirmations, switching and
+            gentle hints. Never blocks interaction — failover happens without
+            error cards. `top-16` clears movi's title bar (desktop); on mobile
+            `top-20` clears the overlay's top bar and its safe-area inset. */}
+        {toast && (
+          <PlayerToast
+            toast={toast}
+            className={isMobileUi ? "top-20" : "top-16"}
+          />
+        )}
         <StreamPickerSheet
           open={showPicker}
           links={videoEntries}
@@ -1942,7 +2455,7 @@ export function DirectVideoPlayer({
           }}
           onClose={() => setShowPicker(false)}
         />
-      </PlayerShell>
+      </div>
     );
   }
 
