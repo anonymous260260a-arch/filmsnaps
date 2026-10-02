@@ -26,6 +26,25 @@
         "imageWidth": 260
       },
       "package": "app.filmsnaps.mobile",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "category": ["DEFAULT", "BROWSABLE"],
+          "data": [
+            {
+              "scheme": "https",
+              "host": "filmsnap-pro.netlify.app",
+              "pathPrefix": "/movie"
+            },
+            {
+              "scheme": "https",
+              "host": "filmsnap-pro.netlify.app",
+              "pathPrefix": "/tv"
+            }
+          ]
+        }
+      ],
       "navigationBar": {
         "visible": "sticky-immersive",
         "backgroundColor": "#18181b"
