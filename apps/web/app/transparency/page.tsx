@@ -69,13 +69,15 @@ const FAQS: {
   {
     question: "Does FilmSnaps collect my personal data?",
     answerText:
-      "No. We collect no personal data. The Android app can send anonymous usage statistics and crash reports (switchable off in Settings); these contain no identifiers, no IP addresses, and no titles by name. The website sends nothing. The Privacy Policy lists exactly what's sent.",
+      "No. We collect no personal data. The Android app can send anonymous usage statistics and crash reports (switchable off in Settings); these contain no device or advertising identifiers, no IP addresses, and no titles by name — the only identifier is a random ID created on your device while statistics are on and deleted when you turn them off. The website sends nothing. The Privacy Policy lists exactly what's sent.",
     answer: (
       <Body>
         <Bold>No.</Bold> We collect no personal data. The Android app can send
         anonymous usage statistics and crash reports (switchable off in
-        Settings); these contain no identifiers, no IP addresses, and no titles
-        by name. The website sends nothing. The{" "}
+        Settings); these contain no device or advertising identifiers, no IP
+        addresses, and no titles by name — the only identifier is a random ID
+        created on your device while statistics are on and deleted when you turn
+        them off. The website sends nothing. The{" "}
         <Link
           href="/privacy"
           className="text-primary underline-offset-2 hover:underline"
@@ -192,7 +194,7 @@ export default function TransparencyPage() {
         icon={<Info className="h-10 w-10 text-primary" strokeWidth={1.5} />}
       >
         <p className="mb-2 text-sm font-medium text-faint">
-          Last updated: September 2026
+          Last updated: September 28, 2026
         </p>
 
         <p className="mb-8 text-base leading-7 text-muted-foreground">

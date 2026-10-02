@@ -1,28 +1,37 @@
 /**
- * Telemetry queue — batched, capped, gated, privacy-first.
+ * Telemetry queue — batched, capped, gated, privacy-first, loss-resistant.
  *
  * Gates: nothing queues/sends unless legalAccepted AND analyticsEnabled.
- * When the gate closes (user toggle off), the queue is dropped immediately
- * and the flush timer stops.
+ * When the gate closes (user toggle off), the queue is dropped, the anon ID
+ * is deleted, and the flush timer stops.
  *
- * Batching: ≤20 events or 30s, flush on AppState background, one retry
- * then discard that batch, hard cap 200 (drop oldest).
+ * Durability: the queue is mirrored to AsyncStorage on every enqueue and
+ * cleared only after the server acknowledges a batch. Kill/background
+ * flushes drain the WHOLE queue (not just one 20-event batch) so a
+ * 3-hour session's telemetry survives process death; restoring the queue
+ * after restart guards the background-flush race.
+ *
+ * Batching: ≤20 events or 30s, drain-all on background, one retry then
+ * keep-and-resend later (never silently discard), hard cap 400.
  *
  * Transport: POST `${getApiBaseUrl()}/api/telemetry` with a static header
  * token (deterrent only — not auth). No IP is read or sent by this module.
  */
 
 import { AppState } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiBaseUrl } from "../api";
 import {
   scrub,
   type TelemetryEnvelope,
   type TelemetryEventName,
 } from "./types";
+import { getAnonId, initAnonId } from "./anonId";
 
-const MAX_QUEUE = 200;
+const MAX_QUEUE = 400;
 const BATCH_SIZE = 20;
 const FLUSH_INTERVAL_MS = 30_000;
+const QUEUE_KEY = "telemetry:queue:v1";
 
 let queue: TelemetryEnvelope[] = [];
 let legalAccepted = false;
@@ -51,7 +60,7 @@ function ensureListeners(): void {
   if (appStateSub) return;
   appStateSub = AppState.addEventListener("change", (state) => {
     if (state === "background" || state === "inactive") {
-      void flushNow();
+      void flushAll();
     }
   });
 }
@@ -70,6 +79,44 @@ function scheduleFlush(): void {
   }, FLUSH_INTERVAL_MS);
 }
 
+function persistQueue(): void {
+  if (queue.length === 0) {
+    AsyncStorage.removeItem(QUEUE_KEY).catch(() => {});
+  } else {
+    AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(queue)).catch(() => {});
+  }
+}
+
+async function restoreQueue(): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(QUEUE_KEY);
+    if (!raw) return;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return;
+    const restored = parsed
+      .map((e) => scrub(e as TelemetryEnvelope))
+      .filter((e): e is TelemetryEnvelope => e !== null);
+    // Guard against double-restore (background flush fired, send failed,
+    // app was killed, restart raced a live process): never shrink the
+    // in-memory queue, and cap to MAX_QUEUE.
+    if (restored.length > queue.length) {
+      queue = restored
+        .slice(Math.max(0, restored.length - MAX_QUEUE))
+        .concat(queue.slice(0, Math.max(0, MAX_QUEUE - restored.length)));
+    }
+  } catch {
+    // Corrupt snapshot — drop it, live queue continues.
+    AsyncStorage.removeItem(QUEUE_KEY).catch(() => {});
+  }
+}
+
+/** Called when the analytics gate opens: restore pending events + anon ID. */
+export function hydrateTelemetry(): void {
+  void restoreQueue().then(() => {
+    if (gateOpen() && queue.length > 0) scheduleFlush();
+  });
+}
+
 function dropQueue(reason: string): void {
   if (queue.length > 0) {
     console.log(`[Telemetry] drop queue (${reason}) n=${queue.length}`);
@@ -80,12 +127,14 @@ function dropQueue(reason: string): void {
     clearTimeout(flushTimer);
     flushTimer = null;
   }
+  persistQueue();
 }
 
 /**
  * Sync the legal + analytics gates. Call on settings load and whenever
- * legalAccepted or analyticsEnabled changes. Closing either gate drops
- * the queue and stops sends immediately.
+ * legalAccepted or analyticsEnabled changes. Opening the gate (re)creates
+ * the anon ID; closing either gate drops the queue, deletes the anon ID,
+ * and stops sends immediately.
  */
 export function setTelemetryGate(opts: {
   legalAccepted: boolean;
@@ -96,8 +145,12 @@ export function setTelemetryGate(opts: {
   analyticsEnabled = opts.analyticsEnabled;
   const open = gateOpen();
 
+  // Anon ID lifecycle — gate-scoped by privacy contract.
+  void initAnonId(open);
+
   if (open && !wasOpen) {
     ensureListeners();
+    hydrateTelemetry();
     // Flush any cold-start app_launch that was buffered while the gate was
     // still closed (legal not yet accepted / settings not yet hydrated).
     if (pendingAppLaunch) {
@@ -105,7 +158,11 @@ export function setTelemetryGate(opts: {
       pendingAppLaunch = null;
       const env = scrub(held);
       if (env) {
-        queue.push(env);
+        // Stamp the anon ID if it loaded in time (it is created in the same
+        // gate-open tick; if the storage read is still pending the event
+        // sends without it, which the server accepts).
+        const anonId = getAnonId();
+        queue.push({ ...env, ...(anonId ? { anonId } : {}) });
         sessionEventCount += 1;
       }
     }
@@ -148,6 +205,12 @@ export function enqueue(
   const env = scrub({ ...envelope, name, dims });
   if (!env) return;
 
+  // Envelope-level anonymous install ID (not a dim; server strips unknown
+  // fields and stores it in its own column). Null before the async load
+  // completes for this session — the event still sends.
+  const anonId = getAnonId();
+  const full: TelemetryEnvelope = { ...env, ...(anonId ? { anonId } : {}) };
+
   // P3 — count for session_end (provider_switch idents itself by name).
   sessionEventCount += 1;
   // P4 — lastScreen = last *place* the user was on. screen_view is the
@@ -157,11 +220,11 @@ export function enqueue(
   else if (name === "download_event") lastScreenSeen = "download";
   if (name === "provider_switch") sessionProviderSwitches += 1;
 
-  queue.push(env);
+  queue.push(full);
   if (queue.length > MAX_QUEUE) {
-    const overflow = queue.length - MAX_QUEUE;
-    queue.splice(0, overflow);
+    queue.splice(0, queue.length - MAX_QUEUE);
   }
+  persistQueue();
   if (queue.length >= BATCH_SIZE) {
     void flushNow();
   } else {
@@ -191,28 +254,7 @@ export function startNewSession(): void {
   sessionProviderSwitches = 0;
 }
 
-/** Force-send the current batch (background / manual). */
-export async function flushNow(): Promise<void> {
-  if (flushing || !gateOpen() || queue.length === 0) return;
-  flushing = true;
-  try {
-    const batch = queue.splice(0, BATCH_SIZE);
-    const ok = await postBatch(batch);
-    if (!ok) {
-      // One retry then discard this batch (never unbounded re-queue).
-      const retried = await postBatch(batch);
-      if (!retried) {
-        console.log(
-          `[Telemetry] batch discarded after retry n=${batch.length}`,
-        );
-      }
-    }
-  } finally {
-    flushing = false;
-    if (queue.length > 0) scheduleFlush();
-  }
-}
-
+/** Send up to batchSize events; true = server acknowledged the batch. */
 async function postBatch(batch: TelemetryEnvelope[]): Promise<boolean> {
   try {
     const token = process.env.EXPO_PUBLIC_TELEMETRY_TOKEN;
@@ -224,11 +266,60 @@ async function postBatch(batch: TelemetryEnvelope[]): Promise<boolean> {
       },
       body: JSON.stringify({ events: batch }),
     });
-    // 204 = kill-switch accepted (events intentionally dropped server-side).
+    // 204 = accepted (also the kill-switch / empty-after-sanitize response —
+    // both mean the server will never accept these; drop them).
     return res.ok;
   } catch {
     return false;
   }
+}
+
+/**
+ * Force-send events (background / batch threshold / manual).
+ * Drains up to `max` events; each ACKED chunk is removed from the queue and
+ * the persisted snapshot. Failed chunks STAY queued (one immediate retry,
+ * then the 30s timer keeps trying) — nothing is silently discarded.
+ */
+async function sendFromQueue(max: number): Promise<void> {
+  if (flushing || !gateOpen()) return;
+  flushing = true;
+  try {
+    let guard = 0;
+    while (queue.length > 0 && guard++ < max) {
+      const batch = queue.slice(0, BATCH_SIZE);
+      const ok = await postBatch(batch);
+      if (ok) {
+        queue.splice(0, batch.length);
+        persistQueue();
+        continue;
+      }
+      // One immediate retry; if that fails too, keep the events and let the
+      // 30s timer / next background flush try again (never drop data).
+      const retried = await postBatch(batch);
+      if (retried) {
+        queue.splice(0, batch.length);
+        persistQueue();
+      }
+      break;
+    }
+  } finally {
+    flushing = false;
+    if (queue.length > 0) scheduleFlush();
+  }
+}
+
+/** Timer/batch flush: bounded so the JS thread is never blocked long. */
+export async function flushNow(): Promise<void> {
+  await sendFromQueue(25);
+}
+
+/**
+ * Background flush: drain the ENTIRE queue so nothing survives process
+ * death unsent. Android gives ~1-2s after backgrounding — usually enough;
+ * anything the OS cuts off is restored from AsyncStorage on next launch.
+ */
+export async function flushAll(): Promise<void> {
+  await sendFromQueue(Infinity);
 }
 
 /** Test/debug: clear everything without sending. */

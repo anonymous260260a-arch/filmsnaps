@@ -2,9 +2,17 @@
 
 export type Dashboard = {
   meta: { fromDay: string; toDay: string; event: string | null; total: number };
+  /** Distinct anonymous-install aggregates (random UUIDs, aggregate-only). */
+  audience?: {
+    uniquesTotal: number;
+    eventsPerInstall: number;
+    uniquesByDay: { day: string; n: number }[];
+  };
   daily: Record<string, Record<string, number>>;
   funnel: {
     watchOpened: Record<string, number>;
+    /** watch_end by player surface (direct native vs embed webview). */
+    watchEndSurface?: { surface: string; n: number; durMs: number }[];
     playerStart: Record<string, number>;
     playerErrors: { errorClass: string; surface: string; n: number }[];
     providerSwitches: Record<string, number>;
@@ -41,6 +49,8 @@ export type RawRow = {
   appVersion: string;
   connectionClass: string;
   deviceTier: string;
+  /** First 8 chars of the anonymous install UUID (privacy-truncated). */
+  anonId?: string | null;
   dims: Record<string, string | number | boolean>;
 };
 

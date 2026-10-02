@@ -75,7 +75,7 @@ export default function TransparencyScreen() {
           className="text-sm leading-7 mb-6"
           style={{ color: colors.textSecondary }}
         >
-          Last updated: September 2026
+          Last updated: September 28, 2026
         </Text>
 
         <Text
@@ -258,9 +258,11 @@ export default function TransparencyScreen() {
             <Body>
               <Bold>No.</Bold> We collect no personal data. The Android app can
               send anonymous usage statistics and crash reports (switchable off
-              in Settings); these contain no identifiers, no IP addresses, and
-              no titles by name. The website sends nothing. The Privacy Policy
-              lists exactly what's sent.
+              in Settings); these contain no device or advertising identifiers,
+              no IP addresses, and no titles by name — the only identifier is a
+              random ID created on your device while statistics are on and
+              deleted when you turn them off. The website sends nothing. The
+              Privacy Policy lists exactly what's sent.
             </Body>
           </FaqItem>
 

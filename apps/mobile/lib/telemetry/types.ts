@@ -179,6 +179,7 @@ export const EVENT_DIMS: Record<TelemetryEventName, readonly string[]> = {
     "capBucket",
     "watchedPctBucket",
     "resumeCorrection",
+    "surface",
   ],
   provider_switch: ["from", "to", "reason"],
   app_launch: [
@@ -224,7 +225,7 @@ export const EVENT_DIMS: Record<TelemetryEventName, readonly string[]> = {
   ],
   feature_used: ["feature", "context", "fromTab", "surface"],
   exit_during_switch: ["surface", "switchKind"],
-  watch_opened: ["surface"],
+  watch_opened: ["surface", "mediaType"],
   network_speed: ["mbpsBucket", "connectionClass", "latencyBucket"],
   boundary_error: ["errorClass"],
 } as const;
@@ -262,6 +263,8 @@ export interface WatchEndDims {
   watchedPctBucket?: WatchedPctBucket;
   /** Resume correction fired (startAt was wrong and we re-seeked). */
   resumeCorrection?: boolean;
+  /** Which player surface closed the watch intent (direct native / embed web). */
+  surface?: PlayerSurface;
 }
 
 export type WatchedPctBucket =
@@ -359,6 +362,12 @@ export interface TelemetryEnvelope {
   appVersion: string;
   connectionClass: ConnectionClass;
   deviceTier: DeviceTier;
+  /**
+   * Random per-install UUID (NOT device-derived). Present only while the
+   * analytics gate is open; lets the dashboard count distinct installs.
+   * Envelope-level, never a dim, and deleted when statistics are disabled.
+   */
+  anonId?: string;
   dims: Record<string, string | number | boolean>;
 }
 

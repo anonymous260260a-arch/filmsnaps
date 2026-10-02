@@ -5,6 +5,10 @@
  *  - Static header token (deterrent only; not user auth).
  *  - Kill-switch: TELEMETRY_ENABLED=0 → 204 + drop (no insert).
  *  - Same whitelist validation as the client scrub().
+ *  - anonId: the ONLY identifier — a RANDOM per-install UUID minted
+ *    on-device while statistics are on, deleted when they're turned off.
+ *    Never derived from hardware/OS/IP/account; stored in its own column
+ *    (never inside dims_json) for aggregate-only distinct counts.
  *  - No IP access, no logging middleware on this route.
  *  - Per-request rate limit (simple in-memory counter, best-effort).
  */
@@ -46,6 +50,7 @@ const EVENT_DIMS: Record<string, readonly string[]> = {
     "capBucket",
     "watchedPctBucket",
     "resumeCorrection",
+    "surface",
   ],
   provider_switch: ["from", "to", "reason"],
   app_launch: [
@@ -91,7 +96,7 @@ const EVENT_DIMS: Record<string, readonly string[]> = {
   feature_used: ["feature", "context", "fromTab", "surface"],
   exit_during_switch: ["surface", "switchKind"],
   seek_latency: ["latencyMs", "kind", "providerId", "mediaType"],
-  watch_opened: ["surface"],
+  watch_opened: ["surface", "mediaType"],
   network_speed: ["mbpsBucket", "connectionClass", "latencyBucket"],
   boundary_error: ["errorClass"],
 };
@@ -121,6 +126,10 @@ function rateLimited(): boolean {
   return rateCount > RATE_MAX;
 }
 
+/** Strict v4-shaped UUID — anything else is dropped (never stored raw). */
+const ANON_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 function sanitizeEvent(raw: unknown): Record<string, unknown> | null {
   if (!raw || typeof raw !== "object") return null;
   const e = raw as Record<string, unknown>;
@@ -138,6 +147,10 @@ function sanitizeEvent(raw: unknown): Record<string, unknown> | null {
       : "unknown";
   const deviceTier =
     typeof e.deviceTier === "string" ? e.deviceTier.slice(0, 16) : "unknown";
+  // Envelope-level anonymous install ID — validated, never persisted into
+  // dims_json, and only accepted in strict UUID form.
+  const anonId =
+    typeof e.anonId === "string" && ANON_ID_RE.test(e.anonId) ? e.anonId : null;
 
   const rawDims =
     e.dims && typeof e.dims === "object"
@@ -162,7 +175,7 @@ function sanitizeEvent(raw: unknown): Record<string, unknown> | null {
     n += 1;
   }
 
-  return { name, ts, appVersion, connectionClass, deviceTier, dims };
+  return { name, ts, appVersion, connectionClass, deviceTier, anonId, dims };
 }
 
 export async function POST(req: Request) {
@@ -213,8 +226,9 @@ export async function POST(req: Request) {
   try {
     const stmt = db.prepare(
       `INSERT INTO telemetry_events
-         (name, ts, app_version, connection_class, device_tier, dims_json)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         (name, ts, app_version, connection_class, device_tier, anon_id,
+          dims_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
     const bound = cleaned.map((e) =>
       stmt.bind(
@@ -223,12 +237,34 @@ export async function POST(req: Request) {
         e.appVersion,
         e.connectionClass,
         e.deviceTier,
+        e.anonId,
         JSON.stringify(e.dims),
       ),
     );
     await db.batch(bound);
   } catch {
-    // Never surface analytics failures to the client.
+    // Migration 003 (anon_id column) may not be applied yet — retry WITHOUT
+    // the column so a pending migration can never drop live events again.
+    try {
+      const stmt6 = db.prepare(
+        `INSERT INTO telemetry_events
+           (name, ts, app_version, connection_class, device_tier, dims_json)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      );
+      const bound6 = cleaned.map((e) =>
+        stmt6.bind(
+          e.name,
+          e.ts,
+          e.appVersion,
+          e.connectionClass,
+          e.deviceTier,
+          JSON.stringify(e.dims),
+        ),
+      );
+      await db.batch(bound6);
+    } catch {
+      // Never surface analytics failures to the client.
+    }
   }
 
   return new NextResponse(null, { status: 204 });

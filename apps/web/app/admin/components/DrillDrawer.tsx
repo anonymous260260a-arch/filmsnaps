@@ -178,6 +178,14 @@ export function DrillDrawer({ state, onClose }: DrillDrawerProps) {
                             {row.deviceTier}
                           </span>
                         )}
+                        {row.anonId && (
+                          <span
+                            className="text-[11px] font-mono text-violet-300/80 bg-violet-400/10 px-1.5 py-0.5 rounded"
+                            title="Anonymous install ID (truncated) — random UUID, not device-derived"
+                          >
+                            {row.anonId.slice(0, 8)}
+                          </span>
+                        )}
                       </div>
                     </div>
 

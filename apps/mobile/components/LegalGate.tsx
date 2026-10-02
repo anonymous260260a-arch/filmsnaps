@@ -275,112 +275,114 @@ export default function LegalGate() {
           contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 160 }}
           showsVerticalScrollIndicator={false}
         >
-        {/* Centered brand area */}
-        <View className="items-center pt-8 pb-6">
-          <Image
-            source={require("../assets/icon.png")}
-            style={{
-              width: 56,
-              height: 56,
-              borderRadius: 14,
-              marginBottom: 16,
-            }}
-            accessibilityLabel="FilmSnaps logo"
-          />
-          <Text
-            style={{
-              fontFamily: "PlayfairDisplay_700Bold",
-              fontSize: 18,
-              color: colors.gold,
-              textAlign: "center",
-              lineHeight: 26,
-            }}
-          >
-            Your personal cinema,
-            {"\n"}anywhere.
-          </Text>
-        </View>
-
-        {/* Gold accent divider */}
-        <View
-          className="w-12 h-0.5 mx-auto mb-6"
-          style={{ backgroundColor: colors.gold }}
-        />
-
-        {/* Accordion sections */}
-        {SECTIONS.map((section) => {
-          const isExpanded = expandedSection === section.key;
-          return (
-            <View
-              key={section.key}
-              className="mb-2 rounded-xl overflow-hidden"
+          {/* Centered brand area */}
+          <View className="items-center pt-8 pb-6">
+            <Image
+              source={require("../assets/icon.png")}
               style={{
-                borderWidth: 1,
-                borderColor: colors.borderSubtle,
+                width: 56,
+                height: 56,
+                borderRadius: 14,
+                marginBottom: 16,
+              }}
+              accessibilityLabel="FilmSnaps logo"
+            />
+            <Text
+              style={{
+                fontFamily: "PlayfairDisplay_700Bold",
+                fontSize: 18,
+                color: colors.gold,
+                textAlign: "center",
+                lineHeight: 26,
               }}
             >
-              <TouchableOpacity
-                onPress={() => toggleSection(section.key)}
-                activeOpacity={0.7}
-                className="flex-row items-center justify-between px-4 py-3.5"
-                style={{ backgroundColor: colors.bgCard }}
+              Your personal cinema,
+              {"\n"}anywhere.
+            </Text>
+          </View>
+
+          {/* Gold accent divider */}
+          <View
+            className="w-12 h-0.5 mx-auto mb-6"
+            style={{ backgroundColor: colors.gold }}
+          />
+
+          {/* Accordion sections */}
+          {SECTIONS.map((section) => {
+            const isExpanded = expandedSection === section.key;
+            return (
+              <View
+                key={section.key}
+                className="mb-2 rounded-xl overflow-hidden"
+                style={{
+                  borderWidth: 1,
+                  borderColor: colors.borderSubtle,
+                }}
               >
-                <Text
-                  className="text-sm tracking-wide flex-1 mr-2"
-                  style={{
-                    color: colors.gold,
-                    fontFamily: "Inter_600SemiBold",
-                  }}
-                >
-                  {section.title}
-                </Text>
-                <Ionicons
-                  name={isExpanded ? "chevron-up" : "chevron-down"}
-                  size={16}
-                  color={colors.gold}
-                />
-              </TouchableOpacity>
-              {isExpanded && (
-                <View
-                  className="px-4 pt-1 pb-4"
+                <TouchableOpacity
+                  onPress={() => toggleSection(section.key)}
+                  activeOpacity={0.7}
+                  className="flex-row items-center justify-between px-4 py-3.5"
                   style={{ backgroundColor: colors.bgCard }}
                 >
-                  <section.body />
-                </View>
-              )}
-            </View>
-          );
-        })}
+                  <Text
+                    className="text-sm tracking-wide flex-1 mr-2"
+                    style={{
+                      color: colors.gold,
+                      fontFamily: "Inter_600SemiBold",
+                    }}
+                  >
+                    {section.title}
+                  </Text>
+                  <Ionicons
+                    name={isExpanded ? "chevron-up" : "chevron-down"}
+                    size={16}
+                    color={colors.gold}
+                  />
+                </TouchableOpacity>
+                {isExpanded && (
+                  <View
+                    className="px-4 pt-1 pb-4"
+                    style={{ backgroundColor: colors.bgCard }}
+                  >
+                    <section.body />
+                  </View>
+                )}
+              </View>
+            );
+          })}
 
-        {/* Summary line */}
-        <Text
-          className="text-sm text-center mt-6 leading-6"
-          style={{ color: colors.textSecondary }}
-        >
-          By tapping "I Understand", you accept these terms.
-        </Text>
-        <Text
-          className="text-xs text-center mt-2 leading-5"
-          style={{ color: colors.textTertiary }}
-        >
-          FilmSnaps may send anonymous usage statistics and crash reports —
-          small, non-personal signals that help us fix crashes and improve
-          streaming sources (crash reports are processed by Sentry, a US-based
-          crash-reporting service). Nothing identifies you. You can turn this
-          off anytime in Settings → Anonymous usage statistics.
-        </Text>
-        <TouchableOpacity
-          onPress={() => setShowingPrivacy(true)}
-          activeOpacity={0.7}
-          className="mt-3 items-center"
-        >
+          {/* Summary line */}
           <Text
-            className="text-xs underline"
-            style={{ color: colors.info, fontFamily: "Inter_500Medium" }}
+            className="text-sm text-center mt-6 leading-6"
+            style={{ color: colors.textSecondary }}
           >
-            Read the Privacy Policy →
+            By tapping "I Understand", you accept these terms.
           </Text>
-        </TouchableOpacity>
+          <Text
+            className="text-xs text-center mt-2 leading-5"
+            style={{ color: colors.textTertiary }}
+          >
+            FilmSnaps may send anonymous usage statistics and crash reports —
+            small, non-personal signals that help us fix crashes and improve
+            streaming sources (crash reports are processed by Sentry, a US-based
+            crash-reporting service). Nothing identifies you; the only ID is a
+            random one created on your device and deleted if you turn statistics
+            off. You can turn this off anytime in Settings → Anonymous usage
+            statistics.
+          </Text>
+          <TouchableOpacity
+            onPress={() => setShowingPrivacy(true)}
+            activeOpacity={0.7}
+            className="mt-3 items-center"
+          >
+            <Text
+              className="text-xs underline"
+              style={{ color: colors.info, fontFamily: "Inter_500Medium" }}
+            >
+              Read the Privacy Policy →
+            </Text>
+          </TouchableOpacity>
         </ScrollView>
       )}
 

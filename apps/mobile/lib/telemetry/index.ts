@@ -9,7 +9,10 @@
  *   trackNetworkSpeed / trackBoundaryError / resolveCapBucket
  *
  * Hard rules (enforced in types.ts + queue.ts + server):
- *   - No user/device/advertising/session identifiers ever.
+ *   - No device/advertising identifiers, ever. The ONLY identifier is a
+ *     RANDOM per-install UUID (anonId) created while statistics are on and
+ *     deleted when they are turned off — not derived from hardware, OS,
+ *     IP, or account. It exists solely to count distinct installs.
  *   - No IP read, logged, or stored.
  *   - No free text / URLs / titles — whitelisted fields only.
  *   - Nothing queues or sends before legalAccepted AND analyticsEnabled.
@@ -20,6 +23,8 @@ export {
   setTelemetryGate,
   isTelemetryOpen,
   flushNow,
+  flushAll,
+  hydrateTelemetry,
   resetTelemetryForTests,
 } from "./queue";
 
