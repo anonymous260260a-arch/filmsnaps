@@ -52,10 +52,14 @@ export const tmdbApi = {
   getUpcomingMovies: () => apiFetch("/movie/upcoming"),
 
   getMovieDetails: (id: number | string) =>
-    apiFetch(`/movie/${id}?append_to_response=videos,credits,similar`),
+    apiFetch(
+      `/movie/${id}?append_to_response=videos,credits,similar,recommendations`,
+    ),
 
   getTVDetails: (id: number | string) =>
-    apiFetch(`/tv/${id}?append_to_response=videos,credits,similar`),
+    apiFetch(
+      `/tv/${id}?append_to_response=videos,credits,similar,recommendations`,
+    ),
 
   getSeason: (tvId: number | string, seasonNumber: number) =>
     apiFetch(`/tv/${tvId}/season/${seasonNumber}`),

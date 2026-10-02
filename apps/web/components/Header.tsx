@@ -1,26 +1,18 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { Search, Menu, X, ArrowLeft, Download, Clock } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { Search, Menu, X } from "lucide-react";
 import { useWatchlist } from "@/hooks/useWatchlist";
-import { getImageUrl, rankSearchResults, smartSearch } from "@/lib/tmdb";
-import { useDebounce } from "@/hooks/useDebounce";
-import { useQuery } from "@tanstack/react-query";
 import { ModeSplitToggle } from "@/components/ModeSplitToggle";
 import { SearchPalette } from "@/components/desktop/SearchPalette";
 
 export function Header() {
   const pathname = usePathname();
-  const router = useRouter();
   const { savedMovies } = useWatchlist();
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const debouncedQuery = useDebounce(searchQuery, 300);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   // Lazy-init: synchronously detect Electron on first client render to avoid
   // the one-frame flash of the full website header on desktop.
   const [isDesktop] = useState(() => {
@@ -40,19 +32,8 @@ export function Header() {
     [savedMovies?.length, isDesktop],
   );
 
-  // Search suggestions
-  const { data: searchResults } = useQuery({
-    queryKey: ["header-search", debouncedQuery],
-    queryFn: () => smartSearch(debouncedQuery),
-    enabled: debouncedQuery.length > 1,
-    staleTime: 30 * 1000,
-    gcTime: 60 * 1000,
-  });
-
-  const suggestions = useMemo(() => {
-    if (!searchResults?.results) return [];
-    return rankSearchResults(searchResults.results, debouncedQuery, 6);
-  }, [searchResults, debouncedQuery]);
+  // Search suggestions live inside SearchPalette (both desktop and mobile
+  // open the same command palette) — no duplicate header-side query.
 
   // Keyboard shortcut
   useEffect(() => {
@@ -63,7 +44,6 @@ export function Header() {
       }
       if (e.key === "Escape") {
         setSearchOpen(false);
-        setMobileSearchOpen(false);
         setMenuOpen(false);
       }
     };
@@ -71,18 +51,9 @@ export function Header() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // Focus input when desktop search opens
-  useEffect(() => {
-    if (searchOpen && searchInputRef.current) {
-      setTimeout(() => searchInputRef.current?.focus(), 100);
-    }
-  }, [searchOpen]);
-
   // Close search on route change
   useEffect(() => {
     setSearchOpen(false);
-    setMobileSearchOpen(false);
-    setSearchQuery("");
   }, [pathname]);
 
   // Disable body scroll when menu is open
@@ -104,24 +75,6 @@ export function Header() {
   // Keeping the Header mounted but returning null preserves all 8 mount
   // sites without editing them, and leaves the web build untouched.
   if (isDesktop) return null;
-
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (searchQuery.trim()) {
-      setSearchOpen(false);
-      setMobileSearchOpen(false);
-      router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
-      setSearchQuery("");
-    }
-  };
-
-  const handleSuggestionClick = (item: any) => {
-    setSearchOpen(false);
-    setMobileSearchOpen(false);
-    setSearchQuery("");
-    const type = item.media_type || "movie";
-    router.push(`/${type}?id=${item.id}`);
-  };
 
   const openDesktopSearch = () => {
     setSearchOpen(true);
@@ -192,11 +145,6 @@ export function Header() {
                 </kbd>
               </button>
 
-              {/* Centered command palette — matches the desktop SearchPalette
-                  exactly (portal to body, backdrop-closes, ESC-closes, inline
-                  Anime pill). Reused directly so web == desktop. */}
-              <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
-
               {/* Hard Mode Split toggle (web header) */}
               <span className="hidden lg:inline-flex items-center">
                 <ModeSplitToggle />
@@ -206,123 +154,31 @@ export function Header() {
 
           {/* ── Mobile: Search + Menu buttons ── */}
           <div className="md:hidden flex items-center gap-1">
-            {/* Mobile search overlay */}
-            {mobileSearchOpen ? (
-              <div className="fixed inset-0 z-50 bg-background/98 backdrop-blur-lg">
-                <div className="flex items-center gap-2 px-4 h-16 border-b border-white/[0.04]">
-                  <button
-                    onClick={() => {
-                      setMobileSearchOpen(false);
-                      setSearchQuery("");
-                    }}
-                    className="p-1.5 -ml-1 text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <ArrowLeft className="h-5 w-5" />
-                  </button>
-                  <form onSubmit={handleSearchSubmit} className="flex-1">
-                    <input
-                      ref={searchInputRef}
-                      type="text"
-                      placeholder="Search movies & TV shows..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full h-11 px-4 rounded-xl bg-secondary/30 border border-white/[0.06] text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
-                      autoFocus
-                    />
-                  </form>
-                </div>
-
-                <div className="overflow-y-auto max-h-[calc(100vh-4rem)] px-4 py-4">
-                  {searchQuery.length > 1 && suggestions.length > 0 && (
-                    <div className="space-y-1">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/50 mb-3 px-1">
-                        Suggestions
-                      </p>
-                      {suggestions.map((item: any) => (
-                        <button
-                          key={`${item.media_type}-${item.id}`}
-                          onClick={() => handleSuggestionClick(item)}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-left hover:bg-white/[0.04] transition-colors"
-                        >
-                          <div className="w-10 h-14 rounded-lg overflow-hidden bg-secondary/40 flex-shrink-0">
-                            {(item.poster_path || item.poster) && (
-                              <img
-                                src={
-                                  getImageUrl(
-                                    item.poster_path || item.poster,
-                                    "w92",
-                                  ) || ""
-                                }
-                                alt=""
-                                className="w-full h-full object-cover"
-                              />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium text-foreground truncate">
-                              {item.title || item.name}
-                            </p>
-                            <p className="text-xs text-muted-foreground capitalize">
-                              {item.media_type === "movie"
-                                ? "Movie"
-                                : "TV Show"}
-                              {item.release_date || item.first_air_date
-                                ? ` · ${(item.release_date || item.first_air_date).slice(0, 4)}`
-                                : ""}
-                            </p>
-                          </div>
-                        </button>
-                      ))}
-                      <button
-                        onClick={handleSearchSubmit}
-                        className="w-full flex items-center justify-center gap-2 mt-3 px-4 py-3 rounded-xl bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors"
-                      >
-                        <Search className="h-4 w-4" />
-                        See all results
-                      </button>
-                    </div>
-                  )}
-                  {searchQuery.length > 1 && suggestions.length === 0 && (
-                    <div className="text-center text-sm text-muted-foreground py-12">
-                      No results found
-                    </div>
-                  )}
-                  {searchQuery.length <= 1 && (
-                    <div className="text-center text-sm text-muted-foreground py-12">
-                      <Search className="h-10 w-10 mx-auto mb-3 opacity-30" />
-                      Start typing to search
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <>
-                <button
-                  onClick={() => {
-                    setMobileSearchOpen(true);
-                    setMenuOpen(false);
-                  }}
-                  className="p-2 rounded-xl hover:bg-white/[0.06] transition-all duration-200"
-                  aria-label="Open search"
-                >
-                  <Search className="h-5 w-5 text-muted-foreground" />
-                </button>
-                <button
-                  className="p-2 rounded-xl hover:bg-white/[0.06] transition-all duration-200"
-                  onClick={() => setMenuOpen(!menuOpen)}
-                  aria-label="Toggle menu"
-                >
-                  {menuOpen ? (
-                    <X className="h-5 w-5 text-primary" />
-                  ) : (
-                    <Menu className="h-5 w-5 text-muted-foreground" />
-                  )}
-                </button>
-              </>
-            )}
+            <button
+              onClick={openDesktopSearch}
+              className="p-2 rounded-xl hover:bg-white/[0.06] transition-all duration-200"
+              aria-label="Open search"
+            >
+              <Search className="h-5 w-5 text-muted-foreground" />
+            </button>
+            <button
+              className="p-2 rounded-xl hover:bg-white/[0.06] transition-all duration-200"
+              onClick={() => setMenuOpen(!menuOpen)}
+              aria-label="Toggle menu"
+            >
+              {menuOpen ? (
+                <X className="h-5 w-5 text-primary" />
+              ) : (
+                <Menu className="h-5 w-5 text-muted-foreground" />
+              )}
+            </button>
           </div>
         </div>
       </div>
+
+      {/* ── Search palette — portal to body, opened by the desktop
+            ⌘K/⌘-button AND the mobile search button (web == desktop). ── */}
+      <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
 
       {/* ── Mobile Overlay ── */}
       <div

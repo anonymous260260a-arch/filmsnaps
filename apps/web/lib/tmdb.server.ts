@@ -80,7 +80,9 @@ export async function tmdbMovieMeta(id: string) {
 }
 
 export async function tmdbMovieFull(id: string) {
-  return tmdb(`/movie/${id}?append_to_response=videos,credits,similar`);
+  return tmdb(
+    `/movie/${id}?append_to_response=videos,credits,similar,recommendations`,
+  );
 }
 export async function getMovieGenres() {
   return tmdb("/genre/movie/list?language=en-US");
@@ -93,7 +95,9 @@ export async function tmdbTvMeta(id: string) {
 }
 
 export async function tmdbTvFull(id: string) {
-  return tmdb(`/tv/${id}?append_to_response=videos,credits,similar`);
+  return tmdb(
+    `/tv/${id}?append_to_response=videos,credits,similar,recommendations`,
+  );
 }
 export async function getMovies({
   genreIds,
