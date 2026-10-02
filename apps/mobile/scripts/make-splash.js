@@ -1,6 +1,19 @@
 /**
- * Regenerates apps/mobile/assets/splash.png:
- *   bg #070708 · icon mark · "FilmSnaps" (Geist 700) · "your personal cinema"
+ * Regenerates apps/mobile/assets/splash.png as a SQUARE brand lockup.
+ *
+ * Why square: the same asset is shown by two very different renderers.
+ *   1. Native boot splash — Android 12+ fits it into the system icon circle
+ *      (~2/3 of a 288dp box); Android <12 uses the classic window splash
+ *      (app.json imageWidth). A full-screen poster is contain-fitted into
+ *      that tiny box, which shrank the wordmark to ~10dp — the reported
+ *      "splash sometimes too small in prod" bug. A square lockup scales
+ *      down gracefully and looks intentional in every renderer.
+ *   2. The JS `SplashHold` in app/_layout.tsx (until fonts/settings ready).
+ *
+ * Layout (canvas 1284×1284):
+ *   icon 34% · gap · "FilmSnaps" Geist-700 · "your personal cinema" Geist-400
+ * All content sits within the middle 72% so the Android 12+ circular mask
+ * cannot clip the wordmark.
  *
  * Usage: node apps/mobile/scripts/make-splash.js
  */
@@ -9,14 +22,11 @@ const fs = require("fs");
 const path = require("path");
 
 const W = 1284;
-const H = 2778;
+const H = 1284; // SQUARE — safe in the Android 12+ icon circle
 const root = "M:/filmsnaps-main";
 const iconPath = path.join(root, "apps/mobile/assets/icon.png");
 const outPath = path.join(root, "apps/mobile/assets/splash.png");
-const backupPath = path.join(
-  root,
-  "apps/mobile/assets/splash-original.png",
-);
+const backupPath = path.join(root, "apps/mobile/assets/splash-original.png");
 
 // Phase 1C FIX 5.3: real brand font (Geist) from node_modules, not Segoe UI.
 const GEIST_BOLD = path.join(
@@ -34,7 +44,7 @@ if (!fs.existsSync(outPath)) {
 }
 if (!fs.existsSync(backupPath)) {
   fs.copyFileSync(outPath, backupPath);
-  console.log("backed up original splash");
+  console.log("backed up previous splash → splash-original.png");
 }
 if (!fs.existsSync(GEIST_BOLD) || !fs.existsSync(GEIST_REG)) {
   console.error("Geist TTF not found — cannot render brand wordmark");
@@ -44,10 +54,23 @@ if (!fs.existsSync(GEIST_BOLD) || !fs.existsSync(GEIST_REG)) {
 const fontBoldB64 = fs.readFileSync(GEIST_BOLD).toString("base64");
 const fontRegB64 = fs.readFileSync(GEIST_REG).toString("base64");
 
-const titleY = 1680;
-const iconSize = 360;
-const iconTop = titleY - 96 - 60 - iconSize;
+// Geometry — everything inside the middle 72% (circle-mask safe).
+const iconSize = Math.round(W * 0.34); // ~436px
+const titleSize = Math.round(W * 0.085); // ~109px
+const taglineSize = Math.round(W * 0.032); // ~41px
+const gapIconTitle = Math.round(W * 0.045);
+const gapTitleTagline = Math.round(W * 0.03);
+
+// Vertical block: icon + title + tagline centered as one group.
+const titleBaseline = 0; // computed below via block height
+const blockH =
+  iconSize + gapIconTitle + titleSize + gapTitleTagline + taglineSize;
+const blockTop = Math.round((H - blockH) / 2);
+const iconTop = blockTop;
 const iconLeft = Math.round((W - iconSize) / 2);
+const titleY =
+  blockTop + iconSize + gapIconTitle + Math.round(titleSize * 0.78);
+const taglineY = titleY + gapTitleTagline + taglineSize;
 
 const svg = Buffer.from(`
 <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
@@ -58,9 +81,11 @@ const svg = Buffer.from(`
     </style>
   </defs>
   <rect width="100%" height="100%" fill="#070708"/>
-  <text x="${W / 2}" y="${titleY}" text-anchor="middle" font-family="Geist" font-weight="700" font-size="96" fill="#f5f5f4" letter-spacing="6">FilmSnaps</text>
-  <text x="${W / 2}" y="${titleY + 72}" text-anchor="middle" font-family="Geist" font-weight="400" font-size="36" fill="#a1a1aa" letter-spacing="8">your personal cinema</text>
+  <text x="${W / 2}" y="${titleY}" text-anchor="middle" font-family="Geist" font-weight="700" font-size="${titleSize}" fill="#f5f5f4" letter-spacing="6">FilmSnaps</text>
+  <text x="${W / 2}" y="${taglineY}" text-anchor="middle" font-family="Geist" font-weight="400" font-size="${taglineSize}" fill="#a1a1aa" letter-spacing="8">your personal cinema</text>
 </svg>`);
+
+void titleBaseline;
 
 (async () => {
   const textLayer = await sharp(svg).png().toBuffer();
@@ -85,8 +110,9 @@ const svg = Buffer.from(`
     fs.statSync(outPath).size,
     "dims",
     meta.width,
+    "x",
     meta.height,
-    "font=Geist",
+    "(square lockup)",
   );
 })().catch((e) => {
   console.error(e);
