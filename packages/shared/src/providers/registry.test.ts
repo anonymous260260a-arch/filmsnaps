@@ -4,6 +4,7 @@ import {
   getProvider,
   getEnabledProviders,
   isProtectionEnabled,
+  isProviderAvailableOn,
 } from "./registry";
 import type { ProviderDefinition } from "../types/provider";
 
@@ -152,6 +153,55 @@ describe("Provider Registry", () => {
         protection: { enabled: false },
       };
       expect(isProtectionEnabled(providerDisabled)).toBe(false);
+    });
+  });
+
+  describe("isProviderAvailableOn", () => {
+    const direct = (platforms?: string[]): ProviderDefinition => ({
+      id: "test-direct",
+      name: "Test Direct",
+      baseUrl: "https://test.com",
+      type: "direct",
+      ...(platforms ? { platforms } : {}),
+      embed: {
+        movie: (id) => `/movie/${id}`,
+        tv: (id, s, e) => `/tv/${id}/${s}/${e}`,
+      },
+    });
+
+    it("always passes for embeds (platforms only ever filtered the web picker)", () => {
+      const webOnlyEmbed: ProviderDefinition = {
+        id: "test-embed",
+        name: "Test Embed",
+        baseUrl: "https://test.com",
+        platforms: ["web"],
+        embed: {
+          movie: (id) => `/movie/${id}`,
+          tv: (id, s, e) => `/tv/${id}/${s}/${e}`,
+        },
+      };
+      expect(isProviderAvailableOn(webOnlyEmbed, "mobile")).toBe(true);
+    });
+
+    it("direct provider without platforms is available everywhere", () => {
+      const p = direct();
+      expect(isProviderAvailableOn(p, "mobile")).toBe(true);
+      expect(isProviderAvailableOn(p, "web")).toBe(true);
+    });
+
+    it("direct provider restricted to web is hidden on mobile", () => {
+      const p = direct(["web"]);
+      expect(isProviderAvailableOn(p, "mobile")).toBe(false);
+      expect(isProviderAvailableOn(p, "web")).toBe(true);
+    });
+
+    it("matches registry semantics for existing direct providers", () => {
+      const spacedom = getProvider("spacedom"); // ["mobile", "web"]
+      const falix = getProvider("falix"); // ["mobile"]
+      expect(spacedom && isProviderAvailableOn(spacedom, "mobile")).toBe(true);
+      expect(spacedom && isProviderAvailableOn(spacedom, "web")).toBe(true);
+      expect(falix && isProviderAvailableOn(falix, "mobile")).toBe(true);
+      expect(falix && isProviderAvailableOn(falix, "web")).toBe(false);
     });
   });
 

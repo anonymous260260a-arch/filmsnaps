@@ -21,6 +21,7 @@ import {
   getProvider,
   getDefaultProviderId,
   isDirectProvider,
+  isProviderAvailableOn,
   type ProviderPlatform,
 } from "@filmsnaps/shared";
 import { getLastProvider } from "./lastProvider";
@@ -38,10 +39,17 @@ export interface PlaybackProviderQuery {
   anime?: boolean;
 }
 
-function isValidCandidate(id: string | null | undefined): string | null {
+function isValidCandidate(
+  id: string | null | undefined,
+  platform: ProviderPlatform,
+): string | null {
   if (!id) return null;
   const def = getProvider(id);
-  return def ? def.id : null;
+  if (!def) return null;
+  // A stale/foreign default pointing at a web-only DIRECT source (e.g. bing
+  // deep-linked from web) must fall through to the next tier, not open a
+  // dead server. Embeds always pass.
+  return isProviderAvailableOn(def, platform) ? def.id : null;
 }
 
 export interface ResolvedPlaybackProvider {
@@ -50,7 +58,9 @@ export interface ResolvedPlaybackProvider {
 }
 
 /** Sync core: resolve with all tiers already in hand (returns id only). */
-export function resolvePlaybackProviderIdCore(q: PlaybackProviderQuery): string {
+export function resolvePlaybackProviderIdCore(
+  q: PlaybackProviderQuery,
+): string {
   return resolvePlaybackProviderIdTiered(q).providerId;
 }
 
@@ -59,14 +69,16 @@ export function resolvePlaybackProviderIdTiered(
   q: PlaybackProviderQuery,
 ): ResolvedPlaybackProvider {
   const platform = q.platform ?? "mobile";
-  const candidates: Array<[string | null | undefined, ResolvedPlaybackProvider["tier"]]> = [
+  const candidates: Array<
+    [string | null | undefined, ResolvedPlaybackProvider["tier"]]
+  > = [
     [q.routeProvider, "route"],
     [q.sessionPick, "session"],
     [q.savedServer, "saved"],
     [q.lastProvider, "last"],
   ];
   for (const [id, tier] of candidates) {
-    const valid = isValidCandidate(id);
+    const valid = isValidCandidate(id, platform);
     if (valid) return { providerId: valid, tier };
   }
   return {

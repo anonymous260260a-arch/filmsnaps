@@ -46,6 +46,7 @@ export interface ValidationResult {
     | "aac"
     | "mpegts"
     | "hls"
+    | "mpd"
     | "unknown";
   /** MKV audio risk from EBML sniff: dts/eac3 tracks often fail on device. */
   audioRisk?: "safe" | "risky" | "unknown";
@@ -138,10 +139,6 @@ interface ProbeMeta {
   acceptRanges?: string;
 }
 
-/**
- * Shared classification for both transports. `body` holds the first bytes of
- * the response (may be empty — treated like any other undersized payload).
- */
 /** "#EXT" magic of an m3u8 playlist (checked as bytes — Hermes-safe). */
 function looksLikeM3u8(buffer: ArrayBuffer | null): boolean {
   if (!buffer || buffer.byteLength < 4) return false;
@@ -149,6 +146,35 @@ function looksLikeM3u8(buffer: ArrayBuffer | null): boolean {
   return b[0] === 0x23 && b[1] === 0x45 && b[2] === 0x58 && b[3] === 0x54;
 }
 
+/** `<?xml` / `<MPD` magic of a DASH manifest (bytes — Hermes-safe). */
+function looksLikeMpd(buffer: ArrayBuffer | null): boolean {
+  if (!buffer || buffer.byteLength < 4) return false;
+  const b = new Uint8Array(buffer);
+  let i = 0;
+  // Optional BOM, then leading whitespace, then the root element's '<'.
+  if (b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) i = 3;
+  while (
+    i < b.length &&
+    b[i] <= 0x20 &&
+    (b[i] === 0x20 || b[i] === 0x09 || b[i] === 0x0a || b[i] === 0x0d)
+  ) {
+    i++;
+  }
+  if (i + 3 >= b.length || b[i] !== 0x3c) return false; // '<'
+  const n1 = b[i + 1];
+  const n2 = b[i + 2];
+  const n3 = b[i + 3];
+  const n4 = b[i + 4];
+  return (
+    (n1 === 0x3f && n2 === 0x78 && n3 === 0x6d && n4 === 0x6c) || // <?xml
+    (n1 === 0x4d && n2 === 0x50 && n3 === 0x44) // <MPD
+  );
+}
+
+/**
+ * Shared classification for both transports. `body` holds the first bytes of
+ * the response (may be empty — treated like any other undersized payload).
+ */
 function classifyProbe(
   meta: ProbeMeta,
   body: ArrayBuffer | null,
@@ -188,6 +214,25 @@ function classifyProbe(
       outcome: "unknown",
       valid: false,
       error: "HLS playlist unverified",
+      ...base,
+    };
+  }
+
+  // DASH manifests are small XML documents (~2.5 KB on MovieBox) — the size
+  // check below would mark a working stream dead ("File too small: 2495
+  // bytes"). Match on the URL extension (never on content-type: these answer
+  // application/octet-stream), then on the XML magic. A recognized manifest
+  // is valid; an inconclusive body is unknown, never dead.
+  const isDash =
+    /\.mpd(\?|$)/i.test(url ?? "") || /dash\+xml/i.test(meta.contentType ?? "");
+  if (isDash && isHttpSuccess) {
+    if (looksLikeMpd(body)) {
+      return { outcome: "valid", valid: true, containerType: "mpd", ...base };
+    }
+    return {
+      outcome: "unknown",
+      valid: false,
+      error: "DASH manifest unverified",
       ...base,
     };
   }

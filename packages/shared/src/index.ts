@@ -35,6 +35,7 @@ export {
   resolveInitialProviderId,
   getProviderType,
   isDirectProvider,
+  isProviderAvailableOn,
   PLATFORM_DEFAULT_PROVIDER_IDS,
   ANIME_DEFAULT_PROVIDER_ID,
   type AppMode,
@@ -75,8 +76,28 @@ export type {
   PreferredLanguage,
 } from "./providers/streamSelector";
 export {
+  rankDownloadLinks,
+  describeDownloadFile,
+  downloadDisplayName,
+  downloadMetaSegments,
+  simplifyDownloadName,
+  buildDownloadFileName,
+  formatFileSize,
+  qualityLabel,
+} from "./providers/downloadRank";
+export type {
+  DownloadFileDetails,
+  DownloadNameContext,
+  DownloadRankOptions,
+  DownloadPreferredLanguage,
+  DownloadFileNameInput,
+  MetaSegment,
+  MetaTone,
+} from "./providers/downloadRank";
+export {
   resolveStreams,
   buildStreamSourceUrl,
+  buildStreamSourceBody,
 } from "./providers/resolveStreams";
 export type {
   ResolveStreamsParams,

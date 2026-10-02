@@ -402,7 +402,11 @@ export function rankStreams(
     if (isDownloadOnlyLink(link)) return false;
     const sizeMB = sizeOf(link) / (1024 * 1024);
     const minMB = MIN_SIZE_MB[effectiveQuality(link)] ?? 200;
-    if (sizeMB > 0 && sizeMB < minMB) return false;
+    // The floors are calibrated for feature-length rips. An upstream that
+    // honestly serves episode-length encodes under them (MovieBox) opts its
+    // links out — see StreamLink._meta.skipMinSizeFloor.
+    if (sizeMB > 0 && sizeMB < minMB && !link._meta?.skipMinSizeFloor)
+      return false;
     return true;
   });
 

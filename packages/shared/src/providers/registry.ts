@@ -22,6 +22,15 @@ export type AppMode = MediaType; // 'movie_tv' | 'anime'
  * falix (download-only), direct, videasy, vidnest, justanime (mobile anime
  * direct), megaplay (anime-only embed).
  */
+/**
+ * PenguPlay (MovieBox) API root. The auth token is percent-encoded JSON in
+ * the path, so it rides along with every urlTemplate below and no API
+ * request headers are needed beyond the `Accept: application/json` the
+ * platform fetch already sends.
+ */
+const PENGU_API =
+  "https://pengu.uk/%7B%22auth_token%22%3A%2246b6V8tT19lpxGmiwCKpXyvuMwzDEGm0A9iZ2mMLJAs%22%7D";
+
 export const PROVIDERS: ProviderDefinition[] = [
   // ── Server 1  ──
   {
@@ -249,7 +258,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     displayName: "HDHub",
     note: "4k · Fast · Multi-lang",
     type: "direct",
-    order: 8,
+    order: 1,
     platforms: ["mobile"],
     baseUrl: "",
     // URL is built at runtime from the resolved video source — not a static
@@ -278,7 +287,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     displayName: "SpaceDom",
     note: "Beta · Experimental",
     type: "direct",
-    order: 10,
+    order: 4,
     platforms: ["mobile", "web"],
     baseUrl: "",
     selection: "spacedom",
@@ -355,6 +364,109 @@ export const PROVIDERS: ProviderDefinition[] = [
       },
     ],
   },
+  // ── Bing — api.bingr.one scraper cluster (POST-only upstream) ──────
+  // Four routes, one response shape {scraperName, sources[], subtitles[]}:
+  //   GET  /api/stream/aphelion-tv/{tmdb}/{s}/{e}  — DarkMatter, TV-only
+  //   POST /api/stream {srv,t,id,query}            — s70 Polaris, s62
+  //        Bastion (multi-lang 720/480 HLS), s61 Corvus (mixed-quality HLS)
+  // POST bodies are declarative (bodyTemplate/bodyTemplateTv): movie queries
+  // must NOT carry season/episode keys (the upstream then treats them as a
+  // TV lookup and answers empty); TV queries need {season}/{episode}.
+  // WEB ONLY: api.bingr.one 403s GET on /api/stream (POST route) and mobile's
+  // on-device fetcher only issues GET urlTemplates — resolved by the
+  // /api/player/direct proxy instead. Mobile's pickers hide it through
+  // isProviderAvailableOn(); embeds are unaffected.
+  // Tier 1 = the POST scrapers in yield order (Bastion first, Polaris last —
+  // it flaked empty in probes but is cheap alongside the others); tier 2 =
+  // the aphelion GET route, fetched only when tier 1 comes up short (its
+  // animecurx manifests have been hotlink-403ing from browsers).
+  {
+    id: "bing",
+    name: "Bing",
+    displayName: "Bing",
+    note: "Beta · Experimental",
+    type: "direct",
+    order: 5,
+    platforms: ["web"],
+    baseUrl: "https://api.bingr.one",
+    embed: {
+      movie: () => "",
+      tv: () => "",
+    },
+    streamSources: [
+      ...["s62", "s61", "s70"].map((srv) => ({
+        id: `bing-${srv}`,
+        adapter: "bing",
+        apiBase: "https://api.bingr.one/api/stream",
+        kind: "raw" as const,
+        enabled: true,
+        priority: 1,
+        timeoutMs: 10000,
+        retries: 1,
+        method: "POST" as const,
+        urlTemplate: "https://api.bingr.one/api/stream",
+        bodyTemplate: `{"srv":"${srv}","t":"movie","id":"{tmdbId}","query":{"title":"","year":""}}`,
+        bodyTemplateTv: `{"srv":"${srv}","t":"tv","id":"{tmdbId}","query":{"season":"{season}","episode":"{episode}"}}`,
+      })),
+      {
+        id: "bing-aphelion",
+        adapter: "bing",
+        apiBase: "https://api.bingr.one/api/stream/aphelion-tv",
+        kind: "raw",
+        enabled: true,
+        priority: 2,
+        timeoutMs: 8000,
+        // Movies hit the TV path with 1/1 upstream — answers empty (expected;
+        // this scraper is TV-only), which keeps the tier machine honest.
+        urlTemplate:
+          "https://api.bingr.one/api/stream/aphelion-tv/{tmdbId}/1/1",
+        urlTemplateTv:
+          "https://api.bingr.one/api/stream/aphelion-tv/{tmdbId}/{season}/{episode}",
+      },
+    ],
+  },
+  // ── MovieBox (PenguPlay) — one Stremio-shaped API, many upstreams ──
+  // Response carries whichever servers hold the title (MovieBox, Anikoto,
+  // VAPlayer, Miruro, 4KHDHub); `selection: "moviebox"` keeps MovieBox ahead
+  // of its mirrors as a tie-break inside the language/quality tiers.
+  // MOBILE ONLY: the good links (sacdn…hakunaymatata.com DASH/HLS) are
+  // Cookie-gated and need those headers on every manifest + segment request —
+  // StreamLink.headers, merged by the probe and ExoPlayer, carries them; a
+  // browser media stack cannot. Playback-only: no download page.
+  // Anime: PenguPlay accepts `tmdb:{id}` in place of `tt{id}` (verified —
+  // same rows), so anime sessions inject `tmdb:{tmdbId}` as the {imdbId}
+  // placeholder instead of resolving an IMDb id; unknown tmdb ids return an
+  // empty stream list (graceful).
+  {
+    id: "moviebox",
+    name: "MovieBox",
+    displayName: "MovieBox",
+    note: "Beta · Multi-lang",
+    type: "direct",
+    order: 2,
+    platforms: ["mobile"],
+    mediaTypes: ["movie_tv", "anime"], // anime served via PenguPlay's tmdb: ids
+    baseUrl: "",
+    selection: "moviebox",
+    idScheme: "tmdb",
+    embed: {
+      movie: () => "",
+      tv: () => "",
+    },
+    streamSources: [
+      {
+        id: "moviebox-main",
+        adapter: "moviebox",
+        apiBase: PENGU_API,
+        kind: "streams",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 8000,
+        urlTemplate: `${PENGU_API}/stream/movie/{imdbId}.json`,
+        urlTemplateTv: `${PENGU_API}/stream/series/{imdbId}:{season}:{episode}.json`,
+      },
+    ],
+  },
   // ── Way2Movies — scraper API, multiple server IDs, one request each ──
   // Each server ID returns an array of media URLs (HLS/MP4) for one language
   // group. All enabled servers fire in parallel; the selector orders the
@@ -368,7 +480,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     displayName: "NetMirror",
     note: "Beta · Experimental",
     type: "direct",
-    order: 9,
+    order: 3,
     platforms: ["mobile", "web"],
     baseUrl: "",
     selection: "way2movies",
@@ -847,7 +959,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     displayName: "JustAnime",
     note: "Anime · 3 servers",
     type: "direct",
-    order: 29,
+    order: 1,
     platforms: ["mobile"],
     mediaTypes: ["anime"],
     animeOnly: true,
@@ -966,10 +1078,10 @@ export const PROVIDERS: ProviderDefinition[] = [
  */
 export const PLATFORM_DEFAULT_PROVIDER_IDS = {
   desktop: "direct",
-  // Web defaults to an embed until direct playback gets a same-origin byte
-  // proxy (the stream CDNs send no CORS headers, which blocks byte-fetching
-  // engines in the browser). Direct remains available on desktop + mobile.
-  web: "screenscape",
+  // Web opens on NetMirror (way2movies) — the direct scraper source, whose
+  // registry entry flags `platforms: ["mobile", "web"]`. It replaced
+  // screenscape (an embed) as the web default.
+  web: "way2movies",
   // Mobile kept the legacy behavior of the old watch page: no explicit choice
   // means the direct pipeline (first available = "direct"), which ranks and
   // probes hdhub/falix links before falling back to embeds via the picker.
@@ -1016,6 +1128,30 @@ export function getProviderType(p: ProviderDefinition): "embed" | "direct" {
 
 export function isDirectProvider(p: ProviderDefinition): boolean {
   return getProviderType(p) === "direct";
+}
+
+/**
+ * Platform gate for surfaces that deliberately show every enabled EMBED
+ * (mobile's pickers have never filtered by `platforms` — screenscape and
+ * cinemaos are `['web']` yet render fine in the mobile WebView) but must
+ * hide DIRECT providers their own pipeline cannot resolve.
+ *
+ * Embeds pass unconditionally: any platform's WebView can load them, and
+ * `platforms` on an embed only ever meant "web picker visibility".
+ *
+ * Direct providers pass when `platforms` is unset (available everywhere)
+ * or includes `platform` — their `streamSources[]` are fetched by each
+ * platform's own pipeline (mobile: on-device GET via `urlTemplate`,
+ * web: the `/api/player/direct` proxy), so a web-only direct source
+ * (e.g. bing — POST-only upstreams mobile's fetcher can't issue) must
+ * not surface on mobile as a dead server.
+ */
+export function isProviderAvailableOn(
+  p: ProviderDefinition,
+  platform: ProviderPlatform,
+): boolean {
+  if (!isDirectProvider(p)) return true;
+  return !p.platforms || p.platforms.includes(platform);
 }
 
 /**

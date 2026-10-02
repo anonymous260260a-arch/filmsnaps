@@ -64,3 +64,20 @@ export async function selectBestStream(
   const { isCellular, speedMbps } = await resolveNetwork();
   return rankStreams(links, { ...options, isCellular, speedMbps });
 }
+
+/**
+ * Display-only audio chip for MovieBox (PenguPlay) rows. The API's 🎧 line
+ * ("Audio: Arabic" / "French" / "Tamil" …) is stored in `_meta.audioLanguage`
+ * — a free-form word no shared name parser knows, so those rows rendered with
+ * no language at all; when the upstream states none (or "unknown") the row is
+ * the untouched original track. Gated to `providerId === "moviebox"` so every
+ * other provider's rows keep their exact current labels (display only — this
+ * must not feed ranking, sections, or filters).
+ */
+export function movieboxAudioLabel(link: StreamLink): string | null {
+  if (link._meta?.providerId !== "moviebox") return null;
+  const spoken = (link._meta?.audioLanguage ?? "").trim();
+  if (spoken) return spoken.charAt(0).toUpperCase() + spoken.slice(1);
+  // No 🎧 line / audio unknown (and the "original" tag) → the original track.
+  return "Original Audio";
+}
