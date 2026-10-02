@@ -788,10 +788,21 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     );
     if (!trackId) return null;
 
-    // After the re-prepare the track list refreshes asynchronously — poll briefly.
+    // After the re-prepare the merged source reloads asynchronously. The old
+    // 5s poll plus a 3-attempt retry loop in the caller STARVED the prepare:
+    // each retry called addSidecarSubtitle again, which re-prepared AGAIN,
+    // aborting the previous in-flight load — with ~10s HLSe loads the track
+    // never surfaced within any 5s window (device: bytes frozen across all
+    // four attempts, then "rollback also failed" because the rollback
+    // re-prepare aborted its predecessor too). ONE attach call + ONE long
+    // poll: the prepare is started exactly once and given time to finish.
     const started = Date.now();
-    while (Date.now() - started < 5000) {
+    let lastStatus = "";
+    while (Date.now() - started < 20_000) {
       await new Promise((r) => setTimeout(r, 250));
+      try {
+        lastStatus = String(this.player.status);
+      } catch {}
       const tracks = this.getSubtitleTracks();
       // MergingMediaSource prefixes child-source format ids with the child
       // index — our "sidecar_1" reports as "1:sidecar_1". Match both forms.
@@ -801,10 +812,15 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       if (match) {
         this.setSubtitleTrack(match.id);
         this.subtitleEnabledAt = Date.now();
+        console.log(
+          `[SubSync] sidecar track ${match.id} appeared after ${Date.now() - started}ms`,
+        );
         return match.id;
       }
     }
-    const finalTracks = this.getSubtitleTracks();
+    console.log(
+      `[SubSync] sidecar track ${trackId} not surfaced within 20s (player status: ${lastStatus})`,
+    );
     return null;
   }
 

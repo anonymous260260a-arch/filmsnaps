@@ -22,6 +22,8 @@ export interface StreamLink {
   _meta?: {
     codec: string;
     audio: string;
+    /** Spoken language when the upstream states one (moviebox 🎧 line). */
+    audioLanguage?: string;
     source: string;
     isDownloadOnly: boolean;
     isWebReady: boolean;

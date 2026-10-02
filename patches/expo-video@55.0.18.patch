@@ -11,7 +11,7 @@ index 2c0b7df769e37d7b7a139e7795ea6256aa8a1550..ec6b78bc32f05ef3ad238c2d7ea3e6b2
 +  compileOnly 'org.checkerframework:checker-qual:3.43.0'
  }
 diff --git a/android/src/main/java/expo/modules/video/VideoModule.kt b/android/src/main/java/expo/modules/video/VideoModule.kt
-index 336b4aac6eaa97c696d61b2b6506af80b519480c..12d92eced2bfaebb619ebc34f111627ccbd2cc95 100644
+index 336b4aac6eaa97c696d61b2b6506af80b519480c..54e7ec5e422bb2cbcd61e1ae67324a6add1f0fe2 100644
 --- a/android/src/main/java/expo/modules/video/VideoModule.kt
 +++ b/android/src/main/java/expo/modules/video/VideoModule.kt
 @@ -26,6 +26,13 @@ import expo.modules.video.records.SeekTolerance
@@ -114,6 +114,121 @@ index 336b4aac6eaa97c696d61b2b6506af80b519480c..12d92eced2bfaebb619ebc34f111627c
        Property("timeUpdateEventInterval")
          .get { ref: VideoPlayer ->
            ref.intervalUpdateClock.interval / 1000.0
+@@ -400,6 +479,16 @@ private inline fun <reified T : VideoView> ViewDefinitionBuilder<T>.VideoViewCom
+   Prop("contentFit") { view: T, contentFit: ContentFit ->
+     view.contentFit = contentFit
+   }
++  // BEGIN immersive-mode (expo-video patch)
++  Prop("immersiveMode") { view: T, immersive: Boolean? ->
++    view.immersiveMode = immersive ?: false
++  }
++  // END immersive-mode (expo-video patch)
++  // BEGIN subtitle-position (expo-video patch)
++  Prop("subtitleMarginFraction") { view: T, fraction: Double? ->
++    view.subtitleMarginFraction = fraction ?: 0.0
++  }
++  // END subtitle-position (expo-video patch)
+   Prop("startsPictureInPictureAutomatically") { view: T, autoEnterPiP: Boolean? ->
+     view.autoEnterPiP = autoEnterPiP ?: false
+   }
+diff --git a/android/src/main/java/expo/modules/video/VideoView.kt b/android/src/main/java/expo/modules/video/VideoView.kt
+index bdf4c8de9ced7f350c5e8c043c20d569efa465e1..c61af2d5ba46c2b1c6be915e4b9c29692f1fe84a 100644
+--- a/android/src/main/java/expo/modules/video/VideoView.kt
++++ b/android/src/main/java/expo/modules/video/VideoView.kt
+@@ -89,6 +89,15 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+       // Reconfigure when window gains focus (returning from settings)
+       SubtitleUtils.configureSubtitleView(playerView, context)
+     }
++    // BEGIN immersive-mode (expo-video patch)
++    // Re-assert immersive after focus changes (system dialogs, home gestures)
++    // strip it, and restore bars when the view loses focus.
++    if (hasFocus && immersiveMode && isAttachedToWindow) {
++      applyImmersiveMode()
++    } else if (!hasFocus && immersiveMode) {
++      restoreSystemBars()
++    }
++    // END immersive-mode (expo-video patch)
+   }
+ 
+   var pipParams by IgnoreSameSet(PiPParams()) { new, old ->
+@@ -122,6 +131,61 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+       field = value
+     }
+ 
++  // BEGIN immersive-mode (expo-video patch)
++  // When true, the VideoView takes responsibility for the system bars while
++  // it is attached to the window: it hides the status + navigation bars
++  // (WindowInsetsController) and restores them on detach / focus loss. This
++  // gives JS a declarative "immersive video" switch without importing
++  // expo-navigation-bar. Multiple views never fight: each attach re-applies,
++  // and every detach/focus-loss restores the bars.
++  var immersiveMode: Boolean = false
++    set(value) {
++      field = value
++      if (isAttachedToWindow) {
++        applyImmersiveMode()
++      }
++    }
++
++  fun applyImmersiveMode() {
++    val window = currentActivity?.window ?: return
++    val controller = window.insetsController ?: return
++    if (immersiveMode) {
++      controller.systemBarsBehavior =
++        android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
++      controller.hide(
++        android.view.WindowInsets.Type.statusBars()
++          or android.view.WindowInsets.Type.navigationBars()
++      )
++    } else {
++      controller.show(
++        android.view.WindowInsets.Type.statusBars()
++          or android.view.WindowInsets.Type.navigationBars()
++      )
++    }
++  }
++
++  fun restoreSystemBars() {
++    val window = currentActivity?.window ?: return
++    window.insetsController?.show(
++      android.view.WindowInsets.Type.statusBars()
++        or android.view.WindowInsets.Type.navigationBars()
++    )
++  }
++  // END immersive-mode (expo-video patch)
++
++  // BEGIN subtitle-position (expo-video patch)
++  // Bottom PADDING fraction for the Media3 SubtitleView (0..0.45) — the real
++  // API is setBottomPaddingFraction (Media3 has no setBottomMarginFraction).
++  // Media3's built-in default is 0.08, so our "0" maps to 0.08 (stock look),
++  // and the user's lift adds on top: option value + 0.08 baseline.
++  var subtitleMarginFraction: Double = 0.0
++    set(value) {
++      val clamped = value.coerceIn(0.0, 0.45)
++      playerView.subtitleView?.setBottomPaddingFraction(clamped.toFloat())
++      field = clamped
++    }
++  // END subtitle-position (expo-video patch)
++
+   var videoPlayer: VideoPlayer? = null
+     set(newPlayer) {
+       field?.let {
+@@ -364,6 +428,15 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+   override fun onDetachedFromWindow() {
+     super.onDetachedFromWindow()
+ 
++    // BEGIN immersive-mode (expo-video patch)
++    // Leaving the hierarchy always restores the system bars so leaving the
++    // player (or closing the app to another screen) can never strand the
++    // device in immersive mode.
++    if (immersiveMode) {
++      restoreSystemBars()
++    }
++    // END immersive-mode (expo-video patch)
++
+     // Clean up captioning change listener
+     captioningChangeListener?.let {
+       val captioningManager = context.getSystemService(Context.CAPTIONING_SERVICE) as? CaptioningManager
 diff --git a/android/src/main/java/expo/modules/video/player/VideoPlayer.kt b/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
 index ee4e976659525b5d1c1039707b7bdcac800700d9..68149e27cfe4f6dc1e3791e3185dc92dff1600ad 100644
 --- a/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
@@ -202,7 +317,7 @@ index ee4e976659525b5d1c1039707b7bdcac800700d9..68149e27cfe4f6dc1e3791e3185dc92d
  
      mediaSource?.let {
        player.setMediaSource(it)
-@@ -430,6 +463,80 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
+@@ -430,6 +463,88 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
      }
    }
  
@@ -218,7 +333,7 @@ index ee4e976659525b5d1c1039707b7bdcac800700d9..68149e27cfe4f6dc1e3791e3185dc92d
 +   */
 +  private fun mergeWithSidecarSubtitles(videoSource: MediaSource): MediaSource {
 +    if (sidecarSubtitles.isEmpty()) return videoSource
-+    Log.d(
++    Log.i(
 +      SIDECAR_LOG_TAG,
 +      "merge: ${sidecarSubtitles.size} sidecar track(s) -> " +
 +        sidecarSubtitles.joinToString { "${it.trackId}(${it.mimeType})" },
@@ -228,7 +343,15 @@ index ee4e976659525b5d1c1039707b7bdcac800700d9..68149e27cfe4f6dc1e3791e3185dc92d
 +      val configuration = MediaItem.SubtitleConfiguration.Builder(android.net.Uri.parse(sidecar.uri))
 +        .setId(sidecar.trackId)
 +        .setMimeType(sidecar.mimeType)
-+        .setLanguage(sidecar.language)
++        // BEGIN sidecar-lang-fallback (expo-video patch)
++        // language=null is fatal: upstream SubtitleTrack.fromFormat
++        // (records/Tracks.kt) returns null for a languageless Format, which
++        // drops the sidecar from availableSubtitleTracks entirely — the synced
++        // track then never surfaces and the apply times out (device 2026-09:
++        // lang=EN surfaced in 0.5s, lang=null timed out at 20s). "und" is the
++        // standard BCP-47 undetermined-language tag.
++        .setLanguage(sidecar.language ?: "und")
++        // END sidecar-lang-fallback (expo-video patch)
 +        .setLabel(sidecar.label)
 +        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
 +        .build()
@@ -250,10 +373,10 @@ index ee4e976659525b5d1c1039707b7bdcac800700d9..68149e27cfe4f6dc1e3791e3185dc92d
 +    // Only re-prepare when no source switch is in flight and a source is live;
 +    // a pending prepare() will pick the new sidecar up on its own.
 +    val canReprepareNow = uncommittedSource == null && commitedSource != null
-+    Log.d(
++    Log.i(
 +      SIDECAR_LOG_TAG,
 +      "add: id=$trackId uri=$uri mime=$mimeType lang=$language label=$label " +
-+        "reprepareNow=$canReprepareNow (uncommitted=${uncommittedSource != null}, committed=${commitedSource != null})",
++        "status=$status reprepareNow=$canReprepareNow (uncommitted=${uncommittedSource != null}, committed=${commitedSource != null})",
 +    )
 +    if (canReprepareNow) {
 +      val positionMs = player.currentPosition
@@ -262,11 +385,11 @@ index ee4e976659525b5d1c1039707b7bdcac800700d9..68149e27cfe4f6dc1e3791e3185dc92d
 +        Log.w(SIDECAR_LOG_TAG, "add: base toMediaSource() returned null — sidecar $trackId queued, no re-prepare")
 +        return trackId
 +      }
-+      Log.d(SIDECAR_LOG_TAG, "add: re-preparing merged source at ${positionMs}ms")
++      Log.i(SIDECAR_LOG_TAG, "add: re-preparing merged source at ${positionMs}ms")
 +      player.setMediaSource(mergeWithSidecarSubtitles(base), positionMs)
 +      player.prepare()
 +    } else {
-+      Log.d(SIDECAR_LOG_TAG, "add: sidecar $trackId queued — applies at the next prepare()")
++      Log.i(SIDECAR_LOG_TAG, "add: sidecar $trackId queued — applies at the next prepare()")
 +    }
 +    return trackId
 +  }
@@ -274,7 +397,7 @@ index ee4e976659525b5d1c1039707b7bdcac800700d9..68149e27cfe4f6dc1e3791e3185dc92d
 +  /** Drops all registered sidecar subtitles. Takes effect at the next prepare(). */
 +  fun clearSidecarSubtitles() {
 +    if (sidecarSubtitles.isNotEmpty()) {
-+      Log.d(SIDECAR_LOG_TAG, "clear: dropping ${sidecarSubtitles.size} sidecar track(s)")
++      Log.i(SIDECAR_LOG_TAG, "clear: dropping ${sidecarSubtitles.size} sidecar track(s)")
 +    }
 +    sidecarSubtitles.clear()
 +  }
@@ -394,7 +517,7 @@ index 0000000000000000000000000000000000000000..d9e10a0056bcbf0360c1fe27f0c9df41
 +  }
 +}
 diff --git a/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt b/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
-index 460fb7bf3d81aa80951f2086de0e31211f9cec0a..53c2bbe3257004abb0455d24c4e9bad4a72f6bea 100644
+index 460fb7bf3d81aa80951f2086de0e31211f9cec0a..339c1a75f4d72ea19cc47bcf77c7fdaa7ed53c2e 100644
 --- a/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
 +++ b/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
 @@ -13,7 +13,217 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -615,7 +738,7 @@ index 460fb7bf3d81aa80951f2086de0e31211f9cec0a..53c2bbe3257004abb0455d24c4e9bad4
  
  @OptIn(UnstableApi::class)
  fun buildBaseDataSourceFactory(context: Context, videoSource: VideoSource): DataSource.Factory {
-@@ -26,7 +182,9 @@ fun buildBaseDataSourceFactory(context: Context, videoSource: VideoSource): Data
+@@ -26,7 +236,9 @@ fun buildBaseDataSourceFactory(context: Context, videoSource: VideoSource): Data
  
  @OptIn(UnstableApi::class)
  fun buildOkHttpDataSourceFactory(context: Context, videoSource: VideoSource): OkHttpDataSource.Factory {
@@ -626,7 +749,7 @@ index 460fb7bf3d81aa80951f2086de0e31211f9cec0a..53c2bbe3257004abb0455d24c4e9bad4
  
    // If the application name has ANY non-ASCII characters, we need to strip them out. This is because using non-ASCII characters
    // in the User-Agent header can cause issues with getting the media to play.
-@@ -35,12 +193,18 @@ fun buildOkHttpDataSourceFactory(context: Context, videoSource: VideoSource): Ok
+@@ -35,12 +247,18 @@ fun buildOkHttpDataSourceFactory(context: Context, videoSource: VideoSource): Ok
    val defaultUserAgent = Util.getUserAgent(context, applicationName)
  
    return OkHttpDataSource.Factory(client).apply {
@@ -648,7 +771,7 @@ index 460fb7bf3d81aa80951f2086de0e31211f9cec0a..53c2bbe3257004abb0455d24c4e9bad4
    }
  }
  
-@@ -53,8 +217,10 @@ fun buildCacheDataSourceFactory(context: Context, videoSource: VideoSource): Dat
+@@ -53,8 +271,10 @@ fun buildCacheDataSourceFactory(context: Context, videoSource: VideoSource): Dat
    }
  }
  
@@ -1153,7 +1276,7 @@ index 0000000000000000000000000000000000000000..400922a07515aa412250aff94e09361f
 +}
 diff --git a/android/src/main/java/expo/modules/video/utils/LegacyTextRenderersFactory.kt b/android/src/main/java/expo/modules/video/utils/LegacyTextRenderersFactory.kt
 new file mode 100644
-index 0000000000000000000000000000000000000000..cc410143e6688189eb8ed81a7ff8110c6fa1db7b
+index 0000000000000000000000000000000000000000..c4d93cec1659f194a52b9174d2715256422483a2
 --- /dev/null
 +++ b/android/src/main/java/expo/modules/video/utils/LegacyTextRenderersFactory.kt
 @@ -0,0 +1,69 @@
@@ -1228,10 +1351,10 @@ index 0000000000000000000000000000000000000000..cc410143e6688189eb8ed81a7ff8110c
 +// END legacy-text-decoding (expo-video patch)
 diff --git a/android/src/main/java/expo/modules/video/utils/PlayerAudioTap.kt b/android/src/main/java/expo/modules/video/utils/PlayerAudioTap.kt
 new file mode 100644
-index 0000000000000000000000000000000000000000..7cd59ae3f9072838bcee84ecfb82675e3a6abb88
+index 0000000000000000000000000000000000000000..9a7a98e7f192454dfe6439f1049f9751d8e09c7c
 --- /dev/null
 +++ b/android/src/main/java/expo/modules/video/utils/PlayerAudioTap.kt
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,166 @@
 +package expo.modules.video.utils
 +
 +import android.os.SystemClock
@@ -1291,8 +1414,25 @@ index 0000000000000000000000000000000000000000..7cd59ae3f9072838bcee84ecfb82675e
 +    private val flushCount = AtomicLong(0)
 +    private val segmentResetCount = AtomicLong(0)
 +
-+    // Active-claim: only the most-recently-CONFIGURED processor forwards.
++    // Active-claim: forwarding follows PCM ACTIVITY, not configuration.
++    // The app keeps two VideoPlayers (warm/early + hook); each builds a
++    // LegacyTextRenderersFactory and thus its own TapAudioProcessor. The old
++    // "most-recently-configured wins" rule let the IDLE player's sink steal
++    // the claim when it configured after the playing one — the playing
++    // stream's PCM then hit the claim gate and was dropped (collector saw
++    // span=0ms forever while tapProbe bytes climbed). A paused player emits
++    // no PCM at all, so "the processor currently producing PCM" is the
++    // unambiguous owner; a quiet player's claim is stolen after a grace
++    // window so player switches transfer cleanly.
 +    private val activeProcessor = AtomicReference<Any?>()
++    @Volatile private var activeLastPcmWallMs = 0L
++
++    // Per-processor format memo: an idle player's sink must never describe
++    // the playing stream's PCM (the collector parses forwarded buffers with
++    // sampleRate/channelCount/encoding). The claimed processor's format is
++    // (re)sent to the listener on claim change.
++    private val formats = java.util.concurrent.ConcurrentHashMap<Any, AudioFormatInfo?>()
++    private data class AudioFormatInfo(val sr: Int, val ch: Int, val enc: Int)
 +
 +    /** Snapshot for tapProbe — bytes since last [resetCounters]. */
 +    @JvmStatic
@@ -1324,7 +1464,11 @@ index 0000000000000000000000000000000000000000..7cd59ae3f9072838bcee84ecfb82675e
 +    // --- called from TapAudioProcessor (audio-sink thread) ---
 +
 +    internal fun onFormat(p: Any, sr: Int, ch: Int, enc: Int) {
-+        activeProcessor.set(p)
++        // Configuration NO LONGER steals the claim (see note above). The
++        // format is memoized per-processor and pushed to the listener only
++        // when THIS processor owns the claim.
++        formats[p] = AudioFormatInfo(sr, ch, enc)
++        if (activeProcessor.get() !== p) return
 +        sampleRate = sr
 +        channelCount = ch
 +        encoding = enc
@@ -1335,7 +1479,24 @@ index 0000000000000000000000000000000000000000..7cd59ae3f9072838bcee84ecfb82675e
 +        // Counters always advance (rate measurement is claim-independent).
 +        totalBytes.addAndGet(buffer.remaining().toLong())
 +        lastPcmWallMs = System.currentTimeMillis()
-+        if (activeProcessor.get() !== p) return
++        val now = lastPcmWallMs
++        if (activeProcessor.get() !== p) {
++            val current = activeProcessor.get()
++            val idle = current == null ||
++                now - activeLastPcmWallMs > CLAIM_STEAL_IDLE_MS
++            if (!idle) return
++            // Steal: the previously-claimed processor has gone quiet (paused
++            // / torn down) — this one is the stream actually playing.
++            activeProcessor.set(p)
++            // The new owner's own format must describe the forwarded PCM.
++            formats[p]?.let { f ->
++                sampleRate = f.sr
++                channelCount = f.ch
++                encoding = f.enc
++                listener?.onFormat(f.sr, f.ch, f.enc)
++            }
++        }
++        activeLastPcmWallMs = now
 +        listener?.onPcm(buffer)
 +    }
 +
@@ -1353,101 +1514,12 @@ index 0000000000000000000000000000000000000000..7cd59ae3f9072838bcee84ecfb82675e
 +
 +    internal fun onRelease(p: Any) {
 +        activeProcessor.compareAndSet(p, null)
-+    }
-+}
-diff --git a/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt b/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt
-new file mode 100644
-index 0000000000000000000000000000000000000000..e467a4b1c28a05308b5bc33f9822157ea04050d5
---- /dev/null
-+++ b/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt
-@@ -0,0 +1,88 @@
-+package expo.modules.video.utils
-+
-+import android.os.SystemClock
-+import androidx.media3.common.audio.AudioProcessor
-+import androidx.media3.common.audio.BaseAudioProcessor
-+import androidx.media3.common.util.UnstableApi
-+import java.nio.ByteBuffer
-+
-+/**
-+ * Always-attached pass-through audio processor for the playback watch tap.
-+ *
-+ * Installed once per player via LegacyTextRenderersFactory.buildAudioSink.
-+ * Accepts any linear PCM encoding the decoder emits; always copies input →
-+ * output so the AudioTrack path is bit-identical whether or not a watch
-+ * listener is attached.
-+ *
-+ * queueInput MUST consume the input buffer (advance position to limit):
-+ * media3's sink measures consumption by position. A non-consuming copy
-+ * loops the same AudioTrack chunk (audible beep).
-+ *
-+ * queueInput copies through an intermediate byte array: media3's buffer pool
-+ * can hand us the SAME buffer as output, and a ByteBuffer put(ByteBuffer) into
-+ * itself throws "The source buffer is this buffer".
-+ *
-+ * Pre-sonic: user processors run before silence-skipping/sonic in
-+ * DefaultAudioProcessorChain, so handleBuffer sees original content-rate PCM
-+ * regardless of playback speed.
-+ */
-+@UnstableApi
-+class TapAudioProcessor : BaseAudioProcessor() {
-+    private var copyBuf = ByteArray(0)
-+    private var lastBufferWallMs = 0L
-+
-+    override fun onConfigure(
-+        inputAudioFormat: AudioProcessor.AudioFormat,
-+    ): AudioProcessor.AudioFormat {
-+        // Claim: this sink is now the active one (most-recently-configured).
-+        PlayerAudioTap.onFormat(
-+            this,
-+            inputAudioFormat.sampleRate,
-+            inputAudioFormat.channelCount,
-+            inputAudioFormat.encoding,
-+        )
-+        return inputAudioFormat // pass-through: output format == input format
++        // Drop the format memo — processors are recreated on every player
++        // rebuild; keeping entries would leak across a long session.
++        formats.remove(p)
 +    }
 +
-+    // BaseAudioProcessor.flush() is final and invokes onFlush().
-+    override fun onFlush() {
-+        // Seek/discontinuity. Suspension is the collector's job.
-+        PlayerAudioTap.onFlush(this)
-+    }
-+
-+    override fun onReset() {
-+        PlayerAudioTap.onRelease(this)
-+    }
-+
-+    override fun queueInput(inputBuffer: ByteBuffer) {
-+        val remaining = inputBuffer.remaining()
-+        if (remaining == 0) {
-+            return
-+        }
-+        val now = SystemClock.elapsedRealtime()
-+        if (lastBufferWallMs != 0L && now - lastBufferWallMs > SEGMENT_GAP_MS) {
-+            PlayerAudioTap.onSegmentReset(this, now - lastBufferWallMs)
-+        }
-+        lastBufferWallMs = now
-+
-+        // Tee: read-only duplicate — the listener may read but the original
-+        // position must remain untouched for OUR consuming read below.
-+        PlayerAudioTap.onPcm(this, inputBuffer.duplicate())
-+
-+        // Consume + pass through. The consuming read MUST advance
-+        // inputBuffer.position to its limit: media3's sink measures
-+        // consumption by position. A processor that never consumes makes the
-+        // sink loop the same input — heard on device as a repeating beep.
-+        // The array copy (not a direct put(inputBuffer)) exists because (a)
-+        // the output buffer may alias the input (self-put throws) and (b)
-+        // the input may be read-only.
-+        if (copyBuf.size < remaining) copyBuf = ByteArray(remaining)
-+        inputBuffer.get(copyBuf, 0, remaining) // advances position to limit
-+        replaceOutputBuffer(remaining).put(copyBuf, 0, remaining).flip()
-+    }
-+
-+    companion object {
-+        /** Wall gap across a flush that counts as a segment boundary. */
-+        private const val SEGMENT_GAP_MS = 1_000L
-+    }
++    private const val CLAIM_STEAL_IDLE_MS = 2000L
 +}
 diff --git a/android/src/main/java/expo/modules/video/utils/SecondarySeekHeadMatroskaExtractor.java b/android/src/main/java/expo/modules/video/utils/SecondarySeekHeadMatroskaExtractor.java
 new file mode 100644
@@ -4885,6 +4957,100 @@ index 0000000000000000000000000000000000000000..4f18d7d8bde77e0314db8808ce7fa8ae
 +    })
 +  }
 +}
+diff --git a/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt b/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..a17a3cf5625040750b3dcc0b74e3490d58809410
+--- /dev/null
++++ b/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt
+@@ -0,0 +1,88 @@
++package expo.modules.video.utils
++
++import android.os.SystemClock
++import androidx.media3.common.audio.AudioProcessor
++import androidx.media3.common.audio.BaseAudioProcessor
++import androidx.media3.common.util.UnstableApi
++import java.nio.ByteBuffer
++
++/**
++ * Always-attached pass-through audio processor for the playback watch tap.
++ *
++ * Installed once per player via LegacyTextRenderersFactory.buildAudioSink.
++ * Accepts any linear PCM encoding the decoder emits; always copies input →
++ * output so the AudioTrack path is bit-identical whether or not a watch
++ * listener is attached.
++ *
++ * queueInput MUST consume the input buffer (advance position to limit):
++ * media3's sink measures consumption by position. A non-consuming copy
++ * loops the same AudioTrack chunk (audible beep).
++ *
++ * queueInput copies through an intermediate byte array: media3's buffer pool
++ * can hand us the SAME buffer as output, and a ByteBuffer put(ByteBuffer) into
++ * itself throws "The source buffer is this buffer".
++ *
++ * Pre-sonic: user processors run before silence-skipping/sonic in
++ * DefaultAudioProcessorChain, so handleBuffer sees original content-rate PCM
++ * regardless of playback speed.
++ */
++@UnstableApi
++class TapAudioProcessor : BaseAudioProcessor() {
++    private var copyBuf = ByteArray(0)
++    private var lastBufferWallMs = 0L
++
++    override fun onConfigure(
++        inputAudioFormat: AudioProcessor.AudioFormat,
++    ): AudioProcessor.AudioFormat {
++        // Claim: this sink is now the active one (most-recently-configured).
++        PlayerAudioTap.onFormat(
++            this,
++            inputAudioFormat.sampleRate,
++            inputAudioFormat.channelCount,
++            inputAudioFormat.encoding,
++        )
++        return inputAudioFormat // pass-through: output format == input format
++    }
++
++    // BaseAudioProcessor.flush() is final and invokes onFlush().
++    override fun onFlush() {
++        // Seek/discontinuity. Suspension is the collector's job.
++        PlayerAudioTap.onFlush(this)
++    }
++
++    override fun onReset() {
++        PlayerAudioTap.onRelease(this)
++    }
++
++    override fun queueInput(inputBuffer: ByteBuffer) {
++        val remaining = inputBuffer.remaining()
++        if (remaining == 0) {
++            return
++        }
++        val now = SystemClock.elapsedRealtime()
++        if (lastBufferWallMs != 0L && now - lastBufferWallMs > SEGMENT_GAP_MS) {
++            PlayerAudioTap.onSegmentReset(this, now - lastBufferWallMs)
++        }
++        lastBufferWallMs = now
++
++        // Tee: read-only duplicate — the listener may read but the original
++        // position must remain untouched for OUR consuming read below.
++        PlayerAudioTap.onPcm(this, inputBuffer.duplicate())
++
++        // Consume + pass through. The consuming read MUST advance
++        // inputBuffer.position to its limit: media3's sink measures
++        // consumption by position. A processor that never consumes makes the
++        // sink loop the same input — heard on device as a repeating beep.
++        // The array copy (not a direct put(inputBuffer)) exists because (a)
++        // the output buffer may alias the input (self-put throws) and (b)
++        // the input may be read-only.
++        if (copyBuf.size < remaining) copyBuf = ByteArray(remaining)
++        inputBuffer.get(copyBuf, 0, remaining) // advances position to limit
++        replaceOutputBuffer(remaining).put(copyBuf, 0, remaining).flip()
++    }
++
++    companion object {
++        /** Wall gap across a flush that counts as a segment boundary. */
++        private const val SEGMENT_GAP_MS = 1_000L
++    }
++}
 diff --git a/android/src/main/java/expo/modules/video/utils/VarintReader.java b/android/src/main/java/expo/modules/video/utils/VarintReader.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..041cb17b7131ef236948832458af9d08f2843bc4
@@ -5041,3 +5207,50 @@ index 0000000000000000000000000000000000000000..041cb17b7131ef236948832458af9d08
 +    return varint;
 +  }
 +}
+diff --git a/build/VideoView.types.d.ts b/build/VideoView.types.d.ts
+index 9a15734207acfc54ca8454fbf6db8e1f09e3c662..380e93fc3e3b275a7443c12e57a317bd92ca8154 100644
+--- a/build/VideoView.types.d.ts
++++ b/build/VideoView.types.d.ts
+@@ -34,6 +34,19 @@ export interface VideoViewProps extends ViewProps {
+      * @default 'contain'
+      */
+     contentFit?: VideoContentFit;
++    /**
++     * Android only. While `true`, the video view hides the system status
++     * and navigation bars (immersive) and restores them when unmounted.
++     * @default false
++     */
++    immersiveMode?: boolean;
++    /**
++     * Bottom padding fraction for the subtitle view (Android, Media3
++     * SubtitleView.setBottomPaddingFraction). Media3's default is 0.08, so `0`
++     * here maps to that stock position; larger values lift subtitles further.
++     * @default 0
++     */
++    subtitleMarginFraction?: number;
+     /**
+      * Determines the fullscreen mode options.
+      */
+diff --git a/src/VideoView.types.ts b/src/VideoView.types.ts
+index 2cb9b5cee7e1ef0b777f0cfb41e4c4f9ef3ff600..1f6de3da7fd14c09972956708fa6a22fe65b186f 100644
+--- a/src/VideoView.types.ts
++++ b/src/VideoView.types.ts
+@@ -40,6 +40,18 @@ export interface VideoViewProps extends ViewProps {
+    * @default 'contain'
+    */
+   contentFit?: VideoContentFit;
++  /**
++   * Android only. While `true`, the video view hides the system status
++   * and navigation bars (immersive) and restores them when unmounted.
++   * @default false
++   */
++  immersiveMode?: boolean;
++    /**
++     * Bottom margin fraction for the subtitle view (Android). `0` keeps the
++     * default bottom anchor; up to `0.45` lifts subtitles off the bottom edge.
++     * @default 0
++     */
++    subtitleMarginFraction?: number;
+ 
+   /**
+    * Determines the fullscreen mode options.

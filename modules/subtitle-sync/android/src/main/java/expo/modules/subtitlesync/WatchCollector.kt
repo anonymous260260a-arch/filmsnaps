@@ -40,10 +40,17 @@ class WatchCollector(
     private val vadMarkOff: Float? = null,
 ) : PlayerAudioTap.Listener {
     companion object {
-        private const val WATCH_WINDOW_SEC = 90.0
-        private const val MIN_EMIT_SPAN_US = 20_000_000L
+        private const val WATCH_WINDOW_SEC = 60.0
+        // Cadence (device 2026-09): first apply landed at ~180s of playing
+        // time — 90s windows + 45s interval emits meant the two-window
+        // agreement gate waited for its SECOND independent candidate. The
+        // gate itself stays (it is what killed the false applies); the
+        // evidence pace sets sync latency. 60s windows + 30s emits land
+        // agreement around ~90-120s; the wide-slice rescue already converges
+        // on 60-65s spans (conf 0.809/0.884 observed on device).
+        private const val MIN_EMIT_SPAN_US = 15_000_000L
         private const val MIN_FORCE_SPAN_US = 15_000_000L
-        private const val EMIT_INTERVAL_US = 45_000_000L
+        private const val EMIT_INTERVAL_US = 30_000_000L
         private const val SEGMENT_GAP_MS = 1_000L
         /** ~0.6s of 40ms buffers — enough to ride short worker stalls. */
         private const val QUEUE_CAPACITY = 96
@@ -98,6 +105,22 @@ class WatchCollector(
             segmentResetPending = false
             queue.clear()
             PlayerAudioTap.listener = this
+            // Mid-playback attach: the audio sink almost always configured
+            // BEFORE this collector existed (Auto Sync is tapped while the
+            // episode is already open), so no onFormat callback will arrive
+            // until the next sink reconfigure. Backfill the claimant's
+            // format from the tap snapshot — without it every buffer is
+            // dropped at the rate<=0 guard in onPcm and the session
+            // starves (span=0ms forever, heard=0s).
+            val snap = PlayerAudioTap.snapshot()
+            val snapSr = (snap["sampleRate"] as? Int) ?: 0
+            val snapCh = (snap["channelCount"] as? Int) ?: 0
+            if (snapSr > 0 && snapCh > 0) {
+                fmtRate = snapSr
+                fmtCh = snapCh
+                (snap["encoding"] as? Int)?.let { fmtEnc = it }
+                log("watch: format backfill ${snapSr}Hz ch=$snapCh enc=$fmtEnc")
+            }
             val gen = ++workerGen
             worker = Thread({
                 while (!stopped && workerGen == gen) {
@@ -195,7 +218,16 @@ class WatchCollector(
             return
         } ?: return
 
-        if (suspended) return
+        // A segment-gap suspension is CLEARED by processing the pending
+        // reset below — do not short-circuit while it is set. The old
+        // `if (suspended) return` made the pending flag unreachable: one
+        // >=1s PCM wall-gap (pause, buffering stall, seek) suspended the
+        // collector forever, because the only code that clears suspension
+        // sat behind this very check. Device logs (2026-09): session
+        // starving at span=0ms after a single pause/resume while bytes
+        // flowed; recovery only via a JS anchor (position jump), which a
+        // normal pause/resume never produces.
+        if (suspended && !segmentResetPending) return
 
         synchronized(stateLock) {
             if (stopped || !active) return
@@ -211,6 +243,11 @@ class WatchCollector(
             }
             if (segmentResetPending) {
                 segmentResetPending = false
+                // Post-gap audio is a fresh stream — resume feeding. The
+                // pts model continues content time, which is correct for
+                // the stall/pause case (content did not jump); real seeks
+                // re-base via anchor() from the JS/player side.
+                suspended = false
                 c.resetTimeline()
                 emitLocked(force = true, reason = "segment-gap")
                 if (active && collector != null) {

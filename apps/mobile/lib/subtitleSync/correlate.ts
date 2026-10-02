@@ -72,6 +72,21 @@ export type OffsetResult = {
   baseline: number;
   keep: number;
   top: OffsetCandidate[];
+  /**
+   * ALL valid refined peaks regardless of keep, best-first (shoulder-deduped).
+   * `top` is keep-gated, so a true offset that a SHORT window structurally
+   * cannot keep (see findOffsetWideSlice) would be invisible to any rescuer
+   * reading only `top` — peaks is the unfiltered candidate pool.
+   */
+  peaks: OffsetCandidate[];
+  /**
+   * Raw FFT coarse-peak offsets (shoulder-deduped, strongest first) BEFORE
+   * any windowed scoring. On a short watch window a large true offset is
+   * INVALID under the window's own cue set (no cues land in the span), so
+   * it is absent from both `top` and `peaks` — the coarse proposals are the
+   * only place it survives. Feed these to findOffsetWideSlice.
+   */
+  coarsePeaks: number[];
 };
 
 type Contrast = {
@@ -522,6 +537,20 @@ export function findOffset(cues: Cue[], sig: SpeechSignal): OffsetResult {
     if (top.length >= TOP_CANDIDATES) break;
   }
 
+  // Unfiltered pool for wide-slice rescoring (see findOffsetWideSlice): the
+  // true offset on a short watch window is keep-ineligible, so it exists
+  // only here.
+  const peaks: OffsetCandidate[] = [];
+  const allRanked = refined
+    .filter((r) => r.valid)
+    .sort((a, b) => b.score - a.score);
+  for (const r of allRanked) {
+    if (peaks.some((t) => Math.abs(t.offset - r.offset) <= PEAK_SHOULDER_SEC))
+      continue;
+    peaks.push({ offset: r.offset, score: r.score, keep: r.keep });
+    if (peaks.length >= 12) break;
+  }
+
   const t1 =
     typeof performance !== "undefined" ? performance.now() : Date.now();
   console.log(
@@ -537,6 +566,8 @@ export function findOffset(cues: Cue[], sig: SpeechSignal): OffsetResult {
     baseline,
     keep: bestKeep,
     top,
+    peaks,
+    coarsePeaks,
   };
 }
 
@@ -660,4 +691,149 @@ export function meanCueStart(cues: Cue[]): number {
   let sum = 0;
   for (const c of cues) sum += c.start;
   return sum / cues.length;
+} /**
+ * Wide-slice offset scoring for SHORT windows (watch-first).
+ *
+ * Structural problem this solves: findOffset scores candidates against the
+ * cues that overlap the SIGNAL's span (P4 windowed-cue fix), which silently
+ * assumes |offset| << window span. A watch window is only ~60-90s of audio,
+ * while real offsets reach ±90s (recaps, cold opens, WEB-DL cuts). At the
+ * TRUE offset o, only cues with t∈[sigStart-o..sigEnd-o] have their audio
+ * in the window — with o≈54s on a 65s window that is 2-3 cues → the true
+ * peak is INVALID/keep-INELIGIBLE under the window's cue set, and a junk
+ * near-zero offset with high keep wins instead (device: true +54.47s lost
+ * to -5.19s conf=0.370 sharp=0.00). Even the FFT's coarse proposals cannot
+ * rescue this: with only ~3 cues of aligned mass the true peak's magnitude
+ * ties with junk, so it does not rank in the top FFT_PEAKS_SCORED.
+ *
+ * Rescue: forget the FFT and DIRECTLY coarse-scan the whole ±MAX_OFF range
+ * at 1s steps. Each candidate is scored with contrastAt over a WIDE cue
+ * slice — ALL file cues whose t+o intersects the scanned span — so at a
+ * large true offset the slice is the file's dialogue band around
+ * t≈sigStart-o..sigEnd-o, and the paired cue-vs-gap contrast inside the
+ * observable region is measured with real speech on both sides. 181
+ * contrastAt calls + one ±0.5s refine on the winner: single-digit ms.
+ *
+ * `keep` is the observable-coverage analog of the fetch keep fraction: the
+ * share of the scanned span that the winning slice's cues+gaps explain
+ * ((cueBins+nullBins)/N). A thin junk slice covers little of the span and
+ * decays; the true offset's slice explains the whole window. Note it is
+ * NOT the fraction of slice cue-time kept — a wide slice is by construction
+ * mostly outside the span, so that fraction would punish exactly the
+ * offsets this rescuer exists to find.
+ *
+ * Returns the winner (refined on its fixed slice), its keep, the best
+ * DISTINCT rival's wide-slice score (for sharpness), or null when no
+ * candidate produced a judgeable wide-slice score.
+ */
+export function findOffsetWideSlice(
+  allCues: Cue[],
+  sig: SpeechSignal,
+  coarseStepSec = 1.0,
+): {
+  offset: number;
+  score: number;
+  cues: Cue[];
+  rivalScore: number;
+  keep: number;
+} | null {
+  if (allCues.length === 0 || sig.data.length === 0) return null;
+  const P = makePrefix(sig);
+  const N = sig.data.length;
+  const scored: {
+    offset: number;
+    score: number;
+    cueBins: number;
+    nullBins: number;
+    cues: Cue[];
+  }[] = [];
+  for (let o = -MAX_OFF; o <= MAX_OFF + 1e-9; o += coarseStepSec) {
+    const off = Math.round(o * 1000) / 1000;
+    // Cues the offset can actually reach: cue stream-time [c.start+o,
+    // c.end+o] intersects the scanned span.
+    const slice = allCues.filter(
+      (c) => c.end + off > sig.startSec && c.start + off < sig.endSec,
+    );
+    if (slice.length < MIN_CUES) continue;
+    const ct = contrastAt(slice, sig, P, off);
+    if (!ct.valid) continue;
+    scored.push({
+      offset: off,
+      score: ct.score,
+      cueBins: ct.cueBins,
+      nullBins: ct.nullBins,
+      cues: slice,
+    });
+  }
+  if (scored.length === 0) return null;
+  scored.sort((a, b) => b.score - a.score);
+  let best = { ...scored[0] };
+  // Rival = best distinct candidate's wide-slice score (shoulder apart).
+  let rivalScore = 0;
+  for (const s of scored) {
+    if (Math.abs(s.offset - best.offset) <= PEAK_SHOULDER_SEC) continue;
+    rivalScore = s.score;
+    break;
+  }
+  // Local contrast refine around the winner (same trick as findOffset's
+  // refinePeak, ±0.5s @ 0.01s) — scored on the FIXED wide slice so the
+  // refined score stays comparable with the coarse one.
+  const refined = refineNear(best.cues, sig, best.offset, 0.5, 0.01);
+  if (refined != null && Math.abs(refined - best.offset) > 1e-9) {
+    const rct = contrastAt(best.cues, sig, P, refined);
+    if (rct.valid && rct.score > best.score) {
+      best = {
+        offset: refined,
+        score: rct.score,
+        cueBins: rct.cueBins,
+        nullBins: rct.nullBins,
+        cues: best.cues,
+      };
+    }
+  }
+  return {
+    offset: best.offset,
+    score: best.score,
+    cues: best.cues,
+    rivalScore,
+    keep: Math.min(1, (best.cueBins + best.nullBins) / N),
+  };
+}
+
+/**
+ * Confidence for a wide-slice offset: same blend as confidence() but the
+ * keep term is the observable-coverage analog ((cueBins+nullBins)/N — how
+ * much of the scanned span the offset's slice explains), matching
+ * findOffsetWideSlice's `keep`. The slice's own cue-time fraction would be
+ * structurally tiny at large offsets and must not decay the score.
+ * `runnerUpScore` is the best rival candidate's wide-slice score (0 when
+ * the winner stood alone).
+ */
+export function confidenceWideSlice(
+  slice: Cue[],
+  sig: SpeechSignal,
+  offset: number,
+  score: number,
+  runnerUpScore: number,
+): number {
+  if (slice.length < MIN_CUES) return 0;
+  const P = makePrefix(sig);
+  const N = sig.data.length;
+  let speech = 0;
+  for (let i = 0; i < N; i++) speech += sig.data[i];
+  const baseline = speech / N;
+  if (baseline > 0.9 || baseline < 0.02) return 0;
+  const ct = contrastAt(slice, sig, P, offset);
+  if (!ct.valid) return 0;
+  const keep = Math.min(1, (ct.cueBins + ct.nullBins) / N);
+  const coverageScore = Math.max(0, Math.min(1, ct.score / CONTRAST_HEADROOM));
+  const sharpness =
+    score > 0
+      ? Math.max(
+          0,
+          Math.min(1, ((score - runnerUpScore) / Math.max(score, 0.02)) * 1.5),
+        )
+      : 0;
+  const raw = 0.6 * coverageScore + 0.4 * sharpness;
+  return raw * Math.min(1, keep / 0.5);
 }

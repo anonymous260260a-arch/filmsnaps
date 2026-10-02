@@ -13,7 +13,13 @@
 
 import type { Cue, SpeechSignal, SubFormat } from "./types";
 import { validateSignal } from "./types";
-import { findOffset, confidence, keptFraction } from "./correlate";
+import {
+  findOffset,
+  confidence,
+  keptFraction,
+  findOffsetWideSlice,
+  confidenceWideSlice,
+} from "./correlate";
 import {
   CHECKPOINT_EARLY_APPLY,
   CHECKPOINT_CONF,
@@ -36,6 +42,7 @@ import {
   watchAnchor as nativeWatchAnchor,
   stopWatchSync as nativeStopWatchSync,
   onWatchSignal,
+  onDebug,
   type WatchSignalEvent,
 } from "expo-subtitle-sync";
 import { downloadToast } from "../../components/DownloadToast";
@@ -89,7 +96,7 @@ export type WatchApplyHandler = (
       }
     | undefined,
   kind?: WatchApplyKind,
-) => void | Promise<void>;
+) => boolean | void | Promise<boolean | void>;
 
 export type WatchSessionOptions = {
   contentId: string;
@@ -109,6 +116,8 @@ export type WatchSessionOptions = {
 type Session = WatchSessionOptions & {
   cues: Cue[] | null;
   subtitleFormat: SubFormat | null;
+  /** URI the loaded cues came from — invalidated when the live URI changes. */
+  cuesFromUri: string | null;
   /** Last applied auto offset (ms) — null until first apply. */
   appliedMs: number | null;
   refinements: number;
@@ -116,6 +125,8 @@ type Session = WatchSessionOptions & {
   /** P4: previous window's candidate (first-apply two-window agreement). */
   lastCandidateMs: number | null;
   lastCandidateConf: number;
+  /** Whether the stashed candidate came from the wide-slice rescue. */
+  lastCandidateFromRescue: boolean;
   /** P4: baseline came from the fetch cache, not a live apply (weaker trust). */
   adoptedFromCache: boolean;
   capAt: number;
@@ -128,6 +139,77 @@ type Session = WatchSessionOptions & {
 
 let session: Session | null = null;
 let applyHandler: WatchApplyHandler | null = null;
+/** Diagnostics: windows received this process (never reset per session). */
+let signalCount = 0;
+/**
+ * Scoped native-log bridge (diagnostics). B4 removed the global onDebug
+ * console mirror (it double-printed fetch-scan lines against the 500ms
+ * poller), which also hid every WATCH-collector log — `watch: emit #N`,
+ * `watch: skip emit`, silero init — exactly when a watch-only session runs
+ * and no poller exists. While a watch session is live we mirror ONLY the
+ * collector's messages (they are prefix-filtered to `watch`), so fetch
+ * scans stay single-printed.
+ */
+let unsubNativeDebug: (() => void) | null = null;
+
+function startNativeDebugBridge(): void {
+  if (unsubNativeDebug) return;
+  try {
+    unsubNativeDebug = onDebug((msg) => {
+      if (typeof msg === "string" && /^watch/.test(msg)) {
+        console.log(`[SubSyncNative] ${msg}`);
+      }
+    });
+  } catch {
+    // bridge is best-effort
+  }
+}
+
+function stopNativeDebugBridge(): void {
+  try {
+    unsubNativeDebug?.();
+  } catch {
+    // ignore
+  }
+  unsubNativeDebug = null;
+}
+
+// ── Watch-first UX (2026-09): progress pub/sub for the Auto Sync card ──
+// The card polls watchSessionProgress() so it can show a live "heard Xs"
+// line without a new native event surface. Reset on every session start.
+let progress = {
+  listenedSec: 0,
+  candidateMs: null as number | null,
+  appliedMs: null as number | null,
+  /** Highest content-time credited so far (windows may re-cover ground). */
+  creditedEndSec: 0,
+};
+const progressListeners = new Set<() => void>();
+
+function notifyProgress(): void {
+  progressListeners.forEach((l) => l());
+}
+
+/** Subscribe to watch-session progress (listening seconds + candidate). */
+export function onWatchProgress(fn: () => void): () => void {
+  progressListeners.add(fn);
+  return () => {
+    progressListeners.delete(fn);
+  };
+}
+
+/** Latest watch-session progress snapshot (module-level, survives remounts). */
+export function watchSessionProgress(): {
+  listenedSec: number;
+  candidateMs: number | null;
+  appliedMs: number | null;
+} {
+  return {
+    listenedSec: progress.listenedSec,
+    candidateMs: progress.candidateMs,
+    appliedMs: progress.appliedMs,
+  };
+}
 
 /** Register the UI-side apply sink (SubtitleSheet). Replaces any prior handler. */
 export function registerWatchApplyHandler(
@@ -154,14 +236,37 @@ function cleanSubtitle(text: string, format: SubFormat): string {
   return t;
 }
 
-/** Lazy-load cues from the current subtitle URI. Returns null when unavailable. */
+/** Lazy-load cues from the current subtitle URI. Returns null when unavailable.
+ *  Re-reads when the live URI changed (user picked a different subtitle file
+ *  after tapping sync) so correlation never runs against a stale file. */
 async function ensureCues(
   s: Session,
 ): Promise<{ cues: Cue[]; format: SubFormat } | null> {
-  if (s.cues && s.subtitleFormat)
-    return { cues: s.cues, format: s.subtitleFormat };
   const uri = s.getSubtitleUri();
   if (!uri) return null;
+  if (s.cues && s.subtitleFormat && s.cuesFromUri === uri) {
+    return { cues: s.cues, format: s.subtitleFormat };
+  }
+  if (s.cues != null && s.cuesFromUri !== uri) {
+    // The user picked a DIFFERENT subtitle file after tapping sync. The old
+    // baseline/refinement state belongs to the previous file — reset to
+    // fresh-session semantics so correlation starts clean for the new one.
+    console.log(
+      "[SubSync] watch: subtitle file changed - resetting session state",
+    );
+    s.cues = null;
+    s.subtitleFormat = null;
+    s.appliedMs = null;
+    s.adoptedFromCache = false;
+    s.refinements = 0;
+    s.lastDeltaMs = null;
+    s.lastCandidateMs = null;
+    s.lastCandidateConf = 0;
+    s.lastCandidateFromRescue = false;
+    progress.appliedMs = null;
+    progress.candidateMs = null;
+    notifyProgress();
+  }
   try {
     const text = await new File(uri).text();
     const format = detectFormat(uri);
@@ -174,6 +279,7 @@ async function ensureCues(
     }
     s.cues = cues;
     s.subtitleFormat = format;
+    s.cuesFromUri = uri;
     console.log(
       `[SubSync] watch: loaded ${cues.length} cues (${format}) from ${uri.split("/").pop()}`,
     );
@@ -254,6 +360,13 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
     );
     return;
   }
+  // Diagnostics: every native window that reaches JS. If this line never
+  // appears for a session, the native audio-tap produced nothing (that is
+  // an expo-video patch / audio-pipeline problem, not a correlation one).
+  signalCount += 1;
+  console.log(
+    `[SubSync] watch: signal #${signalCount} [${ev.startSec.toFixed(1)}..${ev.endSec.toFixed(1)}]s bins=${ev.bins} baseline=${s.appliedMs ?? "none"}${s.adoptedFromCache ? " (cache)" : ""}`,
+  );
 
   let sig: SpeechSignal;
   try {
@@ -267,6 +380,18 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
   } catch (e: any) {
     console.log(`[SubSync] watch: invalid signal: ${e?.message ?? e}`);
     return;
+  }
+
+  // Watch-first UX: a usable window landed — credit its span as "heard".
+  // Only the part beyond what earlier windows already covered counts
+  // (re-anchors can re-cover old ground; that isn't new evidence). Windows
+  // rejected earlier (invalid signal, no handler, apply in flight) never
+  // reach this line and don't count.
+  const creditFrom = Math.max(ev.startSec, progress.creditedEndSec);
+  if (ev.endSec > creditFrom) {
+    progress.listenedSec += ev.endSec - creditFrom;
+    progress.creditedEndSec = ev.endSec;
+    notifyProgress();
   }
 
   const loaded = await ensureCues(s);
@@ -286,16 +411,16 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
       );
       return;
     }
-    const off = findOffset(cuesInWindow, sig);
-    const conf = confidence(
+    let off = findOffset(cuesInWindow, sig);
+    let conf = confidence(
       cuesInWindow,
       sig,
       off.offset,
       off.runnerUp,
       off.score,
     );
-    const keep = keptFraction(cuesInWindow, sig, off.offset);
-    const sharp =
+    let keep = keptFraction(cuesInWindow, sig, off.offset);
+    let sharp =
       off.runnerUp >= 0
         ? (off.score - off.runnerUp) / Math.max(off.score, 0.02)
         : 1;
@@ -306,6 +431,56 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
         `applied=${s.appliedMs ?? "none"} refinements=${s.refinements}`,
     );
 
+    // P5: SHORT-window wide-slice rescue. A watch window is ~60-90s of
+    // audio, but real offsets reach ±90s (recap / cold-open / WEB-DL cuts).
+    // At a large TRUE offset only a thin sliver of the window's cue set maps
+    // into the span — the windowed scorer marks the true peak INVALID (no
+    // cues) or keep-ineligible — so findOffset's winner is a junk near-zero
+    // offset (device evidence: true +54.47s lost to -5.19s conf=0.370
+    // sharp=0.00; even the FFT's coarse proposals cannot rank the truth
+    // with ~3 cues of aligned mass). The rescuer direct-scans the whole
+    // ±MAX_OFF range over WIDE slices of the FILE's cues. Runs even when a
+    // (cache-adopted) baseline exists — if the rescue disagrees, it must
+    // win the SAME two-window agreement as a first apply before it can
+    // displace the baseline (below).
+    let rescueWon = false;
+    {
+      const rescue = findOffsetWideSlice(cues, sig);
+      if (rescue) {
+        const rConf = confidenceWideSlice(
+          rescue.cues,
+          sig,
+          rescue.offset,
+          rescue.score,
+          rescue.rivalScore,
+        );
+        if (rConf > conf) {
+          const rSharp =
+            rescue.rivalScore > 0
+              ? (rescue.score - rescue.rivalScore) /
+                Math.max(rescue.score, 0.02)
+              : 1;
+          console.log(
+            `[SubSync] watch: wide-slice rescue accepted ` +
+              `offset=${rescue.offset.toFixed(2)}s conf=${rConf.toFixed(3)} ` +
+              `keep=${rescue.keep.toFixed(2)} sharp=${rSharp.toFixed(2)} ` +
+              `(${rescue.cues.length} wide cues; was ${off.offset.toFixed(2)}s ` +
+              `conf=${conf.toFixed(3)} keep=${keep.toFixed(2)})`,
+          );
+          off = {
+            ...off,
+            offset: rescue.offset,
+            score: rescue.score,
+            keep: rescue.keep,
+          };
+          conf = rConf;
+          keep = rescue.keep;
+          sharp = rSharp;
+          rescueWon = true;
+        }
+      }
+    }
+
     // Content-dead / no signal — skip without burning a refinement.
     if (off.score <= 0 || conf <= 0) return;
 
@@ -314,44 +489,67 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
     let kind: WatchApplyKind | null = null;
 
     if (isFirst) {
+      // No single-window first apply, even at checkpoint bars. A SHORT
+      // window is locally ambiguous: at offset o the window only hears the
+      // cue band [start-o..end-o], and on a recap/credits file that band is
+      // sparse — so a WRONG offset can score higher than the truth inside
+      // the window (device 2026-09: true +54.47s mapped to a 3-cue recap
+      // band and lost to junk -26.28s on a 20.5s window; the fetch path
+      // guards this exact case with early+late agreement before applying).
+      // Stash and require the NEXT emit (≥45s later, a different cue band)
+      // to agree before anything touches playback.
       targetMs = Math.round(off.offset * 1000);
-      // Fast path: one strong window applies immediately (fetch checkpoint
-      // bars — reached in ~45s of watching on clean dialogue).
+      // Stash quality floor: a junk candidate (device: -33.20s, sharp 0.05)
+      // must not occupy the pairing slot — a first stash needs its own
+      // window to clear the per-window conf bar.
       if (
-        CHECKPOINT_EARLY_APPLY &&
-        conf >= CHECKPOINT_CONF &&
-        off.score > 0 &&
-        keep >= CHECKPOINT_KEEP &&
-        sharp >= CHECKPOINT_SHARP
+        s.lastCandidateMs == null &&
+        (conf < AGREE_FIRST_CONF || sharp < AGREE_FIRST_SHARP)
       ) {
-        kind = "first";
         console.log(
-          `[SubSync] watch: first apply checkpoint ${targetMs >= 0 ? "+" : ""}${(targetMs / 1000).toFixed(2)}s ` +
-            `(conf=${conf.toFixed(3)}/${CHECKPOINT_CONF} keep=${keep.toFixed(2)}/${CHECKPOINT_KEEP} ` +
-            `sharp=${sharp.toFixed(2)}/${CHECKPOINT_SHARP})`,
+          `[SubSync] watch: candidate ${targetMs}ms below stash floor ` +
+            `(conf=${conf.toFixed(3)}/${AGREE_FIRST_CONF} sharp=${sharp.toFixed(2)}/${AGREE_FIRST_SHARP}) - not stashing`,
         );
-      } else if (
-        // Agreement path: two consecutive windows landing on the same offset
-        // is fetch-style cross-validation — accept at a lower per-window bar.
+        return;
+      }
+      // Sharpness is per-window noise on wide-slice rescues (the "rival" is
+      // a junk full-range candidate). When two independent windows AGREE on
+      // the same offset, the agreement itself is the cross-validation —
+      // sharp is exempt for rescue candidates (device: +53.73s and +54.69s
+      // agreed within 0.96s but sharp 0.05 < 0.08 vetoed the apply).
+      if (
         s.lastCandidateMs != null &&
         conf >= AGREE_FIRST_CONF &&
         keep >= AGREE_FIRST_KEEP &&
-        sharp >= AGREE_FIRST_SHARP &&
+        (s.lastCandidateFromRescue || sharp >= AGREE_FIRST_SHARP) &&
         Math.abs(targetMs - s.lastCandidateMs) <= WINDOW_AGREE_DELTA_SEC * 1000
       ) {
-        targetMs = Math.round((targetMs + s.lastCandidateMs) / 2);
         kind = "first";
         console.log(
           `[SubSync] watch: first apply via window agreement ${targetMs >= 0 ? "+" : ""}${(targetMs / 1000).toFixed(2)}s ` +
             `(windows Δ<=${WINDOW_AGREE_DELTA_SEC}s, this conf=${conf.toFixed(3)}/${AGREE_FIRST_CONF})`,
         );
+      } else if (s.lastCandidateMs != null && conf < s.lastCandidateConf) {
+        // Eviction discipline: a WEAKER candidate never replaces a stashed
+        // one (device 2026-09: junk −36.12s conf=0.619 evicted the better
+        // −5.11s conf=0.685 stash, costing one full emit cycle of latency).
+        // Agreement with the stash is handled above; disagreement at lower
+        // confidence leaves the stronger candidate waiting for its partner.
+        console.log(
+          `[SubSync] watch: candidate ${targetMs}ms conf=${conf.toFixed(3)} weaker than stash ` +
+            `${s.lastCandidateMs}ms (${s.lastCandidateConf.toFixed(3)}) - stash kept`,
+        );
+        return;
       } else {
-        // Stash this window's candidate and wait for the next emit (~45s).
+        // Stash this window's candidate and wait for the next emit (~30s).
         s.lastCandidateMs = targetMs;
         s.lastCandidateConf = conf;
+        s.lastCandidateFromRescue = rescueWon;
+        progress.candidateMs = targetMs;
+        notifyProgress();
         console.log(
           `[SubSync] watch: first window below bar - candidate stashed ` +
-            `(conf=${conf.toFixed(3)} keep=${keep.toFixed(2)} sharp=${sharp.toFixed(2)}), waiting for agreement`,
+            `(conf=${conf.toFixed(3)} keep=${keep.toFixed(2)} sharp=${sharp.toFixed(2)}${rescueWon ? ", rescue" : ""}), waiting for agreement`,
         );
         return;
       }
@@ -360,6 +558,30 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
       // is a first-apply override, not a refinement — the cached offset was
       // never verified against live audio. (Live-applied baselines keep the
       // normal refinement guards.)
+      // A rescue result that contradicts a CACHE baseline (never verified
+      // against live audio) is not applied immediately: it is stashed and
+      // must win the same two-window agreement as a first apply. (Windowed
+      // scoring cannot see large offsets at all, so rescueWon is the only
+      // signal that may legitimately displace the baseline.)
+      if (
+        s.adoptedFromCache &&
+        rescueWon &&
+        Math.abs(Math.round(off.offset * 1000) - s.appliedMs!) >
+          WINDOW_AGREE_DELTA_SEC * 1000
+      ) {
+        const candMs = Math.round(off.offset * 1000);
+        console.log(
+          `[SubSync] watch: rescue ${candMs}ms contradicts cache baseline ${s.appliedMs}ms - stashing for agreement`,
+        );
+        s.appliedMs = null;
+        s.adoptedFromCache = false;
+        s.lastCandidateMs = candMs;
+        s.lastCandidateConf = conf;
+        progress.appliedMs = null;
+        progress.candidateMs = candMs;
+        notifyProgress();
+        return;
+      }
       const candMs = Math.round(off.offset * 1000);
       if (
         s.adoptedFromCache &&
@@ -389,8 +611,10 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
         }
         const deltaMs = Math.round(off.offset * 1000) - s.appliedMs!;
         if (Math.abs(deltaMs) < REFINE_MIN_DELTA_MS) {
+          // Distinguishes "baseline already correct" (expected when the
+          // session adopted a good cache offset) from a weak measurement.
           console.log(
-            `[SubSync] watch: refine |Δ|=${(Math.abs(deltaMs) / 1000).toFixed(2)}s < ${REFINE_MIN_DELTA_MS}ms - ignoring`,
+            `[SubSync] watch: refine |Δ|=${(Math.abs(deltaMs) / 1000).toFixed(2)}s < ${REFINE_MIN_DELTA_MS}ms - ignoring (baseline already matches${s.adoptedFromCache ? " the cached offset" : ""})`,
           );
           return;
         }
@@ -420,9 +644,14 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
     // Shared applyOnce gate with the fetch path (autoSync.applyOrConfirm).
     const priorAppliedMs = s.appliedMs;
     s.applying = true;
+    let attachOk = true;
     try {
       const result = await runApplyOnce(async () => {
-        await applyHandler!(targetMs!, conf, rewritten, kind!);
+        // The handler returns false when the offset could NOT be attached
+        // (sidecar re-add failed and rolled back) — the session must not
+        // treat the offset as applied, and the UI must not persist it.
+        const r = await applyHandler!(targetMs!, conf, rewritten, kind!);
+        attachOk = r !== false;
         return true;
       });
       if (result == null) {
@@ -433,6 +662,18 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
           `[SubSync] watch: applyOnce busy (fetch path holds the gate) - adopting ${targetMs}ms as baseline`,
         );
         s.appliedMs = targetMs;
+        return;
+      }
+      if (!attachOk) {
+        // ATTACH FAILED. Do NOT update the baseline, do NOT clear the
+        // pending candidate, do NOT cache, and do NOT show success. The
+        // device loop (2026-09): a failed attach still marked appliedMs,
+        // the offset persisted to prefs/cache, and every later session
+        // started poisoned on an unverified wrong offset.
+        console.log(
+          `[SubSync] watch: apply REJECTED - attach failed, baseline stays ${s.appliedMs ?? "none"}`,
+        );
+        s.lastCandidateMs = null;
         return;
       }
     } finally {
@@ -446,6 +687,10 @@ async function handleSignal(ev: WatchSignalEvent): Promise<void> {
     s.appliedMs = targetMs;
     s.lastCandidateMs = null;
     s.lastCandidateConf = 0;
+    s.lastCandidateFromRescue = false;
+    progress.appliedMs = targetMs;
+    progress.candidateMs = null;
+    notifyProgress();
 
     // I-2: surface the outcome to the user even with the sheet closed — the
     // session owner owns the toast (first apply + every correction).
@@ -550,7 +795,11 @@ export async function startWatchSession(
   try {
     const activated = await activateWatchSync({
       fromSec: Math.max(0, opts.fromSec),
-      windowSec: 90,
+      // 60s windows (was 90): shorter independent windows make the two-window
+      // agreement gate land sooner. The wide-slice rescue already converges on
+      // 60-65s spans on device (conf 0.809/0.884) — evidence pace, not gate
+      // strictness, was setting sync latency (first apply ~180s).
+      windowSec: 60,
       useSilero: true,
       vadMarkOn: MARK_ON,
       vadMarkOff: MARK_OFF,
@@ -568,12 +817,14 @@ export async function startWatchSession(
     ...opts,
     cues: null,
     subtitleFormat: null,
+    cuesFromUri: null,
     appliedMs: adoptedMs,
     adoptedFromCache: adoptedMs != null,
     refinements: 0,
     lastDeltaMs: null,
     lastCandidateMs: null,
     lastCandidateConf: 0,
+    lastCandidateFromRescue: false,
     capAt: Date.now() + SESSION_CAP_MS,
     unsubSignal: onWatchSignal(onSignalSafe),
     anchorTimer: null,
@@ -582,6 +833,14 @@ export async function startWatchSession(
     stopped: false,
   };
   session = s;
+  progress = {
+    listenedSec: 0,
+    candidateMs: null,
+    appliedMs: adoptedMs,
+    creditedEndSec: 0,
+  };
+  notifyProgress();
+  startNativeDebugBridge();
 
   // 5s anchor poll: re-base when content time jumped beyond expected drift
   // (seek that bypassed isSeeking, stall recovery, etc.). Position comes
@@ -596,6 +855,15 @@ export async function startWatchSession(
     try {
       const pos = cur.getPosition();
       if (!Number.isFinite(pos) || pos < 0) return;
+      // FROZEN POSITION (paused / stalled / buffering): do NOT re-anchor.
+      // Device logs (2026-09) showed the old logic re-anchoring every 5s
+      // while paused (drift = poll interval > tolerance), which spammed
+      // native rebuilds + VAD re-inits AND wiped any accumulated partial
+      // window on every pause/play cycle. A frozen playhead is not a seek.
+      // (A resume after a real stall still trips the drift check below on
+      // the next poll — and that re-anchor also clears native suspension.)
+      const moved = Math.abs(pos - cur.lastAnchorPos);
+      if (moved < 0.25) return;
       // Expected continuous-play drift is ~ANCHOR_POLL_MS of content time;
       // anything far from that is a discontinuity worth re-anchoring.
       const elapsed = ANCHOR_POLL_MS / 1000;
@@ -612,7 +880,7 @@ export async function startWatchSession(
 
   console.log(
     `[SubSync] watch: session started contentId=${opts.contentId} from=${opts.fromSec.toFixed(1)}s ` +
-      `cap=${SESSION_CAP_MS / 1000}s`,
+      `cap=${SESSION_CAP_MS / 1000}s baseline=${adoptedMs != null ? `${adoptedMs}ms (cache)` : "none"}`,
   );
   return true;
 }
@@ -648,7 +916,15 @@ export function anchorWatchSession(toSec: number): boolean {
 /** Stop the session (source change, unmount, video end, cap, kill-switch). */
 export function stopWatchSession(reason = "stop"): boolean {
   const s = session;
-  if (!s) return false;
+  if (!s) {
+    console.log(
+      `[SubSync] watch: stop ignored - no active session (${reason})`,
+    );
+    return false;
+  }
+  console.log(
+    `[SubSync] watch: stopping session (${reason}) applied=${s.appliedMs ?? "none"} refinements=${s.refinements} signalsSeen=${signalCount}`,
+  );
   s.stopped = true;
   if (s.anchorTimer) {
     clearInterval(s.anchorTimer);
@@ -660,15 +936,19 @@ export function stopWatchSession(reason = "stop"): boolean {
     // ignore
   }
   session = null;
+  progress = {
+    listenedSec: 0,
+    candidateMs: null,
+    appliedMs: progress.appliedMs,
+    creditedEndSec: 0,
+  };
+  notifyProgress();
+  stopNativeDebugBridge();
   try {
     nativeStopWatchSync();
   } catch {
     // ignore
   }
-  console.log(
-    `[SubSync] watch: session stopped (${reason}) applied=${s.appliedMs ?? "none"} ` +
-      `refinements=${s.refinements}`,
-  );
   return true;
 }
 
@@ -679,6 +959,10 @@ export function watchSessionStatus(): {
   refinements?: number;
   capAt?: number;
   lastAnchorPos?: number;
+  /** True when a session is live AND the playing-time deadline is still open. */
+  deadlineOpen?: boolean;
+  /** Seconds of usable audio heard this session (watch-first UX). */
+  listenedSec?: number;
 } {
   const s = session;
   if (!s) return { active: false };
@@ -688,6 +972,8 @@ export function watchSessionStatus(): {
     refinements: s.refinements,
     capAt: s.capAt,
     lastAnchorPos: s.lastAnchorPos,
+    deadlineOpen: Date.now() < s.capAt,
+    listenedSec: progress.listenedSec,
   };
 }
 

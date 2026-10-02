@@ -15,6 +15,20 @@
 export const MARK_ON = 0.35;
 /** Silero mark-OFF threshold (falling edge — stays on until prob < this). */
 export const MARK_OFF = 0.25;
+
+/**
+ * Watch-first Sync tap (2026-09). When true, tapping Auto Sync starts ONLY
+ * the watch session (listens to the audio the user is already playing — no
+ * network scan) and, if nothing applies after WATCH_FIRST_DEADLINE_PLAYED_SEC
+ * of PLAYING time, parks the card with a manual "Scan the stream instead"
+ * affordance (never auto-scans — zero surprise data on any network).
+ * Set false to restore the legacy tap behavior (watch piggyback + immediate
+ * full fetch scan).
+ */
+export const WATCH_FIRST_TAP = true;
+/** Playing-time budget before the watch path admits defeat and offers the
+ * manual scan affordance (paused playback does not burn the budget). */
+export const WATCH_FIRST_DEADLINE_PLAYED_SEC = 300;
 /**
  * F6 escalation (NOT active): onset-of-speech binning. Flip to true only if
  * F6 undercorrects Lioness/Spider on device.
