@@ -86,6 +86,17 @@ export function useMovieTheme(
     typeof initial === "string" ? initial : null,
   );
 
+  // The swatch whose color story is currently painted (seeded by the sync
+  // probe) and whether `progress` has been taken away from it. Both gate the
+  // startup-breath guard at the top of `apply`.
+  const paintedRef = useRef<string | null>(
+    typeof initial === "string" ? initial : null,
+  );
+  // Mirrors the `fadingOut` state for use inside `apply` (which must not
+  // depend on that state — it would churn `apply`'s identity and re-run the
+  // key effect). True whenever progress is below the painted story.
+  const fadingOutRef = useRef(false);
+
   // One Animated.Value per mount (not per key).
   const [progress] = useState(() => new Animated.Value(initialPalette ? 1 : 0));
 
@@ -103,9 +114,29 @@ export function useMovieTheme(
 
   const apply = useCallback(
     (hex: string) => {
+      // Startup-breath guard: never repaint a color story that is already
+      // painted. Two startup paths hit this — warm mount (the sync probe
+      // seeds the hook with the hex, the key effect then applies the same
+      // hex again) and cold mount (the poster paints first, the backdrop
+      // refines within the same family) — and both used to take the
+      // "later arrival" dip below, pulsing the whole hero once (up/down at
+      // startup). Same rule the poster path already honours: a hue gap
+      // under 60° never repaints. Never skip while a fade-out is in
+      // flight — that state must run the full path to restore.
+      if (
+        paintedRef.current !== null &&
+        !fadingOutRef.current &&
+        !fadeOutRef.current &&
+        hueDistance(hex, paintedRef.current) < 60
+      ) {
+        return;
+      }
+
       fadeOutRef.current?.stop();
       fadeOutRef.current = null;
       setFadingOut(false);
+      fadingOutRef.current = false;
+      paintedRef.current = hex;
       setSwatch(hex);
       const nextPalette = buildPalette(hex);
       if (!nextPalette) return; // unusable swatch — stay on the fallback
@@ -150,8 +181,11 @@ export function useMovieTheme(
     // "the wrong color for this movie"); cross it out while the new swatch
     // resolves. Interrupted by `apply` when the new accent lands.
     setFadingOut(true);
+    fadingOutRef.current = true; // progress is leaving the painted story
     if (reduceMotion) {
-      // Snap the old accent off instead of animating it out.
+      // Snap the old accent off instead of animating it out. The memo keeps
+      // the old palette painted (hence setFadingOut(false)), but
+      // fadingOutRef STAYS true: the story is hidden until `apply` restores.
       progress.setValue(0);
       setFadingOut(false);
       return;
