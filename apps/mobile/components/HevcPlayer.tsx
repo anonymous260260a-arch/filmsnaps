@@ -30,17 +30,19 @@ import {
   Text,
   TouchableOpacity,
   AppState,
+  useWindowDimensions,
 } from "react-native";
 import { VideoView, useVideoPlayer, type VideoPlayer } from "expo-video";
 import { Ionicons } from "@expo/vector-icons";
 import * as ScreenOrientation from "expo-screen-orientation";
 import * as KeepAwake from "expo-keep-awake";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "../theme/colors";
 import { ExpoVideoAdapter } from "./player/ExpoVideoAdapter";
 import { PlayerOverlay } from "./player/PlayerOverlay";
 import { StreamPickerSheet } from "./player/StreamPickerSheet";
 import { saveProgress } from "../lib/watchHistory";
-import { releaseEarlyPlayer } from "../lib/earlyPlayerHolder";
+
 import {
   rememberWorkingSource,
   getLastWorkingSource,
@@ -342,8 +344,16 @@ export function HevcPlayer({
   );
   const [activeLinkIndex, setActiveLinkIndex] = useState(initialStart.index);
   const [showStreamPicker, setShowStreamPicker] = useState(false);
-  // FIX 6: defer StreamPickerSheet until first open (player mounts light).
+  // Pre-mount the stream picker HIDDEN once links land (replaces FIX 6's
+  // defer-until-open): the first tap used to pay the sheet's mount + layout
+  // cost (~0.5–1s felt delay). The sheet gates its data work on `visible`,
+  // so a hidden pre-mount does no extra work and the opener is instant.
   const [streamPickerMounted, setStreamPickerMounted] = useState(false);
+  useEffect(() => {
+    if (streamPickerMounted || !links || links.length === 0) return;
+    const t = setTimeout(() => setStreamPickerMounted(true), 1500);
+    return () => clearTimeout(t);
+  }, [links, streamPickerMounted]);
   const openStreamPicker = useCallback(() => {
     setStreamPickerMounted(true);
     setShowStreamPicker(true);
@@ -410,13 +420,29 @@ export function HevcPlayer({
    *  error from an already-condemned source must not skip two embed
    *  providers by re-triggering the handoff. */
   const exhaustedRef = useRef(false);
-  const fireExhausted = useCallback(() => {
-    if (exhaustedRef.current) return;
-    exhaustedRef.current = true;
-    setExhausted(true);
-    perfRef.current?.noteFailed();
-    onExhausted?.();
-  }, [onExhausted]);
+  /**
+   * @param autoProviderSwitch when false, exhaustion renders the exhausted
+   *   card but does NOT auto-call onExhausted (the provider hop). Cold-start
+   *   cascade guard (device 2026-09): when nothing has played yet this
+   *   episode, a fast error cascade over an unverified head on a slow
+   *   network burned through every provider in seconds. The user decides
+   *   via the card's "Try Another Server" instead; once something HAS
+   *   played, auto-hopping stays the existing behavior.
+   */
+  const fireExhausted = useCallback(
+    (autoProviderSwitch = true) => {
+      if (exhaustedRef.current) return;
+      exhaustedRef.current = true;
+      setExhausted(true);
+      perfRef.current?.noteFailed();
+      if (autoProviderSwitch) onExhausted?.();
+      else
+        console.log(
+          "[Flow] exhausted before any playback — showing recovery card, provider switch left to the user",
+        );
+    },
+    [onExhausted],
+  );
   const switchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recheckTokenRef = useRef(0);
   /** True while the app is backgrounded — freezes playback + auto-switching. */
@@ -753,6 +779,43 @@ export function HevcPlayer({
   const currentLink =
     links && links.length > 0 ? links[activeLinkIndex] : undefined;
 
+  // Sidecar subtitles shipped with this pool, offered in the subtitle
+  // sheet's "With this source" section. MovieBox (PenguPlay) only — every
+  // other provider's sheet renders exactly as before. The active row is
+  // usually the dub (0 subtitle files) while the sub files live on sibling
+  // rows of the same pool, so gather the whole ranked pool — active row
+  // first — instead of just the active link. Rows of one source group ship
+  // the identical file set: dedupe by file url AND language label (the
+  // sheet keys its rows by url).
+  const subtitleSidecars = React.useMemo(() => {
+    if (!links?.length) return undefined;
+    const seenUrls = new Set<string>();
+    const seenLangs = new Set<string>();
+    const rows: { lang: string; url: string; source?: string }[] = [];
+    const ordered = currentLink
+      ? [currentLink, ...links.filter((l) => l !== currentLink)]
+      : links;
+    for (const l of ordered) {
+      const meta = l._meta;
+      if (meta?.providerId !== "moviebox" || !meta.subtitles?.length) continue;
+      for (const s of meta.subtitles) {
+        if (seenUrls.has(s.url) || seenLangs.has(s.lang)) continue;
+        seenUrls.add(s.url);
+        seenLangs.add(s.lang);
+        rows.push({
+          lang: s.lang,
+          url: s.url,
+          source: meta.source || undefined,
+        });
+      }
+    }
+    // English entries first ("English", "English - SDH", "English 2", "eng"…);
+    // everything else keeps its upstream/rank order (Array.sort is stable).
+    const isEnglish = (lang: string) => /^(english|eng)\b/i.test(lang.trim());
+    rows.sort((a, b) => Number(isEnglish(b.lang)) - Number(isEnglish(a.lang)));
+    return rows.length > 0 ? rows : undefined;
+  }, [links, currentLink]);
+
   // Reset all tracking when media / links change
   useEffect(() => {
     // Diagnostic: what the source selector actually has, per audio track.
@@ -1025,7 +1088,11 @@ export function HevcPlayer({
             );
           } else {
             setSwitchInfo(null);
-            fireExhausted();
+            // Switch-timeout exhaustion: nothing played (else the timeout
+            // would not have fired). On a cold network this is the cascade
+            // killer — a slow-but-alive source condemned here used to burn
+            // the next provider too. Show the recovery card; the user hops.
+            fireExhausted(hasPlayedRef.current);
           }
         } else {
           beginSwitch(next, true, undefined, "timeout");
@@ -1046,7 +1113,10 @@ export function HevcPlayer({
     const numLinks = links?.length ?? 0;
     if (numLinks <= 1) {
       setSwitchInfo(null);
-      fireExhausted();
+      // Same cold-start rule as the multi-link path below: nothing played
+      // yet → the user chooses (Re-check / Try Another Server); something
+      // played → auto provider hop stays.
+      fireExhausted(hasPlayedRef.current);
       return;
     }
 
@@ -1069,7 +1139,11 @@ export function HevcPlayer({
         `[Flow] all ${numLinks} links exhausted after ${reason} failure — embed handoff`,
       );
       setSwitchInfo(null);
-      fireExhausted();
+      // Error-failure exhaustion with no playback this episode is the
+      // classic cold-start cascade (unverified head + slow probes): hold the
+      // provider and show Re-check / Choose / Try Another Server instead of
+      // auto-hopping. Once something has played, keep the auto handoff.
+      fireExhausted(hasPlayedRef.current);
       return;
     }
 
@@ -1457,22 +1531,23 @@ export function HevcPlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoSource, externalPlayer]);
 
-  // D3: release the adopted warm player when THIS HevcPlayer goes away
-  // (watch close / media change). The hook player is auto-released by expo.
+  // D3: the adopted warm player is OWNED by the watch screen (single-owner
+  // rule — see earlyPlayerHolder). This component must NEVER release it:
+  // React runs the old mount's cleanup BEFORE the new mount's effects, so
+  // any borrower-side release races the next borrower's VideoView — that
+  // is exactly the "Cannot use shared object that was already released"
+  // crash when HevcPlayer double-mounts for one key. Cleanup only pauses
+  // so an unmounted instance stays silent (the new instance's adopt effect
+  // re-plays); the screen disposes the player on unmount.
   useEffect(() => {
-    if (!externalPlayer || !earlyPlayerKey) return;
+    if (!externalPlayer) return;
     return () => {
       try {
-        externalPlayer.release();
-        console.log(
-          `[Flow] early player released on close (key=${earlyPlayerKey})`,
-        );
+        externalPlayer.pause();
       } catch {}
-      // Also clear any leftover holder entry for this key (defensive).
-      releaseEarlyPlayer(earlyPlayerKey);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [externalPlayer, earlyPlayerKey]);
+  }, [externalPlayer]);
 
   // Wrap in adapter (stable — only recreated if player changes)
   const adapter = useMemo(() => new ExpoVideoAdapter(player), [player]);
@@ -2322,6 +2397,7 @@ export function HevcPlayer({
         ? (current.getCurrentTime() / current.getDuration()) * 100
         : undefined,
       resumeCorrectedRef.current || undefined,
+      "direct",
     );
     setActivePerfSession(null);
     perfRef.current = null;
@@ -2365,7 +2441,7 @@ export function HevcPlayer({
       if (nextCountdownTimerRef.current)
         clearInterval(nextCountdownTimerRef.current);
       if (autoToastTimerRef.current) clearTimeout(autoToastTimerRef.current);
-      perfRef.current?.close();
+      perfRef.current?.close(undefined, undefined, "direct");
       setActivePerfSession(null);
       perfRef.current = null;
       stopWatchSession("unmount");
@@ -2450,6 +2526,69 @@ export function HevcPlayer({
     return `Trying source ${n} of ${links?.length ?? 0}${detail ? ` — ${detail}` : ""}`;
   })();
 
+  // ── Edge-to-edge video surface insets (Bug: landscape subtitle/video cut) ──
+  // The app draws edge-to-edge, so a 100%×100% video surface extends under the
+  // transparent gesture-nav / status bars. Media3 renders subtitles anchored
+  // to the surface's bottom edge and the video frame bleeds into the system
+  // bars — the surface must shrink by the system-bar insets in fullscreen.
+  // The overlay already lifts itself (+36 landscape); the surface never did.
+  const insets = useSafeAreaInsets();
+  const { width: winW, height: winH } = useWindowDimensions();
+  // In fullscreen the video surface must live INSIDE the system bars (they're
+  // transparent and this app draws edge-to-edge): Media3 anchors subtitles to
+  // the surface's bottom edge, so a surface that reaches the physical screen
+  // bottom puts subtitles under the gesture-nav bar and bleeds the frame into
+  // system UI. Absolute-positioning with per-edge insets is the geometry that
+  // CANNOT overflow: top/left/right/bottom pin all four edges inward.
+  // (Margins on a 100%-height view were tried and are wrong — Yoga adds
+  // margins OUTSIDE percentage sizes, growing the footprint instead.)
+  //
+  // Applies whenever the surface fills the SCREEN:
+  //   - isFullscreen: expanded fullscreen box
+  //   - physical landscape (rotated without the button): full-height box
+  //   - standalone HevcPlayer (no externalFullscreen prop, e.g. Falix): the
+  //     container is the page's flex:1 — always full screen, portrait too
+  // The unified-page portrait 50% box keeps the old geometry on purpose
+  // (YouTube-style flush-top; its bottom sits mid-screen, clear of nav UI).
+  const surfaceFillsScreen =
+    isFullscreen || winW > winH || externalFullscreen === undefined;
+  const videoSurfaceStyle = useMemo(
+    () =>
+      surfaceFillsScreen
+        ? {
+            position: "absolute" as const,
+            top: insets.top,
+            bottom: insets.bottom,
+            left: insets.left,
+            right: insets.right,
+          }
+        : styles.video,
+    [
+      surfaceFillsScreen,
+      insets.top,
+      insets.bottom,
+      insets.left,
+      insets.right,
+      winW,
+      winH,
+    ],
+  );
+
+  // Subtitle position — Media3 anchors subtitles to the surface's bottom
+  // edge; the user-lifted fraction (settings) raises them so they sit clear
+  // of the progress bar / gesture-nav zone. null = auto (the default): Low
+  // (0.14) in portrait, Middle (0.2) in landscape — the landscape surface
+  // is the full screen, so the lifted default sits differently there. An
+  // explicit pin (any number) wins in both orientations. Android-only
+  // native prop (patched expo-video); other platforms ignore it.
+  const subtitleMarginFraction =
+    settings.subtitleBottomMargin ?? (winW > winH ? 0.2 : 0.14);
+  // Immersive video — while the surface fills the screen, the VideoView hides
+  // the OS status + navigation bars (native patch) and restores them on
+  // unmount / focus loss. No edge-to-edge letterboxing surprises: safe-area
+  // insets collapse to ~0 while immersive, so the surface re-expands cleanly.
+  const immersive = surfaceFillsScreen;
+
   return (
     <View style={styles.container}>
       <StatusBar hidden={isFullscreen} barStyle="light-content" />
@@ -2469,12 +2608,14 @@ export function HevcPlayer({
           ]}
         >
           <VideoView
-            style={styles.video}
+            style={videoSurfaceStyle}
             player={player}
             nativeControls={false}
             allowsPictureInPicture={false}
             fullscreenOptions={{ enable: false }}
             contentFit={screenFit}
+            subtitleMarginFraction={subtitleMarginFraction}
+            immersiveMode={immersive}
           />
 
           {/* Controls overlay (also carries the switching pill + buffering spinner) */}
@@ -2500,6 +2641,7 @@ export function HevcPlayer({
             }}
             subtitleKey={subtitleKey ?? undefined}
             subtitleOnlineSearch={subtitleOnlineSearch}
+            subtitleSidecars={subtitleSidecars}
             autoSync={
               subtitleKey
                 ? {

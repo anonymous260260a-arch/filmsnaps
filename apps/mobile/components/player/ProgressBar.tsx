@@ -251,8 +251,13 @@ export function ProgressBar({
     });
 
   const panGesture = Gesture.Pan()
-    .activeOffsetX(HORIZONTAL_ACTIVATE_PX)
-    .failOffsetY(VERTICAL_FAIL_PX)
+    // Arm BOTH directions: a positive number alone (activeOffsetXEnd) only
+    // activates on rightward movement, so touch-down-then-drag-BACK never
+    // activated the pan (and Tap failed on distance) — the reported "tap and
+    // scrub backward does nothing" bug. Same for failOffsetY: gesture-nav
+    // swipes move DOWN first, but notification-shade pulls move UP.
+    .activeOffsetX([-HORIZONTAL_ACTIVATE_PX, HORIZONTAL_ACTIVATE_PX])
+    .failOffsetY([-VERTICAL_FAIL_PX, VERTICAL_FAIL_PX])
     .onTouchesDown(() => {
       activatedSV.value = false;
     })

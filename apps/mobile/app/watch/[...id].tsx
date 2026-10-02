@@ -28,7 +28,11 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAnimeDirectPipeline } from "../../hooks/useAnimeDirectPipeline";
 import { useSettings } from "../../lib/settings";
-import { getProvider, isDirectProvider } from "@filmsnaps/shared";
+import {
+  getProvider,
+  getProvidersForMode,
+  isDirectProvider,
+} from "@filmsnaps/shared";
 import { getLastProvider, saveLastProvider } from "../../lib/lastProvider";
 import { resolvePlaybackProviderIdTiered } from "../../lib/resolvePlaybackProvider";
 import { markWatchEntry, markPerfStage } from "../../lib/perfMetrics";
@@ -38,7 +42,7 @@ import {
 } from "../../lib/watchPerfMismatch";
 import {
   takeEarlyPlayer,
-  releaseEarlyPlayer,
+  disposeEarlyPlayer,
 } from "../../lib/earlyPlayerHolder";
 import type { VideoPlayer } from "expo-video";
 import { LanguagePromptSheet } from "../../components/player/LanguagePromptSheet";
@@ -236,7 +240,10 @@ export default function WatchScreen() {
       (providerDef0 ? isDirectProvider(providerDef0) : false) ||
       isDirectVideoUrl(videoUrl || "") ||
       !!fileUri;
-    trackWatchOpened({ surface: direct ? "direct" : "embed" });
+    trackWatchOpened({
+      surface: direct ? "direct" : "embed",
+      ...(type ? { mediaType: type } : {}),
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -358,6 +365,31 @@ export default function WatchScreen() {
     animeMalId,
     animeAnilistId,
   ]);
+  // Anime sessions reach the generic (registry) pipeline ONLY through
+  // providers that declare anime capability — today MovieBox (PenguPlay
+  // serves anime via `tmdb:` ids, see registry `idScheme`). Everything else
+  // behaves exactly as before: JustAnime keeps the MAL pipeline below, and
+  // the details-open `provider=direct` quirk stays disabled here so the
+  // player's auto-fallback to JustAnime still runs untouched.
+  const animeGenericIds = React.useMemo(() => {
+    if (!isAnime) return null;
+    return new Set(
+      getProvidersForMode("anime")
+        .filter(
+          (p) =>
+            isDirectProvider(p) && p.animeOnly !== true && p.id !== "direct",
+        )
+        .map((p) => p.id),
+    );
+  }, [isAnime]);
+  const animeGeneric =
+    isAnime &&
+    activeDirectProvider != null &&
+    (animeGenericIds?.has(activeDirectProvider) ?? false);
+  // Which pipeline feeds the player: the MAL-keyed JustAnime pool or the
+  // generic registry pool (MovieBox in anime mode). Links/error/retry all
+  // follow this — `isAnime` alone no longer decides.
+  const animeSurface = isAnime && activeDirectProvider === ANIME_PROVIDER_ID;
   const animeActive =
     isAnime &&
     activeDirectProvider === ANIME_PROVIDER_ID &&
@@ -375,11 +407,18 @@ export default function WatchScreen() {
   // onto the dedicated anime embed (MegaPlay) so playback keeps working with
   // zero interaction. A MANUAL pick of JustAnime after this stays on the unified
   // direct surface instead (Retry + auto-fallback to the next server).
+  //
+  // BUG FIX (first-launch megaplay fallback): a settlement caused by fetch
+  // ERRORS (cold-start DNS/TLS failures hitting all three servers at once)
+  // is NOT a genuine upstream empty — auto-embedding there hid the real
+  // problem with no valid reason shown. fetchFailed settlements keep the
+  // user on the direct surface with the error card + Retry.
   const animeSettledEmpty =
     animeActive &&
     animeDirect.attempted &&
     !animeDirect.loading &&
     animeDirect.links.length === 0 &&
+    !animeDirect.fetchFailed &&
     !userPickedProviderRef.current;
   // JustAnime ships per-episode intro/outro timestamps in its API — convert
   // the head link's upstream segments into the native skip-button shape so we
@@ -407,13 +446,21 @@ export default function WatchScreen() {
     type,
     isDirectPlayback:
       isDirectPlayback && !!activeDirectProvider && providerReady,
-    provider: isAnime ? undefined : (activeDirectProvider ?? undefined),
+    provider: isAnime
+      ? animeGeneric
+        ? (activeDirectProvider ?? undefined)
+        : undefined
+      : (activeDirectProvider ?? undefined),
     languageAnswered,
     initialSeason: season,
     initialEpisode: episode,
     settingsRef,
     // FIX 2: after a manual server pick, never chain away from that id.
-    lockProvider: userPickedProviderRef.current,
+    // Anime-generic sessions also stay single-provider: the generic chain
+    // would fall through to movie/TV scrapers that were never profiled for
+    // anime, and a chain-head flip would trip the anime gate above. Empty
+    // settles into the player's one-shot auto-fallback (anime server list).
+    lockProvider: userPickedProviderRef.current || animeGeneric,
   });
   // The player's server picker selected a direct provider — repoint the
   // pipeline at it; the provider change re-runs the fetch (and the cache is
@@ -426,10 +473,13 @@ export default function WatchScreen() {
 
   // Remember which direct provider actually served this title — CW and the
   // details page restore it on the next visit. Anime served via JustAnime uses
-  // its own pipeline, so include its link count here.
+  // its own pipeline, so include its link count here; anime served via
+  // MovieBox reports from the generic pool like any direct title.
   useEffect(() => {
     if (!isDirectPlayback || !id || !activeDirectProvider) return;
-    const served = isAnime ? animeDirect.links.length : direct.links.length;
+    const served = animeSurface
+      ? animeDirect.links.length
+      : direct.links.length;
     if (served === 0) return;
     saveLastProvider(type, id, activeDirectProvider).catch(() => {});
   }, [
@@ -451,9 +501,21 @@ export default function WatchScreen() {
     const head = direct.links[direct.bestIndex];
     const headProvider = head?._meta?.providerId;
     if (headProvider && headProvider !== activeDirectProvider) {
+      // Anime sessions only hand the head over to anime-capable providers —
+      // a movie/TV scraper head (e.g. a details handoff pool) must not knock
+      // MovieBox out of the anime gate, or episode changes would stop
+      // refetching. Playback still plays that head; only the override waits.
+      if (isAnime && !(animeGenericIds?.has(headProvider) ?? false)) return;
       setHeadProviderOverride(headProvider);
     }
-  }, [isDirectPlayback, direct.links, direct.bestIndex, activeDirectProvider]);
+  }, [
+    isDirectPlayback,
+    isAnime,
+    animeGenericIds,
+    direct.links,
+    direct.bestIndex,
+    activeDirectProvider,
+  ]);
 
   // ── Android two-step back guard with calm floating toast ──
   const { showToast, toastOpacity } = useDoubleBackExit();
@@ -469,15 +531,14 @@ export default function WatchScreen() {
   } | null>(null);
   // If the holder was taken but HevcPlayer never mounted (language prompt,
   // gate, error), release on unmount so no orphan player survives to home.
+  // disposeEarlyPlayer is terminal + idempotent: it releases the adoption
+  // claim (if HevcPlayer did not already abandon it) and any holder entry.
   useEffect(() => {
     return () => {
       const held = earlyPlayerStateRef.current;
       if (held) {
         earlyPlayerStateRef.current = null;
-        try {
-          held.player.release();
-        } catch {}
-        releaseEarlyPlayer(held.key);
+        disposeEarlyPlayer(held.key);
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -596,31 +657,37 @@ export default function WatchScreen() {
           startAt={startAt}
           onClose={() => nav.goBack({ fallback: "/(tabs)" })}
           directStream={{
-            links: isAnime ? animeDirect.links : direct.links,
-            bestIndex: isAnime ? animeDirect.bestIndex : direct.bestIndex,
-            prevalidated: isAnime
+            links: animeSurface ? animeDirect.links : direct.links,
+            bestIndex: animeSurface ? animeDirect.bestIndex : direct.bestIndex,
+            prevalidated: animeSurface
               ? animeDirect.prevalidated
               : direct.prevalidated,
-            selectionReason: isAnime
+            selectionReason: animeSurface
               ? animeDirect.selectionReason
               : direct.selectionReason,
-            lastWorkingIndex: isAnime
+            lastWorkingIndex: animeSurface
               ? animeDirect.lastWorkingIndex
               : direct.lastWorkingIndex,
-            loading: isAnime ? animeDirect.loading : direct.loading,
-            error: isAnime ? animeDirect.error : direct.error,
-            stageMessage: isAnime
+            loading: animeSurface ? animeDirect.loading : direct.loading,
+            error: animeSurface ? animeDirect.error : direct.error,
+            stageMessage: animeSurface
               ? animeDirect.stageMessage
               : direct.stageMessage,
           }}
           onDirectSelected={handleDirectSelected}
-          onDirectRetry={isAnime ? animeDirect.refetch : direct.refetch}
+          onDirectRetry={animeSurface ? animeDirect.refetch : direct.refetch}
           nativeIntroSegments={animeIntroSegments}
           onDirectEpisodeChange={(s, e) => {
-            // Anime episodes are MAL-resolved per TMDB (s, e) — just record the
-            // new position; the target re-resolves and the anime pipeline refetches.
+            // Anime episodes are MAL-resolved per TMDB (s, e) — record the
+            // position so the JustAnime target re-resolves on its next run,
+            // even while MovieBox is serving (server switches stay correct).
+            // The generic pool is TMDB-keyed and refetches like any TV title.
             if (isAnime) {
               setAnimeEpOverride({ season: s, episode: e });
+              if (!animeSurface) {
+                direct.setSeason(s);
+                direct.setEpisode(e);
+              }
               return;
             }
             direct.setSeason(s);

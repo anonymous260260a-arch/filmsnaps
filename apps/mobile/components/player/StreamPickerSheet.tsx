@@ -30,6 +30,7 @@ import {
   getLanguageSection,
   isCamPrint,
   isDownloadOnlyLink,
+  movieboxAudioLabel,
   type LinkLanguage,
   type PreferredLanguage,
 } from "../../lib/streamSelector";
@@ -330,10 +331,15 @@ export function StreamPickerSheet({
               const outcome = linkStatuses[index];
               const status = statusIcon(outcome);
               const failed = outcome === "dead";
-              const langLabel = compactLanguageLabel(
-                parseLinkLanguages(link.name),
-                preferredLanguage,
-              );
+              // MovieBox rows show the API's 🎧 audio language first (Arabic,
+              // French, Tamil … — nothing the name parser can read); other
+              // providers fall through unchanged (label is null for them).
+              const langLabel =
+                movieboxAudioLabel(link) ??
+                compactLanguageLabel(
+                  parseLinkLanguages(link.name),
+                  preferredLanguage,
+                );
               const sizeLabel = formatSizeHuman(link);
               // S3: main line is quality · language · size only — no container/codec jargon.
               const hasBadges =

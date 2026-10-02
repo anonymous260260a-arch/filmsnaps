@@ -19,14 +19,21 @@ import {
   AppState,
 } from "react-native";
 import { colors } from "../theme/colors";
-import { trackFeatureUsed, trackPlayerError } from "../lib/telemetry";
+import {
+  trackFeatureUsed,
+  trackPlayerError,
+  trackWatchEnd,
+} from "../lib/telemetry";
+import type { QualityBucket } from "../lib/telemetry";
 import { ProgressiveImage } from "./ProgressiveImage";
 import PlayerWebView, { PlayerWebViewRef } from "../modules/player-webview";
 import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   getNonAnimeProviders,
   getProvidersForMode,
+  isProviderAvailableOn,
   getProvider,
   isDirectProvider,
   getImageUrl,
@@ -678,6 +685,127 @@ export function VideoWebView({
     episodeKey: buildEpisodeKey(type, id, season ?? 1, episode ?? 1),
   });
   const startAtRef = useRef<number>(0);
+
+  // ── E2 — embed watch session (watch_end for the embedded webview) ──
+  // The direct/native path emits watch_end via PerfSessionTracker in
+  // HevcPlayer, but the EMBED surface had no session at all: a user watching
+  // an embed for hours produced ZERO watch_end rows (the 3-hour telemetry
+  // black hole). Track the same shapes the direct path does, from the
+  // throttled progress callbacks; closed on unmount, app background, or
+  // the direct surface taking over.
+  const embedSessionRef = useRef<{
+    startedAt: number;
+    playedMs: number;
+    /** Last playback position (s) — playedMs accumulates forward deltas. */
+    lastTime: number | null;
+    rebuffers: number;
+    stallStartedAt: number | null;
+    stallMs: number;
+    framed: boolean;
+    /** ms from session start to first playback signal (intent→frame proxy). */
+    firstFrameAtMs: number | null;
+    handoff: "used" | "none";
+    provider: string;
+    quality: string | null;
+    maxPct: number | null;
+    durationMs: number | null;
+  } | null>(null);
+  /** True while the EMBED surface (not the direct/native player) is active. */
+  const embedActiveRef = useRef(false);
+  const embedHandoffRef = useRef<"used" | "none">("none");
+  const embedSessionClosedRef = useRef(false);
+
+  /** Bucket a watch duration (ms) to the shared 30s granularity. */
+  const embedBucketDuration = (ms: number) =>
+    Math.max(0, Math.round(ms / 30_000) * 30_000);
+
+  /** Emit watch_end for the embed session exactly once (guards re-entry). */
+  const closeEmbedWatchSession = useCallback(
+    (maxPct?: number | null, durationMs?: number | null) => {
+      const s = embedSessionRef.current;
+      if (!s || embedSessionClosedRef.current) return;
+      embedSessionClosedRef.current = true;
+      embedSessionRef.current = null;
+      if (s.stallStartedAt != null) {
+        s.stallMs += Date.now() - s.stallStartedAt;
+        s.stallStartedAt = null;
+      }
+      const dur = durationMs ?? s.durationMs ?? Date.now() - s.startedAt;
+      // Mirror the direct path's junk guard: skip empty sessions (sub-15s,
+      // never framed, nothing watched) so completion stays meaningful.
+      if (dur < 15_000 && !s.framed && maxPct == null) return;
+      const intentToFirstFrameMs =
+        s.firstFrameAtMs ?? (s.framed ? null : Date.now() - s.startedAt);
+      const q = (s.quality ?? "").toLowerCase();
+      const qualityBucket: QualityBucket =
+        q.includes("4k") || q.includes("2160")
+          ? "4k"
+          : q.includes("1080")
+            ? "1080p"
+            : q.includes("720")
+              ? "720p"
+              : q.includes("480")
+                ? "480p"
+                : "unknown";
+      const pct = maxPct ?? s.maxPct;
+      trackWatchEnd({
+        providerId: s.provider || "unknown",
+        mediaType: type,
+        tmdbId: Number(id) || 0,
+        durationMs: embedBucketDuration(dur),
+        fallbacks: 0,
+        switchedProvider: false,
+        intentToFirstFrameMs: intentToFirstFrameMs ?? Date.now() - s.startedAt,
+        handoff: s.handoff,
+        eager: "none",
+        stallMs: s.stallMs,
+        rebufferCount: s.rebuffers,
+        reachedFirstFrame: s.framed,
+        gaveUp: !s.framed && s.rebuffers === 0,
+        qualityBucket,
+        surface: "embed",
+        ...(pct != null && dur > 0
+          ? {
+              watchedPctBucket:
+                pct < 5
+                  ? ("0-5" as const)
+                  : pct < 25
+                    ? ("5-25" as const)
+                    : pct < 50
+                      ? ("25-50" as const)
+                      : pct < 75
+                        ? ("50-75" as const)
+                        : pct < 90
+                          ? ("75-90" as const)
+                          : ("90-100" as const),
+            }
+          : {}),
+      });
+    },
+    [type, id],
+  );
+
+  /** Open (or reopen after direct→embed switch) the embed watch session. */
+  const beginEmbedWatchSession = useCallback((provider: string) => {
+    if (embedSessionRef.current) return;
+    embedSessionClosedRef.current = false;
+    embedSessionRef.current = {
+      startedAt: Date.now(),
+      playedMs: 0,
+      lastTime: null,
+      rebuffers: 0,
+      stallStartedAt: null,
+      stallMs: 0,
+      framed: false,
+      firstFrameAtMs: null,
+      handoff: embedHandoffRef.current,
+      provider,
+      quality: null,
+      maxPct: null,
+      durationMs: null,
+    };
+    embedHandoffRef.current = "none";
+  }, []);
   /**
    * Per-episode seeded resume, KEYED by episode. In the window between an
    * episode flip and its async getProgress seed resolving, the previous
@@ -738,6 +866,7 @@ export function VideoWebView({
 
   // ── Subscribe to the engine once (mount). The callback reads updateOverlaysRef
   // so it always invokes the latest closure (no stale render-scope values). ──
+  // E2: the same events feed the embed watch session (watch_end on close).
   useEffect(() => {
     if (!engineRef.current) return;
     const unsub = engineRef.current.subscribe((s) => {
@@ -746,9 +875,32 @@ export function VideoWebView({
           prev.type !== "PLAYING" ? { type: "PLAYING" } : prev,
         );
       }
+      // E2 — embed watch session bookkeeping (only while the embed is the
+      // active surface; the direct/native player has its own PerfSession).
+      if (embedActiveRef.current && embedSessionRef.current) {
+        const es = embedSessionRef.current;
+        if (s.duration > 0) es.durationMs = Math.round(s.duration * 1000);
+        if (s.currentTime > 0.25) {
+          if (!es.framed) {
+            es.framed = true;
+            es.firstFrameAtMs = Date.now() - es.startedAt;
+          }
+          if (es.lastTime != null && s.currentTime > es.lastTime) {
+            es.playedMs += Math.round((s.currentTime - es.lastTime) * 1000);
+          }
+          es.lastTime = s.currentTime;
+        }
+        if (s.duration > 0 && s.currentTime > 0) {
+          es.maxPct = Math.max(
+            es.maxPct ?? 0,
+            (s.currentTime / s.duration) * 100,
+          );
+        }
+      }
       updateOverlaysRef.current?.(s);
     });
     return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Unified load state machine Ã¢â€â‚¬Ã¢â€â‚¬
@@ -874,7 +1026,11 @@ export function VideoWebView({
           // native server alongside the nxsha/screenscape/megaplay embeds.
           getProvidersForMode("anime")
         : getNonAnimeProviders()
-    ).filter((p) => p.id !== "direct");
+    )
+      .filter((p) => p.id !== "direct")
+      // Web-only DIRECT sources (e.g. bing) can't be resolved by mobile's
+      // GET-only fetch pipeline — hide them. Embeds always pass.
+      .filter((p) => isProviderAvailableOn(p, "mobile"));
     // HDHub direct only for movie/TV — anime uses its own direct sources.
     return isAnime ? embeds : [DIRECT_PROVIDER, ...embeds];
   }, [isAnime]);
@@ -946,6 +1102,55 @@ export function VideoWebView({
     (getProvider(providerId)
       ? isDirectProvider(getProvider(providerId)!)
       : false);
+
+  // E2 — embed-session surface gating: open on embed, close on direct
+  // taking over (the native player owns watch_end from that point).
+  const isDirectRef = useRef(false);
+  useEffect(() => {
+    if (isDirect) {
+      if (embedActiveRef.current) {
+        embedActiveRef.current = false;
+        closeEmbedWatchSession();
+      }
+      return;
+    }
+    // Direct→embed fallback = the direct handoff rescue was used.
+    if (!isDirect && isDirectRef.current && embedSessionRef.current == null) {
+      embedHandoffRef.current = "used";
+    }
+    isDirectRef.current = isDirect;
+    // Embed surface active (or resuming after a direct stint).
+    if (!embedSessionRef.current) {
+      beginEmbedWatchSession(providerId || "unknown");
+    }
+    embedActiveRef.current = true;
+  }, [isDirect, providerId, beginEmbedWatchSession, closeEmbedWatchSession]);
+
+  // E2 — close the embed watch session on unmount and on app background;
+  // re-arm a fresh session when the user comes back. AppState background
+  // covers the "watched for hours then switched apps" case that previously
+  // lost everything; the re-arm keeps post-resume viewing counted too.
+  useEffect(() => {
+    const closeNow = () => {
+      if (embedActiveRef.current) closeEmbedWatchSession();
+      embedActiveRef.current = false;
+    };
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "background") {
+        closeNow();
+      } else if (state === "active" && !isDirectRef.current) {
+        // Resumed on the embed surface — open a fresh session if none is live.
+        if (!embedSessionRef.current) {
+          beginEmbedWatchSession(providerRef.current?.id ?? "unknown");
+        }
+        embedActiveRef.current = true;
+      }
+    });
+    return () => {
+      sub.remove();
+      closeNow();
+    };
+  }, [closeEmbedWatchSession, beginEmbedWatchSession]);
 
   // ── MegaPlay sub/dub preference (persisted, per-title) ──
   // MegaPlay's embed honors opts.audio (/stream/<space>/<id>/<ep>/<sub|dub>).
@@ -1114,6 +1319,21 @@ export function VideoWebView({
   const [showEpPicker, setShowEpPicker] = useState(false);
   // FIX 6: EpisodeRail mounts on first open only.
   const [epRailMounted, setEpRailMounted] = useState(false);
+  // FIX (tap latency): pre-mount the sheets HIDDEN ~1.5s after the player
+  // page settles. The old "deferred until first open" made the FIRST tap pay
+  // the full sheet mount + layout cost (~0.5–1s felt delay), and on a busy
+  // frame the tap could even land before the sheet existed. Both sheets are
+  // Modal-based, render nothing meaningful while `visible=false`, and gate
+  // their data effects on `visible` — so a hidden pre-mount does no network
+  // work and the opener becomes a pure visible flip (instant).
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setServerSheetMounted(true);
+      if (isTV) setEpRailMounted(true);
+    }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // HEVC source inspection API (registered by HevcPlayer) — powers the hub's
   // Sources tab (list + select) without duplicating player state here.
   const [directSourceApi, setDirectSourceApi] = useState<{
@@ -1261,6 +1481,16 @@ export function VideoWebView({
           // Only switch episodes on open — never during in-player navigation.
           setCurrentSeason(resume.season);
           setCurrentEpisode(resume.episode);
+          // Direct (HEVC) links live in the HOST watch screen's pipeline,
+          // keyed by the pipeline's OWN season/episode — flipping only this
+          // local picker state would show the resume episode while the ROUTE
+          // episode's links keep playing (CW after a completed episode: picker
+          // on E6, E5 video). Every other episode flip (EpisodeRail, hub,
+          // next-episode card) notifies the host; this open-time switch must
+          // too so the per-episode fetch re-runs.
+          if (isDirect) {
+            onDirectEpisodeChange?.(resume.season, resume.episode);
+          }
         }
       } catch (e) {
         console.warn("[WatchHistory] Auto-resume check error:", e);
@@ -1748,9 +1978,27 @@ export function VideoWebView({
           `[VideoWebView] Direct next episode resolved: S${nextSeason}E${nextEp} (prefetching links)`,
         );
         // FIX 1: next-episode prefetch must use the provider watch will open.
-        // Anime stays on JustAnime's own cache (MAL-relative episode); the
-        // movie/TV path resolves the provider watch would open instead.
+        // Anime on an anime-capable registry direct (MovieBox) warms the
+        // generic cache with the TMDB episode; JustAnime and anime embeds
+        // stay on their own MAL-keyed cache; the movie/TV path resolves the
+        // provider watch would open instead.
         if (!cancelled && isAnime) {
+          const animeCur = getProvider(providerId);
+          if (
+            animeCur &&
+            isDirectProvider(animeCur) &&
+            animeCur.animeOnly !== true
+          ) {
+            void prefetchStreams(parseInt(id, 10), "tv", nextSeason, nextEp, {
+              cellularMaxMB: settingsRef.current.cellularMaxMB,
+              maxQuality: settingsRef.current.maxQuality,
+              preferredAudioLanguage:
+                settingsRef.current.preferredAudioLanguage,
+              providerId: animeCur.id,
+              trigger: "next-episode",
+            }).catch(() => {});
+            return;
+          }
           const r = resolveShow(id, nextSeason, nextEp);
           if (!r.ok) return;
           void prefetchAnimeStreams(r.malId, r.episode, audio, {
@@ -2177,7 +2425,7 @@ export function VideoWebView({
       !nextEpRewarmDoneRef.current &&
       directNextEp
     ) {
-      if (isAnime) {
+      if (isAnime && provider?.animeOnly === true) {
         // Anime streams live in their own cache (no age lookup) — a miss or
         // negative entry is re-warmed once per episode key.
         if (!nextEpRewarmDoneRef.current) {
@@ -2198,6 +2446,18 @@ export function VideoWebView({
           }
         }
       } else {
+        // Anime served by an anime-capable registry direct (MovieBox): warm
+        // that provider directly — resolvePlaybackProviderId runs WITHOUT the
+        // anime flag and could hand back a non-anime provider. Non-anime
+        // titles resolve exactly as before.
+        const resolveWarmProvider = (): Promise<string | null> =>
+          isAnime
+            ? Promise.resolve(provider?.id ?? null)
+            : resolvePlaybackProviderId({
+                mediaType: "tv",
+                tmdbId: parseInt(id, 10),
+                savedServer: settingsRef.current.defaultServer,
+              });
         const age = getPrefetchAgeMs(
           parseInt(id, 10),
           "tv",
@@ -2212,11 +2472,7 @@ export function VideoWebView({
           console.log(
             `[VideoWebView] FIX 11 re-warm next-ep S${directNextEp.season}E${directNextEp.episode} (age=${Math.round(age / 1000)}s)`,
           );
-          void resolvePlaybackProviderId({
-            mediaType: "tv",
-            tmdbId: parseInt(id, 10),
-            savedServer: settingsRef.current.defaultServer,
-          })
+          void resolveWarmProvider()
             .then((nextProviderId) => {
               if (!nextProviderId) return;
               return prefetchStreams(
@@ -2239,11 +2495,7 @@ export function VideoWebView({
         } else if (age === null) {
           // Miss (expired/evicted) — also re-warm once.
           nextEpRewarmDoneRef.current = true;
-          void resolvePlaybackProviderId({
-            mediaType: "tv",
-            tmdbId: parseInt(id, 10),
-            savedServer: settingsRef.current.defaultServer,
-          })
+          void resolveWarmProvider()
             .then((nextProviderId) => {
               if (!nextProviderId) return;
               return prefetchStreams(
@@ -3190,6 +3442,76 @@ export function VideoWebView({
         )}
       </View>
 
+      {/* Sub/Dub toggle — anime DIRECT providers with a MAL sub/dub pool
+          (JustAnime; portrait). The redesigned chrome dropped the overlay
+          button MegaPlay embeds still inject, so the direct surface gets its
+          own right-aligned pill below the player. Hidden for anime-capable
+          registry directs (MovieBox) whose rows carry their own audio tag and
+          are ranked by the preferred-language setting instead.
+          changeAudio() keeps it honest: local state + per-title persist +
+          onAnimeAudioChange → route prop → direct pipeline re-publish. */}
+      {isDirect &&
+        isAnime &&
+        currentProvider?.animeOnly === true &&
+        !directFullscreen &&
+        !isPhysicalLandscape && (
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "flex-end",
+              paddingHorizontal: 14,
+              paddingTop: 10,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                backgroundColor: colors.bgCard,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: colors.borderSubtle,
+                padding: 3,
+                gap: 2,
+              }}
+            >
+              {(["sub", "dub"] as const).map((track) => {
+                const active = audio === track;
+                return (
+                  <TouchableOpacity
+                    key={track}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      if (active) return;
+                      Haptics.selectionAsync().catch(() => {});
+                      changeAudio(track);
+                    }}
+                    style={{
+                      paddingHorizontal: 16,
+                      paddingVertical: 6,
+                      borderRadius: 999,
+                      backgroundColor: active ? colors.gold : "transparent",
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Switch to ${track}`}
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        fontWeight: "800",
+                        letterSpacing: 0.6,
+                        color: active ? colors.bg : colors.textSecondary,
+                      }}
+                    >
+                      {track.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
       {/* ── Tabbed hub below the direct player (portrait): Episodes + Servers ──
           Page-level chrome only — the HEVC stream/source selector stays in
           the player chrome. Hidden in fullscreen, in landscape (the box needs
@@ -3213,7 +3535,6 @@ export function VideoWebView({
           currentProviderId={providerId}
           getProviderName={getProviderDisplayName}
           onSelectProvider={switchProvider}
-          directActive={isDirect}
           sourceApi={directSourceApi}
         />
       )}
