@@ -1,17 +1,23 @@
 import type { ImageColorsResult } from "react-native-image-colors";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import tinycolor from "tinycolor2";
-import { oklch, clampChroma, formatHex, formatRgb } from "culori";
 import { getImageUrl } from "@filmsnaps/shared";
 import { colors } from "../theme/colors";
 import { MovieAccent, DECODE_WIDTH } from "../modules/movie-accent";
+import {
+  C,
+  buildPalette as buildPaletteCore,
+  paintAccent,
+  pickAccent,
+  swatchesFromPixels,
+  type Swatch,
+} from "./accentCore";
 
 export type AccentMode = "dark" | "light";
 
 /**
- * The app ships a single dark theme (app.json `userInterfaceStyle: "dark"`),
- * so the dark normalization path below is the live one. The light path exists
- * so switching themes later only flips this constant.
+ * The app ships a single dark theme (app.json `userInterfaceStyle: "dark"`).
+ * The light argument exists so switching themes later only flips this
+ * constant — v10's recipe (lib/accentCore.ts) is dark-only, as the lab was.
  */
 export const APP_COLOR_SCHEME: AccentMode = "dark";
 
@@ -26,6 +32,15 @@ export interface MovieThemePalette {
   mid: string;
   /** Accent blended into the app background — solid end of the cinematic fade. */
   faded: string;
+  /**
+   * v10 hero tint — the accent color laid over the backdrop image (bottom
+   * weighted, transparent at the top). Rendered as a PLAIN alpha layer by
+   * `components/HeroTint.tsx`, NOT a mixBlendMode multiply: the blend path
+   * forced the image into an Android saveLayer group and made it blank during
+   * the close transition (see HeroTint header + port-spec line 27's fallback).
+   * Additive key; only palettes produced by this module carry it.
+   */
+  tint: string;
 }
 
 /**
@@ -44,89 +59,27 @@ const EXTRACT_SIZE_CLASS = "w1280";
 /** A hung extraction must not stall the hero — see `resolveSwatch`. */
 const EXTRACT_TIMEOUT_MS = 3000;
 
-const AA_CONTRAST = 4.5;
-
-// ── OKLCH tone recipe (phase 3 — energy, temperature, coverage) ───────────
-// Hue is the ONLY thing taken from the artwork — tone/chroma are the app's.
-// Hue preservation = mood preservation (horror ≠ romcom). OKLCH is used
-// because its L/C axes are perceptually uniform: clamping L produces the
-// same visual weight for every hue, unlike HSL where yellow at L 0.5 is
-// blinding and blue at L 0.5 is navy.
-//
-// GATES vs PAINT BAND (separated in phase 3 — they used to be conflated and
-// everything painted at the gate floor, which read as dull):
-//
-// GATE_MIN_C / BROWN_MIN_C / MUD_MIN_C only decide ELIGIBILITY of a swatch
-// (strict pass vs relaxed lift vs grey rejection). They never set what
-// ships.
-//
-// The PAINT band is what the CTA actually shows, AFTER the gate, in both
-// tiers: chroma clamped to [PAINT_MIN_C, PAINT_MAX_C], relaxed lifts
-// straight to PAINT_LIFT_C, and the L band is widened to [0.48, 0.62]
-// because the AA SOLVER below (not L clamping) keeps text legal.
-const TONE_MIN_L = 0.48;
-const TONE_MAX_L = 0.62;
-const GATE_MIN_C = 0.09;
-const PAINT_MIN_C = 0.12;
-const PAINT_MAX_C = 0.19;
-const PAINT_LIFT_C = 0.13;
-// Brown/skin gate: warm hues (OKLCH H ≈ 15–70°) at low chroma ARE brown —
-// #8a5a3c at C .085 is "military mud"'s warm cousin and, because posters are
-// full of warm grading and faces, it won constantly ("the app is brown and
-// light-red"). Warm hues below 0.11 chroma are rejected in the strict tier
-// (so a better-hued swatch can win) and LIFTED in the relaxed tier (so
-// warm-graded posters still earn a vivid amber/caramel accent instead of
-// no accent at all — the lift preserves the hue, never the mud).
-const BROWN_HUE_LO = 15;
-const BROWN_HUE_HI = 70;
-const BROWN_MIN_C = 0.11;
-// Olive/khaki hues (OKLCH H ≈ 75–115°) are the #1 "cheap color" generator:
-// at low chroma they read as military mud on a dark UI. Same tier structure
-// as the brown gate.
-const MUD_HUE_LO = 75;
-const MUD_HUE_HI = 115;
-const MUD_MIN_C = 0.1;
-// Grey gate floor — LIGHTNESS-AWARE (see isGreySwatch below).
-const RELAXED_MIN_C = 0.04;
-// Second-chance tier: muted-but-hued swatches (≥ RELAXED_MIN_C, lightness-
-// aware) are LIFTED into the paint band on their own hue rather than
-// dropping the surface to brand gold. True grey (lightness-aware below)
-// is never faked — B&W stays neutral.
-const RELAXED_LIFT_C = 0.13;
-
-const TEXT_LIGHT = "#ffffff";
-const TEXT_DARK = "#070708";
-
-const ANDROID_SWATCHES = [
-  "darkVibrant",
-  "darkMuted",
-  "vibrant",
-  "muted",
-  "dominant",
-  "average",
-  "lightVibrant",
-  "lightMuted",
-] as const;
-
-const IOS_SWATCHES = ["background", "primary", "secondary", "detail"] as const;
-
 const TIMEOUT_SENTINEL = Symbol("movieAccent.extractTimeout");
 
+/** Accepts #RGB / #RRGGBB only — the shapes TMDB/extraction ever produce. */
+const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+
 /**
- * `backdrop_path` → picked raw swatch.
+ * `backdrop_path` → picked raw swatch (the seed hex; the PAINT happens in
+ * `buildPalette` through v10's `paintAccent`).
  * `null` is the failure memo: a real rejection is never retried this session.
  * An absent key means "not attempted yet".
  */
 const swatchCache = new Map<string, string | null>();
 
-// Cache keys are versioned so changing the extraction recipe (size, pick
-// order, clamps) migrates instead of silently serving stale swatches. The
-// version prefix also makes keys idempotent under re-entry.
-// v5: the paint recipe moved to a separated gate/paint model with an AA
-// SOLVER (phase 3 — energy/temperature/coverage). v4 keys come from the
-// pre-solver recipe, so they are dropped once and re-extracted onto the
-// new baseline — one-time re-extraction.
-const SWATCH_KEY_VERSION = "v5";
+// Cache keys are versioned so changing the extraction recipe migrates instead
+// of silently serving stale swatches. The version prefix also makes keys
+// idempotent under re-entry.
+// v6: the v10 "Glow+" port — pixel-histogram extraction (swatchesFromPixels)
+// + the lab's verbatim pick/paint/wash engine (lib/accentCore.ts) replaced
+// the v5 gate/paint/AA-solver recipe. v5 and older keys are dropped once and
+// re-extracted onto the new baseline — one-time re-extraction.
+const SWATCH_KEY_VERSION = "v6";
 
 function extractKey(backdropPath: string): string {
   const base = backdropPath.split("?")[0].trim();
@@ -239,12 +192,12 @@ function commitSwatch(cacheKey: string, hex: string): void {
 
 /**
  * Paths whose extraction failed with a TRANSPORT error (network/decode
- * rejection) once this session. Phase 3: a transport failure is NO LONGER
- * memoized as "no swatch" — one flaky-network moment on first view used to
- * strand a title on brand gold until relaunch. First failure: not memoized
- * (the next visit retries). Second failure for the same path: memo null and
- * stop looping. Resolved-but-unusable bags (genuinely grey art) still memo
- * null immediately — that is a real answer, not an error.
+ * rejection) once this session. A transport failure is NO LONGER memoized as
+ * "no swatch" — one flaky-network moment on first view used to strand a
+ * title on brand gold until relaunch. First failure: not memoized (the next
+ * visit retries). Second failure for the same path: memo null and stop
+ * looping. Resolved-but-unusable results (genuinely grey art, <50 usable
+ * pixels) still memo null immediately — that is a real answer, not an error.
  */
 const transportFailures = new Set<string>();
 
@@ -263,8 +216,9 @@ export function hydrateAccentCache(): Promise<void> {
           if (typeof hex !== "string") continue;
           // Only entries in the CURRENT format hydrate. Older versions
           // (v1 raw paths, v2 large-image swatches, v3 preference-walk
-          // swatches, v4 pre-AA-solver paints) are dropped — the new
-          // engine re-extracts them once onto the current baseline.
+          // swatches, v4 pre-AA-solver paints, v5 gate/paint-band recipes)
+          // are dropped — the new engine re-extracts them once onto the
+          // v10 baseline.
           if (!storedKey.startsWith(`${SWATCH_KEY_VERSION}|`)) continue;
           if (swatchCache.has(storedKey)) continue;
           swatchCache.set(storedKey, hex);
@@ -344,361 +298,20 @@ export async function warmHeroAccent(
   }
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
+// ── v10 pipeline (lab recipe — see lib/accentCore.ts) ─────────────────────
 
 /**
- * Max chroma sRGB can hold at a given (L, H) — computed by PROBE, not
- * analytically: clampChroma a high-chroma probe and read back what fits.
- * This is the yardstick for both the vividness score and the lightness-
- * aware grey gate (dark corners of OKLCH simply cannot hold much chroma —
- * a genuinely blue dark poster swatch must not be misread as grey there).
+ * The pixel path: RGBA dump → OKLCH hue histogram → accent pick.
+ * Returns the picked RAW hex (the seed), or null when the art yields
+ * nothing usable (all-grey / <50 usable pixels — real answers, memoized as
+ * failures by the callers). Never throws.
  */
-function cMax(l: number, h: number): number {
-  const probe = clampChroma({ mode: "oklch", l, c: 0.4, h }, "oklch");
-  return probe?.c ?? 0;
-}
-
-/**
- * LIGHTNESS-AWARE grey gate: reject as "grey" only when the chroma is low
- * AND low relative to what sRGB could hold at this lightness/hue
- * (C < 0.04 AND C < 0.30 × cMax(L, H)). A flat C < 0.04 cut misclassified
- * dark cool posters (low-L navy/teal swatches live at C ≈ 0.03 where the
- * gamut itself is tiny) as grey and stranded them on brand gold; true B&W
- * (C ≈ 0.01, far under both bounds) still falls back.
- */
-function isGreySwatch(l: number, c: number, h: number): boolean {
-  return c < RELAXED_MIN_C && c < 0.3 * cMax(l, h);
-}
-
-/**
- * GAMUT-AWARE (L, C) solve: clampChroma at high L steals chroma from cool
- * hues (at L 0.6 blue caps out around C 0.13 while warm hues hold 0.19),
- * which silently painted cool accents duller than warm ones. When the
- * wanted chroma doesn't fit at the band lightness, walk L DOWN in 0.02
- * steps (floor 0.45) until it does; if it never fits, keep the (L, C)
- * with the max achievable chroma. Cool accents trade a little lightness
- * for FULL chroma — no more cool-dulling.
- */
-function gamutFit(l: number, c: number, h: number): { l: number; c: number } {
-  let cur = clamp(l, 0.45, 1);
-  while (cur >= 0.45) {
-    const fitted = clampChroma({ mode: "oklch", l: cur, c, h }, "oklch");
-    if (fitted && (fitted.c ?? 0) >= c - 1e-4) {
-      return { l: cur, c };
-    }
-    if (fitted && cur === 0.45) {
-      // Bottom of the walk — take the best the gamut can hold.
-      return { l: cur, c: fitted.c ?? c };
-    }
-    cur = Math.round((cur - 0.02) * 1000) / 1000;
+function pickFromPixels(data: Uint8Array | Uint8ClampedArray): string | null {
+  try {
+    return pickAccent(swatchesFromPixels(data))?.hex ?? null;
+  } catch {
+    return null; // degenerate art (<50 usable px) — a real answer
   }
-  const fitted = clampChroma({ mode: "oklch", l: 0.45, c, h }, "oklch");
-  return { l: 0.45, c: fitted?.c ?? c };
-}
-
-/**
- * Pull an accent out of a raw swatch in OKLCH. HUE IS PRESERVED EXACTLY
- * from the seed (mood lives in hue).
- *
- * Phase 3 separation — GATES decide eligibility, the PAINT band decides
- * what ships (they used to be conflated, so everything painted at the gate
- * floor and read dull):
- *  - gates: grey (lightness-aware), brown (warm C < 0.11), mud (olive
- *    C < 0.10) — unchanged in role from phase 2;
- *  - strict tier: an eligible swatch paints at clamp(c, PAINT_MIN_C,
- *    PAINT_MAX_C) — a C 0.095 swatch no longer ships at 0.095;
- *  - relaxed tier: a muted-but-hued swatch (grey-gate survivor) LIFTS
- *    straight to PAINT_LIFT_C on its own hue — muted art still tells a
- *    color story, and fabricating chroma is what guarantees the CTA never
- *    ships the muted value that read as dull/brown.
- * The gamut solve then fits (L, C) into sRGB without stealing chroma.
- */
-function normalizeAccent(
-  hex: string,
-  mode: AccentMode,
-  relaxed = false,
-): string | null {
-  const color = oklch(hex);
-  if (!color || color.l == null) return null;
-
-  if (mode === "dark") {
-    const hue = color.h ?? 0;
-    const seedL = color.l;
-    const seedC = color.c ?? 0;
-
-    // Grey gate (lightness-aware) — true grey is never faked into color;
-    // B&W posters stay on brand gold. Applies in BOTH tiers.
-    if (isGreySwatch(seedL, seedC, hue)) return null;
-
-    // Hue-family chroma minimums: warm (brown/skin) and olive hues at low
-    // chroma ARE mud — the #1 "the app is brown" generator.
-    const hueMinC =
-      hue >= BROWN_HUE_LO && hue <= BROWN_HUE_HI
-        ? BROWN_MIN_C
-        : hue >= MUD_HUE_LO && hue <= MUD_HUE_HI
-          ? MUD_MIN_C
-          : 0;
-    if (seedC < Math.max(GATE_MIN_C, hueMinC)) {
-      // GATE: strict rejects (a better-hued swatch may win the scoring
-      // pass); relaxed LIFTS the muted-but-hued survivor into the paint
-      // band so muted/warm posters still get an accent instead of brand
-      // gold ("the accent is not working" from phase 2).
-      if (!relaxed) return null;
-    }
-
-    // PAINT BAND — what ships, in BOTH tiers, regardless of the seed's
-    // chroma. Nothing paints at the gate floor any more.
-    const paintC = relaxed
-      ? PAINT_LIFT_C
-      : clamp(Math.max(seedC, PAINT_MIN_C), PAINT_MIN_C, PAINT_MAX_C);
-    const fitted = gamutFit(clamp(seedL, TONE_MIN_L, TONE_MAX_L), paintC, hue);
-    const clamped = clampChroma(
-      { mode: "oklch", l: fitted.l, c: fitted.c, h: hue },
-      "oklch",
-    );
-    return clamped ? (formatHex(clamped) ?? null) : null;
-  }
-
-  // Light-mode path (dormant — see APP_COLOR_SCHEME): same hue preservation,
-  // slightly deeper paint band so accents hold weight on white.
-  const fitted = gamutFit(clamp(color.l, 0.42, 0.52), 0.14, color.h ?? 0);
-  const clamped = clampChroma(
-    { mode: "oklch", l: fitted.l, c: fitted.c, h: color.h ?? 0 },
-    "oklch",
-  );
-  return clamped ? (formatHex(clamped) ?? null) : null;
-}
-
-/**
- * Hue zone → text side. The pairing policy is HUE-AWARE because the
- * perceptual failure modes are asymmetric: light red reads cosmetic/salmon
- * (nobody ships black-on-red CTAs — YouTube/Netflix are white-on-red;
- * Netflix red passes white text at 4.77:1), while light amber looks rich
- * and REQUIRES near-black text. Zones:
- *  - red (H 330–360 ∪ 0–40, wrapping): white text, ALWAYS — deep blood
- *    red, never salmon. Never take the dark-text side for a red hue even
- *    when it is "closer" in L.
- *  - luminous (H 40–150, orange→amber→yellow→lime→green): near-black text.
- *  - cool (H 150–330, teal→blue→purple→magenta): white text (passes easily).
- * Boundaries are starting values — if a gold ever flips to white text the
- * H-40 boundary is too low (nudge to 45).
- */
-function textSideFor(hue: number): "white" | "dark" {
-  if (hue >= 330 || hue <= 40) return "white"; // red zone (wraps)
-  if (hue <= 150) return "dark"; // luminous: amber→green
-  return "white"; // cool: teal→blue→purple→magenta
-}
-
-/** White-side taste target — pulls reds a touch deeper than the 4.5 floor.
- *  The legal AA minimum (4.5) still applies when the band can't reach 5.0.
- *  If deep reds ever read maroon/brown, relax this to 4.7 first. */
-const AA_TASTE_TARGET = 5.0;
-/** Red-zone whites may solve DEEPER than the band floor — deep is correct
- *  for red; the paint band's 0.48 floor is not a hard stop there. */
-const RED_ZONE_FLOOR_L = 0.44;
-/** Luminous-zone dark text may solve brighter than the band cap (rare). */
-const DARK_EXTEND_MAX_L = 0.72;
-
-/**
- * AA SOLVER v2 (hue-aware). The v1 solver searched BOTH text sides and
- * picked the solution closest to L 0.56 — a hue-blind tie-break that, for
- * red, could land on the dark-text side and ship LIGHT red (salmon): red's
- * WCAG luminance is low, so both sides are in-band and distance votes
- * wrong. v2: the side is POLICY (textSideFor), never distance. Only L ever
- * moves (hue + chroma FIXED — chroma is never reduced for contrast), and
- * only when the policy pairing fails at the painted value:
- *  - white side: push to the 5.0 taste target (brightest passing L at or
- *    below the painted one); legal floor 4.5 when 5.0 is unreachable; red
- *    zone may solve down to 0.44; near-neon extends further in 0.02 steps.
- *  - dark side: solve upward to the darkest L that reaches 4.5 with
- *    near-black text (keeps golds/greens rich instead of pastel).
- * clampChroma re-runs at every L move so the result stays in sRGB.
- */
-function aaSolver(accent: string): { accent: string; text: string } {
-  const o = oklch(accent);
-  if (!o) {
-    return { accent, text: TEXT_LIGHT };
-  }
-  const hue = o.h ?? 0;
-  const chroma = o.c ?? 0;
-  const l = o.l;
-
-  const hexAt = (target: number): string => {
-    const fitted = clampChroma(
-      { mode: "oklch", l: target, c: chroma, h: hue },
-      "oklch",
-    );
-    return (
-      formatHex(fitted ?? { mode: "oklch", l: target, c: chroma, h: hue }) ??
-      accent
-    );
-  };
-
-  if (textSideFor(hue) === "white") {
-    const redZone = hue >= 330 || hue <= 40;
-    const loBound = redZone ? RED_ZONE_FLOOR_L : TONE_MIN_L;
-    if (tinycolor.readability(accent, TEXT_LIGHT) >= AA_TASTE_TARGET) {
-      return { accent, text: TEXT_LIGHT }; // already at/above taste — keep
-    }
-    // Brightest L at-or-below the painted value reaching the taste target
-    // (contrast vs white rises as L falls). Falls back to the 4.5 floor.
-    const solve = (target: number): number | null => {
-      if (tinycolor.readability(hexAt(loBound), TEXT_LIGHT) < target)
-        return null;
-      let lo = loBound; // passes
-      let hi = l; // fails (accent itself was below target)
-      for (let i = 0; i < 6; i++) {
-        const mid = (lo + hi) / 2;
-        if (tinycolor.readability(hexAt(mid), TEXT_LIGHT) >= target) {
-          lo = mid; // passes → try brighter
-        } else {
-          hi = mid; // fails → go darker
-        }
-      }
-      return lo;
-    };
-    const deep = solve(AA_TASTE_TARGET) ?? solve(AA_CONTRAST);
-    if (deep != null) return { accent: hexAt(deep), text: TEXT_LIGHT };
-    // Even the floor L misses the legal minimum (near-neon) — extend down.
-    for (
-      let cur = Math.round((loBound - 0.02) * 1000) / 1000;
-      cur >= 0.3;
-      cur = Math.round((cur - 0.02) * 1000) / 1000
-    ) {
-      const probe = hexAt(cur);
-      if (tinycolor.readability(probe, TEXT_LIGHT) >= AA_CONTRAST) {
-        return { accent: probe, text: TEXT_LIGHT };
-      }
-    }
-    return { accent, text: TEXT_LIGHT };
-  }
-
-  // Luminous zone: near-black text; contrast vs dark RISES with L.
-  if (tinycolor.readability(accent, TEXT_DARK) >= AA_CONTRAST) {
-    return { accent, text: TEXT_DARK }; // keep the painted value
-  }
-  // Darkest L at-or-above the painted value reaching 4.5 (solve upward —
-  // minimal move, keeps the gold as deep as readability allows).
-  if (
-    tinycolor.readability(hexAt(DARK_EXTEND_MAX_L), TEXT_DARK) >= AA_CONTRAST
-  ) {
-    let lo = l; // fails
-    let hi = DARK_EXTEND_MAX_L; // passes
-    for (let i = 0; i < 6; i++) {
-      const mid = (lo + hi) / 2;
-      if (tinycolor.readability(hexAt(mid), TEXT_DARK) >= AA_CONTRAST) {
-        hi = mid; // passes → try darker
-      } else {
-        lo = mid; // fails → go brighter
-      }
-    }
-    return { accent: hexAt(hi), text: TEXT_DARK };
-  }
-  return { accent, text: TEXT_DARK };
-}
-
-function derivePalette(
-  accent: string,
-  text: string,
-  background: string,
-): MovieThemePalette {
-  return {
-    accent,
-    accentText: text,
-    // Wash shares are tuned against the richer accent band: a brighter
-    // accent needs a smaller mix share to hit the same visual weight,
-    // otherwise pages glow like a highlighter instead of a cinema.
-    glow: tinycolor.mix(accent, background, 38).setAlpha(0.32).toRgbString(),
-    mid: tinycolor.mix(accent, background, 42).setAlpha(0.5).toRgbString(),
-    faded: tinycolor.mix(accent, background, 62).setAlpha(0.94).toRgbString(),
-  };
-}
-
-/**
- * The dim brand color, used whenever there is no backdrop or extraction fails.
- * Pre-computed (not normalized) so a failed page looks exactly like the app
- * does today.
- */
-export const FALLBACK_PALETTE: MovieThemePalette = derivePalette(
-  colors.goldDim,
-  colors.bg,
-  colors.bg,
-);
-
-/** Turn a raw swatch into a ready-to-paint palette, or null if unusable. */
-export function buildPalette(
-  swatch: string,
-  mode: AccentMode = APP_COLOR_SCHEME,
-): MovieThemePalette | null {
-  // Strict gate first, then the relaxed tier (lift). The hook paints
-  // whatever swatch the extractor committed — including a relaxed pick —
-  // so the relaxed acceptance must be reachable here too, otherwise
-  // muted posters would extract fine and still paint brand gold.
-  const normalized =
-    normalizeAccent(swatch, mode) ?? normalizeAccent(swatch, mode, true);
-  if (!normalized) return null;
-  const { accent, text } = aaSolver(normalized);
-  return derivePalette(accent, text, mode === "dark" ? colors.bg : "#ffffff");
-}
-
-/**
- * VIVIDNESS (phase 3 scoring) — chroma RELATIVE to the sRGB maximum at the
- * swatch's own (L, H). HSL saturation overrates warm hues (sRGB gives them
- * higher HSL-s at equal OKLCH chroma), which biased every pick warm;
- * vividness is perceptually fair across the hue wheel.
- */
-function vividness(l: number, c: number, h: number): number {
-  const cap = cMax(l, h);
-  return cap > 0 ? c / cap : 0;
-}
-
-/**
- * Skin/beige penalty in OKLCH — movie art is full of faces, and skin tones
- * are the #1 "beige app" failure mode. The old HSL box (h 15–45°, s 0.2–
- * 0.5) missed graded-orange skin at s 0.5–0.8 — exactly what modern
- * posters are full of — so faces escaped the penalty and won on population.
- * The OKLCH box (h 25–80°, C 0.03–0.14) catches them. Penalty, NEVER a
- * gate: a warm poster with nothing else still earns its warm accent (hue
- * preservation is the contract).
- */
-export function skinPenalty(hex: string): number {
-  const o = oklch(hex);
-  if (!o) return 1;
-  const h = o.h ?? 0;
-  const c = o.c ?? 0;
-  return h >= 25 && h <= 80 && c >= 0.03 && c <= 0.14 ? 0.4 : 1;
-}
-
-/**
- * score = vividness × √population × skin-penalty.
- * √population (phase 3): linear population let a big amber sky beat a vivid
- * teal sliver every time; the square root keeps population meaningful while
- * letting a genuinely vivid sliver win.
- */
-function swatchScore(hex: string, population: number): number {
-  const o = oklch(hex);
-  if (!o) return 0;
-  const v = vividness(o.l, o.c ?? 0, o.h ?? 0);
-  return v * Math.sqrt(Math.max(population, 0)) * skinPenalty(hex);
-}
-
-function usableSwatch(
-  value: unknown,
-): value is string | { hex: string; population?: number } {
-  // Accepts BOTH native shapes: plain hex strings (react-native-image-colors
-  // fallback) and v4 { hex, population } objects from the native module.
-  if (typeof value === "string") {
-    return value.length >= 4 && tinycolor(value).isValid();
-  }
-  if (value && typeof value === "object") {
-    const hex = (value as { hex?: unknown }).hex;
-    return (
-      typeof hex === "string" && hex.length >= 4 && tinycolor(hex).isValid()
-    );
-  }
-  return false;
 }
 
 /** Normalize a bag entry to its raw hex regardless of native shape. */
@@ -711,213 +324,99 @@ function swatchHex(value: unknown): string | null {
   return null;
 }
 
-/** Native bags carry a pixel-share population; string bags don't. */
-function swatchPopulation(value: unknown): number {
-  if (value && typeof value === "object") {
-    const p = (value as { population?: unknown }).population;
-    if (typeof p === "number" && p > 0) return p;
-  }
-  return 1; // fallback engine: every candidate weighs the same
-}
+const ANDROID_SWATCHES = [
+  "darkVibrant",
+  "darkMuted",
+  "vibrant",
+  "muted",
+  "dominant",
+  "average",
+  "lightVibrant",
+  "lightMuted",
+] as const;
 
-interface BagPick {
-  hex: string;
-  tier: "strict" | "relaxed";
-}
+const IOS_SWATCHES = ["background", "primary", "secondary", "detail"] as const;
 
 /**
- * Population-weighted pick from a swatch bag.
- *
- * When the bag carries populations (native v4 engine), candidates are scored
- * vividness × √population × skin-penalty (OKLCH — see swatchScore) and the
- * best-scoring ACCENT wins — a tiny but vivid sliver can beat a large dull
- * field, while a big beige face is penalized. When no populations exist (fallback engine),
- * the original preference-order walk is kept verbatim: it IS the tuned
- * behavior for that engine and inventing weights there would be a guess.
- *
- * Both paths share the gate: strict pass first, then one relaxed pass
- * (strict-first so a strict candidate always beats a relaxed one).
+ * Fallback engine (react-native-image-colors) pick. Extraction differs
+ * there — a named-swatch bag, not pixels — so candidates are fabricated as
+ * FLAT swatches (share = wshare = 1; no pixel shares exist) and handed to
+ * the lab's `pickAccent`, which scores vividness + skin/mud penalties and
+ * skips grey. Paint is identical either path (it happens in `buildPalette`).
  */
-function pickFromBag(
-  order: readonly string[],
-  bag: Record<string, unknown>,
-): BagPick | null {
-  // Pass 1 — strict tier.
-  let best: { hex: string; score: number } | null = null;
-  for (const key of order) {
-    const value = bag[key];
-    if (!usableSwatch(value)) continue;
-    const hex = swatchHex(value) ?? "";
-    if (!normalizeAccent(hex, APP_COLOR_SCHEME)) continue;
-    const score = swatchScore(hex, swatchPopulation(value));
-    if (!best || score > best.score) best = { hex, score };
-  }
-  if (best) return { hex: best.hex, tier: "strict" };
-
-  // Pass 2 — relaxed tier (near-neutrals tint).
-  for (const key of order) {
-    const value = bag[key];
-    if (!usableSwatch(value)) continue;
-    const hex = swatchHex(value) ?? "";
-    if (normalizeAccent(hex, APP_COLOR_SCHEME, true)) {
-      return { hex, tier: "relaxed" };
-    }
-  }
-  return null;
-}
-
 export function pickAccentSwatch(result: ImageColorsResult): string | null {
   const order = result.platform === "ios" ? IOS_SWATCHES : ANDROID_SWATCHES;
-  return (
-    pickFromBag(order, result as unknown as Record<string, unknown>)?.hex ??
-    null
-  );
-}
-
-/** Native-engine variant: the module returns the Android swatch bag only. */
-export function pickFromSwatchBag(
-  bag: Record<string, unknown> | null | undefined,
-): string | null {
-  if (!bag) return null;
-  return pickFromBag(ANDROID_SWATCHES, bag)?.hex ?? null;
-}
-
-export interface AccentPickMeta {
-  hex: string;
-  /** Which named swatch won ("darkVibrant", "vibrant", …). */
-  name: string;
-  /** Which tier accepted it. */
-  tier: "strict" | "relaxed";
-  /** score = vividness × √population × skin-penalty (population defaults 1). */
-  score?: number;
+  const bag = result as unknown as Record<string, unknown>;
+  const candidates: Swatch[] = [];
+  for (const key of order) {
+    const hex = swatchHex(bag[key]);
+    if (!hex || !HEX_COLOR.test(hex)) continue;
+    candidates.push({
+      name: key,
+      hex: hex.toLowerCase(),
+      population: 1,
+      share: 1,
+      wshare: 1,
+    });
+  }
+  return pickAccent(candidates)?.hex ?? null;
 }
 
 /**
- * Diagnostics twin of `pickFromSwatchBag` (dev Accent Lab): the same walk,
- * but reports WHO won and WHY. Not used by production rendering.
- * `opts.relaxed === false` simulates a strict-only build (lab toggle).
+ * The dim brand color, used whenever there is no backdrop or extraction
+ * fails. HAND-COMPUTED literals — failed pages must keep EXACTLY the classic
+ * gold look they had before the v10 port:
+ *  - accent/accentText: goldDim on bg, as always;
+ *  - glow/mid/faded: the pre-v10 derivePalette mixes (38/42/62 % toward bg)
+ *    at the OLD alphas .32 / .50 / .94 — the v10 wash alphas (.82/.94/1.0)
+ *    must NOT leak into the fallback;
+ *  - tint: hand-picked gold tint — the v10 tint of the gold seed
+ *    (paintAccent(#B88B2A) → buildPalette → tint), captured once here.
  */
-export function pickAccentWithMeta(
-  bag: Record<string, unknown> | null | undefined,
-  opts?: { relaxed?: boolean },
-): AccentPickMeta | null {
-  if (!bag) return null;
-  const allowRelaxed = opts?.relaxed !== false;
-
-  // Pass 1 — strict (population-weighted).
-  let best: { key: string; hex: string; score: number } | null = null;
-  for (const key of ANDROID_SWATCHES) {
-    const value = bag[key];
-    if (!usableSwatch(value)) continue;
-    const hex = swatchHex(value) ?? "";
-    if (!normalizeAccent(hex, APP_COLOR_SCHEME)) continue;
-    const score = swatchScore(hex, swatchPopulation(value));
-    if (!best || score > best.score) best = { key, hex, score };
-  }
-  if (best) {
-    return { hex: best.hex, name: best.key, tier: "strict", score: best.score };
-  }
-  if (!allowRelaxed) return null;
-
-  // Pass 2 — relaxed (preference order, as production).
-  for (const key of ANDROID_SWATCHES) {
-    const value = bag[key];
-    if (!usableSwatch(value)) continue;
-    const hex = swatchHex(value) ?? "";
-    if (normalizeAccent(hex, APP_COLOR_SCHEME, true)) {
-      const population = swatchPopulation(value);
-      return {
-        hex,
-        name: key,
-        tier: "relaxed",
-        score: population > 1 ? swatchScore(hex, population) : undefined,
-      };
-    }
-  }
-  return null;
-}
-
-/**
- * Which quality gates would engage for a raw swatch (dev Accent Lab labels).
- * Purely descriptive — production behavior lives in normalizeAccent.
- */
-export function accentGateLabels(hex: string): string[] {
-  const color = oklch(hex);
-  if (!color || color.l == null) return ["invalid"];
-  const labels: string[] = [];
-  const c = color.c ?? 0;
-  const l = color.l;
-  const hue = color.h ?? 0;
-  if (isGreySwatch(l, c, hue)) {
-    labels.push("grey gate");
-    return labels;
-  }
-  const hueMinC =
-    hue >= BROWN_HUE_LO && hue <= BROWN_HUE_HI
-      ? BROWN_MIN_C
-      : hue >= MUD_HUE_LO && hue <= MUD_HUE_HI
-        ? MUD_MIN_C
-        : 0;
-  if (c < Math.max(GATE_MIN_C, hueMinC)) labels.push("relaxed lift");
-  if (hue >= BROWN_HUE_LO && hue <= BROWN_HUE_HI && c < BROWN_MIN_C) {
-    labels.push("brown gate");
-  }
-  if (hue >= MUD_HUE_LO && hue <= MUD_HUE_HI && c < MUD_MIN_C) {
-    labels.push("mud gate");
-  }
-  // OKLCH skin box (h 25–80°, C 0.03–0.14) — matches the scoring penalty.
-  if (hue >= 25 && hue <= 80 && c >= 0.03 && c <= 0.14) labels.push("skin-box");
-  if (labels.length === 0) labels.push("strict pass");
-  return labels;
-}
-
-type ImageColorsModule = {
-  getColors: (
-    uri: string,
-    config?: Record<string, unknown>,
-  ) => Promise<ImageColorsResult>;
+export const FALLBACK_PALETTE: MovieThemePalette = {
+  accent: colors.goldDim,
+  accentText: colors.bg,
+  glow: "rgba(117, 89, 29, 0.32)",
+  mid: "rgba(110, 84, 28, 0.5)",
+  faded: "rgba(74, 57, 21, 0.94)",
+  tint: "#975706",
 };
 
 /**
- * Loaded lazily: the package resolves its native binding at import time, so a
- * missing binding must not take the whole bundle down with it.
+ * Turn a raw swatch (the picked seed hex) into a ready-to-paint v10
+ * palette, or null if the art is grey/invalid (caller paints the fallback).
+ * `mode` is kept for the signature — v10 is dark-only (APP_COLOR_SCHEME).
  */
-let imageColorsModule: ImageColorsModule | null | undefined;
-
-async function loadImageColors(): Promise<ImageColorsModule | null> {
-  if (imageColorsModule !== undefined) return imageColorsModule;
-  try {
-    const loaded = (await import("react-native-image-colors")) as unknown as {
-      default?: ImageColorsModule;
-    } & ImageColorsModule;
-    imageColorsModule = loaded.default ?? loaded;
-  } catch {
-    imageColorsModule = null;
-  }
-  return imageColorsModule;
+export function buildPalette(
+  swatch: string,
+  mode: AccentMode = APP_COLOR_SCHEME,
+): MovieThemePalette | null {
+  void mode; // v10 recipe is dark-only; light branch never existed live
+  if (!HEX_COLOR.test(swatch)) return null;
+  const painted = paintAccent(swatch);
+  if ("fail" in painted) return null;
+  return buildPaletteCore(painted.accent, painted.text);
 }
 
 /**
  * Perceptual hue distance (0–180°) between two colors, measured on their
  * NORMALIZED accents — the CTA tone each would paint — not on raw swatches.
- * Raw swatches of the same artwork can sit far apart in lightness/chroma
- * (a dark poster face vs a bright sky) while painting the same CTA hue;
- * comparing the painted accents is what "same color story" actually means.
- * Used to decide whether a late backdrop swatch should REPLACE an
- * already-painted poster-derived accent (< 60° = keep the painted one, no
- * shift) — part of the "user should never see color changing" contract.
+ * v10: normalization = `paintAccent` (keeps hue, solves L for AA), and the
+ * distance is measured in OKLCH hue (the engine's own axis). Used to decide
+ * whether a late backdrop swatch should REPLACE an already-painted
+ * poster-derived accent (< 60° = keep the painted one, no shift) — part of
+ * the "user should never see color changing" contract.
  */
 export function hueDistance(hexA: string, hexB: string): number {
   const norm = (hex: string): string | null => {
-    const h =
-      normalizeAccent(hex, APP_COLOR_SCHEME) ??
-      normalizeAccent(hex, APP_COLOR_SCHEME, true);
-    return h;
+    if (!HEX_COLOR.test(hex)) return null;
+    const painted = paintAccent(hex);
+    return "fail" in painted ? null : painted.accent;
   };
   const a = norm(hexA) ?? hexA;
   const b = norm(hexB) ?? hexB;
-  const ha = tinycolor(a).toHsl().h;
-  const hb = tinycolor(b).toHsl().h;
+  const ha = HEX_COLOR.test(a) ? C.oklch(a).h : 0;
+  const hb = HEX_COLOR.test(b) ? C.oklch(b).h : 0;
   const d = Math.abs(ha - hb) % 360;
   return d > 180 ? 360 - d : d;
 }
@@ -940,9 +439,9 @@ const nativeEngine = MovieAccent;
 /**
  * Fetch the accent swatch for a poster/backdrop path. Never throws.
  *
- * - Engine: the MovieAccent native module (off-JS-thread OkHttp + Palette,
- *   3 KB/15 KB sources) when present; react-native-image-colors otherwise
- *   (old dev-clients / iOS / Expo Go).
+ * - Engine: the MovieAccent native module (off-JS-thread OkHttp + exact-64px
+ *   RGBA dump + the lab's histogram pick, 3 KB/15 KB sources) when present;
+ *   react-native-image-colors otherwise (old dev-clients / iOS / Expo Go).
  * - Timed-out requests are NOT memoized: the work continues in the background
  *   and a late success commits through `commitSwatch` — warming the cache for
  *   the next visit AND live-updating any subscriber still waiting on it.
@@ -974,23 +473,23 @@ export async function resolveSwatch(
     });
     try {
       const outcome = await Promise.race([
-        nativeEngine.getSwatches(url, DECODE_WIDTH),
+        nativeEngine.getPixels(url, DECODE_WIDTH),
         timeout,
       ]);
       if (timer) clearTimeout(timer);
       if (outcome === TIMEOUT_SENTINEL) {
         // Late commit still lands (see commitSwatch) — never memoized.
         nativeEngine
-          .getSwatches(url, DECODE_WIDTH)
+          .getPixels(url, DECODE_WIDTH)
           .then((late) => {
-            const lateSwatch = late ? pickFromSwatchBag(late) : null;
+            const lateSwatch = late ? pickFromPixels(late) : null;
             if (lateSwatch) commitSwatch(cacheKey, lateSwatch);
             else swatchCache.set(cacheKey, null);
           })
           .catch(() => swatchCache.set(cacheKey, null));
         return null;
       }
-      const swatch = outcome ? pickFromSwatchBag(outcome) : null;
+      const swatch = outcome ? pickFromPixels(outcome) : null;
       if (swatch) commitSwatch(cacheKey, swatch);
       else swatchCache.set(cacheKey, null); // engine ran and found nothing usable
       return swatch;
@@ -1063,9 +562,35 @@ export async function resolveSwatch(
   }
 }
 
+type ImageColorsModule = {
+  getColors: (
+    uri: string,
+    config?: Record<string, unknown>,
+  ) => Promise<ImageColorsResult>;
+};
+
 /**
- * Synchronous fast path: memory cache first, then the native module's LRU
- * (which survives Metro reloads — the native process keeps its cache when
+ * Loaded lazily: the package resolves its native binding at import time, so a
+ * missing binding must not take the whole bundle down with it.
+ */
+let imageColorsModule: ImageColorsModule | null | undefined;
+
+async function loadImageColors(): Promise<ImageColorsModule | null> {
+  if (imageColorsModule !== undefined) return imageColorsModule;
+  try {
+    const loaded = (await import("react-native-image-colors")) as unknown as {
+      default?: ImageColorsModule;
+    } & ImageColorsModule;
+    imageColorsModule = loaded.default ?? loaded;
+  } catch {
+    imageColorsModule = null;
+  }
+  return imageColorsModule;
+}
+
+/**
+ * Synchronous fast path: memory cache first, then the native module's pixel
+ * LRU (which survives Metro reloads — the native process keeps its cache when
  * the JS bundle restarts). Commits a native hit into the JS cache so later
  * probes stay synchronous. undefined when neither knows the path.
  */
@@ -1078,12 +603,12 @@ export function getSwatchSync(
   if (cached !== undefined) return cached;
   if (!nativeEngine) return undefined;
   try {
-    const bag = nativeEngine.peekSwatches(
+    const pixels = nativeEngine.peekPixels(
       cheapUrlFor(backdropPath, size),
       DECODE_WIDTH,
     );
-    if (!bag) return undefined;
-    const hex = pickFromSwatchBag(bag);
+    if (!pixels) return undefined;
+    const hex = pickFromPixels(pixels);
     if (hex) {
       commitSwatch(extractKey(backdropPath), hex);
       return hex;
@@ -1119,14 +644,4 @@ export function clearSwatchCache(): void {
   } catch {
     // native side best-effort
   }
-}
-
-/** Dev/lab helper: sRGB rgba() string for an accent at a given alpha. */
-export function accentWithAlpha(hex: string, alpha: number): string {
-  const rgb = formatRgb(oklch(hex) ?? hex);
-  if (!rgb) return hex;
-  // formatRgb → "rgb(r g b / a)"; rebuild with the requested alpha.
-  const m = rgb.match(/rgba?\(([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/);
-  if (!m) return hex;
-  return `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${alpha})`;
 }

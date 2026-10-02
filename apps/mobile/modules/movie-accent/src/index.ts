@@ -23,11 +23,21 @@ export type NativeSwatches = {
 };
 
 export type MovieAccentNative = {
-  /** Fetch + subsampled decode (~decodeWidth px) + Palette, all off the JS thread. */
+  /**
+   * Fetch + subsampled decode + scale to EXACTLY decodeWidth px + RGBA dump,
+   * all off the JS thread. Resolves to a Uint8Array (4 bytes/px) or null when
+   * the fetch/decode failed. This is what the v10 CORE histogram consumes.
+   */
+  getPixels(url: string, decodeWidth: number): Promise<Uint8Array | null>;
+  /** Synchronous in-module pixel LRU (survives Metro reloads). null = not cached. */
+  peekPixels(url: string, decodeWidth: number): Uint8Array | null;
+  /**
+   * Legacy Palette swatch bag — KEPT FOR THE DEV ACCENT-LAB SCREEN ONLY.
+   * The app pipeline consumes getPixels.
+   */
   getSwatches(url: string, decodeWidth: number): Promise<NativeSwatches | null>;
-  /** Synchronous in-module LRU lookup (survives Metro reloads). null = not cached. */
   peekSwatches(url: string, decodeWidth: number): NativeSwatches | null;
-  /** Fire-and-forget prefetch. */
+  /** Fire-and-forget PIXEL prefetch (the pipeline's unit of work). */
   warm(urls: string[], decodeWidth: number): void;
   clear(): void;
 };

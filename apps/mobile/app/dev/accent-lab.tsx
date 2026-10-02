@@ -1,18 +1,18 @@
 /**
- * Accent Lab — dev-only tuning harness for the movie-accent pipeline.
+ * Accent Lab — dev-only harness for the movie-accent pipeline (v10).
  *
- * Renders the REAL production path (native/fallback engine → pickFromSwatchBag
- * → normalizeAccent → buildPalette) across the curated dev corpus, with
- * per-title readouts: winning swatch + tier + score, gate labels, OKLCH
- * (L/C/H) pre-clamp and post-clamp, palette bar, mock CTA. Toggles compare
- * poster vs backdrop sources (and whether the 60° refine gate would fire),
- * strict-only vs strict+relaxed, and diff vs persisted swatches.
+ * Renders the REAL production path (resolveSwatch: getPixels →
+ * swatchesFromPixels → pickAccent → hex, then buildPalette = paintAccent →
+ * wash) across the curated dev corpus, with per-title readouts: winning
+ * seed + painted accent (OKLCH L/C/H), zone, AA contrast, palette bar,
+ * mock CTA. Toggles compare poster vs backdrop sources (and whether the
+ * 60° refine gate would fire) and diff vs persisted swatches.
  * "Run bench" captures p50/p95/stall on-device.
  *
  * NOT wired into any production surface; route exists only in dev builds.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -23,21 +23,17 @@ import {
   View,
 } from "react-native";
 import { getImageUrl } from "@filmsnaps/shared";
-import { oklch } from "culori";
 import { tmdbApi } from "../../lib/api";
 import { colors } from "../../theme/colors";
 import { ProgressiveImage } from "../../components/ProgressiveImage";
 import { DEV_CORPUS } from "../../data/devCorpus";
 import {
-  accentGateLabels,
   buildPalette,
-  getSwatchSync,
   hueDistance,
   peekSwatch,
-  pickAccentWithMeta,
   resolveSwatch,
-  type AccentPickMeta,
 } from "../../lib/movieAccent";
+import { C, contrast, paintAccent } from "../../lib/accentCore";
 import { runAccentBench } from "../../lib/bench/accentBench";
 
 interface LabEntry {
@@ -47,8 +43,6 @@ interface LabEntry {
   backdropPath: string | null;
   posterHex: string | null;
   backdropHex: string | null;
-  posterMeta: AccentPickMeta | null;
-  backdropMeta: AccentPickMeta | null;
   persistedPosterHex: string | null | undefined;
   persistedBackdropHex: string | null | undefined;
 }
@@ -57,9 +51,12 @@ const PENDING = Symbol("lab.pending");
 
 /** "L0.62 C0.12 H30" — OKLCH readout (h defaults 0 for pure greys). */
 function oklchText(hex: string): string {
-  const o = oklch(hex);
-  if (!o) return "—";
-  return `L${o.l.toFixed(2)} C${(o.c ?? 0).toFixed(3)} H${(o.h ?? 0).toFixed(0)}`;
+  try {
+    const o = C.oklch(hex);
+    return `L${o.l.toFixed(2)} C${o.c.toFixed(3)} H${o.h.toFixed(0)}`;
+  } catch {
+    return "—";
+  }
 }
 
 async function fetchPaths(entry: (typeof DEV_CORPUS)[number]): Promise<{
@@ -100,24 +97,11 @@ async function warmCorpus(
       const paths = await fetchPaths(entry);
       let posterHex: string | null = null;
       let backdropHex: string | null = null;
-      let posterMeta: AccentPickMeta | null = null;
-      let backdropMeta: AccentPickMeta | null = null;
       if (paths.posterPath) {
         posterHex = await resolveSwatch(paths.posterPath, "w342");
-        if (posterHex) {
-          // resolveSwatch already warmed the native cache — this is a hit.
-          posterMeta = pickAccentWithMeta(
-            (await getBagFor(paths.posterPath, "w342")) as never,
-          );
-        }
       }
       if (paths.backdropPath) {
         backdropHex = await resolveSwatch(paths.backdropPath);
-        if (backdropHex) {
-          backdropMeta = pickAccentWithMeta(
-            (await getBagFor(paths.backdropPath, "w1280")) as never,
-          );
-        }
       }
       out[index] = {
         label: entry.label,
@@ -126,10 +110,7 @@ async function warmCorpus(
         backdropPath: paths.backdropPath,
         posterHex,
         backdropHex,
-        posterMeta,
-        backdropMeta,
-        // Same versioned keys the production cache uses (v4 prefix on ALL
-        // paths — poster and backdrop alike).
+        // Same versioned keys the production cache uses.
         persistedPosterHex: paths.posterPath
           ? peekSwatch(paths.posterPath)
           : undefined,
@@ -146,25 +127,6 @@ async function warmCorpus(
   return out.filter(Boolean) as LabEntry[];
 }
 
-/**
- * Re-fetch the native swatch bag for readouts. Uses the native engine
- * (peek after resolve ⇒ warm cache) or an empty bag on the fallback path.
- */
-async function getBagFor(
-  path: string,
-  size: string,
-): Promise<Record<string, { hex: string; population: number }>> {
-  const { MovieAccent, DECODE_WIDTH } =
-    await import("../../modules/movie-accent");
-  if (!MovieAccent) return {};
-  const url =
-    size === "w342"
-      ? `https://image.tmdb.org/t/p/w92/${path.replace(/^\//, "")}`
-      : `https://image.tmdb.org/t/p/w300/${path.replace(/^\//, "")}`;
-  const bag = await MovieAccent.getSwatches(url, DECODE_WIDTH);
-  return (bag as never) ?? {};
-}
-
 /** expo-router requires a DEFAULT export on route files. */
 export default function AccentLabScreen() {
   const [entries, setEntries] = useState<LabEntry[] | typeof PENDING>(PENDING);
@@ -172,7 +134,6 @@ export default function AccentLabScreen() {
     done: 0,
     total: DEV_CORPUS.length,
   });
-  const [strictOnly, setStrictOnly] = useState(false);
   const [sourceMode, setSourceMode] = useState<"poster" | "backdrop" | "both">(
     "poster",
   );
@@ -233,12 +194,6 @@ export default function AccentLabScreen() {
 
       <View style={styles.controls}>
         <View style={styles.controlRow}>
-          <Text style={styles.controlLabel}>Strict-only</Text>
-          <Switch
-            value={strictOnly}
-            onValueChange={setStrictOnly}
-            thumbColor={strictOnly ? colors.gold : colors.textTertiary}
-          />
           <Text style={styles.controlLabel}>Diff vs persisted</Text>
           <Switch
             value={showDiff}
@@ -282,7 +237,6 @@ export default function AccentLabScreen() {
             <LabCard
               key={e.label}
               entry={e}
-              strictOnly={strictOnly}
               sourceMode={sourceMode}
               showDiff={showDiff}
               onOpen={() => setSelected(e)}
@@ -297,45 +251,42 @@ export default function AccentLabScreen() {
 function effectivePick(
   entry: LabEntry,
   sourceMode: "poster" | "backdrop" | "both",
-  strictOnly: boolean,
 ): {
   hex: string | null;
-  meta: AccentPickMeta | null;
   from: "poster" | "backdrop" | null;
 } {
-  const meta = (m: AccentPickMeta | null): AccentPickMeta | null =>
-    m && strictOnly && m.tier === "relaxed" ? null : m;
-  const poster = meta(entry.posterMeta);
-  const backdrop = meta(entry.backdropMeta);
   if (sourceMode === "poster")
-    return { hex: poster?.hex ?? null, meta: poster, from: "poster" };
+    return { hex: entry.posterHex, from: entry.posterHex ? "poster" : null };
   if (sourceMode === "backdrop")
-    return { hex: backdrop?.hex ?? null, meta: backdrop, from: "backdrop" };
-  // both: strict poster wins; else strict backdrop; else relaxed poster; else relaxed backdrop.
-  if (poster?.tier === "strict")
-    return { hex: poster.hex, meta: poster, from: "poster" };
-  if (backdrop?.tier === "strict")
-    return { hex: backdrop.hex, meta: backdrop, from: "backdrop" };
-  if (poster) return { hex: poster.hex, meta: poster, from: "poster" };
-  if (backdrop) return { hex: backdrop.hex, meta: backdrop, from: "backdrop" };
-  return { hex: null, meta: null, from: null };
+    return {
+      hex: entry.backdropHex,
+      from: entry.backdropHex ? "backdrop" : null,
+    };
+  if (entry.posterHex) return { hex: entry.posterHex, from: "poster" };
+  if (entry.backdropHex) return { hex: entry.backdropHex, from: "backdrop" };
+  return { hex: null, from: null };
 }
 
 function LabCard({
   entry,
-  strictOnly,
   sourceMode,
   showDiff,
   onOpen,
 }: {
   entry: LabEntry;
-  strictOnly: boolean;
   sourceMode: "poster" | "backdrop" | "both";
   showDiff: boolean;
   onOpen: () => void;
 }) {
-  const pick = effectivePick(entry, sourceMode, strictOnly);
+  const pick = effectivePick(entry, sourceMode);
   const palette = pick.hex ? buildPalette(pick.hex) : null;
+  const painted =
+    pick.hex && palette
+      ? (() => {
+          const p = paintAccent(pick.hex);
+          return "fail" in p ? null : p;
+        })()
+      : null;
 
   // Small-source drift: hue gap between poster- and backdrop-derived accents
   // (measured on NORMALIZED accents — the same rule the refine gate uses).
@@ -353,7 +304,6 @@ function LabCard({
       ? hueDistance(persistedHex, pick.hex)
       : null;
 
-  const gateLabels = pick.hex ? accentGateLabels(pick.hex) : [];
   // Would the 60° refine gate fire between sources?
   const refineWouldFire = drift != null && drift >= 60;
 
@@ -382,18 +332,18 @@ function LabCard({
           {pick.hex ? (
             <>
               <Text style={styles.readout} numberOfLines={1}>
-                {pick.from}: {pick.meta?.name} ({pick.meta?.tier})
-                {pick.meta?.score != null
-                  ? ` score ${pick.meta.score.toFixed(0)}`
-                  : ""}{" "}
-                · {oklchText(pick.hex)}
+                {pick.from} seed: {oklchText(pick.hex)}
               </Text>
-              {palette ? (
+              {palette && painted ? (
                 <Text style={styles.readout} numberOfLines={1}>
-                  accent: {oklchText(palette.accent)}
+                  CTA: {oklchText(palette.accent)} · zone {painted.zone} · AA{" "}
+                  {contrast(palette.accent, palette.accentText).toFixed(1)}
                 </Text>
-              ) : null}
-              <Text style={styles.gateText}>{gateLabels.join(" · ")}</Text>
+              ) : (
+                <Text style={[styles.gateText, { color: colors.error }]}>
+                  all grey — fallback (gold)
+                </Text>
+              )}
               {drift != null ? (
                 <Text style={styles.readout}>
                   poster↔backdrop Δhue {Math.round(drift)}°
@@ -458,7 +408,7 @@ function LabCard({
 }
 
 function LabMockup({ entry, onBack }: { entry: LabEntry; onBack: () => void }) {
-  const pick = effectivePick(entry, "both", false);
+  const pick = effectivePick(entry, "both");
   const palette = pick.hex ? buildPalette(pick.hex) : null;
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>

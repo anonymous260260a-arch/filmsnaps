@@ -40,7 +40,7 @@ Estimates come from payload sizes, the usual JPEG decode cost at 64–128px, and
 ## 4. Integration steps
 
 1. Copy the files in. **Diff `android/build.gradle` against `modules/player-webview/android/build.gradle`** and keep your plugin/header block if it differs. Only the two `dependencies` lines are essential.
-2. Confirm the `modules/` directory is picked up by autolinking (the same way as your other two modules). No extra pnpm package is needed: `tinycolor2` and `@react-native-async-storage/async-storage` are already present.
+2. Confirm the `modules/` directory is picked up by autolinking (the same way as your other two modules). No extra pnpm package is needed: `@react-native-async-storage/async-storage` is already present (the v10 port runs on `lib/accentCore.ts`, so `tinycolor2`/`culori` are no longer direct deps).
 3. Reconcile `movieAccent.ts` with your current file: paste your `glow` / `mid` / `faded` lines, then merge the tests.
 4. Metro reload only: the TS runs on the JS fallback engine. Run `pnpm --filter mobile test`.
 5. Rebuild the dev-client: `cd apps/mobile && npx expo prebuild --platform android && npx expo run:android`. Confirm `MovieAccent` is non-null (`console.log(!!require('./modules/movie-accent').MovieAccent)`).

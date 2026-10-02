@@ -15,24 +15,25 @@ every layer so gaps are visible. Section 9 lists known gaps and improvements.
         ▼
 ┌─ NATIVE (Android only) ── modules/movie-accent ─────────────────────────┐
 │ MovieAccentModule.kt                                                    │
-│  OkHttp (2.6s call timeout) → BitmapFactory subsampled decode (~64px)   │
-│  → androidx.palette (16 colors, resize disabled)                        │
-│  → RAW swatch bag {darkVibrant…lightMuted} → "#RRGGBB" strings          │
-│  LRU cache (200) + in-flight dedupe + peekSwatches (sync) + warm()      │
+│  OkHttp (2.6s call timeout) → subsampled decode, scaled to EXACTLY 64px  │
+│  → Bitmap.getPixels → RAW RGBA byte dump (Uint8Array, 4 bytes/px)       │
+│  pixel LRU (100, ~2.4MB) + in-flight dedupe + peekPixels (sync) + warm() │
 └──────────────┬──────────────────────────────────────────────────────────┘
-               │ getSwatches(url, 64) — promise, off JS thread
+               │ getPixels(url, 64) — promise, off JS thread
                ▼
-┌─ JS CORE ── lib/movieAccent.ts ─────────────────────────────────────────┐
-│ resolveSwatch(path, size)      • 3s race, late commits, null memos      │
-│ getSwatchSync(path)            • memory → native LRU (survives reloads) │
-│ pickFromSwatchBag / pickAccentSwatch  • preference-ordered gate walk    │
-│ normalizeAccent (strict + relaxed tiers, mud/grey gates)                │
-│ withReadableText (WCAG AA 4.5:1) → derivePalette (glow/mid/faded)       │
-│ swatchCache Map + AsyncStorage "@movieAccent/v1" (v3 keys, 120 cap)     │
-│ subscribeSwatch(path, cb)      • late-commit pub/sub                    │
-│ setHomeAccent / subscribeHomeAccent / homeAccentTints / accentAmbient   │
-│ warmSwatches(items)            • list prefetch                          │
-│ warmHeroAccent(queryClient)    • first-launch warm behind the LegalGate │
+┌─ JS CORE ── lib/accentCore.ts + lib/movieAccent.ts ─────────────────────┐
+│ accentCore (v10 "Glow+" engine + v11.1 wash):                             │
+│   swatchesFromPixels (OKLCH hue histogram + wshare) → pickAccent        │
+│   → paintAccent (AA-solved anchor) → buildPalette (glow/mid/faded/tint) │
+│ movieAccent (orchestration):                                            │
+│   resolveSwatch(path, size)      • 3s race, late commits, null memos    │
+│   getSwatchSync(path)            • memory → native pixel LRU            │
+│   pickAccentSwatch               • image-colors fallback bag → same pick│
+│   swatchCache Map + AsyncStorage "@movieAccent/v1" (v6 keys, 120 cap)   │
+│   subscribeSwatch(path, cb)      • late-commit pub/sub                  │
+│   setHomeAccent / subscribeHomeAccent / homeAccentTints / accentAmbient │
+│   warmSwatches(items)            • list prefetch                        │
+│   warmHeroAccent(queryClient)    • first-launch warm behind the LegalGate│
 └──────────────┬──────────────────────────────────────────────────────────┘
                │ useMovieTheme(backdropPath, posterPath)
                ▼
@@ -61,32 +62,47 @@ Nothing upstream changes.
 ## 2. Native side (`modules/movie-accent`)
 
 **Files**: `expo-module.config.json` (platforms `["android"]`), `build.gradle`
-(same header pattern as player-webview; adds `androidx.palette:palette-ktx:1.0.0`
-and `com.facebook.react:react-android`; OkHttp already ships with RN),
-`MovieAccentModule.kt`.
+(same header pattern as player-webview; keeps `androidx.palette:palette-ktx`
+for the dev-only `getSwatches` path and `com.facebook.react:react-android`;
+OkHttp already ships with RN), `MovieAccentModule.kt`.
 
-**Pipeline per call** (`load(url, w)`):
+**Pipeline per call** (`getPixels(url, decodeWidth)` — promise, off the JS
+thread):
 
-1. LRU hit (`200` entries, `"w|url"` keys) → return immediately.
-2. In-flight dedupe: concurrent callers share one `Deferred` (loser cancels
-   its own unstarted duplicate).
+1. Pixel LRU hit (`100` entries ≈ 2.4MB max, `"p|<width>|<url>"` keys) →
+   return the cached RGBA dump immediately.
+2. In-flight dedupe: concurrent callers share one deferred result.
 3. `OkHttp` GET — dispatcher 16 max / 8 per host, connect 2s, **call 2.6s**
    (deliberately under the JS 3s race so a native failure memoizes a real
    null instead of racing the timeout).
-4. `BitmapFactory` bounds decode → `inSampleSize` power-of-2 subsample to
-   ≤64px width, `ARGB_8888`.
-5. `Palette.from(bmp).maximumColorCount(16).resizeBitmapArea(0)` — resize
-   disabled because the bitmap is already tiny.
-6. Emit **raw** swatch map (+ computed `average`) as hex strings; recycle bitmap.
+4. `BitmapFactory` bounds decode → `inSampleSize` power-of-2 subsample →
+   `Bitmap.createScaledBitmap` to **EXACTLY `decodeWidth` (64) px wide**
+   (height proportional), `ARGB_8888`.
+5. `Bitmap.getPixels` → RGBA `ByteArray` (4 bytes/px) → JS `Uint8Array`.
+   Fetch/decode failures resolve **`null`** (a miss is a real answer, not a
+   rejection); only an internal throw rejects.
 
-**Deliberate boundary**: native returns RAW swatches only. All taste
-(saturation/lightness bands, mud/grey rejection, AA pairing) stays in JS — one
-place to tune, identical behavior on the fallback engine.
+**`peekPixels(url, decodeWidth)`** — sync, reads the pixel LRU only (no
+decode, no network). This is the frame-1 fast path: `getSwatchSync` picks
+from these bytes after a Metro reload, because the native process keeps its
+LRU across JS bundle restarts.
+
+**`getSwatches` / `peekSwatches`** — the legacy `androidx.palette` 16-color
+bag path, **kept only for the dev Accent Lab** (`app/dev/accent-lab.tsx`)
+readouts. Production never calls it.
+
+**`warm(urls, decodeWidth)`** prefetches **pixels** (what the pipeline
+consumes); `clear()` empties both the pixel LRU and the legacy swatch cache.
+
+**Deliberate boundary**: native returns RAW RGBA pixels only. All taste
+(saturation/lightness bands, hue histogram, grey/mud/skin rejection, AA
+pairing) stays in JS (`lib/accentCore.ts`) — one place to tune, identical
+behavior on the fallback engine.
 
 **Threading**: 3-thread pool (`NORM_PRIORITY-1`), own `SupervisorJob` scope;
 cancelled in `OnDestroy`. JS thread cost ≈ one bridge call.
 
-**Kotlin/DSL note**: `AsyncFunction("getSwatches")` is **Promise-based** (the
+**Kotlin/DSL note**: `AsyncFunction("getPixels")` is **Promise-based** (the
 `expo.modules.kotlin.promise.Promise` pattern used by the repo's expo-video
 patch) rather than the `Coroutine {}` infix DSL — the latter needs an import
 the initial file omitted and failed to compile. The coroutine still runs on
@@ -97,16 +113,62 @@ exists. Before that, `MovieAccent` is `null` and JS falls back transparently.
 
 ---
 
-## 3. JS core (`lib/movieAccent.ts`)
+## 3. JS core (`lib/accentCore.ts` + `lib/movieAccent.ts`)
 
-### Cache & keys
+The port splits the core in two: **`accentCore.ts` is the browser "Accent Lab
+v10 Glow+" engine** (extraction / pick / paint fixture-pinned by tests) plus a
+device-side retune — **v11 "Cinema"** (`TUNE` only: CTA chroma 0.72–0.85 of
+gamut, deeper washes, white-zone anchors down) and **v11.1 wash** (see below);
+**`movieAccent.ts` is the app-side orchestration** (cache, timeouts, warm
+paths, fallback engine) whose contracts are unchanged from the pre-port
+design.
+
+### The engine (`lib/accentCore.ts`, v10 core + v11/v11.1 `TUNE`)
+
+- **Hand-rolled OKLab/OKLCH math** (`C.oklch` / `C.rgb`, `cMaxAt`
+  hue-preserving gamut clamp, `contrast` WCAG ratio, `zoneOf`, `isGrey`,
+  `rgba`). Deliberately NOT swapped for `culori`/`tinycolor2` (both now
+  removed from mobile deps): the lab's arithmetic must stay bit-exact, and
+  it costs sub-ms on a 64px frame.
+- **`swatchesFromPixels(rgba, w, h)`** — per-pixel OKLCH histogram → zones +
+  `wshare` (well-lit hue share). Skips alpha < 200 and near-black pixels.
+  All-grey art (≥50 usable px) → `[]` (a real "no color" answer); fewer
+  than 50 usable px → **throws `"no usable pixels"`** — callers catch and
+  treat as null. This is the lab's own contract, quirks included.
+- **`pickAccent(swatches)`** — scores on **`wshare`, not `population`**
+  (the lab's choice), with vividness + skin-box/mud penalties; grey
+  candidates are skipped (`{ fail: "grey" }`).
+- **`anchorAt(h)` / `paintAccent(hex)`** — the 2-point anchor ladder →
+  AA-solved `{ accent, text }` per zone (white side floors at L 0.40).
+  `paintAccent` does NOT validate its input — `movieAccent.buildPalette`
+  guards with `HEX_COLOR` first (an invalid hex would otherwise paint
+  `#NaNNaNNaN`).
+- **`buildPalette(accent, text)`** — **v11.1**: the wash _is_ the CTA color.
+  Every zone keeps the accent's exact hue (no hue remap — `washHue` was
+  deleted in v11.1); lightness is derived from the CTA's own L:
+  `clamp(CTA_L × mul, lo, hi)` per zone (glow ×0.74 → .40–.62, mid ×0.55 →
+  .30–.50, faded ×0.38 → .18–.36, tint ×0.55 → .40–.52). Chroma comes from
+  the accent (`col.c`, capped at **.20**, tightened to **.13** in the gold
+  band 80–115° instead of hue-shifting to bronze), clamped to the gamut at
+  0.98. Glow/mid/faded are emitted against `BG = #070708` at alphas
+  **.65 / .84 / 1.0**, plus the solid **`tint`** hero color.
+- **Parity pins**: `__tests__/accentParity.test.ts` (20 titles, bit-exact
+  picked/painted hexes against `__tests__/fixtures/accent-lab-v10-export.json`)
+  and `__tests__/accentCore.test.ts` (synthetic swatches, AA, wash, zones).
+  Device caveat: the gate runs on Node/V8; Hermes may differ in the last bit
+  (≤1/255) on some titles.
+
+### Orchestration (`lib/movieAccent.ts`)
+
+**Cache & keys**
 
 - `swatchCache: Map<string, string|null>` — absent = not attempted,
-  `null` = failed memo (real failures never retried this session), string = RAW hex.
-- Keys: **`v3|<path>`** for backdrops; **poster paths use their raw path**
-  (poster + backdrop can coexist for one title). v3 = small-rendition baseline;
-  hydration **drops** older-format entries (v1 raw, v2 large-image) so all
-  titles re-extract once onto one consistent source.
+  `null` = failed memo (real failures never retried this session), string =
+  the picked **raw seed hex** (painting happens later, in `buildPalette`).
+- Keys: **`v6|<path>` for BOTH posters and backdrops** (`extractKey`
+  versions everything; it is also idempotent under re-entry). v6 = the v10
+  pixel-histogram + verbatim-engine baseline; hydration **drops** v5 and
+  older entries so every title re-extracts once onto one recipe.
 - Persistence: successes only, 120-entry cap (recency order), 2s trailing
   debounce, idempotent `hydrateAccentCache()` awaited by `resolveSwatch`
   before probing (kills the cold-start double-flash).
@@ -115,32 +177,37 @@ exists. Before that, `MovieAccent` is `null` and JS falls back transparently.
 
 Accent needs ~64px of pixels, so we download the smallest rendition:
 **poster → `w92` (~3 KB), backdrop → `w300` (~15 KB)** regardless of the
-`size` argument (it only selects which class). Bytes were the dominant
-latency — this is where most of the speed came from, more than the native module.
+`size` argument (it only selects which class; class ≤500 → w92, above → w300).
+Bytes were the dominant latency — this is where most of the speed came from,
+more than the native module.
 
-### Quality gate (`normalizeAccent`, dark scheme)
+### Pipeline (`resolveSwatch`, unchanged flow)
 
-- Strict tier: s ∈ [0.18, 0.7], l clamped [0.28, 0.5].
-- **Mud gate**: hue 40–85° (olive/khaki) requires s ≥ 0.3.
-- **Grey gate**: s < 0.08 never faked into color (B&W posters stay neutral).
-- Relaxed tier (per-swatch AND per-buildPalette): s ≥ 0.08, l ∈ [0.22, 0.42] —
-  near-neutral steel/teal posters still tint instead of falling back to gold.
-- `pickFromBagInOrder`: walk swatches in preference order
-  (`darkVibrant → darkMuted → vibrant → muted → dominant → average → lightVibrant
-→ lightMuted`), first **strict** pass wins; else first **relaxed** pass.
+1. Await hydration → cache probe → native `getPixels` raced against 3s.
+2. Pixels → `pickFromPixels` = `swatchesFromPixels` → `pickAccent`
+   (throw → null). Success commits + notifies subscribers; timeout returns
+   null **without memoizing** (the late retry commits when it lands);
+   transport failures retry once, then memoize null; unusable results
+   (grey art) memoize null immediately.
+3. Fallback engine (no native module: iOS / Expo Go / old dev-client):
+   `react-native-image-colors` named bag → **`pickAccentSwatch` fabricates
+   FLAT swatches** (`share = wshare = 1`, no pixel shares exist) → the same
+   `pickAccent`. Paint is identical either way (it happens in `buildPalette`).
 
-### Palette derivation
+### Paint (`buildPalette`, `hueDistance`)
 
-1. `normalizeAccent` (strict, then relaxed) → normalized accent.
-2. `withReadableText`: choose white or near-black text; darken/lighten the
-   accent in 8% steps (≤8 iterations) until WCAG 4.5:1.
-3. `derivePalette` (mixed against `colors.bg #070708`):
-   - `glow` = mix(accent, bg, 38%) @ α 0.32 — ambient pools
-   - `mid` = mix(accent, bg, 42%) @ α 0.50 — wash middle stop
-   - `faded` = mix(accent, bg, 62%) @ α 0.94 — wash bottom stop
-
-- `FALLBACK_PALETTE` = precomputed from `goldDim` (failed pages look like the
-  classic app).
+- `buildPalette(swatch, mode)`: `HEX_COLOR` guard → `paintAccent` (fail →
+  null) → engine `buildPalette`. `mode` is signature-compat only — v10 is
+  dark-only. Callers paint `FALLBACK_PALETTE` on null.
+- `hueDistance(a, b)`: normalizes both through `paintAccent`, then measures
+  OKLCH hue distance (0–180°). The **< 60° refine gate** uses it: a late
+  backdrop swatch only replaces an already-painted poster accent when the
+  hues differ enough to be worth a shift.
+- `FALLBACK_PALETTE` = **hand-picked literals** so failed pages keep
+  EXACTLY the classic gold look: accent `goldDim`, accentText `bg`,
+  glow/mid/faded at the **OLD** alphas **.32 / .50 / .94** (the v10 wash
+  alphas must not leak into the fallback), tint `#975706` (the v10 tint of
+  the gold seed, computed once).
 
 ### Home store (hero → rows, single source of truth)
 
@@ -169,20 +236,24 @@ Contract: `{ palette, hasAccent, progress }` — `progress` is one `Animated.Val
 per mount; **every** color change is a crossfade (450ms), never a snap; a key
 change fades the OLD accent out immediately (250ms) instead of painting movie A's
 color over movie B; mid-fade the previous palette stays "painted" so consumers
-never pop.
+never pop. The hook itself is unchanged by the v10 port — only what the cache
+returns moved (seed hexes now picked by `accentCore`, keys bumped to `v6`,
+which drops persisted v5 entries and re-extracts each title once).
 
 Order of resolution per mount:
 
-1. **Frame-1 sync probe**: memory → `getSwatchSync` (native LRU — this is why a
-   Metro reload no longer cascades: a known title is tinted on the first frame).
+1. **Frame-1 sync probe**: memory → `getSwatchSync` (memory → native **pixel
+   LRU** via `peekPixels`, picked on the spot — this is why a Metro reload no
+   longer cascades: a known title is tinted on the first frame).
 2. **Effect on key**: cache hit → apply; miss → fade old out + `resolveSwatch`.
 3. **Poster-first fast path** (detail pages): the poster swatch paints in
    ~tens of ms because the extraction source is tiny (~3 KB w92) AND the
    warm call fired at touch-down (press-in timing) — note the card's decoded
    w342 image is a DIFFERENT URL/cache than the extraction's w92, so decode
-   warmth is not the mechanism. The backdrop refines later **only if hue
-   gap ≥ 60°** — same-family refinements never repaint, so the user never
-   sees a correction.
+   warmth is not the mechanism. The backdrop refines later **only if
+   `hueDistance` ≥ 60°** — the distance is measured on `paintAccent`-normalized
+   OKLCH hues (the CTA tone each would paint), so same-family refinements
+   never repaint and the user never sees a correction.
 4. Timeout path (3s): caller gets null, subscribes; the late commit still lands
    via `subscribeSwatch` (never memoized).
 
