@@ -23,6 +23,7 @@ import { colors } from "../../theme/colors";
 import { getImageUrl, getTrailerKey } from "@filmsnaps/shared";
 import { ProgressiveImage } from "../../components/ProgressiveImage";
 import { FilmGrain } from "../../components/FilmGrain";
+import { HeroTint } from "../../components/HeroTint";
 import { useTVDetails } from "../../hooks/useTMDB";
 import { useMovieTheme } from "../../hooks/useMovieTheme";
 import {
@@ -515,6 +516,15 @@ export default function TVDetailScreen() {
                 style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT }}
                 resizeMode="cover"
               />
+              {/* Tint (v11): flat uniform alpha plate inside this animated view
+                  (parallaxes with the photo); fades with accent progress. */}
+              {theme.hasAccent && (
+                <HeroTint
+                  tint={theme.palette.tint}
+                  progress={theme.progress}
+                  alpha={0.07}
+                />
+              )}
             </Animated.View>
           ) : (
             <View

@@ -15,6 +15,7 @@ import { ProgressiveImage } from "./ProgressiveImage";
 import { typography } from "../theme/typography";
 import { colors } from "../theme/colors";
 import { FilmGrain } from "./FilmGrain";
+import { HeroTint } from "./HeroTint";
 import { heroHeightForWidth, HERO_BACKDROP_SIZE } from "./heroLayout";
 import { useMovieTheme } from "../hooks/useMovieTheme";
 import { useReduceMotion } from "../hooks/useReduceMotion";
@@ -299,6 +300,18 @@ export function Hero({ item, onWatchPress, onDetailsPress }: HeroProps) {
             onLoad={commitStagedImage}
           />
         </View>
+      )}
+
+      {/* ── Tint (v11): flat uniform alpha plate over the backdrop photo —
+             fixed area so TINT_ALPHA is a pure strength dial — under the
+             neutral scrim + accent wash (web order). Fades with the accent
+             progress; missing tint drops the layer (non-blocking). The CTA is
+             untouched — it paints palette.accent. ── */}
+      {shownTheme.hasAccent && (
+        <HeroTint
+          tint={shownTheme.palette.tint}
+          progress={shownTheme.progress}
+        />
       )}
 
       {/* ── Film grain texture overlay ── */}
