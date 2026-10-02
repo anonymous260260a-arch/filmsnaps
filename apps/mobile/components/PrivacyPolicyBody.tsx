@@ -33,10 +33,8 @@ export default function PrivacyPolicyBody({
       <View
         className="w-16 h-0.5 mb-5"
         style={{ backgroundColor: colors.gold }}
-      />
-
-      <PBody>Last updated: September 2026</PBody>
-
+      />{" "}
+      <PBody>Last updated: September 28, 2026</PBody>
       <PDivider />
       <PSection num={++sectionIndex} title="The Short Version">
         <PBullet text="FilmSnaps has no accounts — we don't know who you are." />
@@ -44,108 +42,105 @@ export default function PrivacyPolicyBody({
         <PBullet text="The Android app can send anonymous usage statistics and crash reports — on by default, off anytime in Settings." />
         <PBullet text="We never collect anything that can identify you: no identifiers, no IP addresses, no search text, no titles by name." />
       </PSection>
-
       <PDivider />
-
       <PSection num={++sectionIndex} title="What Stays on Your Device">
         <PBody>
           Watch history and progress, bookmarks, your download list, all
-          settings, and downloaded files are stored only on your device and
-          are never transmitted to us. Downloads are saved to your device's
-          shared Downloads folder — like any file there, they remain after
-          you uninstall FilmSnaps.
+          settings, and downloaded files are stored only on your device and are
+          never transmitted to us. Downloads are saved to your device's shared
+          Downloads folder — like any file there, they remain after you
+          uninstall FilmSnaps.
         </PBody>
       </PSection>
-
       <PDivider />
-
-      <PSection num={++sectionIndex} title="Anonymous Usage Statistics (Optional)">
+      <PSection
+        num={++sectionIndex}
+        title="Anonymous Usage Statistics (Optional)"
+      >
         <PBody>
-          To know which streaming sources actually work and what to fix, the
-          app sends small anonymous events — for example, whether a source
-          succeeded or failed, roughly how long it took (rounded), whether
-          playback stalled, which features get used, plus app version and
-          connection type (Wi‑Fi or cellular). To measure source coverage we
-          count the content ID (a TMDB number) of titles you open, in
-          aggregate only. No title names, no search text, no URLs, and no
-          free text are ever sent.
+          To know which streaming sources actually work and what to fix, the app
+          sends small anonymous events — for example, whether a source succeeded
+          or failed, roughly how long it took (rounded), whether playback
+          stalled, which features get used, plus app version and connection type
+          (Wi‑Fi or cellular). To measure source coverage we count the content
+          ID (a TMDB number) of titles you open, in aggregate only. No title
+          names, no search text, no URLs, and no free text are ever sent.
         </PBody>
         <PBody extraMargin>
-          Statistics start after you accept the terms and stay on until you
-          turn them off. Turning them off (Settings → Anonymous usage
-          statistics) stops all sending immediately and clears anything
-          queued.
+          Each event carries one random ID generated on your device, so we can
+          count how many installs use FilmSnaps — not who you are. It is not
+          your device ID, advertising ID, or anything derived from your hardware
+          or IP. When you turn statistics off, the ID is deleted from your
+          device: turning them back on creates a brand-new, unrelated ID, so old
+          statistics can never be connected to you again.
+        </PBody>
+        <PBody extraMargin>
+          Statistics start after you accept the terms and stay on until you turn
+          them off. Turning them off (Settings → Anonymous usage statistics)
+          stops all sending immediately and clears anything queued.
         </PBody>
       </PSection>
-
       <PDivider />
-
-      <PSection num={++sectionIndex} title="Crash Reports (Optional — Same Toggle)">
+      <PSection
+        num={++sectionIndex}
+        title="Crash Reports (Optional — Same Toggle)"
+      >
         <PBody>
-          When the app crashes, a report — the error type and stack trace,
-          with web addresses removed — is sent to Sentry, a third‑party
+          When the app crashes, a report — the error type and stack trace, with
+          web addresses removed — is sent to Sentry, a third‑party
           crash-reporting service hosted in the United States, so we can fix
           crashes. The same toggle controls this.
         </PBody>
       </PSection>
-
       <PDivider />
-
       <PSection num={++sectionIndex} title="What We Never Collect">
         <PBody>
-          No names, emails, or accounts (there are none) · no user, device,
-          advertising, or session identifiers · no IP addresses (we never
-          read or store them) · no search queries · no titles by name · no
-          location · no advertising or tracking SDKs.
+          No names, emails, or accounts (there are none) · no device,
+          advertising, or contact identifiers · no IP addresses (we never read
+          or store them) · no search queries · no titles by name · no location ·
+          no advertising or tracking SDKs. The one random statistics ID
+          described above is the only identifier that exists, and it is deleted
+          when you turn statistics off.
         </PBody>
       </PSection>
-
       <PDivider />
-
       <PSection num={++sectionIndex} title="Who FilmSnaps Connects To">
         <PBullet text="Our servers (Cloudflare): movie/TV metadata lookups (this keeps the TMDB API key off your device), app configuration (source list, announcements, player settings), ad-block filter updates, app update checks, and — if enabled — the anonymous statistics above." />
         <PBullet text="Cloudflare's public speed-test endpoint: only when the app needs to measure your connection (about 4 MB; results cached for a day)." />
         <PBullet text="The streaming source you choose: when you play or download, that provider sees your IP address — exactly as if you opened their site in a browser. We don't control this; a VPN hides it." />
         <PBullet text="Anime metadata (AniList, Kitsu, Shikimori) and subtitle services, when you use those features." />
       </PSection>
-
       <PDivider />
-
       <PSection num={++sectionIndex} title="How Long We Keep It">
         <PBody>
           Anonymous statistics are kept for up to 12 months, then deleted
-          automatically. Crash reports follow Sentry's standard retention.
-          Nothing on our side is linked to you, so there is no profile of
-          you to expire.
+          automatically. Crash reports follow Sentry's standard retention. The
+          random statistics ID is not linked to you in any way — there is no
+          profile of you on our side to expire.
         </PBody>
       </PSection>
-
       <PDivider />
-
       <PSection num={++sectionIndex} title="Your Control">
         <PBody>
           Everything personal to you is already in your hands — history,
           bookmarks, and settings live on your device, and clearing app data
-          removes them. Because nothing we collect is linked to you, there
-          is nothing of yours on our servers to access, correct, or delete —
-          and turning statistics off stops all future collection instantly.
+          removes them. Because nothing we collect is linked to you, there is
+          nothing of yours on our servers to access, correct, or delete — and
+          turning statistics off stops all future collection instantly.
         </PBody>
       </PSection>
-
       <PDivider />
-
       <PSection num={++sectionIndex} title="Your Rights (GDPR / CCPA)">
         <PBody>
-          These laws protect personal data. Our statistics and crash reports
-          contain no identifiers and no IP addresses, so they aren't
-          personal data — but if you ever want anything stopped, the
-          Settings toggle works immediately, and you can reach us at{" "}
-          <PBold>privacy@filmsnaps.app</PBold>.
+          These laws protect personal data. Our statistics contain no device or
+          advertising identifiers, no IP addresses, and no free text — the only
+          ID is the random one described above, which is deleted from your
+          device the moment statistics are turned off. If you ever want anything
+          stopped, the Settings toggle works immediately, and you can reach us
+          at <PBold>privacy@filmsnaps.app</PBold>.
         </PBody>
       </PSection>
-
       <PDivider />
-
       <PSection num={++sectionIndex} title="Children's Privacy">
         <PBody>
           FilmSnaps is not directed at children under 13. We do not knowingly
@@ -153,39 +148,32 @@ export default function PrivacyPolicyBody({
           believe a child has interacted with our services, please contact us.
         </PBody>
       </PSection>
-
       <PDivider />
-
       <PSection num={++sectionIndex} title="Security Research">
         <PBody>
-          We welcome responsible disclosure of security vulnerabilities. If
-          you discover a weakness in FilmSnaps, please open a security issue
-          or pull request at our <PLink url={GITHUB}>GitHub repository</PLink>
-          . We aim to acknowledge reports within 72 hours and work with you to
-          resolve verified issues. Please do not publicly disclose a
-          vulnerability until a fix is available.
+          We welcome responsible disclosure of security vulnerabilities. If you
+          discover a weakness in FilmSnaps, please open a security issue or pull
+          request at our <PLink url={GITHUB}>GitHub repository</PLink>. We aim
+          to acknowledge reports within 72 hours and work with you to resolve
+          verified issues. Please do not publicly disclose a vulnerability until
+          a fix is available.
         </PBody>
       </PSection>
-
       <PDivider />
-
       <PSection num={++sectionIndex} title="Changes to This Policy">
         <PBody>
           We may update this policy from time to time. When we do, we will
-          update the "Last updated" date above and note the change in our
-          public changelog. Because FilmSnaps is open source, you can also
-          review the commit history to see exactly what changed. Continued use
-          of the app after a change constitutes acceptance of the updated
-          policy.
+          update the "Last updated" date above and note the change in our public
+          changelog. Because FilmSnaps is open source, you can also review the
+          commit history to see exactly what changed. Continued use of the app
+          after a change constitutes acceptance of the updated policy.
         </PBody>
       </PSection>
-
       <PDivider />
-
       <PSection num={++sectionIndex} title="Contact">
         <PBody>
-          If you have questions about this privacy policy, please reach out
-          via email at <PBold>privacy@filmsnaps.app</PBold>. For security
+          If you have questions about this privacy policy, please reach out via
+          email at <PBold>privacy@filmsnaps.app</PBold>. For security
           vulnerabilities, please use{" "}
           <PLink url={GITHUB}>GitHub security issues</PLink> instead. See the
           Legal & DMCA page for our open-source license and terms.

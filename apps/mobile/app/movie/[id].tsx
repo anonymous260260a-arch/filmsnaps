@@ -25,14 +25,20 @@ import { getImageUrl, getTrailerKey } from "@filmsnaps/shared";
 import { ProgressiveImage } from "../../components/ProgressiveImage";
 import { typography } from "../../lib/typography";
 import { FilmGrain } from "../../components/FilmGrain";
+import { HeroTint } from "../../components/HeroTint";
 import { useMovieDetails } from "../../hooks/useTMDB";
+import { useMovieTheme } from "../../hooks/useMovieTheme";
 import {
   beginDetail,
   markDetailFirstFrame,
   markDetailContentReady,
 } from "../../lib/detailMetrics";
 import { DETAIL_BACKDROP_SIZE } from "../../components/heroLayout";
-import { openDetail, prepareDetail, toDetailNavItem } from "../../lib/openDetail";
+import {
+  openDetail,
+  prepareDetail,
+  toDetailNavItem,
+} from "../../lib/openDetail";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { MediaCarousel } from "../../components/MediaCarousel";
@@ -48,10 +54,17 @@ import {
 import { getProgress } from "../../lib/watchHistory";
 import { downloadToast } from "../../lib/download";
 import { prefetchArtwork } from "../../lib/prefetchArtwork";
-import { prefetchStreams, peekPrefetchStreams, setStreamHandoff } from "../../lib/streamPrefetch";
+import {
+  prefetchStreams,
+  peekPrefetchStreams,
+  setStreamHandoff,
+} from "../../lib/streamPrefetch";
 import { resolvePlaybackProviderId } from "../../lib/resolvePlaybackProvider";
 import { beginDetailsTap } from "../../lib/perfMetrics";
-import { holdEarlyPlayer, releaseEarlyPlayer } from "../../lib/earlyPlayerHolder";
+import {
+  holdEarlyPlayer,
+  releaseEarlyPlayer,
+} from "../../lib/earlyPlayerHolder";
 import { useSettings } from "../../lib/settings";
 import type { WatchProgress } from "../../lib/watchHistory";
 import { resolveMovie } from "../../lib/anime/resolve";
@@ -86,7 +99,11 @@ export default function MovieDetailScreen() {
 
   // Params-first snapshot: header fields available before query resolves.
   const paramsSnapshot = useMemo(() => {
-    if (!routeParams.title && !routeParams.poster_path && !routeParams.backdrop_path) {
+    if (
+      !routeParams.title &&
+      !routeParams.poster_path &&
+      !routeParams.backdrop_path
+    ) {
       return null;
     }
     return {
@@ -193,16 +210,23 @@ export default function MovieDetailScreen() {
           .then((providerId) => {
             if (prefetchCancelled || !providerId) return;
             resolvedProviderRef.current = providerId;
-            return prefetchStreams(parseInt(id), "movie", undefined, undefined, {
-              cellularMaxMB: settings.cellularMaxMB,
-              maxQuality: settings.maxQuality,
-              preferredAudioLanguage: settings.preferredAudioLanguage,
-              providerId,
-              trigger: "details",
-            })
+            return prefetchStreams(
+              parseInt(id),
+              "movie",
+              undefined,
+              undefined,
+              {
+                cellularMaxMB: settings.cellularMaxMB,
+                maxQuality: settings.maxQuality,
+                preferredAudioLanguage: settings.preferredAudioLanguage,
+                providerId,
+                trigger: "details",
+              },
+            )
               .then((snap) => {
                 // D3: pipeline READY during details dwell → warm player on head.
-                if (prefetchCancelled || !snap || snap.links.length === 0) return;
+                if (prefetchCancelled || !snap || snap.links.length === 0)
+                  return;
                 const head = snap.links[snap.bestIndex];
                 const key = `movie:${parseInt(id)}:s0:e0:${providerId}`;
                 if (holdEarlyPlayer(key, head)) {
@@ -237,9 +261,9 @@ export default function MovieDetailScreen() {
   const toggleBookmark = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const next = !bookmarked;
-setBookmarked(next);
-      trackFeatureUsed("bookmark_save", "detail");
-      if (next) {
+    setBookmarked(next);
+    trackFeatureUsed("bookmark_save", "detail");
+    if (next) {
       debouncedSaveBookmark({
         tmdbId: id!,
         mediaType: "movie",
@@ -278,6 +302,15 @@ setBookmarked(next);
     [id, nav, header?.poster_path, header?.backdrop_path],
   );
 
+  // Accent derived from the backdrop, with the poster as a fast first paint
+  // (w342 poster swatch lands in ~200–400ms vs 1–3s for the w1280 backdrop).
+  // Called before the early returns below so the hook keeps its call order
+  // across skeleton → loaded transitions.
+  const theme = useMovieTheme(
+    header?.backdrop_path ?? null,
+    header?.poster_path ?? null,
+  );
+
   // Deep link / cold route with no header params → full skeleton until data.
   // Params present → paint header immediately; skeleton only for query sections.
   if (!header && isLoading) {
@@ -307,6 +340,29 @@ setBookmarked(next);
   const backdropPath = header?.backdrop_path ?? null;
   const posterPath = header?.poster_path ?? null;
   const voteAverage = header?.vote_average ?? null;
+
+  const ctaLabel =
+    resumeState && resumeState.percent >= 0.95
+      ? "Watch Again"
+      : resumeState && resumeState.percent > 0
+        ? `Resume Playback (${Math.round(resumeState.percent * 100)}%)`
+        : "Watch Now";
+
+  // Single flat CTA — the control snaps to the accent in one frame while the
+  // big wash crossfades, so the two never alpha-blend into a muddy middle.
+  const renderCtaContent = (color: string) => (
+    <>
+      <Ionicons
+        name="play"
+        size={18}
+        color={color}
+        style={{ marginRight: 8 }}
+      />
+      <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 15, color }}>
+        {ctaLabel}
+      </Text>
+    </>
+  );
 
   return (
     <View
@@ -446,6 +502,15 @@ setBookmarked(next);
                 style={{ width: SCREEN_WIDTH, height: BACKDROP_HEIGHT }}
                 resizeMode="cover"
               />
+              {/* Tint (v11): flat uniform alpha plate inside this animated view
+                  (parallaxes with the photo); fades with accent progress. */}
+              {theme.hasAccent && (
+                <HeroTint
+                  tint={theme.palette.tint}
+                  progress={theme.progress}
+                  alpha={0.07}
+                />
+              )}
             </Animated.View>
           ) : (
             <View
@@ -463,7 +528,9 @@ setBookmarked(next);
           {/* Film grain overlay */}
           <FilmGrain opacity={0.03} />
 
-          {/* Cinematic gradient fade */}
+          {/* Cinematic gradient fade — the neutral scrim is PERMANENT. Both
+              layers are translucent, so unmounting it mid-stack would change
+              the composite and pop; it stays mounted forever. */}
           <LinearGradient
             colors={[
               "rgba(7,7,8,0)",
@@ -483,10 +550,79 @@ setBookmarked(next);
             }}
             pointerEvents="none"
           />
+          {theme.hasAccent && (
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: BACKDROP_HEIGHT * 0.7,
+                opacity: theme.progress,
+              }}
+            >
+              <LinearGradient
+                colors={[
+                  "rgba(7,7,8,0)",
+                  "rgba(7,7,8,0)",
+                  theme.palette.mid,
+                  theme.palette.faded,
+                ]}
+                locations={[0, 0.35, 0.68, 1]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 0, y: 1 }}
+                style={{ flex: 1 }}
+              />
+            </Animated.View>
+          )}
         </View>
 
-        {/* Content Section */}
-        <View className="px-4" style={{ marginTop: -POSTER_OVERLAP }}>
+        {/* Accent wash pooling under the backdrop — IN-FLOW (phase 2).
+            Net-zero layout trick: marginTop -0.3H + height 1.2H, then the
+            content section's margin cancels the remaining 0.9H, so the
+            poster still overlaps the backdrop exactly as before while the
+            pool itself is a normal scroll child behind the header block.
+            It decays to pure bg ~0.8 screens down — nothing below is tinted,
+            and the page root stays neutral.
+
+            ALWAYS MOUNTED (transparent while there is no accent): the
+            content section's compensating margin is unconditional, so a
+            conditionally-mounted pool would pull the whole page up by
+            ~0.9 backdrop heights on titles that never get an accent — the
+            "everything moved up" bug. A static container keeps the layout
+            byte-identical in both states. */}
+        <View
+          pointerEvents="none"
+          style={{
+            marginTop: -BACKDROP_HEIGHT * 0.3,
+            height: BACKDROP_HEIGHT * 1.2,
+          }}
+        >
+          {theme.hasAccent && (
+            <Animated.View
+              pointerEvents="none"
+              style={{ flex: 1, opacity: theme.progress }}
+            >
+              <LinearGradient
+                colors={["rgba(7,7,8,0)", theme.palette.glow, "rgba(7,7,8,0)"]}
+                locations={[0, 0.5, 1]}
+                start={{ x: 0.5, y: 0 }}
+                end={{ x: 0.5, y: 1 }}
+                style={{ flex: 1 }}
+              />
+            </Animated.View>
+          )}
+        </View>
+
+        {/* Content Section — margin cancels the pool's in-flow footprint
+            (see above) so the poster still overlaps the backdrop. */}
+        <View
+          className="px-4"
+          style={{
+            marginTop: -(BACKDROP_HEIGHT * 0.9 + POSTER_OVERLAP),
+          }}
+        >
           {/* Poster + Info row */}
           <View className="flex-row items-center">
             {/* Elevated Poster */}
@@ -692,12 +828,18 @@ setBookmarked(next);
                   params.set("provider", resolvedProvider);
                 }
                 // FIX 5: hand the warm snapshot to watch; still runs trigger=watch.
-                const snap = peekPrefetchStreams(parseInt(id), "movie", undefined, undefined, {
-                  cellularMaxMB: settings.cellularMaxMB,
-                  maxQuality: settings.maxQuality,
-                  preferredAudioLanguage: settings.preferredAudioLanguage,
-                  providerId: resolvedProvider ?? undefined,
-                });
+                const snap = peekPrefetchStreams(
+                  parseInt(id),
+                  "movie",
+                  undefined,
+                  undefined,
+                  {
+                    cellularMaxMB: settings.cellularMaxMB,
+                    maxQuality: settings.maxQuality,
+                    preferredAudioLanguage: settings.preferredAudioLanguage,
+                    providerId: resolvedProvider ?? undefined,
+                  },
+                );
                 if (snap && snap.links.length > 0) {
                   const head = snap.links[snap.bestIndex];
                   setStreamHandoff(
@@ -720,42 +862,17 @@ setBookmarked(next);
               }}
               activeOpacity={0.88}
               style={{
-                backgroundColor: colors.gold,
+                backgroundColor: theme.palette.accent,
                 borderRadius: 12,
                 paddingVertical: 14,
                 flexDirection: "row",
                 alignItems: "center",
                 justifyContent: "center",
-                ...Platform.select({
-                  ios: {
-                    shadowColor: colors.gold,
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowOpacity: 0.35,
-                    shadowRadius: 10,
-                  },
-                  android: { elevation: 6 },
-                }),
+                // shadow* only ever rendered on iOS; this build is Android-only.
+                elevation: 6,
               }}
             >
-              <Ionicons
-                name="play"
-                size={18}
-                color={colors.bg}
-                style={{ marginRight: 8 }}
-              />
-              <Text
-                style={{
-                  fontFamily: "Inter_600SemiBold",
-                  fontSize: 15,
-                  color: colors.bg,
-                }}
-              >
-                {resumeState && resumeState.percent >= 0.95
-                  ? "Watch Again"
-                  : resumeState && resumeState.percent > 0
-                    ? `Resume Playback (${Math.round(resumeState.percent * 100)}%)`
-                    : "Watch Now"}
-              </Text>
+              {renderCtaContent(theme.palette.accentText)}
             </TouchableOpacity>
 
             {/* Secondary Action Row: Trailer & Download */}
@@ -876,29 +993,38 @@ setBookmarked(next);
             <CastCarousel cast={movie.credits.cast} />
           )}
 
-          {/* Similar movies — query-dependent */}
-          {queryReady && movie.similar?.results?.length > 0 && (
-            <View className="mt-6">
-              <MediaCarousel
-                title="Similar Movies"
-                data={movie.similar.results}
-                onItemPressIn={(item) => {
-                  const navItem = toDetailNavItem(item, "movie");
-                  if (navItem)
-                    prepareDetail(navItem, "similar", queryClient, router);
-                }}
-                onItemPress={(item) => {
-                  const navItem = toDetailNavItem(item, "movie");
-                  if (navItem)
-                    openDetail(navItem, "similar", {
-                      queryClient,
-                      router,
-                      nav,
-                    });
-                }}
-              />
-            </View>
-          )}
+          {/* More Like This — query-dependent. Prefer TMDB's own
+              /recommendations engine (what the TMDB website renders, and
+              what reads as dramatically better than /similar); fall back to
+              /similar for thin catalogs. */}
+          {queryReady &&
+            ((movie.recommendations?.results?.length ?? 0) > 0 ||
+              (movie.similar?.results?.length ?? 0) > 0) && (
+              <View className="mt-6">
+                <MediaCarousel
+                  title="More Like This"
+                  data={
+                    (movie.recommendations?.results?.length ?? 0) > 0
+                      ? movie.recommendations.results
+                      : movie.similar.results
+                  }
+                  onItemPressIn={(item) => {
+                    const navItem = toDetailNavItem(item, "movie");
+                    if (navItem)
+                      prepareDetail(navItem, "similar", queryClient, router);
+                  }}
+                  onItemPress={(item) => {
+                    const navItem = toDetailNavItem(item, "movie");
+                    if (navItem)
+                      openDetail(navItem, "similar", {
+                        queryClient,
+                        router,
+                        nav,
+                      });
+                  }}
+                />
+              </View>
+            )}
 
           {/* Query-dependent placeholder while details load (params-only paint) */}
           {!queryReady && !isLoading && isError && (

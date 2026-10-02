@@ -70,6 +70,16 @@ export interface AppSettings {
    *  preference; "contain" never crops, so it is the safe default. Values
    *  mirror expo-video's VideoContentFit ("fill" is labeled "Stretch" in UI). */
   playerScreenFit: "contain" | "cover" | "fill";
+  /** Subtitle vertical position: Media3 SubtitleView bottom PADDING fraction
+   *  (0.08 = stock Media3 default). null = auto — orientation-aware default:
+   *  0.14 "Low" in portrait, 0.2 "Middle" in landscape (resolves in the
+   *  player from the current window dimensions). A number = explicit pin
+   *  that wins in both orientations. */
+  subtitleBottomMargin: number | null;
+  /** One-time migration marker: pre-auto installs had 0.14 written into
+   *  storage by ANY settings save, so a stored 0.14 is the legacy default
+   *  rather than an explicit pin. Converted to null (auto) exactly once. */
+  subtitlePosMigrated: boolean;
   /** Whether the first-run language prompt has been answered */
   hasAnsweredLanguagePrompt: boolean;
   /** Background speed test: enabled (non-blocking, cached) */
@@ -120,6 +130,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   maxQuality: null,
   preferredAudioLanguage: "auto",
   playerScreenFit: "contain",
+  subtitleBottomMargin: null,
+  subtitlePosMigrated: false,
   hasAnsweredLanguagePrompt: false,
   enableSpeedTest: true,
   analyticsEnabled: true,
@@ -189,6 +201,22 @@ function doRead(): Promise<AppSettings> {
             merged.analyticsGrandfathered = true;
             console.log(
               "[Settings] F3: grandfathered legacy install to analytics=off",
+            );
+          }
+          // Subtitle position auto-migration (once): the old default 0.14
+          // ("Low") was persisted into storage by ANY settings save, so a
+          // stored 0.14 is almost always the legacy default — not a pin.
+          // Convert it to null (auto: Low in portrait, Middle in landscape)
+          // so the orientation-aware defaults actually take effect. Once the
+          // marker is stored, a later 0.14 IS an explicit pin and stays.
+          if (!stored.subtitlePosMigrated) {
+            if (stored.subtitleBottomMargin === 0.14)
+              merged.subtitleBottomMargin = null;
+            merged.subtitlePosMigrated = true;
+            console.log(
+              `[Settings] subtitle position migrated to auto (was ${String(
+                stored.subtitleBottomMargin,
+              )})`,
             );
           }
           return merged;

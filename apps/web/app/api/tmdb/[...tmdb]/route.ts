@@ -47,10 +47,7 @@ function corsResponse(
 function trimDetailPayload(data: any, isTv: boolean): any {
   if (!data || typeof data !== "object") return data;
 
-  const pick = (
-    src: any,
-    keys: string[],
-  ): Record<string, unknown> => {
+  const pick = (src: any, keys: string[]): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
     if (!src || typeof src !== "object") return out;
     for (const k of keys) {
@@ -108,9 +105,18 @@ function trimDetailPayload(data: any, isTv: boolean): any {
   if (data.credits) {
     const cast = Array.isArray(data.credits.cast) ? data.credits.cast : [];
     const creditsOut: Record<string, unknown> = {
-      cast: cast.slice(0, 15).map((c: any) =>
-        pick(c, ["id", "name", "character", "profile_path", "order", "cast_id"]),
-      ),
+      cast: cast
+        .slice(0, 15)
+        .map((c: any) =>
+          pick(c, [
+            "id",
+            "name",
+            "character",
+            "profile_path",
+            "order",
+            "cast_id",
+          ]),
+        ),
     };
     if (Array.isArray(data.credits.crew) && data.credits.crew.length) {
       // Director only — commonly used; tiny.
@@ -145,26 +151,63 @@ function trimDetailPayload(data: any, isTv: boolean): any {
       : [];
     out.similar = {
       ...pick(data.similar, ["page", "total_pages", "total_results"]),
-      results: results.slice(0, 20).map((m: any) =>
-        pick(m, [
-          "id",
-          "title",
-          "name",
-          "poster_path",
-          "backdrop_path",
-          "vote_average",
-          "release_date",
-          "first_air_date",
-          "media_type",
-          "overview",
-        ]),
-      ),
+      results: results
+        .slice(0, 20)
+        .map((m: any) =>
+          pick(m, [
+            "id",
+            "title",
+            "name",
+            "poster_path",
+            "backdrop_path",
+            "vote_average",
+            "release_date",
+            "first_air_date",
+            "media_type",
+            "overview",
+          ]),
+        ),
+    };
+  }
+
+  // TMDB's own "More Like This" engine — what the TMDB website renders and
+  // what reads as dramatically better than /similar. Passed through so
+  // mobile detail pages can prefer it.
+  if (data.recommendations) {
+    const results = Array.isArray(data.recommendations.results)
+      ? data.recommendations.results
+      : [];
+    out.recommendations = {
+      ...pick(data.recommendations, ["page", "total_pages", "total_results"]),
+      results: results
+        .slice(0, 20)
+        .map((m: any) =>
+          pick(m, [
+            "id",
+            "title",
+            "name",
+            "poster_path",
+            "backdrop_path",
+            "vote_average",
+            "release_date",
+            "first_air_date",
+            "media_type",
+            "overview",
+          ]),
+        ),
     };
   }
 
   if (isTv && Array.isArray(data.seasons)) {
     out.seasons = data.seasons.map((s: any) =>
-      pick(s, ["id", "season_number", "episode_count", "name", "air_date", "poster_path"]),
+      pick(s, [
+        "id",
+        "season_number",
+        "episode_count",
+        "name",
+        "air_date",
+        "poster_path",
+      ]),
     );
   }
 
@@ -223,7 +266,12 @@ export async function GET(
 
   if (wantsTrim && tmdb[0] === "movie" && tmdb[1] && /^\d+$/.test(tmdb[1])) {
     data = trimDetailPayload(data, false);
-  } else if (wantsTrim && tmdb[0] === "tv" && tmdb[1] && /^\d+$/.test(tmdb[1])) {
+  } else if (
+    wantsTrim &&
+    tmdb[0] === "tv" &&
+    tmdb[1] &&
+    /^\d+$/.test(tmdb[1])
+  ) {
     data = trimDetailPayload(data, true);
   }
 

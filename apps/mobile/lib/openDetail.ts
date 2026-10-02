@@ -1,15 +1,17 @@
 /**
  * openDetail — single entry path for movie/TV detail navigation (Phase 2 FIX 1).
  *
- * prepareDetail (onPressIn): 1–4 — source mark, query prefetch, image prefetch,
- * router.prefetch. openDetail / pushDetail (onPress): 5 — navigate with
- * header params so the detail screen can paint before the query resolves.
+ * prepareDetail (onPressIn): 1–4 — source mark, query prefetch, image +
+ * accent-warm prefetch, router.prefetch. openDetail / pushDetail (onPress):
+ * 5 — navigate with header params so the detail screen can paint before the
+ * query resolves.
  */
 import { Image } from "expo-image";
 import { useRouter, type Href } from "expo-router";
 import { getImageUrl } from "@filmsnaps/shared";
 import { tmdbApi } from "./api";
 import { DETAIL_STALE_TIME } from "./detailQuery";
+import { resolveSwatch } from "./movieAccent";
 import { DETAIL_BACKDROP_SIZE } from "../components/heroLayout";
 import { markDetailNav, type DetailSource } from "./detailMetrics";
 import { useSafeNavigation } from "@/lib/navigation";
@@ -95,6 +97,16 @@ export function prepareDetail(
   if (urls.length) {
     Image.prefetch(urls).catch(() => {});
   }
+
+  // 3b. Accent warm — BOTH images the detail wash derives from:
+  // - the card poster (w342): the exact file the user is ALREADY looking at
+  //   (decoded by the card), ~10× smaller → its swatch lands in tens of ms,
+  //   and the detail hook's poster-first fast path paints from it instantly;
+  // - the backdrop: the slow-but-authoritative refine.
+  // Both are cached under their own path keys, so warming here turns the
+  // detail page's first paint into a cache hit instead of an extraction wait.
+  if (item.poster_path) void resolveSwatch(item.poster_path, "w342");
+  if (item.backdrop_path) void resolveSwatch(item.backdrop_path);
 
   // 4. Route module preload.
   try {

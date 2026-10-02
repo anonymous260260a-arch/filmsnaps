@@ -57,23 +57,23 @@
       "hideFromVersion": "2.2.0"
     },
     {
-      "id": "v2-3-0-anime-direct",
+      "id": "v2-4-0-anime-direct",
       "type": "feature",
-      "title": "New version released — 2.3.0 brings the full anime experience",
+      "title": "New version released — 2.4.0 brings the full anime experience",
       "subtitle": "Anime now streams directly from JustAnime with subtitles built in, plus a redesigned player. Download from https://filmsnaps1.anonymous260260a.workers.dev/download.",
       "body": [
-        "FilmSnaps 2.3.0 is here — the biggest anime upgrade since 2.1.0, plus a redesigned player.",
+        "FilmSnaps 2.4.0 is here — the biggest anime upgrade since 2.1.0, plus a redesigned player.",
         "Anime now streams directly from JustAnime: episodes are fetched straight to your device with both sub and dub tracks and built-in subtitle support, so anime plays with fewer hops and less buffering.",
         "The app picks the best server automatically: sources are ranked by speed and reliability before you press play, streams are pre-fetched in the background, and if one server fails the player falls back to the next without you touching anything.",
         "The player got its biggest visual refresh yet: a new episode panel shows every episode and jumps straight to the one you're watching, the progress bar is now YouTube-style with tap-to-seek and precise scrubbing, a new screen-fit setting lets you choose how video fills the screen, and the controls sit better in landscape.",
-        "We also fixed the annoying ones: the next episode now resumes at the right timestamp instead of the previous episode's end, seeking stays accurate through the end of the video, and sheets open and close with smooth animations. Download version 2.3.0 from https://filmsnaps1.anonymous260260a.workers.dev/download."
+        "We also fixed the annoying ones: the next episode now resumes at the right timestamp instead of the previous episode's end, seeking stays accurate through the end of the video, and sheets open and close with smooth animations. Download version 2.4.0 from https://filmsnaps1.anonymous260260a.workers.dev/download."
       ],
       "actionLabel": "Download",
       "externalUrl": "https://filmsnaps1.anonymous260260a.workers.dev/download",
-      "date": "September 27, 2026",
+      "date": "October 3, 2026",
       "dismissible": true,
-      "expiresAt": "2027-09-27T00:00:00Z",
-      "hideFromVersion": "2.3.0"
+      "expiresAt": "2027-10-03T00:00:00Z",
+      "hideFromVersion": "2.4.0"
     }
   ]
 }

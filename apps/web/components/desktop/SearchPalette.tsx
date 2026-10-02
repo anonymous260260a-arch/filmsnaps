@@ -16,6 +16,7 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -86,6 +87,12 @@ function saveAnimeMode(on: boolean) {
 
 /* ── Component ─────────────────────────────────────────────────────────── */
 
+// Focus must land synchronously inside the opening tap's task, or iOS
+// Safari won't bring up the keyboard when the mobile search button opens
+// the palette. Layout effect on the client, inert effect during SSR.
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
 export function SearchPalette({
   open,
   onOpenChange,
@@ -117,13 +124,12 @@ export function SearchPalette({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appMode]);
 
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (open) {
       setRecents(loadRecents());
       // Keep the current toggle state (a prior manual flip persists across
       // reopen); do NOT re-force it to the global mode here.
-      // slight delay so the panel's mount animation doesn't fight focus
-      requestAnimationFrame(() => inputRef.current?.focus());
+      inputRef.current?.focus();
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
@@ -305,7 +311,7 @@ export function SearchPalette({
 
       {/* Panel — positioned in the upper third, Spotlight-style */}
       <div
-        className="sp-panel relative mt-[14vh] w-full max-w-[560px] overflow-hidden rounded-2xl
+        className="sp-panel relative mt-[14vh] mx-3 w-full max-w-[560px] overflow-hidden rounded-2xl sm:mx-0
         border border-white/[0.08] bg-[#111116]/[0.97] shadow-[0_24px_80px_rgba(0,0,0,0.65),0_0_0_1px_rgba(255,255,255,0.03)_inset]
         backdrop-blur-2xl"
       >

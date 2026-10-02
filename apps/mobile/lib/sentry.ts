@@ -21,6 +21,8 @@ const STREAM_HOST_HINTS = [
   "hdhub",
   "spacedom",
   "chillflix",
+  "pengu",
+  "hakunaymatata",
   "hls",
   "m3u8",
   "workers.dev",
@@ -46,12 +48,12 @@ function scrubBreadcrumbs(crumbs: unknown): unknown {
       if (looksLikeEndpoint(b.category)) b.category = "[redacted]";
       if (b.data && typeof b.data === "object") {
         const data: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(b.data as Record<string, unknown>)) {
+        for (const [k, v] of Object.entries(
+          b.data as Record<string, unknown>,
+        )) {
           if (looksLikeEndpoint(v) || /url|href|endpoint/i.test(k)) {
             data[k] = "[redacted]";
-          } else if (
-            /email|user|device|idfa|gaid|adid|ip|session/i.test(k)
-          ) {
+          } else if (/email|user|device|idfa|gaid|adid|ip|session/i.test(k)) {
             continue;
           } else {
             data[k] = v;

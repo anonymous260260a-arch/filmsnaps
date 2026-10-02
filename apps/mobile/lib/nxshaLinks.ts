@@ -161,7 +161,7 @@ function isHubcloudOrigin(rawUrl: string): boolean {
 }
 
 /** A URL pointing straight at a media file we can enqueue. */
-function isDirectFileUrl(rawUrl: string): boolean {
+export function isDirectFileUrl(rawUrl: string): boolean {
   const u = safeUrl(rawUrl);
   if (!u) return false;
   const host = u.hostname.toLowerCase();

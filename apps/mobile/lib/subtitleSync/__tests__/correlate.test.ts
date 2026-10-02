@@ -6,6 +6,8 @@ import {
   solveDrift,
   meanCueStart,
   b64ToBits,
+  findOffsetWideSlice,
+  confidenceWideSlice,
   APPLY_CONF,
   TRY_CONF,
 } from "../correlate";
@@ -294,6 +296,64 @@ describe("correlate", () => {
 
   it("returns 0 for empty cues", () => {
     expect(meanCueStart([])).toBe(0);
+  });
+
+  // ——— findOffsetWideSlice (short-window large-offset rescue) ———
+  it("rescues a large true offset that the keep-gated windowed scorer loses", () => {
+    // Device geometry (2026-09): 65.5s watch window at [62.6..128.1], full-
+    // episode subtitle with ~3.4s cue period, TRUE offset +54.47s. The P4
+    // windowed-cue scoring lost: keep-ineligible true peak, junk -5.19s won.
+    const rate = 100;
+    const startSec = 62.6;
+    const endSec = 128.1;
+    const bins = Math.round((endSec - startSec) * rate);
+    const data = new Uint8Array(bins);
+    const TRUE = 54.47;
+    // Full-episode cue grid with STRONGLY irregular gaps (0.4–6s) and
+    // durations (0.3–3s) — real dialogue is not a metronome, and a
+    // near-periodic grid lets ±period alias offsets beat the truth on a
+    // 65s window.
+    const cues: Cue[] = [];
+    let x = 987654321;
+    const rnd = () => {
+      x = (x * 1103515245 + 12345) & 0x7fffffff;
+      return (x >>> 7) / 0xffffff;
+    };
+    let t = 3.0;
+    while (t < 2520) {
+      const dur = 0.3 + rnd() * 2.7;
+      cues.push({ start: t, end: t + dur, text: `c${cues.length}` });
+      t += dur + 0.4 + rnd() * 5.6;
+    }
+    // Stream audio in [62.6..128.1]: speech wherever (cue + TRUE offset) says.
+    for (const c of cues) {
+      const a = Math.round((c.start + TRUE - startSec) * rate);
+      const b = Math.round((c.end + TRUE - startSec) * rate);
+      for (let i = Math.max(0, a); i < Math.min(bins, b); i++) data[i] = 1;
+    }
+    const sig: SpeechSignal = { rate, startSec, endSec, bins, data };
+
+    const res = findOffset(cues, sig);
+    // Windowed scoring is STRUCTURALLY blind here: the truth keeps only
+    // ~3 of the window's ~13 cues (keep≈0.2 < MIN_KEEP). Whether findOffset
+    // happens to surface it (via anyBest) depends on the noise floor; what
+    // the rescuer must guarantee is recovery regardless.
+    expect(res.keep).toBeLessThan(0.5);
+    // Wide-slice rescue must recover the truth from the full ±MAX_OFF scan.
+    const rescued = findOffsetWideSlice(cues, sig);
+    expect(rescued).not.toBeNull();
+    expect(rescued!.offset).toBeCloseTo(TRUE, 1);
+    // Coverage keep is high: the winning slice explains nearly the whole span.
+    expect(rescued!.keep).toBeGreaterThan(0.7);
+    // And its confidence clears the agreement bar.
+    const conf = confidenceWideSlice(
+      rescued!.cues,
+      sig,
+      rescued!.offset,
+      rescued!.score,
+      rescued!.rivalScore,
+    );
+    expect(conf).toBeGreaterThan(0.45);
   });
 
   // ——— b64ToBits ———

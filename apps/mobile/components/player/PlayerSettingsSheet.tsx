@@ -12,7 +12,7 @@
  * buttons (one tap, no menu) — this sheet holds only global preferences.
  */
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -39,6 +39,10 @@ interface PlayerSettingsSheetProps {
   onSelectSpeed: (speed: number) => void;
   screenFit: "contain" | "cover" | "fill";
   onSelectFit: (fit: "contain" | "cover" | "fill") => void;
+  /** Subtitle vertical position — bottom margin as a fraction of the
+   *  surface, or null = auto (orientation-aware default). */
+  subtitleBottomMargin: number | null;
+  onSelectSubtitleMargin: (fraction: number | null) => void;
   lockAvailable: boolean;
   isLocked: boolean;
   onLock: () => void;
@@ -46,6 +50,22 @@ interface PlayerSettingsSheetProps {
 }
 
 const SPEED_OPTIONS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+
+/** Subtitle vertical position — Media3 SubtitleView bottom padding fraction
+ *  (stock Media3 default is 0.08, so "Bottom" = that exact stock look).
+ *  "Auto" (null) is the default: Low in portrait, Middle in landscape —
+ *  the player resolves it from the current window dimensions. */
+const SUBTITLE_POS_OPTIONS: {
+  value: number | null;
+  label: string;
+  hint: string;
+}[] = [
+  { value: null, label: "Auto", hint: "Low in portrait, Middle in landscape" },
+  { value: 0.08, label: "Bottom", hint: "Stock Media3 position" },
+  { value: 0.14, label: "Low", hint: "Slightly lifted — clears overlays" },
+  { value: 0.2, label: "Middle", hint: "Comfortably above the controls" },
+  { value: 0.3, label: "High", hint: "Well clear of any overlay" },
+];
 
 const FIT_OPTIONS: {
   value: "contain" | "cover" | "fill";
@@ -91,6 +111,8 @@ export function PlayerSettingsSheet({
   onSelectSpeed,
   screenFit,
   onSelectFit,
+  subtitleBottomMargin,
+  onSelectSubtitleMargin,
   lockAvailable,
   isLocked,
   onLock,
@@ -101,6 +123,40 @@ export function PlayerSettingsSheet({
   const { settings, updateSetting } = useSettings();
   const { mounted, backdrop, translateY } = useBottomSheetEntrance(visible);
 
+  // ── Optimistic selection (tap latency fix) ──
+  // The settings context re-renders the WHOLE player tree before the chip
+  // would light up — a full fit/subtitle-position change costs ~0.5–1s of
+  // felt delay (and the pressed chip can even lose its own highlight while
+  // the tree is busy). Drafts flip the chip ON TOUCH inside this lightweight
+  // component; the real updateSetting() runs behind it (deferred via
+  // startTransition so the heavy player re-render never blocks the feedback
+  // frame). Drafts are cleared when the sheet closes.
+  const [draftFit, setDraftFit] = useState<"contain" | "cover" | "fill" | null>(
+    null,
+  );
+  // Tri-state: undefined = no draft yet, null = "Auto" pinned, number = pinned.
+  const [draftSubPos, setDraftSubPos] = useState<number | null | undefined>(
+    undefined,
+  );
+  const [draftAudio, setDraftAudio] = useState<string | null>(null);
+  useEffect(() => {
+    if (!visible) {
+      setDraftFit(null);
+      setDraftSubPos(undefined);
+      setDraftAudio(null);
+    }
+  }, [visible]);
+  const commitTransition = (fn: () => void) => {
+    // React 18 startTransition queues fn as low-priority work so the heavy
+    // player-tree re-render never blocks this sheet's feedback frame.
+    // (startTransition returns void — never chain it with `??` or fn runs twice.)
+    const st = (
+      React as unknown as { startTransition?: (fn: () => void) => void }
+    ).startTransition;
+    if (typeof st === "function") st(fn);
+    else fn();
+  };
+
   const handleSelectSpeed = (speed: number) => {
     onSelectSpeed(speed);
     onClose();
@@ -109,13 +165,12 @@ export function PlayerSettingsSheet({
   const handleSelectLanguage = (
     value: "auto" | "multi" | "hindi" | "english",
   ) => {
-    updateSetting("preferredAudioLanguage", value);
-    // Telemetry hygiene: only a real CHANGE is a feature event. Tapping the
-    // already-selected chip is a no-op — counting it inflated "prefAudioLang"
-    // style data (user "changed" language N times without changing anything).
+    // Optimistic: flip the chip now, defer the heavy context write.
+    setDraftAudio(value);
     if (value !== settings.preferredAudioLanguage) {
       trackFeatureUsed("audio_manual_override", "player");
     }
+    commitTransition(() => updateSetting("preferredAudioLanguage", value));
   };
 
   return (
@@ -162,7 +217,7 @@ export function PlayerSettingsSheet({
             </View>
             <View style={styles.fitRow}>
               {FIT_OPTIONS.map((option) => {
-                const isSelected = screenFit === option.value;
+                const isSelected = (draftFit ?? screenFit) === option.value;
                 return (
                   <TouchableOpacity
                     key={option.value}
@@ -174,7 +229,10 @@ export function PlayerSettingsSheet({
                           "player",
                         );
                       }
-                      onSelectFit(option.value);
+                      // Optimistic: highlight first, defer the player-tree
+                      // re-render that used to eat ~0.5–1s of felt latency.
+                      setDraftFit(option.value);
+                      commitTransition(() => onSelectFit(option.value));
                     }}
                     activeOpacity={0.7}
                     accessibilityRole="button"
@@ -191,6 +249,53 @@ export function PlayerSettingsSheet({
                       style={[
                         styles.fitLabel,
                         isSelected && styles.fitLabelActive,
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={styles.divider} />
+
+            {/* ── Subtitle position ── */}
+            <View style={styles.rowHeader}>
+              <Ionicons name="text-outline" size={16} color={colors.gold} />
+              <Text style={styles.rowHeaderText}>Subtitle position</Text>
+            </View>
+            <View style={styles.chipRow}>
+              {SUBTITLE_POS_OPTIONS.map((option) => {
+                const activePos =
+                  draftSubPos !== undefined
+                    ? draftSubPos
+                    : subtitleBottomMargin;
+                const isSelected =
+                  option.value === null
+                    ? activePos === null
+                    : activePos !== null &&
+                      Math.abs(activePos - option.value) < 0.001;
+                return (
+                  <TouchableOpacity
+                    key={option.label}
+                    style={[styles.chip, isSelected && styles.chipActive]}
+                    onPress={() => {
+                      setDraftSubPos(option.value);
+                      commitTransition(() =>
+                        onSelectSubtitleMargin(option.value),
+                      );
+                    }}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Subtitle position ${option.label}`}
+                    accessibilityHint={option.hint}
+                    accessibilityState={{ selected: isSelected }}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        isSelected && styles.chipTextActive,
                       ]}
                     >
                       {option.label}
@@ -247,7 +352,8 @@ export function PlayerSettingsSheet({
             <View style={styles.chipRow}>
               {LANGUAGE_OPTIONS.map((option) => {
                 const isSelected =
-                  settings.preferredAudioLanguage === option.value;
+                  (draftAudio ?? settings.preferredAudioLanguage) ===
+                  option.value;
                 return (
                   <TouchableOpacity
                     key={option.value}

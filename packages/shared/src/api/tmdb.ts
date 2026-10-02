@@ -6,9 +6,7 @@ export class ApiError extends Error {
   readonly statusText: string;
 
   constructor(status: number, statusText: string, url?: string) {
-    super(
-      `TMDB API error: ${status} ${statusText}${url ? ` (${url})` : ""}`,
-    );
+    super(`TMDB API error: ${status} ${statusText}${url ? ` (${url})` : ""}`);
     this.name = "ApiError";
     this.status = status;
     this.statusText = statusText;
@@ -110,10 +108,7 @@ export function createTmdbApi(apiBase: string) {
       ),
 
     getTrendingTV: (page = 1, signal?: AbortSignal | null) =>
-      fetchTmdb(
-        `/trending/tv/week${page > 1 ? `?page=${page}` : ""}`,
-        signal,
-      ),
+      fetchTmdb(`/trending/tv/week${page > 1 ? `?page=${page}` : ""}`, signal),
 
     getPopularMovies: (page = 1, signal?: AbortSignal | null) =>
       fetchTmdb(`/movie/popular?page=${page}`, signal),
@@ -123,7 +118,9 @@ export function createTmdbApi(apiBase: string) {
 
     getMovieDetails: (id: number | string, signal?: AbortSignal | null) =>
       fetchTmdb(
-        `/movie/${id}?append_to_response=videos,credits,similar&trim=1`,
+        // recommendations = TMDB's own "More Like This" engine (what their
+        // website renders); similar kept as fallback for thin catalogs.
+        `/movie/${id}?append_to_response=videos,credits,similar,recommendations&trim=1`,
         signal,
         // Detail payloads are large — allow a bit more than the default 10s.
         15_000,
@@ -131,7 +128,7 @@ export function createTmdbApi(apiBase: string) {
 
     getTVDetails: (id: number | string, signal?: AbortSignal | null) =>
       fetchTmdb(
-        `/tv/${id}?append_to_response=videos,credits,similar&trim=1`,
+        `/tv/${id}?append_to_response=videos,credits,similar,recommendations&trim=1`,
         signal,
         15_000,
       ),
@@ -139,17 +136,30 @@ export function createTmdbApi(apiBase: string) {
     getTVSeasonsOnly: (id: number | string, signal?: AbortSignal | null) =>
       fetchTmdb(`/tv/${id}`, signal),
 
+    /**
+     * TMDB's OWN relevance engine for "more like this" — materially better
+     * than genre-discover (which just returns popular titles sharing a
+     * genre) and better curated than /similar.
+     */
+    getMovieRecommendations: (
+      id: number | string,
+      page = 1,
+      signal?: AbortSignal | null,
+    ) => fetchTmdb(`/movie/${id}/recommendations?page=${page}`, signal),
+
+    getTVRecommendations: (
+      id: number | string,
+      page = 1,
+      signal?: AbortSignal | null,
+    ) => fetchTmdb(`/tv/${id}/recommendations?page=${page}`, signal),
+
     getSeasonEpisodes: (
       tvId: number | string,
       seasonNumber: number,
       signal?: AbortSignal | null,
     ) => fetchTmdb(`/tv/${tvId}/season/${seasonNumber}`, signal),
 
-    searchMulti: (
-      query: string,
-      page = 1,
-      signal?: AbortSignal | null,
-    ) =>
+    searchMulti: (query: string, page = 1, signal?: AbortSignal | null) =>
       fetchTmdb(
         `/search/multi?query=${encodeURIComponent(query)}&page=${page}`,
         signal,
@@ -184,6 +194,72 @@ export function createTmdbApi(apiBase: string) {
       if (params.language) q.set("with_original_language", params.language);
 
       return fetchTmdb(`/discover/movie?${q}`, signal);
+    },
+
+    getMoviesAdvanced: (
+      params: {
+        genreIds?: number[];
+        sortBy?: string;
+        yearStart?: number;
+        yearEnd?: number;
+        minRating?: number;
+        language?: string;
+        /** vote_count.gte — pair with minRating so zero-vote titles never surface. */
+        minVotes?: number;
+        page?: number;
+      },
+      signal?: AbortSignal | null,
+    ) => {
+      const q = new URLSearchParams();
+      q.set("page", String(params.page ?? 1));
+      q.set("sort_by", params.sortBy ?? "popularity.desc");
+      q.set("include_adult", "false");
+      if (params.genreIds?.length)
+        q.set("with_genres", params.genreIds.join(","));
+      if (params.yearStart !== undefined)
+        q.set("primary_release_date.gte", `${params.yearStart}-01-01`);
+      if (params.yearEnd !== undefined)
+        q.set("primary_release_date.lte", `${params.yearEnd}-12-31`);
+      if (params.minRating !== undefined) {
+        q.set("vote_average.gte", String(params.minRating));
+        q.set("vote_count.gte", String(params.minVotes ?? 60));
+      }
+      if (params.language) q.set("with_original_language", params.language);
+
+      return fetchTmdb(`/discover/movie?${q}`, signal);
+    },
+
+    getTVShowsAdvanced: (
+      params: {
+        genreIds?: number[];
+        sortBy?: string;
+        yearStart?: number;
+        yearEnd?: number;
+        minRating?: number;
+        language?: string;
+        /** vote_count.gte — pair with minRating so zero-vote titles never surface. */
+        minVotes?: number;
+        page?: number;
+      },
+      signal?: AbortSignal | null,
+    ) => {
+      const q = new URLSearchParams();
+      q.set("page", String(params.page ?? 1));
+      q.set("sort_by", params.sortBy ?? "popularity.desc");
+      q.set("include_adult", "false");
+      if (params.genreIds?.length)
+        q.set("with_genres", params.genreIds.join(","));
+      if (params.yearStart !== undefined)
+        q.set("first_air_date.gte", `${params.yearStart}-01-01`);
+      if (params.yearEnd !== undefined)
+        q.set("first_air_date.lte", `${params.yearEnd}-12-31`);
+      if (params.minRating !== undefined) {
+        q.set("vote_average.gte", String(params.minRating));
+        q.set("vote_count.gte", String(params.minVotes ?? 60));
+      }
+      if (params.language) q.set("with_original_language", params.language);
+
+      return fetchTmdb(`/discover/tv?${q}`, signal);
     },
 
     getExternalIds: (

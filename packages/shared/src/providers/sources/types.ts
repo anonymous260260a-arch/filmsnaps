@@ -27,12 +27,26 @@ export interface StreamLink {
   _meta?: {
     codec: string;
     audio: string;
+    /**
+     * Spoken language when the upstream states one (moviebox's 🎧 line:
+     * "Arabic", "French", "Hindi" …). Display-only — `audio` keeps the
+     * sub/dub/original/unknown tag every ranker and counter reads.
+     */
+    audioLanguage?: string;
     source: string;
     isDownloadOnly: boolean;
     isWebReady: boolean;
     sizeBytes?: number;
     /**
-     * Sidecar subtitles for this stream (way2movies, justanime).
+     * Sizes are honest but shorter-form than the shared MIN_SIZE_MB floors
+     * assume (a 420 MB 1080p episode is normal; a 420 MB 1080p movie is not).
+     * Set by adapters for episode-length catalogues → rankStreams skips the
+     * min-size floor for that link only. Absent = the floor applies, which is
+     * every existing provider's behaviour.
+     */
+    skipMinSizeFloor?: boolean;
+    /**
+     * Sidecar subtitles for this stream (way2movies, justanime, moviebox).
      * `default === true` flags the track the upstream calls "captions"
      * (justanime) — players auto-attach those. Absent `default` = optional
      * user-toggleable track only.
@@ -99,6 +113,23 @@ export interface StreamSourceConfig {
    */
   urlTemplate?: string;
   urlTemplateTv?: string;
+  /**
+   * HTTP method for template-built requests. Default "GET". "POST" sources
+   * send `bodyTemplate` (movies) / `bodyTemplateTv` (shows) as a JSON body —
+   * used by upstreams whose route is POST-only (api.bingr.one 403s GET).
+   * Mobile's on-device fetcher only issues GET; such sources belong on
+   * `platforms: ['web']` providers resolved through /api/player/direct.
+   */
+  method?: "GET" | "POST";
+  /**
+   * JSON request body for POST sources. Same placeholders as urlTemplate
+   * ({tmdbId} {imdbId} {type} {season} {episode}). `bodyTemplate` is used
+   * for movies, `bodyTemplateTv` for shows — give each its own JSON when
+   * the payload shape differs per media type (bing: movie queries must not
+   * carry season/episode keys or the upstream treats them as a TV lookup).
+   */
+  bodyTemplate?: string;
+  bodyTemplateTv?: string;
   /** Optional custom headers for API requests. */
   headers?: Record<string, string>;
   /**

@@ -223,6 +223,9 @@ export function trackWatchEnd(
     eager: dims.eager,
     prefAudioLang: cachedPrefAudioLang,
   };
+  // E2 — which surface closed the intent (direct native player vs embed
+  // webview). "direct" when absent (legacy rows / direct pipeline default).
+  if (dims.surface !== undefined) payload.surface = dims.surface;
   // E1 — enriched difficulty + outcome signals (optional dims, whitelisted).
   if (dims.stallMs !== undefined) payload.stallMs = bucketStallMs(dims.stallMs);
   if (dims.rebufferCount !== undefined)
@@ -347,11 +350,21 @@ export function trackSearchPerformed(dims: SearchPerformedDims): void {
 /** P4 — watch-page opened: the top of the playback funnel (direct vs embed). */
 // Dedupe guard: dev StrictMode remounts the watch route twice → one event.
 let lastWatchOpenedAt = 0;
-export function trackWatchOpened(dims: { surface: "direct" | "embed" }): void {
+export function trackWatchOpened(dims: {
+  surface: "direct" | "embed";
+  mediaType?: "movie" | "tv";
+}): void {
   const now = Date.now();
   if (now - lastWatchOpenedAt < 1000) return;
   lastWatchOpenedAt = now;
-  enqueue("watch_opened", { surface: dims.surface }, baseEnvelope());
+  enqueue(
+    "watch_opened",
+    {
+      surface: dims.surface,
+      ...(dims.mediaType ? { mediaType: dims.mediaType } : {}),
+    },
+    baseEnvelope(),
+  );
 }
 
 /**
@@ -410,10 +423,14 @@ export function trackSessionEnd(dims: SessionEndDims): void {
 /**
  * P3 — read the live session counters, emit session_end, and restart the
  * foreground-session window. Call exactly once on AppState → background.
+ * Zero-signal sessions (no events, no screen seen) are dropped instead of
+ * written as junk rows — iOS/Android can fire background during transitions.
  */
 export function emitSessionEndOnBackground(): void {
   const snap = getSessionSnapshot();
-  trackSessionEnd(snap);
+  if (snap.eventCount > 0 || snap.lastScreen) {
+    trackSessionEnd(snap);
+  }
   startNewSession();
 }
 

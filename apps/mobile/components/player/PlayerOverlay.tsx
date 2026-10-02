@@ -42,7 +42,7 @@ import type { PlayerAdapter } from "./types";
 import type { SubtitleSearchQuery } from "../../lib/subtitleSearch";
 import { ProgressBar } from "./ProgressBar";
 import { AudioTrackSheet } from "./AudioTrackSheet";
-import { SubtitleSheet } from "./SubtitleSheet";
+import { SubtitleSheet, type SidecarSubtitle } from "./SubtitleSheet";
 import type { AutoSyncSourceInfo } from "./AutoSyncButton";
 import { PlayerSettingsSheet } from "./PlayerSettingsSheet";
 import { DoubleTapRippleOverlay } from "./DoubleTapRippleOverlay";
@@ -92,6 +92,8 @@ interface PlayerOverlayProps {
   subtitleKey?: string;
   /** Enables the "Load subtitles online" section in the subtitle sheet. */
   subtitleOnlineSearch?: SubtitleSearchQuery;
+  /** Subtitle files shipped with the active stream ("With this source"). */
+  subtitleSidecars?: SidecarSubtitle[];
   /** Enables the Auto Sync button in the subtitle sheet. */
   autoSync?: {
     contentId: string;
@@ -135,6 +137,7 @@ export function PlayerOverlay({
   onAudioTrackSelected,
   subtitleKey,
   subtitleOnlineSearch,
+  subtitleSidecars,
   autoSync,
   onSourcePicker,
   onToggleFullscreen,
@@ -998,7 +1001,9 @@ export function PlayerOverlay({
 
               {/* Bottom-right: CC + fullscreen (proper corner-bracket icons) */}
               <View style={styles.bottomRightRow}>
-                {(subtitleTracks.length > 0 || !!subtitleOnlineSearch) && (
+                {(subtitleTracks.length > 0 ||
+                  !!subtitleOnlineSearch ||
+                  (subtitleSidecars?.length ?? 0) > 0) && (
                   <TouchableOpacity
                     onPress={openSubtitleSheet}
                     style={styles.iconButton}
@@ -1093,6 +1098,7 @@ export function PlayerOverlay({
         player={player}
         storageKey={subtitleKey}
         onlineSearch={subtitleOnlineSearch}
+        sidecars={subtitleSidecars}
         autoSync={autoSync}
         onClose={closeSubtitleSheet}
       />
@@ -1104,6 +1110,10 @@ export function PlayerOverlay({
         onSelectSpeed={handleSelectSpeed}
         screenFit={screenFit}
         onSelectFit={handleSelectFit}
+        subtitleBottomMargin={settings.subtitleBottomMargin}
+        onSelectSubtitleMargin={(fraction) =>
+          updateSetting("subtitleBottomMargin", fraction)
+        }
         lockAvailable={lockAvailable}
         isLocked={isLocked}
         onLock={handleLock}

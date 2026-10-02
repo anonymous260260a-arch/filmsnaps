@@ -8,9 +8,11 @@ import {
   Calendar,
   Tv,
   ArrowLeft,
+  ChevronLeft,
+  Film,
   Play,
+  Share2,
   Youtube,
-  ChevronDown,
 } from "lucide-react";
 import { getImageUrl, getTrailerKey } from "@/lib/tmdb";
 import dynamic from "next/dynamic";
@@ -19,7 +21,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SaveButton } from "@/components/SaveButton";
 import { useResumeTarget } from "@/hooks/useResumeTarget";
+import { useToast } from "@/hooks/use-toast";
 import { prefetchDirectMedia } from "@/lib/directPrefetch";
+import { pickMoreLikeThis } from "@/lib/moreLikeThis";
 import { useQueryClient } from "@tanstack/react-query";
 import { Suspense } from "react";
 import { SkeletonPlayer } from "@/components/SkeletonLoader";
@@ -28,6 +32,7 @@ import DownloadBadge from "@/components/download/DownloadBadge";
 import DownloadButton from "@/components/download/DownloadButton";
 import { CastCarousel } from "@/components/CastCarousel";
 import { TrailerModal } from "@/components/TrailerModal";
+import { DetailEpisodes } from "@/components/detail/DetailEpisodes";
 
 const VideoPlayer = dynamic(
   () =>
@@ -41,9 +46,13 @@ export default function TVDetailClient({ show }: { show: any }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [trailerOpen, setTrailerOpen] = useState(false);
   const [overviewOpen, setOverviewOpen] = useState(false);
   const trailerKey = getTrailerKey(show.videos);
+  // More Like This: TMDB's /recommendations engine (site-quality) with
+  // /similar fallback — same policy as mobile detail pages.
+  const moreLikeThis = pickMoreLikeThis(show);
   const resume = useResumeTarget(
     String(show.id),
     "tv",
@@ -61,6 +70,36 @@ export default function TVDetailClient({ show }: { show: any }) {
   const firstAirYear = show.first_air_date
     ? new Date(show.first_air_date).getFullYear()
     : null;
+
+  // App-parity CTA copy: Watch Again / Resume S# E# / Play S1 E1.
+  const ctaLabel = resume.point
+    ? resume.point.percent >= 0.95
+      ? "Watch Again"
+      : `Resume S${resume.point.season ?? 1} E${resume.point.episode ?? 1}`
+    : "Play S1 E1";
+
+  const handleBack = () => {
+    if (window.history.state?.idx) router.back();
+    else router.push("/");
+  };
+
+  const handleShare = async () => {
+    const url = window.location.href;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: show.name, url });
+      } catch {
+        /* user dismissed the share sheet */
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast({ title: "Link copied" });
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
 
   // Prefetch watch page data on hover — warms the cache before navigation
   const handleWatchPrefetch = () => {
@@ -101,11 +140,15 @@ export default function TVDetailClient({ show }: { show: any }) {
     <div className="min-h-screen bg-background">
       <main className="pt-16">
         {/* ════════════════════════════════════════════════════════════════
-            PHONE HERO  (<sm only)
+            PHONE HERO  (<sm only) — mobile-app detail parity: short
+            backdrop + glass nav, poster/info row, gold CTA + Trailer/
+            Download row, Read more overview, season/episode list.
            ══════════════════════════════════════════════════════════════ */}
         <div className="sm:hidden">
           <div className="relative">
-            <div className="relative w-full aspect-[3/4] max-h-[62vh] overflow-hidden">
+            {/* Backdrop — app parity: min(42vh, 350px), permanent fade
+                into the page background */}
+            <div className="relative w-full h-[42vh] max-h-[350px] overflow-hidden bg-[#222226]">
               {(show.backdrop_path || show.poster_path) && (
                 <Image
                   src={getImageUrl(
@@ -120,170 +163,174 @@ export default function TVDetailClient({ show }: { show: any }) {
                   className="object-cover"
                 />
               )}
-              <div className="absolute inset-0 bg-gradient-to-t from-[#070708] via-[#070708]/10 to-black/40" />
-              <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#070708] to-transparent" />
+              <div className="absolute inset-x-0 bottom-0 h-[70%] bg-gradient-to-t from-[#070708] via-[#070708]/55 to-transparent" />
 
-              <Link href="/" className="absolute top-3 left-3 z-10">
-                <span className="flex items-center justify-center h-10 w-10 rounded-full bg-black/40 backdrop-blur-md ring-1 ring-white/10 active:scale-95 transition-transform">
-                  <ArrowLeft className="h-5 w-5 text-white" />
-                </span>
-              </Link>
-
-              <div className="absolute top-3 right-3 z-10">
-                <SaveButton
-                  movie={show}
-                  size="lg"
-                  className="bg-black/40 backdrop-blur-md ring-1 ring-white/10"
-                />
+              {/* Floating glass nav — back / bookmark / share */}
+              <div className="absolute inset-x-4 top-4 z-20 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  aria-label="Go back"
+                  className="flex h-[38px] w-[38px] items-center justify-center rounded-full border border-white/[0.15] bg-[#0E0E11]/75 text-foreground backdrop-blur-md transition active:scale-95"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </button>
+                <div className="flex items-center gap-2.5">
+                  <SaveButton
+                    movie={show}
+                    showLabel={false}
+                    className="h-[38px] w-[38px] rounded-full border border-white/[0.15] p-0 backdrop-blur-md"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleShare}
+                    aria-label="Share"
+                    className="flex h-[38px] w-[38px] items-center justify-center rounded-full border border-white/[0.15] bg-[#0E0E11]/75 text-foreground backdrop-blur-md transition active:scale-95"
+                  >
+                    <Share2 className="h-[18px] w-[18px]" />
+                  </button>
+                </div>
               </div>
+            </div>
 
-              <div className="absolute inset-x-0 bottom-0 px-4 pb-4 flex items-end gap-3">
-                {show.poster_path && (
-                  <div className="relative w-20 aspect-[2/3] rounded-lg overflow-hidden shadow-2xl shadow-black/60 ring-1 ring-white/[0.12] flex-shrink-0">
+            {/* Content — poster overlaps the backdrop by 52px (app parity) */}
+            <div className="relative z-10 -mt-[52px] px-4">
+              <div className="flex items-center">
+                {show.poster_path ? (
+                  <div className="relative h-[156px] w-[104px] shrink-0 overflow-hidden rounded-xl border border-white/[0.06] shadow-[0_8px_28px_rgba(0,0,0,0.55)]">
                     <Image
                       src={getImageUrl(show.poster_path ?? "", "w342")}
                       alt={show.name}
                       fill
                       priority
+                      sizes="104px"
                       className="object-cover"
                     />
                   </div>
+                ) : (
+                  <div className="flex h-[156px] w-[104px] shrink-0 items-center justify-center rounded-xl border border-white/[0.06] bg-[#222226]">
+                    <Film className="h-7 w-7 text-zinc-600" />
+                  </div>
                 )}
-                <div className="min-w-0 pb-0.5">
-                  <h1
-                    className="font-black tracking-tight text-foreground leading-[1.08] [text-wrap:balance]"
-                    style={{ fontSize: "clamp(1.35rem, 6.5vw, 1.9rem)" }}
-                  >
+
+                <div className="ml-[18px] min-w-0 flex-1 self-center">
+                  <h1 className="mb-1.5 line-clamp-2 text-lg font-semibold leading-[22px] text-foreground">
                     {show.name}
                   </h1>
-                  {firstAirYear && (
-                    <span className="text-muted-foreground/70 font-medium text-sm">
-                      {firstAirYear}
-                    </span>
-                  )}
-                  {show.tagline && (
-                    <p className="text-xs italic text-muted-foreground/70 mt-0.5 line-clamp-1">
-                      {show.tagline}
-                    </p>
+                  <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+                    {show.vote_average > 0 && (
+                      <span className="rounded-md border border-[#D4A237]/30 bg-[#D4A237]/15 px-[7px] py-0.5 text-[11px] font-semibold text-[#D4A237]">
+                        ★ {show.vote_average.toFixed(1)}
+                      </span>
+                    )}
+                    {firstAirYear && (
+                      <span className="rounded-md bg-white/[0.08] px-[7px] py-0.5 text-[11px] font-medium text-zinc-400">
+                        {firstAirYear}
+                      </span>
+                    )}
+                    {show.number_of_seasons > 0 && (
+                      <span className="inline-flex items-center gap-[3px] rounded-md bg-white/[0.08] px-[7px] py-0.5 text-[11px] font-medium text-zinc-400">
+                        <Tv className="h-3 w-3 text-zinc-600" />
+                        {show.number_of_seasons} Season
+                        {show.number_of_seasons !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+                  {show.genres && show.genres.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {show.genres.slice(0, 3).map((genre: any) => (
+                        <span
+                          key={genre.id}
+                          className="rounded-md border border-white/[0.06] bg-[#222226] px-[7px] py-0.5 text-[10px] font-medium text-zinc-400"
+                        >
+                          {genre.name}
+                        </span>
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>
-            </div>
 
-            <div className="px-4 pt-4 pb-2 space-y-4">
-              <div className="flex flex-wrap items-center gap-2.5">
-                {show.vote_average > 0 && (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-accent/15 text-amber-accent text-xs font-bold">
-                    <Star className="h-3 w-3 fill-amber-accent" />
-                    {show.vote_average.toFixed(1)}
-                  </span>
-                )}
-                {show.first_air_date && (
-                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                    <Calendar className="h-3 w-3" />
-                    {new Date(show.first_air_date).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
-                  </span>
-                )}
-                {show.number_of_seasons && (
-                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                    <Tv className="h-3 w-3" />
-                    {show.number_of_seasons} Season
-                    {show.number_of_seasons !== 1 ? "s" : ""}
-                  </span>
-                )}
-              </div>
-
-              {show.genres && show.genres.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 -mt-1">
-                  {show.genres.slice(0, 4).map((genre: any) => (
-                    <Badge
-                      key={genre.id}
-                      variant="secondary"
-                      className="bg-white/[0.04] border border-white/[0.06] text-muted-foreground px-2.5 py-0.5 text-[11px] font-medium"
-                    >
-                      {genre.name}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex items-center gap-2 pt-1">
+              {/* Actions — primary CTA + Trailer / Download row */}
+              <div className="mt-[18px]">
                 <Button
                   onClick={() => router.push(watchHref)}
                   onMouseEnter={handleWatchPrefetch}
                   onFocus={handleWatchPrefetch}
-                  className="flex-1 gap-2 h-12 rounded-full font-bold text-sm text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] active:scale-[0.98] active:brightness-95 transition-all duration-150"
+                  className="w-full gap-2 h-auto py-3.5 rounded-xl font-semibold text-[15px] text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] active:scale-[0.98] active:brightness-95 transition-all duration-150"
                 >
-                  <Play className="w-5 h-5 fill-current" />
-                  {resume.point ? "Resume" : "Watch Now"}
+                  <Play className="h-[18px] w-[18px] fill-current" />
+                  {ctaLabel}
                 </Button>
-                <DownloadButton tmdbId={show.id} mediaType="tv" />
+                <div className="mt-3 flex items-center gap-2.5">
+                  {trailerKey && (
+                    <button
+                      type="button"
+                      onClick={() => setTrailerOpen(true)}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/[0.06] bg-[#0E0E11]/80 py-[11px] text-[13px] font-medium text-foreground transition active:scale-[0.98]"
+                    >
+                      <Youtube size={16} className="text-[#FF0000]" />
+                      Trailer
+                    </button>
+                  )}
+                  <DownloadButton
+                    tmdbId={show.id}
+                    mediaType="tv"
+                    buttonClassName="flex-1 justify-center rounded-xl border-white/[0.06] bg-[#0E0E11]/80 py-[11px] text-[13px] font-medium"
+                  />
+                </div>
+                <div className="mt-3 empty:hidden">
+                  <DownloadBadge />
+                </div>
               </div>
-              <DownloadBadge />
 
+              {/* Overview */}
               {show.overview && (
-                <div className="pt-1">
-                  <button
-                    onClick={() => setOverviewOpen((v) => !v)}
-                    className="flex items-center justify-between w-full text-left"
-                    aria-expanded={overviewOpen}
-                  >
-                    <h2 className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground/60">
-                      Overview
-                    </h2>
-                    <ChevronDown
-                      className={`h-4 w-4 text-muted-foreground/60 transition-transform duration-200 ${overviewOpen ? "rotate-180" : ""}`}
-                    />
-                  </button>
+                <div className="mt-6">
+                  <h2 className="mb-2 text-[15px] font-semibold text-foreground">
+                    Overview
+                  </h2>
                   <p
-                    className={`text-sm text-foreground/80 leading-relaxed mt-2 ${overviewOpen ? "" : "line-clamp-3"}`}
+                    className={`text-sm leading-[21px] text-zinc-400 ${overviewOpen ? "" : "line-clamp-3"}`}
                   >
                     {show.overview}
                   </p>
-                </div>
-              )}
-
-              {show.credits?.cast?.length > 0 && (
-                <div className="pt-1 -mx-4 px-4">
-                  <CastCarousel cast={show.credits.cast} />
-                </div>
-              )}
-
-              {trailerKey && (
-                <div className="pt-1">
-                  <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground/60">
-                      Trailer
-                    </h2>
+                  {show.overview.length > 120 && (
                     <button
-                      onClick={() => setTrailerOpen(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A237]/10 text-[#D4A237] hover:bg-[#D4A237]/20 text-xs font-semibold transition-all"
-                      aria-label="Open trailer in modal"
+                      type="button"
+                      onClick={() => setOverviewOpen((v) => !v)}
+                      aria-expanded={overviewOpen}
+                      className="mt-1 text-xs font-medium text-[#D4A237]"
                     >
-                      <Youtube size={14} />
-                      Fullscreen
+                      {overviewOpen ? "Show less" : "Read more"}
                     </button>
-                  </div>
-                  <Suspense fallback={<SkeletonPlayer />}>
-                    <div className="rounded-xl overflow-hidden ring-1 ring-white/[0.06] shadow-xl">
-                      <VideoPlayer videoKey={trailerKey} title={show.name} />
-                    </div>
-                  </Suspense>
+                  )}
+                </div>
+              )}
+
+              {/* Episodes — season pills + list (SeasonPicker parity) */}
+              <DetailEpisodes
+                tmdbId={show.id}
+                seasons={show.seasons ?? []}
+                initialSeason={resume.point?.season ?? null}
+                extraQuery={animeQs}
+              />
+
+              {/* Cast */}
+              {show.credits?.cast?.length > 0 && (
+                <div className="mt-6 -mx-4 px-4">
+                  <CastCarousel cast={show.credits.cast} />
                 </div>
               )}
             </div>
           </div>
 
-          {show.similar?.results && show.similar.results.length > 0 && (
+          {moreLikeThis && (moreLikeThis.results?.length ?? 0) > 0 && (
             <div className="relative py-8">
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
               <MediaCarousel
-                title="Similar TV Shows"
-                items={show.similar.results}
+                title="More Like This"
+                items={moreLikeThis.results as any}
                 mediaType="tv"
               />
             </div>
@@ -405,7 +452,7 @@ export default function TVDetailClient({ show }: { show: any }) {
                       className="group gap-2.5 px-7 py-3.5 h-auto rounded-full font-bold text-sm text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
                     >
                       <Play className="w-5 h-5 fill-current" />
-                      {resume.point ? "Resume" : "Watch Now"}
+                      {ctaLabel}
                     </Button>
                     <DownloadButton tmdbId={show.id} mediaType="tv" />
                     <DownloadBadge />
@@ -464,12 +511,12 @@ export default function TVDetailClient({ show }: { show: any }) {
             </div>
           </div>
 
-          {show.similar?.results && show.similar.results.length > 0 && (
+          {moreLikeThis && (moreLikeThis.results?.length ?? 0) > 0 && (
             <div className="relative py-14">
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
               <MediaCarousel
-                title="Similar TV Shows"
-                items={show.similar.results}
+                title="More Like This"
+                items={moreLikeThis.results as any}
                 mediaType="tv"
               />
             </div>

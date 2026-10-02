@@ -1,7 +1,8 @@
 /**
  * SeeAllButton — Standardised "See All" link for section headers.
  *
- * - Gold-muted (#B88B2A) text + ForwardIcon
+ * - Accent-tinted text + ForwardIcon when a hero accent is live (falls back
+ *   to the brand gold-dim otherwise)
  * - Consistent hitSlop, font, and spacing
  * - accessibilityRole="button" with hint
  */
@@ -14,12 +15,17 @@ import { colors } from "../theme/colors";
 interface SeeAllButtonProps {
   onPress: () => void;
   label?: string;
+  /** Live hero accent — omit (or null) to keep the brand gold-dim look. */
+  accent?: string | null;
 }
 
 export function SeeAllButton({
   onPress,
   label = "See All",
+  accent,
 }: SeeAllButtonProps) {
+  const tint = accent ?? colors.goldDim;
+
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -32,14 +38,14 @@ export function SeeAllButton({
       <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
         <Text
           style={{
-            color: colors.goldDim,
+            color: tint,
             fontSize: 12,
             fontFamily: "Inter_500Medium",
           }}
         >
           {label}
         </Text>
-        <ForwardIcon width={12} height={12} color={colors.goldDim} />
+        <ForwardIcon width={12} height={12} color={tint} />
       </View>
     </TouchableOpacity>
   );

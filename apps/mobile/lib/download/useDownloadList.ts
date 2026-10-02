@@ -63,6 +63,7 @@ export function formatDate(timestamp: number): string {
 /** Helper: server display name */
 export function serverLabel(server: string): string {
   const labels: Record<string, string> = {
+    hdhub: "HDHub",
     falix: "Falix",
     nxsha: "Nxsha",
     "alt-dl": "Alt DL",

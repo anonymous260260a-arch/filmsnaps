@@ -29,7 +29,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeNavigation } from "@/lib/navigation";
 import { useSettings } from "../../lib/settings";
 import { useDownloadList } from "../../lib/download";
-import { getProvidersForMode } from "@filmsnaps/shared";
+import { getProvidersForMode, isProviderAvailableOn } from "@filmsnaps/shared";
 import { getInfoAsync, documentDirectory } from "expo-file-system/legacy";
 import Constants from "expo-constants";
 import { colors } from "../../theme/colors";
@@ -319,7 +319,10 @@ export default function SettingsScreen() {
   }, []);
 
   const serverProviders = useMemo(
-    () => getProvidersForMode(settings.mode),
+    () =>
+      getProvidersForMode(settings.mode).filter((p) =>
+        isProviderAvailableOn(p, "mobile"),
+      ),
     [settings.mode],
   );
 
@@ -791,7 +794,7 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="bar-chart-outline"
             label="Anonymous usage statistics"
-            subtitle="Helps us fix crashes and improve streaming sources. No personal data."
+            subtitle="Helps us fix crashes and improve streaming sources. No personal data — one random ID, deleted when turned off."
             color={colors.info}
             footer={
               <TouchableOpacity

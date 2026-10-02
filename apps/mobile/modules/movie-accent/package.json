@@ -1,0 +1,16 @@
+{
+  "name": "movie-accent",
+  "version": "0.1.0",
+  "description": "Native Android palette extraction for per-title accent colors",
+  "main": "index.ts",
+  "keywords": [
+    "expo",
+    "palette",
+    "accent"
+  ],
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}

@@ -116,6 +116,38 @@ export function buildStreamSourceUrl(
 }
 
 /**
+ * Build a source's JSON request body from bodyTemplate / bodyTemplateTv
+ * (POST sources — see StreamSourceConfig.method). Same placeholder set as
+ * buildStreamSourceUrl; {season}/{episode} are substituted for TV only, so a
+ * movie body never leaks season keys the upstream would misread as a TV
+ * lookup. Returns null when the source declares no body template.
+ */
+export function buildStreamSourceBody(
+  source: StreamSourceConfig,
+  params: Pick<
+    ResolveStreamsParams,
+    "imdbId" | "tmdbId" | "malId" | "mediaType" | "season" | "episode"
+  >,
+): string | null {
+  const template =
+    params.mediaType === "tv"
+      ? (source.bodyTemplateTv ?? source.bodyTemplate)
+      : (source.bodyTemplate ?? source.bodyTemplateTv);
+  if (!template) return null;
+  let body = template
+    .replace(/\{tmdbId\}/g, String(params.tmdbId ?? ""))
+    .replace(/\{malId\}/g, String(params.malId ?? ""))
+    .replace(/\{imdbId\}/g, params.imdbId ?? "")
+    .replace(/\{type\}/g, params.mediaType);
+  if (params.mediaType === "tv") {
+    body = body
+      .replace(/\{season\}/g, String(params.season ?? 1))
+      .replace(/\{episode\}/g, String(params.episode ?? 1));
+  }
+  return body;
+}
+
+/**
  * Resolve streams from all configured sources for a provider.
  *
  * Each source is fetched independently — a failure or timeout in one source

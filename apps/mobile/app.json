@@ -2,7 +2,7 @@
   "expo": {
     "name": "FilmSnaps",
     "slug": "filmsnaps",
-    "version": "2.3.0",
+    "version": "2.4.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "filmsnaps",
@@ -26,6 +26,25 @@
         "imageWidth": 260
       },
       "package": "app.filmsnaps.mobile",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "category": ["DEFAULT", "BROWSABLE"],
+          "data": [
+            {
+              "scheme": "https",
+              "host": "filmsnap-pro.netlify.app",
+              "pathPrefix": "/movie"
+            },
+            {
+              "scheme": "https",
+              "host": "filmsnap-pro.netlify.app",
+              "pathPrefix": "/tv"
+            }
+          ]
+        }
+      ],
       "navigationBar": {
         "visible": "sticky-immersive",
         "backgroundColor": "#18181b"
@@ -74,6 +93,6 @@
       },
       "feedbackUrl": "https://filmsnaps-feedback.anonymous260260a.workers.dev"
     },
-    "runtimeVersion": "62.0.0"
+    "runtimeVersion": "64.0.0"
   }
 }

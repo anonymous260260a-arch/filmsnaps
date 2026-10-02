@@ -118,6 +118,15 @@ const SERVER_NOTES: Record<string, ServerNote> = {
       "Use the server picker to switch if unavailable.",
     ],
   },
+  moviebox: {
+    title: "Using MovieBox",
+    icon: "albums-outline",
+    lines: [
+      "Aggregates multiple servers — the best-matching language and quality is auto-selected.",
+      "Swipe the server list for more options, including other languages and mirrors.",
+      "Beta source: if a link fails, pick the next one in the list.",
+    ],
+  },
 };
 
 // ── Fallback note for unlisted providers ──

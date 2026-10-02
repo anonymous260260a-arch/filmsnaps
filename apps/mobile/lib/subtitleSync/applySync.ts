@@ -60,10 +60,17 @@ export function rewriteCues(
 }
 
 function formatSrtTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  const ms = Math.round((seconds % 1) * 1000);
+  // Total-millisecond rounding with carry: computing fields independently
+  // (h/m/s from floor, ms from round) breaks when the ms round to 1000 —
+  // "00:00:59,1000" is invalid SRT and Media3's parser REJECTS THE WHOLE
+  // FILE (no track ever surfaces: three consecutive "re-add returned no
+  // track id" with an instantly-successful pristine rollback; a +53.9s
+  // shift lands many cue times exactly on x.9999).
+  const totalMs = Math.max(0, Math.round(seconds * 1000));
+  const h = Math.floor(totalMs / 3_600_000);
+  const m = Math.floor((totalMs % 3_600_000) / 60_000);
+  const s = Math.floor((totalMs % 60_000) / 1000);
+  const ms = totalMs % 1000;
   return (
     String(h).padStart(2, "0") +
     ":" +
@@ -80,12 +87,23 @@ function formatVttTime(seconds: number): string {
 }
 
 function rewriteSrt(cues: Cue[]): string {
-  return cues
-    .map(
-      (c, i) =>
-        `${i + 1}\n${formatSrtTime(c.start)} --> ${formatSrtTime(c.end)}\n${c.text}`,
-    )
-    .join("\n\n");
+  // Byte conventions MATTER here. Device probe (2026-09): the pristine
+  // sidecar that attaches natively is BOM + CRLF ("\uFEFF1\r\n00:…"),
+  // while our rewritten LF-only file parsed to ZERO tracks in the native
+  // reader (three consecutive re-add timeouts; same player, same call,
+  // same directory). The vendored legacy SRT parser evidently requires
+  // CRLF (and/or a BOM), so the rewritten file reproduces both. Trailing
+  // newline included for a terminated final block.
+  return (
+    "\uFEFF" +
+    cues
+      .map(
+        (c, i) =>
+          `${i + 1}\r\n${formatSrtTime(c.start)} --> ${formatSrtTime(c.end)}\r\n${c.text.replace(/\n/g, "\r\n")}`,
+      )
+      .join("\r\n\r\n") +
+    "\r\n"
+  );
 }
 
 /** ASS/SSA: timestamp-only rewrite â€” regex-replace the two time fields on Dialogue lines, leave styling untouched. */
@@ -94,6 +112,7 @@ function rewriteAss(cues: Cue[]): string {
   // Since we only have shifted cues without original lines, generate Dialogue lines.
   // This is a simplified rewrite â€” styling is lost. Use the full rewrite path
   // when original ASS text is available.
+  // BOM + CRLF for the native parser (see rewriteSrt).
   const lines: string[] = [];
   for (let i = 0; i < cues.length; i++) {
     const c = cues[i];
@@ -101,14 +120,17 @@ function rewriteAss(cues: Cue[]): string {
     const end = formatAssTime(c.end);
     lines.push(`Dialogue: 0,${start},${end},Default,,0,0,0,,${c.text}`);
   }
-  return lines.join("\n");
+  return "\uFEFF" + lines.join("\r\n") + "\r\n";
 }
 
 function formatAssTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  const cs = Math.floor(((seconds % 1) * 100) % 100);
+  // Same total-ms carry as formatSrtTime — independent field rounding can
+  // emit centiseconds 100 ("0:00:59.100").
+  const totalMs = Math.max(0, Math.round(seconds * 1000));
+  const h = Math.floor(totalMs / 3_600_000);
+  const m = Math.floor((totalMs % 3_600_000) / 60_000);
+  const s = Math.floor((totalMs % 60_000) / 1000);
+  const cs = Math.floor((totalMs % 1000) / 10);
   return (
     String(h) +
     ":" +
@@ -149,7 +171,21 @@ export async function writeShiftedSubtitleFile(
   try {
     const shifted = rewriteCues(cues, 1, offsetSec, format);
     const base = Paths.cache?.uri ?? Paths.document?.uri ?? "";
-    const dirUri = `${base}${base.endsWith("/") ? "" : "/"}subtitles-sync/`;
+    // Prefer the SOURCE subtitle's own directory. Device evidence
+    // (2026-09): a sidecar re-attached from cache/subtitles/ (the pristine
+    // rollback) succeeds INSTANTLY on the same player and call path where
+    // cache/subtitles-sync/synced-*.srt failed 3× in a row — the native
+    // reader is proven on that directory, so the synced file lives there
+    // too. appliedOffsetMs() is name-based, so the directory is free.
+    const slash = sourceUri.lastIndexOf("/");
+    const sourceDirUri = slash > 0 ? sourceUri.slice(0, slash + 1) : null;
+    const dirUri =
+      sourceDirUri &&
+      sourceDirUri.startsWith("file://") &&
+      base.length > 0 &&
+      sourceDirUri.startsWith(base)
+        ? sourceDirUri
+        : `${base}${base.endsWith("/") ? "" : "/"}subtitles-sync/`;
     const dir = new Directory(dirUri);
     if (!dir.exists) dir.create({ intermediates: true });
     // STABLE name (offset in the name, no timestamp): the persisted subtitle
@@ -162,7 +198,13 @@ export async function writeShiftedSubtitleFile(
     const dest = new File(dir, `synced-${ms}-${origName}`);
     if (dest.exists) dest.delete();
     dest.create();
-    dest.write(shifted);
+    // Await the write: if JS returns the URI before bytes are flushed, the
+    // native sidecar reader can open an empty/partial file — its child
+    // source parses nothing, never yields a subtitle track, and the add
+    // poll times out (observed: three consecutive "re-add returned no
+    // track id" immediately followed by an instant rollback success on
+    // the already-written pristine file).
+    await dest.write(shifted);
     return dest.uri;
   } catch {
     return null;
@@ -222,10 +264,16 @@ export async function ensurePristineSidecar(
   }
 }
 
-/** Offset already baked into a file created by writeShiftedSubtitleFile (ms), else null. */
+/**
+ * Offset already baked into a file created by writeShiftedSubtitleFile
+ * (ms), else null. Handles negative offsets (synced--26280-…). When this
+ * failed to match, ensurePristineSidecar treated an ALREADY-shifted file
+ * as pristine and the stepper's rewrites stacked shifts.
+ */
 export function appliedOffsetMs(uri: string | null | undefined): number | null {
   if (!uri) return null;
   const name = uri.split("/").pop() ?? "";
-  const m = name.match(/^synced-(-?\d+)-/);
-  return m ? Number(m[1]) : null;
+  const m = name.match(/^synced--?(\d+)-/);
+  if (!m) return null;
+  return name.startsWith("synced--") ? -Number(m[1]) : Number(m[1]);
 }

@@ -26,6 +26,7 @@ import {
   FlatList,
   ActivityIndicator,
   StyleSheet,
+  LayoutAnimation,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -60,8 +61,6 @@ interface PlayerHubProps {
   currentProviderId: string;
   getProviderName: (p: ProviderDefinition) => string;
   onSelectProvider: (id: string) => void;
-  /** True while the active provider is the native direct player. */
-  directActive?: boolean;
   /** Default collapse state (default: expanded). */
   defaultCollapsed?: boolean;
   /** HEVC source inspection API (getLinks/select) — renders the Sources tab
@@ -82,6 +81,61 @@ function formatRuntime(seconds: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+/**
+ * Language chips for a source row / the collapsed summary bar. Priority:
+ * upstream-stated spoken language (`_meta.audioLanguage`, moviebox's 🎧
+ * line) → anime sub/dub tag (`_meta.audio`) → legacy name sniff
+ * (Multi / Hindi / English). Moviebox rows with no stated language show
+ * "Original Audio" (the untouched original track) instead of a guess.
+ */
+function langChipsOf(link: StreamLink): string[] {
+  const chips: string[] = [];
+  const spoken = (link._meta?.audioLanguage ?? "").trim();
+  if (spoken) chips.push(spoken.charAt(0).toUpperCase() + spoken.slice(1));
+  const audio = (link._meta?.audio ?? "").toLowerCase();
+  if (audio === "dub" || audio === "sub")
+    chips.push(audio === "dub" ? "Dub" : "Sub");
+  if (chips.length === 0) {
+    if (link._meta?.providerId === "moviebox") {
+      chips.push("Original Audio");
+    } else {
+      const name = (link.name ?? "").toLowerCase();
+      if (name.includes("multi")) chips.push("Multi");
+      else if (name.includes("hindi")) chips.push("Hindi");
+      else if (name.includes("english")) chips.push("English");
+    }
+  }
+  return chips;
+}
+
+/** One-line "what's playing" label for the collapsed summary bar. Movies
+ *  lead with the active source quality; TV leads with the episode. Falls
+ *  back to whatever is known (provider name alone → "Browse"). */
+function hubSummaryLabel(
+  showEpisodes: boolean,
+  providerName: string | null,
+  quality: string | null,
+  season: number,
+  episode: number,
+): string {
+  if (showEpisodes) {
+    const ep = `S${season} E${episode}`;
+    return providerName ? `${ep} · ${providerName}` : ep;
+  }
+  if (quality) return providerName ? `${quality} · ${providerName}` : quality;
+  return providerName ?? "Browse";
+}
+
+/** Verified count for the collapsed summary bar (0 → the chip is hidden). */
+function verifiedLinkCount(
+  links: StreamLink[],
+  statuses: Record<number, ProbeOutcome>,
+): number {
+  let n = 0;
+  for (let i = 0; i < links.length; i++) if (statuses[i] === "valid") n++;
+  return n;
+}
+
 export function PlayerHub({
   showEpisodes,
   tvId,
@@ -92,17 +146,54 @@ export function PlayerHub({
   currentProviderId,
   getProviderName,
   onSelectProvider,
-  directActive = false,
   defaultCollapsed = false,
   sourceApi = null,
 }: PlayerHubProps) {
-  // Collapse state (chevron button; host can also force it)
+  // Collapse state (chevron button). Animated with LayoutAnimation
+  // (same pattern as LegalGate) so expand/collapse feels native instead
+  // of snapping.
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  const toggleCollapsed = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setCollapsed((c) => !c);
+  };
   // Snapshot the HEVC source list — re-read on each render (cheap) so probe
   // statuses stay live while the tab is open.
   const links = sourceApi?.getLinks() ?? [];
+  const statuses = sourceApi?.getStatuses() ?? {};
+  const activeLink = links[sourceApi?.getActiveIndex() ?? -1];
+  const activeProvider = providers.find((p) => p.id === currentProviderId);
+  // Collapsed summary bar content (movies lead with source quality, TV
+  // with the episode).
+  const summaryLabel = hubSummaryLabel(
+    showEpisodes,
+    activeProvider ? getProviderName(activeProvider) : null,
+    activeLink?.quality ?? null,
+    currentSeason,
+    currentEpisode,
+  );
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<HubTab>(showEpisodes ? "episodes" : "servers");
+  // Movies start on Servers (the safe default — Sources only fills once the
+  // HEVC link list arrives) and upgrade to Sources the moment that list is
+  // non-empty. Any explicit tab tap sets tabTouched, which stops the upgrade
+  // from yanking the user back to Sources.
+  const [tabTouched, setTabTouched] = useState(false);
+  const setTabByUser = (next: HubTab) => {
+    setTabTouched(true);
+    setTab(next);
+  };
+  const hasLinks = links.length > 0;
+  useEffect(() => {
+    if (showEpisodes || tabTouched || collapsed || !hasLinks) return;
+    setTab((prev) => (prev === "servers" ? "sources" : prev));
+  }, [showEpisodes, tabTouched, collapsed, hasLinks]);
+  // The direct source API can disappear (switching to an embed server with
+  // no Sources data) — never leave the hub parked on a tab that renders
+  // nothing. Direct setTab: this is a repair, not a user intent.
+  useEffect(() => {
+    if (!sourceApi && tab === "sources") setTab("servers");
+  }, [sourceApi, tab]);
   const [season, setSeason] = useState(currentSeason);
   const seasonScrollRef = useRef<ScrollView>(null);
   const seasonPillX = useRef<Record<number, number>>({});
@@ -163,6 +254,10 @@ export function PlayerHub({
   // EpisodeRail) so a deep episode (e.g. #20) is in view the moment the tab
   // opens — and follows along when next-episode advances. Only when this
   // pane's list is actually mounted and showing the playing season.
+  // #4: the pane unmounts while collapsed, so expanding back re-runs this
+  // (collapsed is a dep) — the onScrollToIndexFailed fallback keeps the
+  // scrollToIndex call safe when the FlatList hasn't rendered the target
+  // row yet (fresh mount after expand).
   useEffect(() => {
     if (collapsed || tab !== "episodes" || !showEpisodes) return;
     if (season !== currentSeason || episodes.length === 0) return;
@@ -171,11 +266,19 @@ export function PlayerHub({
         (ep: any, i: number) => (ep.episode_number ?? i + 1) === currentEpisode,
       );
       if (idx >= 0 && episodeListRef.current) {
-        episodeListRef.current.scrollToIndex({
-          index: idx,
-          viewPosition: 0.25,
-          animated: false,
-        });
+        try {
+          episodeListRef.current.scrollToIndex({
+            index: idx,
+            viewPosition: 0.25,
+            animated: false,
+          });
+        } catch {
+          // Target row not yet rendered — fall back to a layout-based offset.
+          episodeListRef.current.scrollToOffset({
+            offset: Math.max(0, idx * EPISODE_ROW_HEIGHT - 60),
+            animated: false,
+          });
+        }
       }
     }, 90);
     return () => clearTimeout(t);
@@ -189,6 +292,24 @@ export function PlayerHub({
     episodes,
   ]);
 
+  // #3 — season-pill auto-scroll: bring the selected season's pill into
+  // view (long season lists put later pills off-screen). The scaffolding
+  // (ref + onLayout X map) existed but nothing ever scrolled. Runs on
+  // season change, tab open, and expand; waits a beat for pill layout.
+  useEffect(() => {
+    if (collapsed || tab !== "episodes") return;
+    if (seasons.length <= 1) return;
+    const t = setTimeout(() => {
+      const x = seasonPillX.current[season];
+      if (x == null || !seasonScrollRef.current) return;
+      seasonScrollRef.current.scrollTo({
+        x: Math.max(0, x - 40),
+        animated: true,
+      });
+    }, 120);
+    return () => clearTimeout(t);
+  }, [season, seasons.length, collapsed, tab]);
+
   return (
     <View
       style={[styles.cardWrap, { marginBottom: insets.bottom + 8 }]}
@@ -196,105 +317,146 @@ export function PlayerHub({
     >
       {/* ── Tab bar + collapse chevron (order: collapse · Episodes · Servers · Sources) ── */}
       <View style={styles.tabRow} pointerEvents="box-none">
-        <TouchableOpacity
-          style={styles.collapseButton}
-          onPress={() => {
-            Haptics.selectionAsync().catch(() => {});
-            trackFeatureUsed("hub_collapse_toggled", "player");
-            setCollapsed((c) => !c);
-          }}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel={collapsed ? "Expand panel" : "Collapse panel"}
-          accessibilityState={{ expanded: !collapsed }}
-        >
-          <Ionicons
-            name={collapsed ? "chevron-up" : "chevron-down"}
-            size={18}
-            color={colors.textSecondary}
-          />
-        </TouchableOpacity>
-        {showEpisodes && (
+        {/* Collapsed: one informative summary line replaces the idle tab
+            pills — what's playing, its language chips, and probe progress.
+            The whole bar (not just the chevron) is tappable to expand. */}
+        {collapsed && (
           <TouchableOpacity
-            style={[styles.tab, tab === "episodes" && styles.tabActive]}
-            onPress={() => {
-              Haptics.selectionAsync().catch(() => {});
-              trackFeatureUsed("hub_tab_changed", "player");
-              setTab("episodes");
-            }}
+            style={styles.summaryBar}
+            onPress={toggleCollapsed}
             activeOpacity={0.7}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: tab === "episodes" }}
-            accessibilityLabel="Episodes"
+            accessibilityRole="button"
+            accessibilityLabel="Expand panel"
           >
             <Ionicons
-              name="list-outline"
-              size={15}
-              color={tab === "episodes" ? colors.gold : colors.textTertiary}
+              name="chevron-up"
+              size={16}
+              color={colors.textSecondary}
             />
-            <Text
-              style={[
-                styles.tabText,
-                tab === "episodes" && styles.tabTextActive,
-              ]}
-            >
-              Episodes
+            <Text style={styles.summaryText} numberOfLines={1}>
+              {summaryLabel}
             </Text>
+            {activeLink &&
+              langChipsOf(activeLink)
+                .slice(0, 2)
+                .map((chip) => (
+                  <View key={chip} style={styles.langChip}>
+                    <Text style={styles.langChipText}>{chip}</Text>
+                  </View>
+                ))}
+            {links.length > 0 && (
+              <Text style={styles.summaryVerText}>
+                {verifiedLinkCount(links, statuses)}/{links.length}
+              </Text>
+            )}
           </TouchableOpacity>
-        )}{" "}
-        <TouchableOpacity
-          style={[styles.tab, tab === "servers" && styles.tabActive]}
-          onPress={() => {
-            Haptics.selectionAsync().catch(() => {});
-            trackFeatureUsed("hub_tab_changed", "player");
-            setTab("servers");
-          }}
-          activeOpacity={0.7}
-          accessibilityRole="tab"
-          accessibilityState={{ selected: tab === "servers" }}
-          accessibilityLabel="Servers"
-        >
-          <Ionicons
-            name="server-outline"
-            size={15}
-            color={tab === "servers" ? colors.gold : colors.textTertiary}
-          />
-          <Text
-            style={[styles.tabText, tab === "servers" && styles.tabTextActive]}
-          >
-            Servers
-          </Text>
-        </TouchableOpacity>
-        {sourceApi && (
-          <TouchableOpacity
-            style={[styles.tab, tab === "sources" && styles.tabActive]}
-            onPress={() => {
-              Haptics.selectionAsync().catch(() => {});
-              trackFeatureUsed("quality_manual_override", "player", {
-                fromTab: "hub_sources_tab",
-                surface: "direct",
-              });
-              setTab("sources");
-            }}
-            activeOpacity={0.7}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: tab === "sources" }}
-            accessibilityLabel="Sources"
-          >
-            <Ionicons
-              name="film-outline"
-              size={15}
-              color={tab === "sources" ? colors.gold : colors.textTertiary}
-            />
-            <Text
-              style={[
-                styles.tabText,
-                tab === "sources" && styles.tabTextActive,
-              ]}
+        )}
+        {!collapsed && (
+          <>
+            <TouchableOpacity
+              style={styles.collapseButton}
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                trackFeatureUsed("hub_collapse_toggled", "player");
+                toggleCollapsed();
+              }}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={collapsed ? "Expand panel" : "Collapse panel"}
+              accessibilityState={{ expanded: !collapsed }}
             >
-              Sources
-            </Text>
-          </TouchableOpacity>
+              <Ionicons
+                name={collapsed ? "chevron-up" : "chevron-down"}
+                size={18}
+                color={colors.textSecondary}
+              />
+            </TouchableOpacity>
+            {showEpisodes && (
+              <TouchableOpacity
+                style={[styles.tab, tab === "episodes" && styles.tabActive]}
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  trackFeatureUsed("hub_tab_changed", "player");
+                  setTabByUser("episodes");
+                }}
+                activeOpacity={0.7}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: tab === "episodes" }}
+                accessibilityLabel="Episodes"
+              >
+                <Ionicons
+                  name="list-outline"
+                  size={15}
+                  color={tab === "episodes" ? colors.gold : colors.textTertiary}
+                />
+                <Text
+                  style={[
+                    styles.tabText,
+                    tab === "episodes" && styles.tabTextActive,
+                  ]}
+                >
+                  Episodes
+                </Text>
+              </TouchableOpacity>
+            )}{" "}
+            <TouchableOpacity
+              style={[styles.tab, tab === "servers" && styles.tabActive]}
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                trackFeatureUsed("hub_tab_changed", "player");
+                setTabByUser("servers");
+              }}
+              activeOpacity={0.7}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: tab === "servers" }}
+              accessibilityLabel="Servers"
+            >
+              <Ionicons
+                name="server-outline"
+                size={15}
+                color={tab === "servers" ? colors.gold : colors.textTertiary}
+              />
+              <Text
+                style={[
+                  styles.tabText,
+                  tab === "servers" && styles.tabTextActive,
+                ]}
+              >
+                Servers
+              </Text>
+            </TouchableOpacity>
+            {sourceApi && (
+              <TouchableOpacity
+                style={[styles.tab, tab === "sources" && styles.tabActive]}
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  trackFeatureUsed("quality_manual_override", "player", {
+                    fromTab: "hub_sources_tab",
+                    surface: "direct",
+                  });
+                  setTabByUser("sources");
+                }}
+                activeOpacity={0.7}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: tab === "sources" }}
+                accessibilityLabel="Sources"
+              >
+                <Ionicons
+                  name="film-outline"
+                  size={15}
+                  color={tab === "sources" ? colors.gold : colors.textTertiary}
+                />
+                <Text
+                  style={[
+                    styles.tabText,
+                    tab === "sources" && styles.tabTextActive,
+                  ]}
+                >
+                  Sources
+                </Text>
+              </TouchableOpacity>
+            )}
+          </>
         )}
       </View>
 
@@ -393,6 +555,14 @@ export function PlayerHub({
                   offset: EPISODE_ROW_HEIGHT * index,
                   index,
                 })}
+                // RN's documented path for scrollToIndex on a not-yet-rendered
+                // row (fresh mount after expand) — retry once via offset.
+                onScrollToIndexFailed={(e) => {
+                  episodeListRef.current?.scrollToOffset({
+                    offset: Math.max(0, e.index * EPISODE_ROW_HEIGHT - 60),
+                    animated: false,
+                  });
+                }}
                 renderItem={({ item: ep, index }) => {
                   const epNum = ep.episode_number ?? index + 1;
                   const isActive =
@@ -605,15 +775,8 @@ export function PlayerHub({
                 const isActive = idx === sourceApi.getActiveIndex();
                 const isRecommended = idx === sourceApi.getRecommendedIndex();
                 const isLastUsed = idx === sourceApi.getLastUsedIndex();
-                const status = sourceApi.getStatuses()[idx];
-                const langs = (link.name ?? "").toLowerCase();
-                const langTag = langs.includes("multi")
-                  ? "Multi"
-                  : langs.includes("hindi")
-                    ? "Hindi"
-                    : langs.includes("english")
-                      ? "English"
-                      : null;
+                const status = statuses[idx];
+                const langChips = langChipsOf(link);
                 return (
                   <TouchableOpacity
                     key={`${idx}-${link.url?.slice(-16) ?? idx}`}
@@ -704,11 +867,25 @@ export function PlayerHub({
                             </Text>
                           </>
                         ) : (
-                          <Text style={styles.serverNote}>Checking…</Text>
+                          <>
+                            {/* #9 — a tiny spinner makes "Checking…" read as
+                                active work (probe in flight), not a dead row. */}
+                            <ActivityIndicator
+                              size={11}
+                              color={colors.textTertiary}
+                            />
+                            <Text style={styles.serverNote}>Checking…</Text>
+                          </>
                         )}
-                        {langTag ? (
-                          <Text style={styles.serverNote}>· {langTag}</Text>
-                        ) : null}
+                        {langChips.length > 0 && (
+                          <View style={styles.chipRow}>
+                            {langChips.map((chip) => (
+                              <View key={chip} style={styles.langChip}>
+                                <Text style={styles.langChipText}>{chip}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        )}
                       </View>
                     </View>
                     {isActive && (
@@ -980,6 +1157,47 @@ const styles = StyleSheet.create({
   },
   serverTagTextDirect: {
     color: colors.gold,
+  },
+  // Collapsed summary bar (replaces the tab pills while collapsed).
+  summaryBar: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  summaryText: {
+    flexShrink: 1,
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  summaryVerText: {
+    color: colors.textTertiary,
+    fontSize: 11.5,
+    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
+  },
+  // Language chip (Sources rows + collapsed summary bar).
+  langChip: {
+    borderRadius: 999,
+    backgroundColor: colors.bgSubtle,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    alignSelf: "flex-start",
+  },
+  langChipText: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  chipRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    flexShrink: 1,
+    flexWrap: "wrap",
   },
   recommendedTag: {
     backgroundColor: colors.goldBadge,

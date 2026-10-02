@@ -1,14 +1,16 @@
 /**
- * PlayerControlOverlay — cinematic overlay with branded loading,
- * fullscreen toggle, and CPU abuse warning.
+ * PlayerControlOverlay — branded loading cover + CPU abuse warning.
  *
- * Auto-hides after 2s of inactivity. Loading overlay is
- * pointer-events-none so iframe stays clickable underneath.
+ * (It used to also fade in top/bottom "legibility" gradient shadows on every
+ * touch — those double-fired with the player's own chrome and read as a
+ * shadow film over the pill/top/bottom controls, so they're gone.)
+ *
+ * Loading overlay is pointer-events-none so iframe stays clickable underneath.
  */
 
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { AlertCircle, X } from "lucide-react";
 import { usePlayer } from "./PlayerProvider";
 
@@ -17,39 +19,36 @@ interface PlayerControlOverlayProps {
   isPending?: boolean;
 }
 
-const HIDE_DELAY = 2000; // ms before controls auto-hide
+/**
+ * Hard ceiling on the opaque loading cover. If the ready signal never arrives
+ * (hung season fetch, missed iframe load event), the user would otherwise
+ * stare at an un-dismissable sheet over a player that is already playing —
+ * audio keeps going because the cover is pointer-events-none.
+ */
+const MAX_LOADING_MS = 20000;
 
 export function PlayerControlOverlay({
   isPending = false,
 }: PlayerControlOverlayProps) {
   const { cpuWarning, setCpuWarning } = usePlayer();
-  const [visible, setVisible] = useState(false); // start hidden, show on interaction
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [loadingExpired, setLoadingExpired] = useState(false);
 
+  // Reset whenever loading ends so the next episode/season gets a full budget.
   useEffect(() => {
-    const show = () => {
-      setVisible(true);
-      if (hideTimer.current) clearTimeout(hideTimer.current);
-      hideTimer.current = setTimeout(() => setVisible(false), HIDE_DELAY);
-    };
-
-    // Show controls on any interaction
-    document.addEventListener("mousemove", show);
-    document.addEventListener("touchstart", show);
-
-    return () => {
-      document.removeEventListener("mousemove", show);
-      document.removeEventListener("touchstart", show);
-      if (hideTimer.current) clearTimeout(hideTimer.current);
-    };
-  }, []);
+    if (!isPending) {
+      setLoadingExpired(false);
+      return;
+    }
+    const expiry = setTimeout(() => setLoadingExpired(true), MAX_LOADING_MS);
+    return () => clearTimeout(expiry);
+  }, [isPending]);
 
   return (
     <>
       {/* ── Branded Loading State ── */}
       {/* pointer-events-none so if the iframe loads (visually) before
           onLoad fires, the video is still clickable underneath */}
-      {isPending && (
+      {isPending && !loadingExpired && (
         <div className="absolute inset-0 bg-[#070708] z-50 flex flex-col items-center justify-center gap-5 pointer-events-none">
           <div className="relative w-14 h-14">
             <div className="absolute inset-0 rounded-full border-2 border-[#222226]" />
@@ -63,20 +62,6 @@ export function PlayerControlOverlay({
           <p className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse">
             Scanning Projection Room
           </p>
-        </div>
-      )}
-
-      {/* ── Chrome / Controls layer ── */}
-      {/* Always pointer-events-none so the iframe stays clickable underneath */}
-      {!isPending && (
-        <div
-          className={`absolute inset-0 z-20 transition-opacity duration-300 ${
-            visible ? "opacity-100" : "opacity-0"
-          } pointer-events-none`}
-        >
-          {/* Gradient shadows for legibility */}
-          <div className="absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-black/60 to-transparent pointer-events-none" />
-          <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
         </div>
       )}
 

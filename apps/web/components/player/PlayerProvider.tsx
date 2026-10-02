@@ -18,6 +18,7 @@ import React, {
   useEffect,
   type ReactNode,
 } from "react";
+import { SourceProvider } from "./SourceContext";
 
 export interface PlayerProviderState {
   /** Currently selected provider id */
@@ -197,7 +198,9 @@ export function PlayerProvider({
   };
 
   return (
-    <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>
+    <PlayerContext.Provider value={value}>
+      <SourceProvider>{children}</SourceProvider>
+    </PlayerContext.Provider>
   );
 }
 

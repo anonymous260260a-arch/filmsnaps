@@ -13,6 +13,7 @@
  *
  * Response:
  *   meta      — range info
+ *   audience  — distinct anonymous installs (per day + total, events/install)
  *   daily     — per-day event counts by name (trend chart)
  *   funnel    — watch_opened surface split + feature adoption counts
  *   features  — feature_used counts by feature
@@ -91,7 +92,7 @@ export async function GET(req: Request) {
       const rawRes = await db
         .prepare(
           `SELECT name, ts, app_version AS appVersion, connection_class AS connectionClass,
-                  device_tier AS deviceTier, dims_json AS dims
+                  device_tier AS deviceTier, anon_id AS anonId, dims_json AS dims
            FROM telemetry_events
            WHERE ts >= ?1 AND ts <= ?2 AND name = ?3
            ORDER BY ts DESC LIMIT ?4`,
@@ -103,7 +104,13 @@ export async function GET(req: Request) {
         try {
           dims = JSON.parse(String(r.dims ?? "{}"));
         } catch {}
-        return { ...r, ts: Number(r.ts), dims };
+        // Privacy: only an 8-char prefix of the anonymous install ID ever
+        // leaves the server (enough to correlate rows, useless to link).
+        const anonId =
+          typeof r.anonId === "string" && r.anonId.length >= 8
+            ? r.anonId.slice(0, 8)
+            : null;
+        return { ...r, ts: Number(r.ts), anonId, dims };
       });
       return NextResponse.json(
         { meta: { fromDay, toDay, event: eventName }, rows },
@@ -135,6 +142,40 @@ export async function GET(req: Request) {
          ORDER BY dayStart`,
       )
       .bind(...params)
+      .all();
+
+    // ── Audience: distinct anonymous installs (random per-install UUIDs,
+    //    aggregate-only). Unique viewers per day + totals for the range. ──
+    const audienceDayRes = await db
+      .prepare(
+        `SELECT (ts / 86400000) * 86400000 AS dayStart,
+                COUNT(DISTINCT anon_id) AS uniques
+         FROM telemetry_events
+         WHERE ${rangeWhere} AND anon_id IS NOT NULL
+         GROUP BY dayStart ORDER BY dayStart`,
+      )
+      .bind(fromTs, toTs)
+      .all();
+    const audienceTotalRes = await db
+      .prepare(
+        `SELECT COUNT(DISTINCT anon_id) AS uniques, COUNT(*) AS events
+         FROM telemetry_events
+         WHERE ${rangeWhere} AND anon_id IS NOT NULL`,
+      )
+      .bind(fromTs, toTs)
+      .first();
+
+    // ── watch_end by surface (direct native vs embed webview) — the
+    //    "hours watched" numbers used to be embed-blind. ──
+    const watchEndSurfaceRes = await db
+      .prepare(
+        `SELECT json_extract(dims_json, '$.surface') AS surface, COUNT(*) AS n,
+                SUM(json_extract(dims_json, '$.durationMs')) AS durMs
+         FROM telemetry_events
+         WHERE ${rangeWhere} AND name = 'watch_end'
+         GROUP BY surface`,
+      )
+      .bind(fromTs, toTs)
       .all();
 
     // ── feature_used breakdown ──
@@ -392,9 +433,29 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         meta: { fromDay, toDay, event: eventName, total },
+        audience: {
+          uniquesTotal: Number(audienceTotalRes?.uniques ?? 0),
+          eventsPerInstall:
+            Number(audienceTotalRes?.uniques ?? 0) > 0
+              ? Math.round(
+                  (Number(audienceTotalRes?.events ?? 0) /
+                    Number(audienceTotalRes?.uniques ?? 1)) *
+                    10,
+                ) / 10
+              : 0,
+          uniquesByDay: (audienceDayRes.results ?? []).map((r: any) => ({
+            day: isoDay(Number(r.dayStart)),
+            n: Number(r.uniques),
+          })),
+        },
         daily,
         funnel: {
           watchOpened: byName(funnelRes.results, "surface"),
+          watchEndSurface: (watchEndSurfaceRes.results ?? []).map((r: any) => ({
+            surface: String(r.surface ?? "unknown"),
+            n: Number(r.n),
+            durMs: Number(r.durMs ?? 0),
+          })),
           playerStart: byName(playerStartRes.results, "outcome"),
           playerErrors: (playerErrRes.results ?? []).map((r: any) => ({
             errorClass: r.errorClass,

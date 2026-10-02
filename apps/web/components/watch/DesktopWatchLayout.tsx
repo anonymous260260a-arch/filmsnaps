@@ -471,6 +471,7 @@ export function DesktopWatchLayout({
                     onSeasonChange={onSeasonChange}
                     title={watchTitle}
                     onClose={toggleSidebar}
+                    tvId={contentid}
                   />
                 </div>
               )

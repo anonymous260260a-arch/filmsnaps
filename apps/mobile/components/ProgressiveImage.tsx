@@ -23,12 +23,15 @@ export function ProgressiveImage({
   resizeMode = "cover",
   placeholderColor = colors.bg,
   blurRadius,
+  onLoad,
 }: {
   uri: string;
   style?: any;
   resizeMode?: "cover" | "contain" | "stretch" | "repeat" | "center";
   placeholderColor?: string;
   blurRadius?: number;
+  /** Fires when the image finishes loading (expo-image load event). */
+  onLoad?: () => void;
 }) {
   const contentFit = resizeModeToContentFit(resizeMode);
 
@@ -43,6 +46,7 @@ export function ProgressiveImage({
         transition={0}
         cachePolicy="memory-disk"
         blurRadius={blurRadius}
+        onLoad={onLoad}
       />
     </View>
   );

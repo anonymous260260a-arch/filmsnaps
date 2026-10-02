@@ -37,6 +37,17 @@ import type {
 } from "../../lib/subtitleSync/source";
 import { detectKind, isHlsOrDash } from "../../lib/subtitleSync/source";
 import { autoSync, cancelAutoSync } from "../../lib/subtitleSync/autoSync";
+import {
+  WATCH_FIRST_TAP,
+  WATCH_FIRST_DEADLINE_PLAYED_SEC,
+} from "../../lib/subtitleSync/engineConstants";
+import {
+  onWatchProgress,
+  stopWatchSession,
+  watchSessionProgress,
+  watchSessionStatus,
+} from "../../lib/subtitleSync/watchSync";
+import { tapProbe } from "expo-subtitle-sync";
 import type { SubFormat, SyncOutcome } from "../../lib/subtitleSync/types";
 import { downloadToast } from "../DownloadToast";
 
@@ -83,8 +94,16 @@ type Props = {
 // Module-level runner: survives the sheet closing (background sync).
 // ---------------------------------------------------------------------------
 
-type SyncStage = "connect" | "listen" | "analyze";
-type RunnerStatus = "idle" | "running" | "applied" | "failed";
+type SyncStage = "connect" | "listen" | "analyze" | "watch";
+type RunnerStatus =
+  | "idle"
+  | "running"
+  /** Watch-first: session is live and listening; deadline not yet reached. */
+  | "watching"
+  /** Watch-first: deadline reached without an apply — manual scan offered. */
+  | "scan-offer"
+  | "applied"
+  | "failed";
 
 type RunnerState = {
   status: RunnerStatus;
@@ -95,6 +114,10 @@ type RunnerState = {
   resultText: string | null;
   /** Info / error line. */
   message: string | null;
+  /** Watch-first: seconds of usable dialogue heard this session. */
+  watchedSec: number;
+  /** Watch-first: number of live session restarts (sub re-pick etc). */
+  watchEpoch: number;
 };
 
 interface RunHooks {
@@ -116,12 +139,23 @@ const INITIAL: RunnerState = {
   progress: 0,
   resultText: null,
   message: null,
+  watchedSec: 0,
+  watchEpoch: 0,
 };
 
 let runnerState: RunnerState = INITIAL;
 const runnerListeners = new Set<() => void>();
 let runToken = 0;
 let allowBytesNextAttempt = false;
+/** Watch-first deadline ticker (module-level so it survives sheet remounts). */
+let watchTicker: ReturnType<typeof setInterval> | null = null;
+/**
+ * Watch-first: the appliedMs the session STARTED with (fetch-cache adopt).
+ * The applied-transition subscription fires only when the live appliedMs
+ * MOVES off this baseline — otherwise a cached baseline would render the
+ * card "Synced" the instant the session starts.
+ */
+let watchBaselineAppliedMs: number | null = null;
 
 function setRunner(patch: Partial<RunnerState>) {
   runnerState = { ...runnerState, ...patch };
@@ -149,10 +183,181 @@ function beginWatch(hooks: RunHooks): Promise<void> {
     });
 }
 
+// ── Watch-first tap flow (2026-09) ─────────────────────────────────────
+// Tap = watch session ONLY (no network scan). If the deadline passes
+// without an apply, the card parks at "scan-offer" with a manual button.
+// The fetch path stays available via that button (legacy startRun).
+
+/**
+ * Playing-time deadline ticker. Paused playback does NOT burn the budget —
+ * a session can sit paused indefinitely without falsely expiring.
+ */
+function startWatchDeadlineTicker(hooks: RunHooks, startPos: number) {
+  if (watchTicker) clearInterval(watchTicker);
+  /** Playing-time accumulator: burns only while content actually advances. */
+  let playingSec = 0;
+  let lastPos = Math.max(0, startPos);
+  /** Probe cadence counter (log every 5th tick = ~5s). */
+  let tickProbeN = 0;
+  watchTicker = setInterval(() => {
+    try {
+      const st = watchSessionStatus();
+      if (!st.active) {
+        // Session died natively (cap, source change, player teardown).
+        if (watchTicker) {
+          clearInterval(watchTicker);
+          watchTicker = null;
+        }
+        if (runnerState.status === "watching" && runnerState.message == null) {
+          setRunner({
+            status: "scan-offer",
+            message: "Sync stopped (playback ended or source changed).",
+          });
+        }
+        return;
+      }
+      // Playing-time accounting: count only forward movement in the expected
+      // 1s-poll band (a paused player has ~0 delta; a seek jump is excluded).
+      const pos = Math.max(0, hooks.anchorSec?.() ?? 0);
+      const delta = pos - lastPos;
+      if (delta > 0.2 && delta <= 2.5) {
+        playingSec += delta;
+      }
+      lastPos = pos;
+      // ── AUDIO-TAP PROBE (diagnostics, 2026-09) ──
+      // Every 5s while watching: is PCM actually flowing into the native
+      // tap, and does the tap's route/format match the collector's claim?
+      //   bytes flat + ageMs growing + listening=true → tap claimed but NO
+      //     PCM reaches it (claim race or HLS audio not routed through the
+      //     tapped sink) — the fetch path works because it reads the
+      //     network directly, never this tap.
+      //   listening=false → no tap was ever configured (player built
+      //     before the patch was applied / different renderer path).
+      //   sampleRate=0 → sink never configured (same conclusion).
+      tickProbeN = (tickProbeN + 1) % 5;
+      if (tickProbeN === 0) {
+        try {
+          const pb = tapProbe();
+          console.log(
+            `[SubSyncTap] bytes=${pb.totalBytes} ageMs=${pb.ageMs} listening=${pb.listening} sr=${pb.sampleRate} flushes=${pb.flushes} segResets=${pb.segmentResets}`,
+          );
+        } catch {
+          // probe unavailable — non-patched expo-video build
+        }
+      }
+      // Live "heard" line: window-credited audio, floored by playing sec.
+      const listened = Math.min(
+        Math.max(st.listenedSec ?? 0, Math.round(playingSec)),
+        WATCH_FIRST_DEADLINE_PLAYED_SEC,
+      );
+      if (runnerState.watchedSec !== listened) {
+        setRunner({ watchedSec: listened });
+      }
+      // State moved on (applied elsewhere, cancelled, fetch run took over).
+      if (
+        runnerState.status !== "watching" &&
+        runnerState.status !== "running"
+      ) {
+        if (watchTicker) {
+          clearInterval(watchTicker);
+          watchTicker = null;
+        }
+        return;
+      }
+      if (
+        playingSec >= WATCH_FIRST_DEADLINE_PLAYED_SEC &&
+        st.appliedMs == null
+      ) {
+        if (watchTicker) {
+          clearInterval(watchTicker);
+          watchTicker = null;
+        }
+        // Deadline reached without an apply — keep the session alive (it can
+        // still land later) but park the card with the manual affordance.
+        console.log(
+          `[SubSync] watch-first: deadline reached (playing=${Math.round(playingSec)}s, applied=${String(st.appliedMs)}, heard=${st.listenedSec ?? 0}s) - offering manual scan`,
+        );
+        setRunner({ status: "scan-offer" });
+      }
+    } catch {
+      // best-effort
+    }
+  }, 1000);
+}
+
+/**
+ * Watch-first tap: start the watch session and tick the deadline. No network
+ * scan ever starts from the tap itself — zero data usage by default.
+ */
+async function startWatchFirst(hooks: RunHooks) {
+  if (runnerState.status === "running") cancelRun();
+  if (watchTicker) {
+    clearInterval(watchTicker);
+    watchTicker = null;
+  }
+  const token = ++runToken;
+  const alive = () => token === runToken;
+
+  if (!hooks.subtitleUri) {
+    setRunner({
+      status: "failed",
+      resultText: null,
+      message: "Load a subtitle first — sync needs a file.",
+      watchedSec: 0,
+    });
+    return;
+  }
+
+  setRunner({
+    status: "watching",
+    stage: "watch",
+    progress: 0,
+    resultText: null,
+    message: null,
+    watchedSec: 0,
+    watchEpoch: runnerState.watchEpoch + 1,
+  });
+
+  await beginWatch(hooks);
+  if (!alive()) return;
+
+  // Confirm the session actually started (kill-switch off, native activate
+  // ok). A failed start lands the card on the manual scan affordance
+  // instead of pretending to listen forever.
+  const st = watchSessionStatus();
+  if (!st.active) {
+    console.log(
+      "[SubSync] watch-first: session failed to start - offering scan",
+    );
+    setRunner({
+      status: "scan-offer",
+      message: "Listening isn't available right now — you can scan instead.",
+    });
+  } else {
+    // Baseline = whatever the session adopted at start (usually null). The
+    // subscription below fires only on a MOVE off this value.
+    watchBaselineAppliedMs = st.appliedMs ?? null;
+    startWatchDeadlineTicker(hooks, hooks.anchorSec?.() ?? 0);
+  }
+}
+
 function cancelRun() {
   runToken++; // invalidate any in-flight run's continuations
   if (runnerState.status === "running") {
     cancelAutoSync();
+  }
+  if (watchTicker) {
+    clearInterval(watchTicker);
+    watchTicker = null;
+  }
+  // Watch-first: cancel the live session too so it never applies after
+  // the user's explicit cancel. Freeze the baseline so a late session apply
+  // (raced teardown) can't resurrect the card.
+  try {
+    watchBaselineAppliedMs = watchSessionProgress().appliedMs;
+    stopWatchSession("user-cancel");
+  } catch {
+    // best-effort
   }
   setRunner({
     status: "idle",
@@ -160,6 +365,7 @@ function cancelRun() {
     progress: 0,
     resultText: null,
     message: null,
+    watchedSec: 0,
   });
 }
 
@@ -441,6 +647,7 @@ const STAGE_COPY: Record<SyncStage, string> = {
   connect: "Connecting to the stream…",
   listen: "Listening to the dialogue…",
   analyze: "Matching subtitles…",
+  watch: "Listening while you watch…",
 };
 
 export function AutoSyncButton({
@@ -466,11 +673,47 @@ export function AutoSyncButton({
     };
   }, []);
 
+  // Watch-first: applied-transition subscription. Session startedAt is
+  // bumped by startWatchSession — a value set BEFORE the latest session
+  // start is a stale async continuation, never the new session's own
+  // baseline; and the live value must MOVE off the start baseline. Together
+  // these prevent a fetch-cache-adopted baseline (or a late apply raced
+  // against cancel) from falsely rendering the card "Synced" on open.
+  useEffect(() => {
+    if (snap.status !== "watching" && snap.status !== "scan-offer") return;
+    let alive = true;
+    const unsub = onWatchProgress(() => {
+      if (!alive) return;
+      const p = watchSessionProgress();
+      if (p.appliedMs != null && p.appliedMs !== watchBaselineAppliedMs) {
+        console.log(
+          `[SubSync] watch-first: card transition → applied (appliedMs=${p.appliedMs}ms, baseline was ${String(watchBaselineAppliedMs)})`,
+        );
+        watchBaselineAppliedMs = p.appliedMs;
+        if (watchTicker) {
+          clearInterval(watchTicker);
+          watchTicker = null;
+        }
+        setRunner({
+          status: "applied",
+          resultText: null,
+          message: null,
+          watchedSec: 0,
+        });
+      }
+    });
+    return () => {
+      alive = false;
+      unsub();
+    };
+  }, [snap.status]);
+
   // On unmount while running: reassure, don't cancel. (Hard stops — source
   // change, player teardown — are owned by the HevcPlayer-level session.)
   const runningRef = useRef(false);
   useEffect(() => {
-    runningRef.current = snap.status === "running";
+    runningRef.current =
+      snap.status === "running" || snap.status === "watching";
   });
   useEffect(
     () => () => {
@@ -510,7 +753,7 @@ export function AutoSyncButton({
   }, [snap.status, snap.stage, pulse]);
 
   const onPress = () => {
-    if (snap.status === "running") {
+    if (snap.status === "running" || snap.status === "watching") {
       cancelRun();
       return;
     }
@@ -519,31 +762,47 @@ export function AutoSyncButton({
     // session's own re-anchor must not desync the two paths.
     const anchorAtTap = Math.max(0, startWatchPosition?.() ?? 0);
     watchAppliedRef.current = false;
-    // Any onSynced call while the fetch scan runs means a watch-sync apply
-    // landed (the watch path calls the same handler through the shared
-    // registry) — the user's scene is synced, so the scan should stop
-    // before its next window instead of downloading audio nobody needs.
+    // Any onSynced call while a run is live means a watch-sync apply landed
+    // (the watch path calls the same handler through the shared registry).
     const onSyncedWrapped: Props["onSynced"] = (
       offsetMs,
       confidence,
       rewritten,
     ) => {
       watchAppliedRef.current = true;
+      // A watch apply resolves the watch-first flow too.
+      if (watchTicker) {
+        clearInterval(watchTicker);
+        watchTicker = null;
+      }
+      if (
+        runnerState.status === "watching" ||
+        runnerState.status === "scan-offer"
+      ) {
+        setRunner({ status: "applied", resultText: null, message: null });
+      }
       onSynced(offsetMs, confidence, rewritten);
     };
-    void startRun({
+    const hooks: RunHooks = {
       sourceInfo,
       contentId,
       subtitleUri,
       subtitleLanguage,
       onSynced: onSyncedWrapped,
       startWatch,
-      anchorSec: () => anchorAtTap,
+      anchorSec: () => Math.max(0, startWatchPosition?.() ?? 0),
       shouldAbort: () => watchAppliedRef.current,
-    });
+    };
+    if (WATCH_FIRST_TAP) {
+      void startWatchFirst(hooks);
+    } else {
+      void startRun(hooks);
+    }
   };
 
   const running = snap.status === "running";
+  const watching = snap.status === "watching";
+  const scanOffer = snap.status === "scan-offer";
   const eased = easeProgress(snap.progress);
   const hasSub = !!subtitleUri;
 
@@ -553,6 +812,10 @@ export function AutoSyncButton({
   let titleStyle: TextStyle = styles.title;
   if (running) {
     title = STAGE_COPY[snap.stage];
+  } else if (watching) {
+    title = "Listening while you watch…";
+  } else if (scanOffer) {
+    title = "Still out of sync?";
   } else if (snap.status === "applied") {
     title = snap.resultText ?? "Synced";
     titleStyle = styles.titleSuccess;
@@ -565,11 +828,26 @@ export function AutoSyncButton({
 
   const pillLabel = running
     ? "Cancel"
-    : snap.status === "applied"
-      ? "Sync again"
-      : snap.status === "failed"
-        ? "Try again"
-        : "Auto Sync";
+    : watching
+      ? "Stop listening"
+      : snap.status === "applied"
+        ? "Sync again"
+        : snap.status === "failed"
+          ? "Try again"
+          : scanOffer
+            ? "Listen again"
+            : "Auto Sync";
+  const pillIcon = running
+    ? "close-circle"
+    : watching
+      ? "close-circle"
+      : snap.status === "applied"
+        ? "checkmark-circle"
+        : snap.status === "failed"
+          ? "refresh"
+          : scanOffer
+            ? "sync-outline"
+            : "sync-outline";
 
   return (
     <View style={styles.card}>
@@ -582,29 +860,77 @@ export function AutoSyncButton({
         )}
       </View>
 
-      {running ? (
+      {running || watching ? (
         <>
-          <View style={styles.progressTrack}>
-            <Animated.View
-              style={[
-                styles.progressBar,
-                {
-                  width: `${eased * 100}%`,
-                  opacity: snap.stage === "connect" ? pulse : 1,
-                },
-              ]}
-            />
-          </View>
+          {running && (
+            <View style={styles.progressTrack}>
+              <Animated.View
+                style={[
+                  styles.progressBar,
+                  {
+                    width: `${eased * 100}%`,
+                    opacity: snap.stage === "connect" ? pulse : 1,
+                  },
+                ]}
+              />
+            </View>
+          )}
+          {watching && (
+            <Text style={styles.watchedLine}>
+              {snap.watchedSec > 0
+                ? `Heard ${Math.floor(snap.watchedSec / 60)}:${String(snap.watchedSec % 60).padStart(2, "0")} of dialogue so far`
+                : "Play the video — I'm listening to the dialogue"}
+            </Text>
+          )}
           {/* The <1s background promise. */}
           <Text style={styles.cardBody}>
-            Keep watching — sync continues even if you close this. Usually under
-            a minute.
+            {watching
+              ? "No data used — sync applies the moment it locks on, even if you close this."
+              : "Keep watching — sync continues even if you close this. Usually under a minute."}
           </Text>
         </>
       ) : snap.status === "applied" ? (
         <Text style={styles.cardBody}>
           Applied automatically. Slightly off? Use Fine-tune below.
         </Text>
+      ) : scanOffer ? (
+        <>
+          <Text style={styles.cardBody} numberOfLines={2}>
+            {snap.message ??
+              "Watching didn't lock on yet. Scanning uses some data and takes a couple of minutes."}
+          </Text>
+          <TouchableOpacity
+            style={styles.scanInsteadPill}
+            onPress={() => {
+              const anchorAtTap = Math.max(0, startWatchPosition?.() ?? 0);
+              watchAppliedRef.current = false;
+              const wrapped: Props["onSynced"] = (
+                offsetMs,
+                confidence,
+                rewritten,
+              ) => {
+                watchAppliedRef.current = true;
+                onSynced(offsetMs, confidence, rewritten);
+              };
+              void startRun({
+                sourceInfo,
+                contentId,
+                subtitleUri,
+                subtitleLanguage,
+                onSynced: wrapped,
+                startWatch,
+                anchorSec: () => Math.max(0, startWatchPosition?.() ?? 0),
+                shouldAbort: () => watchAppliedRef.current,
+              });
+            }}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Scan the stream to sync subtitles"
+          >
+            <Ionicons name="download-outline" size={15} color={colors.info} />
+            <Text style={styles.scanInsteadText}>Scan the stream instead</Text>
+          </TouchableOpacity>
+        </>
       ) : snap.status === "failed" ? (
         <Text style={styles.cardBodyError} numberOfLines={2}>
           {snap.message}
@@ -622,30 +948,24 @@ export function AutoSyncButton({
       <TouchableOpacity
         style={[
           styles.pill,
-          running && styles.pillCancel,
-          !hasSub && !running && styles.pillDisabled,
+          (running || watching) && styles.pillCancel,
+          !hasSub && !running && !watching && styles.pillDisabled,
         ]}
         onPress={onPress}
         disabled={!hasSub && !running}
         activeOpacity={0.7}
         accessibilityRole="button"
         accessibilityLabel={
-          running ? "Cancel subtitle sync" : "Automatically sync subtitles"
+          running || watching
+            ? "Cancel subtitle sync"
+            : "Automatically sync subtitles"
         }
       >
         <Ionicons
-          name={
-            running
-              ? "close-circle"
-              : snap.status === "applied"
-                ? "checkmark-circle"
-                : snap.status === "failed"
-                  ? "refresh"
-                  : "sync-outline"
-          }
+          name={pillIcon}
           size={17}
           color={
-            running
+            running || watching
               ? colors.textSecondary
               : snap.status === "applied"
                 ? colors.success
@@ -744,6 +1064,28 @@ const styles = StyleSheet.create({
   },
   pillDisabled: {
     opacity: 0.4,
+  },
+  watchedLine: {
+    color: colors.info,
+    fontSize: 12.5,
+    fontWeight: "600",
+    fontVariant: ["tabular-nums"],
+  },
+  scanInsteadPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(91,156,246,0.4)",
+    backgroundColor: "rgba(91,156,246,0.08)",
+  },
+  scanInsteadText: {
+    color: colors.info,
+    fontSize: 13.5,
+    fontWeight: "700",
   },
   pillText: {
     color: colors.gold,

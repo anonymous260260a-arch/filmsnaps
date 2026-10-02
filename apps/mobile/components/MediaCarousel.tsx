@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useMemo } from "react";
+import React, { useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -13,10 +13,14 @@ import type { Movie } from "@filmsnaps/shared";
 import { MediaCard } from "./MediaCard";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useSwipeTabNavigator } from "./SwipeTabNavigator";
+import { warmSwatches } from "../lib/movieAccent";
 
 const ITEM_GAP = 10;
 const ITEM_PADDING = 16;
 const itemWidth = (width: number) => (width - 48) / 3;
+
+/** Stable config — a fresh object per render would re-trigger viewability callbacks. */
+const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 50 };
 
 interface MediaCarouselProps {
   title: string;
@@ -66,6 +70,12 @@ export function MediaCarousel({
   const { width: SCREEN_WIDTH } = useWindowDimensions();
   const swipeTab = useSwipeTabNavigator();
 
+  // Phase 2 placement: rows are a NEUTRAL stage. The old whole-row hero
+  // wash (tints.wash) and accent-tinted chrome are gone — per-item color
+  // arrives through each card's own tile tint (see MediaCard); the tick and
+  // See All are brand gold again. The viewability warm below stays: it is
+  // what feeds the cards' tints AND the detail page's first paint.
+
   // The native scroll gesture that must be exempted from tab navigation.
   // Created once per carousel instance.
   const nativeGesture = React.useMemo(() => Gesture.Native(), []);
@@ -77,6 +87,18 @@ export function MediaCarousel({
 
   const w = itemWidth(SCREEN_WIDTH);
   const step = w + ITEM_GAP;
+
+  // Warm accent swatches for rows as they become visible (w92/w300 sources —
+  // a few KB each). By the time a user taps a card, its detail-page accent
+  // is usually already in cache — the main lever for "first paint is tinted".
+  // onPressIn (prepareDetail) warming stays as the safety net.
+  const handleViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: { item: Movie }[] }) => {
+      if (viewableItems.length === 0) return;
+      warmSwatches(viewableItems.map(({ item }) => item));
+    },
+    [],
+  );
 
   const getItemLayout = useCallback(
     (_: unknown, index: number) => ({
@@ -104,11 +126,25 @@ export function MediaCarousel({
   if (!data?.length) return null;
 
   return (
-    <View className="mb-7">
-      {/* Section header — Playfair heading + gold "See All" */}
-      <View className="flex-row items-center justify-between px-4 mb-3">
-        <Text style={typography.heading}>{title}</Text>
-        {onSeeAll && <SeeAllButton onPress={onSeeAll} />}
+    <View style={{ marginBottom: 28 }}>
+      {/* ── Header — brand-gold tick + default heading + brand-gold See All.
+          No accent tinting: headings were always default, and the tick/See
+          All return to brand gold now that rows carry per-card color. ── */}
+      <View>
+        <View className="flex-row items-center justify-between px-4 mb-3">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <View
+              style={{
+                width: 3,
+                height: 16,
+                borderRadius: 2,
+                backgroundColor: colors.gold,
+              }}
+            />
+            <Text style={typography.heading}>{title}</Text>
+          </View>
+          {onSeeAll && <SeeAllButton onPress={onSeeAll} />}
+        </View>
       </View>
 
       <GestureDetector gesture={nativeGesture}>
@@ -127,6 +163,8 @@ export function MediaCarousel({
           maxToRenderPerBatch={4}
           windowSize={5}
           removeClippedSubviews={false}
+          viewabilityConfig={VIEWABILITY_CONFIG}
+          onViewableItemsChanged={handleViewableItemsChanged}
         />
       </GestureDetector>
     </View>

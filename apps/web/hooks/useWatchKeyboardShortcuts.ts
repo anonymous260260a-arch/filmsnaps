@@ -58,14 +58,22 @@ export function useWatchKeyboardShortcuts({
         return;
 
       // Desktop mpv playback claims F / M / ← / → (fullscreen, mute, seek —
-      // see useMpvDesktopShortcuts). Without this defer, F toggled the
+      // see useMpvDesktopShortcuts) and the web movi player claims the same
+      // set plus ? (its own shortcut panel). Without this defer, F toggled the
       // Electron window fullscreen twice and ← / → both seeked and skipped
       // episodes. Episode navigation stays on N / P.
-      if ((window as any).__fsMpvKeysActive) {
-        const k = e.key.toLowerCase();
-        if (k === "f" || k === "m" || k === "arrowleft" || k === "arrowright")
-          return;
-      }
+      const k = e.key.toLowerCase();
+      const seekLeftRight = k === "arrowleft" || k === "arrowright";
+      if (
+        (window as any).__fsMpvKeysActive &&
+        (k === "f" || k === "m" || seekLeftRight)
+      )
+        return;
+      if (
+        (window as any).__fsMoviKeysActive &&
+        (k === "f" || k === "m" || k === "?" || seekLeftRight)
+      )
+        return;
 
       switch (e.key.toLowerCase()) {
         case "f":

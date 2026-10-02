@@ -65,8 +65,43 @@ export function KpiStrip({ cur, prev, rangeDays }: KpiStripProps) {
   const stallMs = cur.p5?.rebuffer?.stallMs ?? 0;
   const rebufCount = cur.p5?.rebuffer?.total ?? 0;
 
+  // 0. Viewers — distinct anonymous installs (random per-install UUIDs;
+  // aggregate-only, no device/hardware linkage). NULL when no anonId rows yet.
+  const viewers = cur.audience?.uniquesTotal ?? 0;
+  const prevViewers = prev?.audience?.uniquesTotal ?? 0;
+  const eventsPerViewer = cur.audience?.eventsPerInstall ?? 0;
+
+  // Watch-end surface split (direct native vs embed webview) — embed rows
+  // only exist since the embed watch-end fix.
+  const endDirect =
+    cur.funnel?.watchEndSurface?.find((s) => s.surface === "direct") ?? null;
+  const endEmbed =
+    cur.funnel?.watchEndSurface?.find((s) => s.surface === "embed") ?? null;
+
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3.5 mt-6 animate-fade-in">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3.5 mt-6 animate-fade-in">
+      {/* 0. Viewers (distinct anonymous installs) */}
+      <div className="bg-[#141417] border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 flex flex-col justify-between transition-all">
+        <div>
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <span className="text-[11px] font-bold tracking-wider text-white/50 uppercase">
+              Viewers
+            </span>
+            {viewers > 0 && <Delta cur={viewers} prev={prevViewers} />}
+          </div>
+          <div className="text-[26px] font-extrabold text-white tabular-nums tracking-tight">
+            {viewers > 0 ? fmtInt(viewers) : "—"}
+          </div>
+        </div>
+        <div className="mt-3 pt-2.5 border-t border-white/[0.05] text-[11px] text-white/40">
+          {viewers > 0 ? (
+            <span>~{eventsPerViewer.toFixed(1)} events / viewer</span>
+          ) : (
+            "Awaiting anonId rows"
+          )}
+        </div>
+      </div>
+
       {/* 1. Watch Opens */}
       <div className="bg-[#141417] border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 flex flex-col justify-between transition-all">
         <div>
@@ -154,8 +189,15 @@ export function KpiStrip({ cur, prev, rangeDays }: KpiStripProps) {
             {watchEnds > 0 ? fmtPct(deepEnds, watchEnds) : "—"}
           </div>
         </div>
-        <div className="mt-3 pt-2.5 border-t border-white/[0.05] text-[11px] text-white/40">
-          {fmtInt(deepEnds)} of {fmtInt(watchEnds)} completed
+        <div className="mt-3 pt-2.5 border-t border-white/[0.05] text-[11px] text-white/40 flex items-center justify-between">
+          <span>
+            {fmtInt(deepEnds)} of {fmtInt(watchEnds)} completed
+          </span>
+          {endEmbed && endEmbed.n > 0 ? (
+            <span title="watch_end rows by player surface">
+              D{fmtInt(endDirect?.n ?? 0)}/E{fmtInt(endEmbed.n)}
+            </span>
+          ) : null}
         </div>
       </div>
 

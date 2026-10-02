@@ -78,7 +78,7 @@ export function MobilePlayerZone({
   const { iframeLoadError, cpuWarning, playerReady, refreshKey } = usePlayer();
 
   return (
-    <div className="relative w-full h-[38vh] min-h-[245px] max-h-[46vh] sm:h-auto sm:aspect-video bg-[#070708] sm:bg-[#0E0E11] sm:rounded-2xl overflow-hidden shadow-[0_12px_50px_rgba(0,0,0,0.9)] sm:ring-1 sm:ring-white/[0.08] group/player flex items-center justify-center">
+    <div className="relative w-full h-[38vh] min-h-[245px] max-h-[46vh] sm:h-auto sm:aspect-video bg-[#070708] sm:bg-[#0E0E11] sm:rounded-2xl overflow-hidden sm:ring-1 sm:ring-white/[0.08] group/player flex items-center justify-center">
       {/* Ambient glow */}
       <div className="absolute -inset-10 bg-gradient-radial from-[#D4A237]/10 via-transparent to-transparent opacity-40 pointer-events-none z-0 transition-opacity duration-700 group-hover/player:opacity-70" />
 

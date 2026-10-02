@@ -217,6 +217,8 @@ export class PerfSessionTracker {
   /** P5 — completion curve + resume-correction dims for watch_end. */
   watchedPct?: number;
   resumeCorrection?: boolean;
+  /** E2 — surface that closed the session (set via close()). */
+  private closedSurface?: "direct" | "embed";
   private firstFrameLogged = false;
   /** Outcome to stamp on the open segment when the next source opens. */
   private pendingSegmentOutcome: SourceOutcome | null = null;
@@ -397,12 +399,18 @@ export class PerfSessionTracker {
   /**
    * Session over (player closed / back) — flush stall + open source segment,
    * print [watchperf] + END, archive. NEVER called on a source switch.
+   * surface records WHICH player closed the intent (direct native / embed).
    */
-  close(nowPct?: number, resumeCorrection?: boolean) {
+  close(
+    nowPct?: number,
+    resumeCorrection?: boolean,
+    surface?: "direct" | "embed",
+  ) {
     const s = this.session;
     if (!s) return;
     if (nowPct != null) s.watchedPct = nowPct;
     if (resumeCorrection != null) s.resumeCorrection = resumeCorrection;
+    if (surface) this.closedSurface = surface;
     if (this.rebufferStartedAt != null) {
       s.stallMs += Date.now() - this.rebufferStartedAt;
       this.rebufferStartedAt = null;
@@ -421,6 +429,7 @@ export class PerfSessionTracker {
     );
     this.emitWatchEnd(s, ff);
     this.emitPlayerStart(s, ff);
+    this.closedSurface = undefined;
     this.session = null;
   }
 
@@ -441,14 +450,28 @@ export class PerfSessionTracker {
     const quality =
       framed?.quality ?? s.sourceSegments[s.sourceSegments.length - 1]?.quality;
 
+    const durationMs = Date.now() - s.startedAt;
+
+    // Data-quality guard: drop EMPTY sessions — sub-15s, never framed, no
+    // stalls, no completion signal. These were writing watch_end rows with
+    // durationMs=0 (episode-change remounts, instant backs) that polluted
+    // the completion curve. The attempt itself is still counted by
+    // player_start / watch_opened, so the funnel stays complete.
+    const isEmpty =
+      durationMs < 15_000 &&
+      firstFrameMs == null &&
+      s.rebufferCount === 0 &&
+      s.watchedPct == null;
+    if (isEmpty) return;
+
     const base = {
       providerId: s.provider ?? "unknown",
       mediaType: parsed.mediaType,
       tmdbId: parsed.tmdbId,
-      durationMs: Date.now() - s.startedAt,
+      durationMs,
       fallbacks: s.fallbackCount,
       switchedProvider: s.fallbackCount > 0,
-      intentToFirstFrameMs: firstFrameMs ?? Date.now() - s.startedAt,
+      intentToFirstFrameMs: firstFrameMs ?? durationMs,
       handoff: s.handoff ?? "none",
       eager,
       stallMs: s.stallMs,
@@ -456,6 +479,7 @@ export class PerfSessionTracker {
       reachedFirstFrame: firstFrameMs != null,
       gaveUp: firstFrameMs == null && !this.erroredOut,
       qualityBucket: bucketQuality(quality),
+      ...(this.closedSurface ? { surface: this.closedSurface } : {}),
       ...(s.watchedPct != null
         ? { watchedPctBucket: bucketWatchedPct(s.watchedPct) }
         : {}),

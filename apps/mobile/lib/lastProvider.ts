@@ -14,6 +14,7 @@ import {
   getProvider,
   getEnabledProviders,
   isDirectProvider,
+  isProviderAvailableOn,
   type ProviderPlatform,
 } from "@filmsnaps/shared";
 
@@ -53,7 +54,10 @@ export async function getLastProvider(
   const def = getProvider(id);
   if (!def || !isDirectProvider(def) || !getEnabledProviders().includes(def))
     return null;
-  return (def.platforms ?? []).includes(platform) ? id : null;
+  // No `platforms` field = available everywhere (the old `(?? []).includes`
+  // check wrongly null'd such providers on every platform). A web-only
+  // source (bing) is correctly dropped here on mobile.
+  return isProviderAvailableOn(def, platform) ? id : null;
 }
 
 /** Remember which direct provider served this title. */

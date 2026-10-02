@@ -76,6 +76,23 @@ export interface StreamSourceConfig {
   urlTemplate?: string;
   /** URL template for TV episodes. */
   urlTemplateTv?: string;
+  /**
+   * HTTP method for template-built requests. Default "GET". "POST" sources
+   * send `bodyTemplate` (movies) / `bodyTemplateTv` (shows) as a JSON body —
+   * used by upstreams whose route is POST-only (api.bingr.one 403s GET).
+   * Mobile's on-device fetcher only issues GET; such sources belong on
+   * `platforms: ['web']` providers resolved through /api/player/direct.
+   */
+  method?: "GET" | "POST";
+  /**
+   * JSON request body for POST sources. Same placeholders as urlTemplate
+   * ({tmdbId} {imdbId} {type} {season} {episode}). `bodyTemplate` is used
+   * for movies, `bodyTemplateTv` for shows — give each its own JSON when
+   * the payload shape differs per media type (bing: movie queries must not
+   * carry season/episode keys or the upstream treats them as a TV lookup).
+   */
+  bodyTemplate?: string;
+  bodyTemplateTv?: string;
   /** Optional custom headers for API requests. */
   headers?: Record<string, string>;
   /**
@@ -148,6 +165,15 @@ export interface ProviderDefinition {
    * Additive — `animeOnly` is retained for web/desktop until they migrate.
    */
   mediaTypes?: MediaType[];
+  /**
+   * How the `{imdbId}` URL placeholder is filled for anime-mapped titles.
+   * `'tmdb'` = the upstream accepts `tmdb:{id}` natively (PenguPlay — probed
+   * equivalent to `tt…` for movies and series), so anime sessions inject the
+   * route's TMDB id directly instead of round-tripping TMDB `external_ids`.
+   * Omitted = resolve a real `tt…` id (unchanged default). Only consulted for
+   * anime-mapped titles; regular sessions always resolve IMDb.
+   */
+  idScheme?: "imdb" | "tmdb";
   /** Security protection config (per-provider toggle) */
   protection?: ProviderProtection;
 

@@ -12,6 +12,7 @@ import type { SelectOptions, StreamSelection } from "../streamSelector";
 import type { DirectStreamSelector } from "./types";
 import { spacedomSelector } from "./spacedom";
 import { way2moviesSelector } from "./way2movies";
+import { movieboxSelector } from "./moviebox";
 
 /** The generic quality/size/language ranker — used when no selector is set. */
 export const defaultSelector: DirectStreamSelector = {
@@ -26,6 +27,7 @@ const selectors = new Map<string, DirectStreamSelector>();
 selectors.set("default", defaultSelector);
 selectors.set("spacedom", spacedomSelector);
 selectors.set("way2movies", way2moviesSelector);
+selectors.set("moviebox", movieboxSelector);
 
 /**
  * Get a stream selector by id. Unknown or missing ids fall back to the
@@ -40,5 +42,5 @@ export function registerStreamSelector(selector: DirectStreamSelector): void {
   selectors.set(selector.id, selector);
 }
 
-export { spacedomSelector, way2moviesSelector };
+export { spacedomSelector, way2moviesSelector, movieboxSelector };
 export type { DirectStreamSelector };

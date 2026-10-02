@@ -108,37 +108,171 @@ export function usePersonCredits(id: number) {
   });
 }
 
-// ── More Like This (genre-based recommendations from history) ──
+// ── More Like This ──
+//
+// Phase: quality rewrite. The old implementation took the LAST watched
+// title's top-2 genres and ran a popularity-sorted genre discover — that
+// returns "popular movies sharing a genre" (a horror fan got romcoms), the
+// #1 source of "bad results". The fix uses TMDB's OWN relevance engine:
+// the /recommendations endpoint for EACH of the last few watched titles,
+// aggregated with recency weighting, deduped, and quality-gated.
+
+const MLT_SEEDS = 3; // recommendation seeds: the 3 most recent watched titles
+// Quality gate is deliberately LIGHT (5.5 / 15 votes): TMDB's recommendation
+// engine already curates for relevance — the heavy 6.0/25 gate pruned real
+// recommendations and made the row emptier (and worse) than the TMDB site.
+// This only removes the true bottom-feeder junk.
+const MLT_QUALITY_FLOOR = 5.5;
+const MLT_MIN_VOTES = 15;
+
+/** Recency weight: newest seed ×1.0, then ×0.7, ×0.49 … */
+function recencyWeight(index: number): number {
+  return Math.pow(0.7, index);
+}
+
+/**
+ * Build a deduped, recency-weighted, quality-gated "More Like This" pool.
+ * Exported for testing. Raw candidate shape: { item, weight }.
+ */
+export function aggregateRecommendations(
+  seedLists: Array<{
+    seedId: number | string;
+    seedIndex: number;
+    results: any[];
+  }>,
+): any[] {
+  const scores = new Map<
+    number,
+    { item: any; score: number; seedIndex: number }
+  >();
+  // Every watched seed is excluded from its own recommendations AND every
+  // other seed's (built up front — a candidate matching a later seed must
+  // still be dropped when encountered in an earlier list).
+  const exclude = new Set<number>(
+    seedLists.map((l) => Number(l.seedId)).filter((n) => Number.isFinite(n)),
+  );
+
+  for (const list of seedLists) {
+    list.results.forEach((r, position) => {
+      const id = Number(r.id);
+      if (!Number.isFinite(id) || exclude.has(id)) return;
+      // TMDB's OWN ordering is the primary signal (what their website
+      // renders): earlier position = more relevant. Recency scales it; a
+      // capped agreement bonus compounds when multiple seeds push the same
+      // title. NO raw popularity term — it was overriding TMDB's curation
+      // and dragging the row back toward generic-popular filler.
+      const w = recencyWeight(list.seedIndex);
+      const positionScore = Math.max(0, 20 - position) / 20;
+      const score = positionScore * w;
+      const existing = scores.get(id);
+      if (existing) {
+        // Agreement: +60% of the strongest contributing score per extra seed.
+        existing.score += score + existing.score * 0.6;
+        if (list.seedIndex < existing.seedIndex) {
+          existing.seedIndex = list.seedIndex;
+          existing.item = r;
+        }
+      } else {
+        scores.set(id, { item: r, score, seedIndex: list.seedIndex });
+      }
+    });
+  }
+
+  return [...scores.values()]
+    .filter(
+      (e) =>
+        (e.item.vote_average ?? 0) >= MLT_QUALITY_FLOOR &&
+        (e.item.vote_count ?? 0) >= MLT_MIN_VOTES,
+    )
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 20)
+    .map((e) => ({
+      ...e.item,
+      _mediaType: e.item.media_type ?? (e.item.first_air_date ? "tv" : "movie"),
+      _mltScore: e.score,
+    }));
+}
 
 export function useMoreLikeThis(
   historyEntries: Array<{
     latest: { tmdbId: string | number; mediaType: string };
   }>,
 ) {
-  const hasHistory = historyEntries.length > 0;
-  return useQuery({
-    queryKey: ["movies", "more-like-this", historyEntries[0]?.latest?.tmdbId],
+  const seeds = historyEntries.slice(0, MLT_SEEDS);
+  const hasHistory = seeds.length > 0;
+  // Explicit element type: the queryFn's inferred union (multiple return
+  // paths + catch) reads as possibly-undefined at call sites.
+  return useQuery<any[]>({
+    queryKey: [
+      "more-like-this",
+      seeds.map((s) => `${s.latest.mediaType}:${s.latest.tmdbId}`).join("|"),
+    ],
     queryFn: async (ctx: Ctx) => {
       if (!hasHistory) return [];
-      const last = historyEntries[0].latest;
-      let details: any;
-      if (last.mediaType === "tv") {
-        details = await tmdbApi.getTVDetails(Number(last.tmdbId), ctx.signal);
-      } else {
-        details = await tmdbApi.getMovieDetails(Number(last.tmdbId), ctx.signal);
+
+      // Recs for each seed, in parallel; each failure is contained (one dead
+      // seed must not kill the row).
+      const lists = await Promise.all(
+        seeds.map(async (seed, index) => {
+          const id = Number(seed.latest.tmdbId);
+          try {
+            const recs =
+              seed.latest.mediaType === "tv"
+                ? await tmdbApi.getTVRecommendations(id, 1, ctx.signal)
+                : await tmdbApi.getMovieRecommendations(id, 1, ctx.signal);
+            return {
+              seedId: id,
+              seedIndex: index,
+              results: recs?.results ?? [],
+            };
+          } catch {
+            return { seedId: id, seedIndex: index, results: [] };
+          }
+        }),
+      );
+
+      const aggregated = aggregateRecommendations(lists);
+      if (aggregated.length >= 8) return aggregated;
+
+      // Fallback: the old genre-discover path (quality-gated now too) — only
+      // used when recommendations come up short (thin history / obscure seed).
+      const last = seeds[0].latest;
+      try {
+        const details =
+          last.mediaType === "tv"
+            ? await tmdbApi.getTVDetails(Number(last.tmdbId), ctx.signal)
+            : await tmdbApi.getMovieDetails(Number(last.tmdbId), ctx.signal);
+        const genreIds =
+          details?.genres?.slice(0, 2).map((g: any) => g.id) ?? [];
+        if (genreIds.length === 0) return aggregated;
+        const result =
+          last.mediaType === "tv"
+            ? await tmdbApi.getTVShowsAdvanced({
+                genreIds,
+                sortBy: "popularity.desc",
+                minRating: 6,
+                minVotes: 60,
+              })
+            : await tmdbApi.getMoviesAdvanced({
+                genreIds,
+                sortBy: "popularity.desc",
+                minRating: 6,
+                minVotes: 60,
+              });
+        const existingIds = new Set([
+          ...aggregated.map((m: any) => Number(m.id)),
+          ...seeds.map((s) => Number(s.latest.tmdbId)),
+        ]);
+        const filler = (result.results ?? [])
+          .filter((m: any) => !existingIds.has(Number(m.id)))
+          .map((m: any) => ({
+            ...m,
+            _mediaType: last.mediaType === "tv" ? "tv" : "movie",
+          }));
+        return [...aggregated, ...filler].slice(0, 20);
+      } catch {
+        return aggregated;
       }
-      const genreIds = details?.genres?.slice(0, 2).map((g: any) => g.id) ?? [];
-      if (genreIds.length === 0) return [];
-      const result = await tmdbApi.getMovies(
-        {
-          genreIds,
-          sortBy: "popularity.desc",
-        },
-        ctx.signal,
-      );
-      return (result.results ?? []).filter(
-        (m: any) => m.id !== Number(last.tmdbId),
-      );
     },
     staleTime: DAY,
     enabled: hasHistory,

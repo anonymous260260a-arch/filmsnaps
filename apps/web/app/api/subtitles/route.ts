@@ -33,7 +33,11 @@ const WYZIE_API_URL = "https://sub.wyzie.io/search";
 const SUPPORTED_FORMATS = new Set(["srt", "ass", "ssa", "vtt", "sub"]);
 
 const cacheHeaders = {
-  "Cache-Control": "public, s-maxage=600, stale-while-revalidate=3600",
+  // s-maxage=0: the CDN must revalidate every request — an upstream cache
+  // was serving a pre-broadcast file and the client only saw the broadcast
+  // copy ~10 min later (device 2026-09, rare). Search RESULTS are cheap to
+  // recompute; correctness here beats the ~zero cost of origin hits.
+  "Cache-Control": "public, s-maxage=0, stale-while-revalidate=3600",
 };
 
 interface SubtitleEntry {

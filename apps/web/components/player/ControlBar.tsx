@@ -67,6 +67,9 @@ export interface ControlBarProps {
   badgePosition?: "top" | "row";
   /** "strip" = flow layout below mpv video; "overlay" = absolute on top of video */
   layout?: "strip" | "overlay";
+  /** False while the bar is auto-hidden — pauses the progress bar's rAF loop
+   *  so an invisible bar doesn't keep ticking for the whole session. */
+  visible?: boolean;
   /** Buffering state — shows spinner in strip mode (D9 fix) */
   isBuffering?: boolean;
   /** Source switching label — shows in strip mode (D9 fix) */
@@ -105,6 +108,7 @@ export function ControlBar({
   onSubtitlesSearch,
   badgePosition = "top",
   layout = "overlay",
+  visible = true,
   isBuffering = false,
   switchingLabel,
 }: ControlBarProps) {
@@ -305,6 +309,7 @@ export function ControlBar({
             onSeekStart={handleSeekStart}
             onSeekEnd={handleSeekEnd}
             onFrame={handleFrame}
+            active={visible}
           />
         </div>
 
@@ -525,6 +530,7 @@ export function ControlBar({
             onSeekStart={handleSeekStart}
             onSeekEnd={handleSeekEnd}
             onFrame={handleFrame}
+            active={visible}
           />
         </div>
 

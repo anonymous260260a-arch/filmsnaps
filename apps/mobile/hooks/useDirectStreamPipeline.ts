@@ -139,8 +139,13 @@ export function useDirectStreamPipeline({
 
     // FIX 5: seed from the details handoff so the first paint already has
     // the head (still join the pipeline below for trigger=watch confirmation).
+    // A manual provider pick never consumes the handoff: it is keyed by
+    // title/season/episode, NOT provider, so it holds the PREVIOUS server's
+    // links. Seeding it on a switch re-mounted the old pool instantly (picker
+    // said X, video played Y) and a failed re-fetch surfaced no error because
+    // the handoff was non-empty — both sides of the "switch did nothing" bug.
     const handoff =
-      id && parseInt(id, 10)
+      id && parseInt(id, 10) && !lockProvider
         ? peekStreamHandoff(parseInt(id, 10), type, directSeason, directEpisode)
         : null;
     if (handoff && handoff.result.links.length > 0) {
@@ -159,7 +164,10 @@ export function useDirectStreamPipeline({
         provider: handoff.providerId,
         bestValidated: handoff.result.bestValidated,
       });
-      markPerfStage("linksSet", { provider: handoff.providerId, via: "handoff" });
+      markPerfStage("linksSet", {
+        provider: handoff.providerId,
+        via: "handoff",
+      });
       setLinks(handoff.result.links);
       setBestIndex(handoff.result.bestIndex);
       setPrevalidated(handoff.result.validationResults);
@@ -210,7 +218,12 @@ export function useDirectStreamPipeline({
         onStage(null);
         if (!snap || snap.links.length === 0) {
           // Keep any handoff-seeded links; only surface an error when empty.
-          if (!handoff || handoff.result.links.length === 0) {
+          // A locked (manual) pick has no handoff escape hatch — the seeded
+          // pool belongs to the previous server and must not silently resume;
+          // the user gets the error card + Retry instead.
+          const handoffUsable =
+            !!handoff && handoff.result.links.length > 0 && !lockProvider;
+          if (!handoffUsable) {
             setError(
               "No streams available for this title right now. Try again later.",
             );
@@ -220,8 +233,20 @@ export function useDirectStreamPipeline({
         // D1: when the exact-key miss left handoff-seeded links already on
         // screen (different provider id at handoff vs resolve), prefer the
         // handoff head — it is the same pool details already probed.
-        if (handoff && handoff.result.links.length > 0 && links.length > 0) {
-          const exactHeadProvider = snap.links[snap.bestIndex]?._meta?.providerId;
+        // NEVER on a manual provider pick: the user explicitly moved to
+        // another server, so the freshly fetched exact-key pool IS the one
+        // that must play. Preferring the handoff (which is keyed by title,
+        // not provider) here made a server switch mount the OLD provider's
+        // links again — picker state changed, video didn't.
+        const handoffPrefersCurrentHead =
+          !!handoff &&
+          handoff.result.links.length > 0 &&
+          links.length > 0 &&
+          handoff.providerId === provider &&
+          !lockProvider;
+        if (handoffPrefersCurrentHead) {
+          const exactHeadProvider =
+            snap.links[snap.bestIndex]?._meta?.providerId;
           if (exactHeadProvider && exactHeadProvider !== handoff.providerId) {
             console.log(
               `[Flow] watch: keeping handoff head over exact-key ${exactHeadProvider} — same tiered pool`,
@@ -240,7 +265,13 @@ export function useDirectStreamPipeline({
         const head = snap.links[snap.bestIndex];
         const consumedProvider = head?._meta?.providerId ?? provider;
         if (consumedProvider) {
-          noteConsumed(type, parseInt(id, 10), directSeason, directEpisode, consumedProvider);
+          noteConsumed(
+            type,
+            parseInt(id, 10),
+            directSeason,
+            directEpisode,
+            consumedProvider,
+          );
           setPerfContext({
             provider: consumedProvider,
             bestValidated: snap.bestValidated,
@@ -314,7 +345,14 @@ export function useDirectStreamPipeline({
         // linksSet after last-working promotion — player may consume a reordered head.
         const head2 = nextLinks[nextBestIndex];
         const fed = head2?._meta?.providerId ?? consumedProvider;
-        if (fed) noteConsumed(type, parseInt(id, 10), directSeason, directEpisode, fed);
+        if (fed)
+          noteConsumed(
+            type,
+            parseInt(id, 10),
+            directSeason,
+            directEpisode,
+            fed,
+          );
       } catch (err: any) {
         if (!cancelled) {
           setError(

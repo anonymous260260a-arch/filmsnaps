@@ -13,15 +13,19 @@
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronDown, Download, FileVideo, Server } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface DownloadButtonProps {
   tmdbId: string | number;
   mediaType: "movie" | "tv";
+  /** Layout overrides for the trigger button (merged last, so they win). */
+  buttonClassName?: string;
 }
 
 export default function DownloadButton({
   tmdbId,
   mediaType,
+  buttonClassName,
 }: DownloadButtonProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -43,6 +47,7 @@ export default function DownloadButton({
     };
   }, [open]);
 
+  const hdhubHref = `/download/hdhub?type=${mediaType}&id=${tmdbId}`;
   const nxshaHref = `/download/nxsha?type=${mediaType}&id=${tmdbId}`;
   const falixHref = `/download/falix?type=${mediaType}&id=${tmdbId}`;
 
@@ -52,7 +57,10 @@ export default function DownloadButton({
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium text-foreground/80 hover:text-foreground hover:bg-white/[0.06] border border-white/[0.08] transition-colors"
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium text-foreground/80 hover:text-foreground hover:bg-white/[0.06] border border-white/[0.08] transition-colors",
+          buttonClassName,
+        )}
       >
         <Download size={14} />
         Download
@@ -67,18 +75,38 @@ export default function DownloadButton({
           role="menu"
           className="absolute z-50 top-full left-0 mt-2 w-60 rounded-xl bg-[#141417] border border-white/[0.08] shadow-[0_16px_48px_rgba(0,0,0,0.6)] overflow-hidden"
         >
-          {/* Falix — primary source (direct files, first in the list). */}
+          {/* HDHub — primary source (direct CDN files, first in the list). */}
           <Link
-            href={falixHref}
+            href={hdhubHref}
             onClick={() => setOpen(false)}
             className="flex items-start gap-3 px-4 py-3 hover:bg-white/[0.05] transition-colors"
           >
             <FileVideo size={15} className="text-[#D4A237] mt-0.5 shrink-0" />
             <span className="min-w-0">
               <span className="flex items-center gap-2">
-                <span className="text-sm font-semibold">Falix</span>
+                <span className="text-sm font-semibold">HDHub</span>
                 <span className="rounded-full border border-[#D4A237]/30 bg-[#D4A237]/[0.08] px-1.5 py-px text-[11px] font-medium leading-tight text-[#D4A237]">
                   Primary
+                </span>
+              </span>
+              <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                Direct CDN files · all qualities
+              </span>
+            </span>
+          </Link>
+          <div className="h-px bg-white/[0.06]" />
+          {/* Falix — secondary source (direct HEVC files). */}
+          <Link
+            href={falixHref}
+            onClick={() => setOpen(false)}
+            className="flex items-start gap-3 px-4 py-3 hover:bg-white/[0.05] transition-colors"
+          >
+            <FileVideo size={15} className="text-faint mt-0.5 shrink-0" />
+            <span className="min-w-0">
+              <span className="flex items-center gap-2">
+                <span className="text-sm font-semibold">Falix</span>
+                <span className="rounded-full border border-white/[0.08] px-1.5 py-px text-[11px] leading-tight text-faint">
+                  Secondary
                 </span>
               </span>
               <span className="mt-0.5 block text-[11px] text-muted-foreground">
@@ -87,7 +115,7 @@ export default function DownloadButton({
             </span>
           </Link>
           <div className="h-px bg-white/[0.06]" />
-          {/* Nxsha — secondary fallback (aggregated multi-server links). */}
+          {/* Nxsha — tertiary fallback (aggregated multi-server links). */}
           <Link
             href={nxshaHref}
             onClick={() => setOpen(false)}
@@ -98,7 +126,7 @@ export default function DownloadButton({
               <span className="flex items-center gap-2">
                 <span className="text-sm font-semibold">Nxsha</span>
                 <span className="rounded-full border border-white/[0.08] px-1.5 py-px text-[11px] leading-tight text-faint">
-                  Secondary
+                  Backup
                 </span>
               </span>
               <span className="mt-0.5 block text-[11px] text-muted-foreground">

@@ -33,6 +33,7 @@ import {
 } from "@filmsnaps/shared";
 import type { FalixFile } from "@filmsnaps/shared";
 import type { StreamLink } from "../components/player/streamTypes";
+import { resolveMovie, resolveShowIds } from "./anime/resolve";
 
 // ── Native MKV extractor detection ──────────────────────────────────────
 // The secondary-SeekHead MKV extractor lives in a native patch on expo-video.
@@ -288,6 +289,26 @@ async function resolveImdbId(
   }
 }
 
+/**
+ * True when the TMDB id is in the bundled anime twin map — the same
+ * per-title detection the watch route applies for `isAnime` (minus the
+ * `?isAnime=1` param, which only ever points at mapped titles). Cheap
+ * in-memory lookup; a map hard-miss returns false → normal IMDb resolution,
+ * so a map gap degrades to the old path instead of failing.
+ */
+function isAnimeMappedTitle(
+  mediaType: "movie" | "tv",
+  tmdbId: number,
+): boolean {
+  try {
+    return mediaType === "tv"
+      ? resolveShowIds(tmdbId) != null
+      : resolveMovie(tmdbId) != null;
+  } catch {
+    return false;
+  }
+}
+
 // ── HDHub response parsing — moved to packages/shared/src/providers/sources/hdhub.ts ──
 
 // ── Public API ──
@@ -511,7 +532,16 @@ export async function fetchDirectStreams(
   providerId?: string,
 ): Promise<DirectStreamBundle> {
   const fetchStartedAt = Date.now();
-  const imdbId = await resolveImdbId(mediaType, tmdbId);
+  // Anime-mapped title fetched by a tmdb-scheme provider (MovieBox/PenguPlay):
+  // inject the route's TMDB id as `tmdb:{id}` instead of round-tripping TMDB
+  // external_ids — the anime surface never resolves IMDb, and PenguPlay accepts
+  // both schemes with identical rows (probed). Regular titles and every other
+  // provider keep the resolved tt… id (unchanged behavior).
+  const idDef = providerId ? getProvider(providerId) : undefined;
+  const imdbId =
+    idDef?.idScheme === "tmdb" && isAnimeMappedTitle(mediaType, tmdbId)
+      ? `tmdb:${tmdbId}`
+      : await resolveImdbId(mediaType, tmdbId);
   if (!imdbId) {
     throw new Error("Couldn't resolve this title's IMDB id.");
   }
@@ -560,6 +590,16 @@ export async function fetchDirectStreams(
   // Both fetches run concurrently; results are collected sequentially so a
   // slow primary never delays an already-finished falix response.
   const hdhubPromise = (async (): Promise<StreamLink[]> => {
+    // Same URL the download screen uses — a payload already in memory means
+    // neither side needs the network.
+    const cached = readHdHubPayload(apiUrl);
+    if (cached) {
+      console.log(
+        `[Flow] fetch hdhub: ${cached.length} links (cache HIT — no upstream call)`,
+      );
+      return cached;
+    }
+
     let res: Response;
     try {
       res = await fetchWithTimeout(apiUrl, 15_000, {
@@ -572,12 +612,14 @@ export async function fetchDirectStreams(
       throw new Error(`Stream provider returned HTTP ${res.status}`);
     }
     const raw = (await res.json()) as { streams?: unknown[] };
-    return hdhubAdapter.parseResponse(raw, {
+    const parsed = hdhubAdapter.parseResponse(raw, {
       imdbId,
       mediaType,
       season,
       episode,
     });
+    writeHdHubPayload(apiUrl, parsed);
+    return parsed;
   })();
 
   let links: StreamLink[] = [];
@@ -605,4 +647,106 @@ export async function fetchDirectStreams(
   if (links.length === 0 && primaryError) throw primaryError;
 
   return { tmdbId, imdbId, mediaType, links };
+}
+
+// ── HDHub payload reuse ───────────────────────────────────────────
+
+/**
+ * HDHub payloads this app already fetched, keyed by the exact API URL.
+ *
+ * The detail page warms the watch pipeline (`[Flow] fetch hdhub: N links …`)
+ * and the download screen asks for the very same URL — so it reads here
+ * instead of paying for a second round-trip. Both sides write, both sides
+ * read; only a miss (or an entry older than the TTL) ever reaches the network.
+ *
+ * 45 min is well inside the 3-hour signature window on HDHub's presigned file
+ * URLs, and the map is bounded so a browsing session cannot grow it.
+ */
+const HDHUB_PAYLOAD_TTL_MS = 45 * 60 * 1000;
+const HDHUB_PAYLOAD_MAX = 8;
+const hdhubPayloads = new Map<string, { links: StreamLink[]; at: number }>();
+
+function readHdHubPayload(apiUrl: string): StreamLink[] | null {
+  const hit = hdhubPayloads.get(apiUrl);
+  if (!hit) return null;
+  if (Date.now() - hit.at > HDHUB_PAYLOAD_TTL_MS) {
+    hdhubPayloads.delete(apiUrl);
+    return null;
+  }
+  return [...hit.links];
+}
+
+function writeHdHubPayload(apiUrl: string, links: StreamLink[]): void {
+  if (links.length === 0) return;
+  hdhubPayloads.delete(apiUrl);
+  hdhubPayloads.set(apiUrl, { links: [...links], at: Date.now() });
+  while (hdhubPayloads.size > HDHUB_PAYLOAD_MAX) {
+    const oldest = hdhubPayloads.keys().next().value;
+    if (oldest === undefined) break;
+    hdhubPayloads.delete(oldest);
+  }
+}
+
+/**
+ * HDHub-only lookup for the download flow.
+ *
+ * Deliberately separate from fetchDirectStreams(): that one runs hdhub+falix
+ * concurrently and merges both pools for playback ranking, so callers can't
+ * tell which provider a link came from. The download screen offers providers
+ * one at a time, so it must only ever show HDHub's own files.
+ *
+ * Returns the same StreamLink shape the player sees (incl. `_meta.sizeBytes`,
+ * `_meta.isDownloadOnly`) — the caller decides which rows are enqueueable.
+ */
+export async function fetchHdHubLinks(
+  tmdbId: number,
+  mediaType: "movie" | "tv",
+  season?: number,
+  episode?: number,
+): Promise<StreamLink[]> {
+  const imdbId = await resolveImdbId(mediaType, tmdbId);
+  if (!imdbId) {
+    throw new Error("Couldn't resolve this title's IMDB id.");
+  }
+
+  const apiBase = await getProviderApiBase("hdhub");
+  const apiUrl =
+    season && episode
+      ? `${apiBase}/stream/series/${imdbId}:${season}:${episode}.json`
+      : `${apiBase}/stream/movie/${imdbId}.json`;
+
+  // The watch pipeline already fetched this exact URL — reuse it.
+  const cached = readHdHubPayload(apiUrl);
+  if (cached) {
+    console.log(
+      `[Flow] download hdhub: ${cached.length} links (cache HIT — reused detail-page fetch)`,
+    );
+    return cached;
+  }
+
+  let raw: { streams?: unknown[] };
+  try {
+    const res = await fetchWithTimeout(apiUrl, 15_000, {
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      throw new Error(`HDHub returned HTTP ${res.status}`);
+    }
+    raw = (await res.json()) as { streams?: unknown[] };
+  } catch (err) {
+    throw new Error(
+      err instanceof Error && err.message.startsWith("HDHub")
+        ? err.message
+        : "Couldn't reach HDHub.",
+    );
+  }
+
+  const links = hdhubAdapter.parseResponse(raw, {
+    imdbId,
+    mediaType,
+    season,
+    episode,
+  });
+  writeHdHubPayload(apiUrl, links);
+  return links;
 }

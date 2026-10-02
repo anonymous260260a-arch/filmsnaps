@@ -1,0 +1,785 @@
+[
+  {
+    "title": "Spider-Man: Brand New Day",
+    "backdrop_path": "/qeQJx07rK2xm8SD2sJxFKhE7gs0.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#842829",
+        "population": 399,
+        "share": 0.2185104052573932,
+        "wshare": 0.3311426482524218
+      },
+      {
+        "name": "h2",
+        "hex": "#b1734e",
+        "population": 333,
+        "share": 0.1823658269441402,
+        "wshare": 0.3323264923565291
+      },
+      {
+        "name": "h3",
+        "hex": "#bd9c65",
+        "population": 292,
+        "share": 0.15991237677984665,
+        "wshare": 0.20392162912050857
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#842829",
+      "population": 399,
+      "share": 0.2185104052573932,
+      "wshare": 0.3311426482524218,
+      "score": 0.45398206980436095
+    },
+    "painted": {
+      "accent": "#dd002a",
+      "text": "#ffffff",
+      "zone": "red",
+      "rawL": 0.4189793855563585,
+      "rawC": 0.12609211716768662,
+      "hue": 23.811932245950945
+    }
+  },
+  {
+    "title": "Renegade Immortal: Battle of the Immortal Slayer",
+    "backdrop_path": "/rJT7ARv4G2sr1uTZnBEUSigg1hf.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#a56c4f",
+        "population": 634,
+        "share": 0.28726778432260985,
+        "wshare": 0.7522604179751935
+      },
+      {
+        "name": "h2",
+        "hex": "#c3955e",
+        "population": 191,
+        "share": 0.08654281830539194,
+        "wshare": 0.2092751254114273
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#a56c4f",
+      "population": 634,
+      "share": 0.28726778432260985,
+      "wshare": 0.7522604179751935,
+      "score": 0.20722597097628534
+    },
+    "painted": {
+      "accent": "#f56f0b",
+      "text": "#0a0a0b",
+      "zone": "coral",
+      "rawL": 0.5850779183575089,
+      "rawC": 0.08431992068811683,
+      "hue": 47.54690683521966
+    }
+  },
+  {
+    "title": "Resident Evil",
+    "backdrop_path": "/3icyRAqgakNcQn6aDVz9libFmBA.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#7c030b",
+        "population": 99,
+        "share": 0.15639810426540285,
+        "wshare": 0.709194283712025
+      },
+      {
+        "name": "h2",
+        "hex": "#3a3d4a",
+        "population": 136,
+        "share": 0.21484992101105846,
+        "wshare": 0.12671301218406328
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#7c030b",
+      "population": 99,
+      "share": 0.15639810426540285,
+      "wshare": 0.709194283712025,
+      "score": 0.8308245720275433
+    },
+    "painted": {
+      "accent": "#de001a",
+      "text": "#ffffff",
+      "zone": "red",
+      "rawL": 0.37048224505421146,
+      "rawC": 0.1486024702612953,
+      "hue": 26.767347128094524
+    }
+  },
+  {
+    "title": "Coyote vs. Acme",
+    "backdrop_path": "/viZqGq9TNvQ5uXSD4ahg2RpRONT.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#8c4315",
+        "population": 1188,
+        "share": 0.5258964143426295,
+        "wshare": 0.7660617967437006
+      },
+      {
+        "name": "h2",
+        "hex": "#cf8e49",
+        "population": 762,
+        "share": 0.33731739707835323,
+        "wshare": 0.21536133041167355
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#8c4315",
+      "population": 1188,
+      "share": 0.5258964143426295,
+      "wshare": 0.7660617967437006,
+      "score": 0.8019197990234214
+    },
+    "painted": {
+      "accent": "#f57000",
+      "text": "#0a0a0b",
+      "zone": "coral",
+      "rawL": 0.4690676645247155,
+      "rawC": 0.11406451935075293,
+      "hue": 48.34677201883057
+    }
+  },
+  {
+    "title": "The Odyssey",
+    "backdrop_path": "/bulFtfy3oBQtCnAMSi7g6DSSds3.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#2d4457",
+        "population": 774,
+        "share": 0.7029972752043597,
+        "wshare": 0.8981284123933072
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#2d4457",
+      "population": 774,
+      "share": 0.7029972752043597,
+      "wshare": 0.8981284123933072,
+      "score": 0.5144187844817054
+    },
+    "painted": {
+      "accent": "#1473b0",
+      "text": "#ffffff",
+      "zone": "cool",
+      "rawL": 0.37612842589797085,
+      "rawC": 0.043519120332376364,
+      "hue": 244.235222064395
+    }
+  },
+  {
+    "title": "The End of Oak Street",
+    "backdrop_path": "/b9q9VmbXDvJmTziRqkwdEmFdwhr.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#63673b",
+        "population": 759,
+        "share": 0.32985658409387225,
+        "wshare": 0.5059362499093369
+      },
+      {
+        "name": "h2",
+        "hex": "#375132",
+        "population": 498,
+        "share": 0.21642764015645372,
+        "wshare": 0.26419792536665654
+      },
+      {
+        "name": "h3",
+        "hex": "#8a7b55",
+        "population": 343,
+        "share": 0.14906562364189482,
+        "wshare": 0.1527932353711253
+      }
+    ],
+    "picked": {
+      "name": "h2",
+      "hex": "#375132",
+      "population": 498,
+      "share": 0.21642764015645372,
+      "wshare": 0.26419792536665654,
+      "score": 0.2719574493981218
+    },
+    "painted": {
+      "accent": "#3dbf1a",
+      "text": "#0a0a0b",
+      "zone": "green",
+      "rawL": 0.4047953017712053,
+      "rawC": 0.05953925799771855,
+      "hue": 140.48497048856123
+    }
+  },
+  {
+    "title": "The Fix",
+    "backdrop_path": "/dJTWIecL2vxsCRl5G0lRhPsfrhc.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#6f7bae",
+        "population": 647,
+        "share": 0.281917211328976,
+        "wshare": 0.46593523477353854
+      },
+      {
+        "name": "h2",
+        "hex": "#a4a544",
+        "population": 536,
+        "share": 0.23355119825708062,
+        "wshare": 0.31288910996795105
+      },
+      {
+        "name": "h3",
+        "hex": "#aa9365",
+        "population": 273,
+        "share": 0.11895424836601307,
+        "wshare": 0.08515969249088333
+      }
+    ],
+    "picked": {
+      "name": "h2",
+      "hex": "#a4a544",
+      "population": 536,
+      "share": 0.23355119825708062,
+      "wshare": 0.31288910996795105,
+      "score": 0.46004157473395335
+    },
+    "painted": {
+      "accent": "#c3c430",
+      "text": "#0a0a0b",
+      "zone": "gold",
+      "rawL": 0.7015781030960629,
+      "rawC": 0.11975515925843752,
+      "hue": 109.67612491342787
+    }
+  },
+  {
+    "title": "The Love Hypothesis",
+    "backdrop_path": "/o7Oy9Gbx1CCyaweL8xUhtMW4Puq.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#2d6478",
+        "population": 1639,
+        "share": 0.7236203090507727,
+        "wshare": 0.8094175150863098
+      },
+      {
+        "name": "h2",
+        "hex": "#9d6d50",
+        "population": 356,
+        "share": 0.15717439293598234,
+        "wshare": 0.18338960993468598
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#2d6478",
+      "population": 1639,
+      "share": 0.7236203090507727,
+      "wshare": 0.8094175150863098,
+      "score": 0.7031420139988309
+    },
+    "painted": {
+      "accent": "#0e7695",
+      "text": "#ffffff",
+      "zone": "cool",
+      "rawL": 0.47479822518706877,
+      "rawC": 0.06599508489194231,
+      "hue": 224.6963350470019
+    }
+  },
+  {
+    "title": "After Impact",
+    "backdrop_path": "/k22XyPbce7zvzzf5OnT4uaY8ZD1.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#3d556c",
+        "population": 306,
+        "share": 0.31611570247933884,
+        "wshare": 0.6659069349943986
+      },
+      {
+        "name": "h2",
+        "hex": "#313747",
+        "population": 178,
+        "share": 0.18388429752066116,
+        "wshare": 0.2035129081908512
+      },
+      {
+        "name": "h3",
+        "hex": "#3a3040",
+        "population": 87,
+        "share": 0.08987603305785125,
+        "wshare": 0.09653215798534283
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#3d556c",
+      "population": 306,
+      "share": 0.31611570247933884,
+      "wshare": 0.6659069349943986,
+      "score": 0.39714927602312755
+    },
+    "painted": {
+      "accent": "#1373ba",
+      "text": "#ffffff",
+      "zone": "cool",
+      "rawL": 0.43975499428188475,
+      "rawC": 0.04808119562636781,
+      "hue": 247.90572388725082
+    }
+  },
+  {
+    "title": "Runner",
+    "backdrop_path": "/2c9zNZJL0ZdagD6JbmU3hH4hovs.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#4d5914",
+        "population": 1324,
+        "share": 0.5749023013460703,
+        "wshare": 0.7361836336012506
+      },
+      {
+        "name": "h2",
+        "hex": "#93573f",
+        "population": 476,
+        "share": 0.2066869300911854,
+        "wshare": 0.21426169118802127
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#4d5914",
+      "population": 1324,
+      "share": 0.5749023013460703,
+      "wshare": 0.7361836336012506,
+      "score": 0.7806239051431922
+    },
+    "painted": {
+      "accent": "#a7c02d",
+      "text": "#0a0a0b",
+      "zone": "green",
+      "rawL": 0.4392056323477328,
+      "rawC": 0.09189622717042281,
+      "hue": 119.02728653052888
+    }
+  },
+  {
+    "title": "The Mongoose",
+    "backdrop_path": "/iRIhPqqoUHiFBxn8oYf3gCQnaKk.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#bb271c",
+        "population": 1258,
+        "share": 0.5551632833186231,
+        "wshare": 0.8138640848833324
+      },
+      {
+        "name": "h2",
+        "hex": "#ba7f63",
+        "population": 533,
+        "share": 0.235216240070609,
+        "wshare": 0.15819813707276573
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#bb271c",
+      "population": 1258,
+      "share": 0.5551632833186231,
+      "wshare": 0.8138640848833324,
+      "score": 0.8126967798669502
+    },
+    "painted": {
+      "accent": "#df0300",
+      "text": "#ffffff",
+      "zone": "red",
+      "rawL": 0.5166059187309138,
+      "rawC": 0.1854792742966072,
+      "hue": 29.37204192082053
+    }
+  },
+  {
+    "title": "Colony",
+    "backdrop_path": "/hpBGCnzOvdtQoMyE48gvwp2y5yx.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#8a5a45",
+        "population": 706,
+        "share": 0.3425521591460456,
+        "wshare": 0.5482990736080482
+      },
+      {
+        "name": "h2",
+        "hex": "#a98757",
+        "population": 544,
+        "share": 0.2639495390587094,
+        "wshare": 0.3003227864257881
+      },
+      {
+        "name": "h3",
+        "hex": "#6d3334",
+        "population": 72,
+        "share": 0.034934497816593885,
+        "wshare": 0.07442943014895799
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#8a5a45",
+      "population": 706,
+      "share": 0.3425521591460456,
+      "wshare": 0.5482990736080482,
+      "score": 0.4103788739254818
+    },
+    "painted": {
+      "accent": "#f66812",
+      "text": "#0a0a0b",
+      "zone": "coral",
+      "rawL": 0.5149352180701021,
+      "rawC": 0.07126006163867783,
+      "hue": 44.35787237919627
+    }
+  },
+  {
+    "title": "Mutiny",
+    "backdrop_path": "/e2QAGrEmbpmZpMymDRkDisJkvg9.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#4a6372",
+        "population": 930,
+        "share": 0.40611353711790393,
+        "wshare": 0.5791281254553575
+      },
+      {
+        "name": "h2",
+        "hex": "#9f7267",
+        "population": 303,
+        "share": 0.13231441048034934,
+        "wshare": 0.40261604357658626
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#4a6372",
+      "population": 930,
+      "share": 0.40611353711790393,
+      "wshare": 0.5791281254553575,
+      "score": 0.34532177972645306
+    },
+    "painted": {
+      "accent": "#1675a1",
+      "text": "#ffffff",
+      "zone": "cool",
+      "rawL": 0.4854819164891925,
+      "rawC": 0.03836138461016412,
+      "hue": 234.9382102126374
+    }
+  },
+  {
+    "title": "Toy Story 5",
+    "backdrop_path": "/4D1pdB27uph7J8HQzNf8QvvH9bn.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#bea34a",
+        "population": 427,
+        "share": 0.1853298611111111,
+        "wshare": 0.2820921116412465
+      },
+      {
+        "name": "h2",
+        "hex": "#a7733e",
+        "population": 758,
+        "share": 0.3289930555555556,
+        "wshare": 0.2551159676937828
+      },
+      {
+        "name": "h3",
+        "hex": "#445d78",
+        "population": 485,
+        "share": 0.2105034722222222,
+        "wshare": 0.16730891374068588
+      },
+      {
+        "name": "h4",
+        "hex": "#9f503d",
+        "population": 289,
+        "share": 0.1254340277777778,
+        "wshare": 0.19609194761042353
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#bea34a",
+      "population": 427,
+      "share": 0.1853298611111111,
+      "wshare": 0.2820921116412465,
+      "score": 0.428037274174119
+    },
+    "painted": {
+      "accent": "#e2bc31",
+      "text": "#0a0a0b",
+      "zone": "gold",
+      "rawL": 0.7218441900161222,
+      "rawC": 0.11284033858738182,
+      "hue": 92.48691971349982
+    }
+  },
+  {
+    "title": "UNABOMBER",
+    "backdrop_path": "/58D9nalUYW5L5K0guw7hcpsEJBH.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#878564",
+        "population": 95,
+        "share": 0.0495565988523735,
+        "wshare": 0.3719093422774548
+      },
+      {
+        "name": "h2",
+        "hex": "#57634f",
+        "population": 118,
+        "share": 0.06155451225873761,
+        "wshare": 0.3078433513340505
+      },
+      {
+        "name": "h3",
+        "hex": "#384a3f",
+        "population": 70,
+        "share": 0.036515388628064686,
+        "wshare": 0.1586663001671055
+      },
+      {
+        "name": "h4",
+        "hex": "#624f3d",
+        "population": 21,
+        "share": 0.010954616588419406,
+        "wshare": 0.07492296963998879
+      }
+    ],
+    "picked": {
+      "name": "h2",
+      "hex": "#57634f",
+      "population": 118,
+      "share": 0.06155451225873761,
+      "wshare": 0.3078433513340505,
+      "score": 0.18494182429166967
+    },
+    "painted": {
+      "accent": "#72bb24",
+      "text": "#0a0a0b",
+      "zone": "green",
+      "rawL": 0.4833387989264606,
+      "rawC": 0.03453984352650225,
+      "hue": 132.92096836876374
+    }
+  },
+  {
+    "title": "Digger",
+    "backdrop_path": "/b7t3r39Oll5qPxBKzLZ8eHMBD7l.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#6c6550",
+        "population": 283,
+        "share": 0.13547151747247488,
+        "wshare": 0.3290233035828063
+      },
+      {
+        "name": "h2",
+        "hex": "#263b39",
+        "population": 278,
+        "share": 0.1330780277644806,
+        "wshare": 0.18585243115834682
+      },
+      {
+        "name": "h3",
+        "hex": "#65513e",
+        "population": 279,
+        "share": 0.13355672570607946,
+        "wshare": 0.17571904984287617
+      },
+      {
+        "name": "h4",
+        "hex": "#575b4c",
+        "population": 111,
+        "share": 0.05313547151747248,
+        "wshare": 0.10479673917264674
+      }
+    ],
+    "picked": {
+      "name": "h2",
+      "hex": "#263b39",
+      "population": 278,
+      "share": 0.1330780277644806,
+      "wshare": 0.18585243115834682,
+      "score": 0.23277738553269245
+    },
+    "painted": {
+      "accent": "#28aca4",
+      "text": "#0a0a0b",
+      "zone": "cool",
+      "rawL": 0.33393425513303443,
+      "rawC": 0.02690631250818133,
+      "hue": 188.4931143744328
+    }
+  },
+  {
+    "title": "Heart of the Beast",
+    "backdrop_path": "/bicMU6xVD5deVyKP2azpyx7xkmH.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#9da37a",
+        "population": 803,
+        "share": 0.35960591133004927,
+        "wshare": 0.4246163717051898
+      },
+      {
+        "name": "h2",
+        "hex": "#1d4649",
+        "population": 275,
+        "share": 0.12315270935960591,
+        "wshare": 0.1413904649334807
+      },
+      {
+        "name": "h3",
+        "hex": "#647a63",
+        "population": 300,
+        "share": 0.13434841021047916,
+        "wshare": 0.13479420975794293
+      },
+      {
+        "name": "h4",
+        "hex": "#837655",
+        "population": 192,
+        "share": 0.08598298253470667,
+        "wshare": 0.09813073480997285
+      }
+    ],
+    "picked": {
+      "name": "h2",
+      "hex": "#1d4649",
+      "population": 275,
+      "share": 0.12315270935960591,
+      "wshare": 0.1413904649334807,
+      "score": 0.29387592260313594
+    },
+    "painted": {
+      "accent": "#157a81",
+      "text": "#ffffff",
+      "zone": "cool",
+      "rawL": 0.36634171470005994,
+      "rawC": 0.04589629415937254,
+      "hue": 201.7963378858412
+    }
+  },
+  {
+    "title": "Resident Evil: Welcome to Raccoon City",
+    "backdrop_path": "/wYtEvBmpBRXPdwGgr1gcWiwJSI7.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#7d3225",
+        "population": 1255,
+        "share": 0.5939422621864647,
+        "wshare": 0.8777490385149154
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#7d3225",
+      "population": 1255,
+      "share": 0.5939422621864647,
+      "wshare": 0.8777490385149154,
+      "score": 0.6806813110517104
+    },
+    "painted": {
+      "accent": "#d72300",
+      "text": "#ffffff",
+      "zone": "coral",
+      "rawL": 0.419725171029846,
+      "rawC": 0.10745960863535203,
+      "hue": 31.813782461491652
+    }
+  },
+  {
+    "title": "Obsession",
+    "backdrop_path": "/5lTZyuBTNOfawsfPT8Q0cIg6qAF.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#5c3427",
+        "population": 657,
+        "share": 0.28515625,
+        "wshare": 0.8890989127513945
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#5c3427",
+      "population": 657,
+      "share": 0.28515625,
+      "wshare": 0.8890989127513945,
+      "score": 0.555600450835775
+    },
+    "painted": {
+      "accent": "#f95815",
+      "text": "#0a0a0b",
+      "zone": "coral",
+      "rawL": 0.37158993500924636,
+      "rawC": 0.06197916990724721,
+      "hue": 38.74377573580776
+    }
+  },
+  {
+    "title": "The Uprising",
+    "backdrop_path": "/y0reRTsewsPh0ePtgvDeLIsb5Wk.jpg",
+    "swatches": [
+      {
+        "name": "h1",
+        "hex": "#6a808f",
+        "population": 282,
+        "share": 0.12303664921465969,
+        "wshare": 0.8784042811155268
+      }
+    ],
+    "picked": {
+      "name": "h1",
+      "hex": "#6a808f",
+      "population": 282,
+      "share": 0.12303664921465969,
+      "wshare": 0.8784042811155268,
+      "score": 0.32308488230017113
+    },
+    "painted": {
+      "accent": "#1774a4",
+      "text": "#ffffff",
+      "zone": "cool",
+      "rawL": 0.5877350856916829,
+      "rawC": 0.03443237713594519,
+      "hue": 237.98581264102899
+    }
+  }
+]

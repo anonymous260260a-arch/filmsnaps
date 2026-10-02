@@ -7,7 +7,7 @@
 
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   X,
   RefreshCw,
@@ -27,7 +27,7 @@ import {
 } from "@/lib/probeStream";
 import { isDownloadOnlyLink } from "@/lib/streamSelector";
 
-interface StreamLink {
+export interface StreamLink {
   quality: string;
   name: string;
   id: string;
@@ -62,7 +62,7 @@ interface StreamPickerSheetProps {
   onClose: () => void;
 }
 
-type LanguageFilter = "all" | LinkLanguage;
+export type LanguageFilter = "all" | LinkLanguage;
 
 const LANGUAGE_LABELS: Record<LinkLanguage, string> = {
   hindi: "Hindi",
@@ -70,6 +70,90 @@ const LANGUAGE_LABELS: Record<LinkLanguage, string> = {
   multi: "Multi",
   unknown: "",
 };
+
+export interface LinkSection {
+  label: string;
+  items: Array<{ link: StreamLink; index: number }>;
+}
+
+export interface GroupedLinks {
+  sections: LinkSection[];
+  deadSection: Array<{ link: StreamLink; index: number }>;
+}
+
+/**
+ * Split links into language-ordered alive sections plus a dead section.
+ * Shared by the modal picker and PlayerHub's Sources tab so both read the
+ * same top-down order the auto-pick would try.
+ */
+export function groupLinkSections(
+  links: StreamLink[],
+  linkStatuses: Map<number, ProbeOutcome> | undefined,
+  languageFilter: LanguageFilter,
+  rankById: Map<string, number> | undefined,
+): GroupedLinks {
+  const alive: Array<{ link: StreamLink; index: number }> = [];
+  const dead: Array<{ link: StreamLink; index: number }> = [];
+
+  for (let i = 0; i < links.length; i++) {
+    const link = links[i];
+    const outcome = linkStatuses?.get(i);
+
+    if (languageFilter !== "all") {
+      const lang = parseLinkLanguage(link.name);
+      if (lang !== languageFilter && lang !== "unknown") continue;
+    }
+
+    if (outcome === "dead") {
+      dead.push({ link, index: i });
+    } else {
+      alive.push({ link, index: i });
+    }
+  }
+
+  // Rank order within each section — the picker should read top-down in the
+  // same order the auto-pick would try them, so "why is this on top" is
+  // answered by the badges instead of mystery.
+  const rankOf = (l: StreamLink) =>
+    rankById?.get(l.id) ?? Number.MAX_SAFE_INTEGER;
+  const byRank = (
+    a: { link: StreamLink; index: number },
+    b: { link: StreamLink; index: number },
+  ) => rankOf(a.link) - rankOf(b.link);
+
+  // Group alive links by language section
+  const sectionMap = new Map<
+    string,
+    Array<{ link: StreamLink; index: number }>
+  >();
+  for (const item of alive) {
+    const lang = parseLinkLanguage(item.link.name);
+    const sectionKey = lang === "unknown" ? "default" : lang;
+    if (!sectionMap.has(sectionKey)) sectionMap.set(sectionKey, []);
+    sectionMap.get(sectionKey)!.push(item);
+  }
+
+  // Build ordered sections: multi, hindi, english, default
+  const orderedKeys = ["multi", "hindi", "english", "default"];
+  const sections: LinkSection[] = [];
+  for (const key of orderedKeys) {
+    const items = sectionMap.get(key);
+    if (items && items.length > 0) {
+      items.sort(byRank);
+      sections.push({
+        label:
+          key === "default"
+            ? "Other"
+            : LANGUAGE_LABELS[key as LinkLanguage] || key,
+        items,
+      });
+    }
+  }
+
+  dead.sort(byRank);
+
+  return { sections, deadSection: dead };
+}
 
 export function StreamPickerSheet({
   open,
@@ -85,6 +169,20 @@ export function StreamPickerSheet({
   onClose,
 }: StreamPickerSheetProps) {
   const [languageFilter, setLanguageFilter] = useState<LanguageFilter>("all");
+
+  // Esc closes the overlay — the desktop expectation for a modal, and it
+  // keeps movi's own window-level hotkeys from also reacting to the press
+  // (capture + stop; browser defaults like fullscreen exit still run).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, onClose]);
 
   const verifiedCount = useMemo(
     () =>
@@ -105,87 +203,26 @@ export function StreamPickerSheet({
   }, [links]);
 
   // Group links into sections
-  const { sections, deadSection } = useMemo(() => {
-    const alive: Array<{ link: StreamLink; index: number }> = [];
-    const dead: Array<{ link: StreamLink; index: number }> = [];
-
-    for (let i = 0; i < links.length; i++) {
-      const link = links[i];
-      const outcome = linkStatuses?.get(i);
-
-      // Apply language filter
-      if (languageFilter !== "all") {
-        const lang = parseLinkLanguage(link.name);
-        if (lang !== languageFilter && lang !== "unknown") continue;
-      }
-
-      if (outcome === "dead") {
-        dead.push({ link, index: i });
-      } else {
-        alive.push({ link, index: i });
-      }
-    }
-
-    // Rank order within each section — the picker should read top-down in the
-    // same order the auto-pick would try them, so "why is this on top" is
-    // answered by the badges instead of mystery.
-    const rankOf = (l: StreamLink) =>
-      rankById?.get(l.id) ?? Number.MAX_SAFE_INTEGER;
-    const byRank = (
-      a: { link: StreamLink; index: number },
-      b: { link: StreamLink; index: number },
-    ) => rankOf(a.link) - rankOf(b.link);
-
-    // Group alive links by language section
-    const sectionMap = new Map<
-      string,
-      Array<{ link: StreamLink; index: number }>
-    >();
-    for (const item of alive) {
-      const lang = parseLinkLanguage(item.link.name);
-      const sectionKey = lang === "unknown" ? "default" : lang;
-      if (!sectionMap.has(sectionKey)) sectionMap.set(sectionKey, []);
-      sectionMap.get(sectionKey)!.push(item);
-    }
-
-    // Build ordered sections: multi, hindi, english, default
-    const orderedKeys = ["multi", "hindi", "english", "default"];
-    const sections: Array<{
-      label: string;
-      items: Array<{ link: StreamLink; index: number }>;
-    }> = [];
-    for (const key of orderedKeys) {
-      const items = sectionMap.get(key);
-      if (items && items.length > 0) {
-        items.sort(byRank);
-        sections.push({
-          label:
-            key === "default"
-              ? "Other"
-              : LANGUAGE_LABELS[key as LinkLanguage] || key,
-          items,
-        });
-      }
-    }
-
-    dead.sort(byRank);
-
-    return { sections, deadSection: dead };
-  }, [links, linkStatuses, languageFilter, rankById]);
+  const { sections, deadSection } = useMemo(
+    () => groupLinkSections(links, linkStatuses, languageFilter, rankById),
+    [links, linkStatuses, languageFilter, rankById],
+  );
 
   if (!open) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center"
       onClick={onClose}
     >
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/60" />
 
-      {/* Panel */}
+      {/* Panel — centred dialog at md+ (desktop), bottom sheet below it so a
+          thumb can reach every row on a phone. */}
       <div
-        className="relative bg-[#16161A] rounded-2xl w-[440px] max-h-[80vh] flex flex-col border border-white/[0.08] shadow-2xl overflow-hidden"
+        className="relative bg-[#16161A] rounded-t-2xl md:rounded-2xl w-full md:w-[440px] max-h-[75vh] md:max-h-[80vh] flex flex-col border-x border-t md:border border-white/[0.08] shadow-2xl overflow-hidden"
+        style={{ paddingBottom: "max(0px, env(safe-area-inset-bottom))" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -343,7 +380,7 @@ function ProbeIcon({ outcome }: { outcome?: ProbeOutcome }) {
   }
 }
 
-function LinkRow({
+export function LinkRow({
   link,
   index,
   isActive,

@@ -29,7 +29,7 @@ export default function PrivacyPage() {
       }
     >
       <p className="mb-2 text-sm font-medium text-faint">
-        Last updated: September 2026
+        Last updated: September 28, 2026
       </p>
 
       <Section title="The Short Version">
@@ -51,14 +51,13 @@ export default function PrivacyPage() {
 
       <Section title="Anonymous Usage Statistics (Optional)">
         <Body>
-          To know which streaming sources actually work and what to fix, the
-          app sends small anonymous events — for example, whether a source
-          succeeded or failed, roughly how long it took (rounded), whether
-          playback stalled, which features get used, plus app version and
-          connection type (Wi-Fi or cellular). To measure source coverage we
-          count the content ID (a TMDB number) of titles you open, in aggregate
-          only. No title names, no search text, no URLs, and no free text are
-          ever sent.
+          To know which streaming sources actually work and what to fix, the app
+          sends small anonymous events — for example, whether a source succeeded
+          or failed, roughly how long it took (rounded), whether playback
+          stalled, which features get used, plus app version and connection type
+          (Wi-Fi or cellular). To measure source coverage we count the content
+          ID (a TMDB number) of titles you open, in aggregate only. No title
+          names, no search text, no URLs, and no free text are ever sent.
         </Body>
         <Body extraMargin>
           <Bold>
@@ -67,9 +66,17 @@ export default function PrivacyPage() {
           </Bold>
         </Body>
         <Body extraMargin>
-          Statistics start after you accept the terms and stay on until you
-          turn them off. Turning them off (Settings → Anonymous usage
-          statistics) stops all sending immediately and clears anything queued.
+          Each event carries one random ID generated on your device, so we can
+          count how many installs use FilmSnaps — not who you are. It is not
+          your device ID, advertising ID, or anything derived from your hardware
+          or IP. When you turn statistics off, the ID is deleted from your
+          device: turning them back on creates a brand-new, unrelated ID, so old
+          statistics can never be connected to you again.
+        </Body>
+        <Body extraMargin>
+          Statistics start after you accept the terms and stay on until you turn
+          them off. Turning them off (Settings → Anonymous usage statistics)
+          stops all sending immediately and clears anything queued.
         </Body>
       </Section>
 
@@ -84,10 +91,12 @@ export default function PrivacyPage() {
 
       <Section title="What We Never Collect">
         <Body>
-          No names, emails, or accounts (there are none) · no user, device,
-          advertising, or session identifiers · no IP addresses (we never read
+          No names, emails, or accounts (there are none) · no device,
+          advertising, or contact identifiers · no IP addresses (we never read
           or store them) · no search queries · no titles by name · no location ·
-          no advertising or tracking SDKs.
+          no advertising or tracking SDKs. The one random statistics ID
+          described above is the only identifier that exists, and it is deleted
+          when you turn statistics off.
         </Body>
       </Section>
 
@@ -102,8 +111,8 @@ export default function PrivacyPage() {
         <Body>
           Anonymous statistics are kept for up to 12 months, then deleted
           automatically. Crash reports follow Sentry&apos;s standard retention.
-          Nothing on our side is linked to you, so there is no profile of you to
-          expire.
+          The random statistics ID is not linked to you in any way — there is no
+          profile of you on our side to expire.
         </Body>
       </Section>
 
@@ -119,11 +128,12 @@ export default function PrivacyPage() {
 
       <Section title="Your Rights (GDPR / CCPA)">
         <Body>
-          These laws protect personal data. Our statistics and crash reports
-          contain no identifiers and no IP addresses, so they aren&apos;t
-          personal data — but if you ever want anything stopped, the Settings
-          toggle works immediately, and you can reach us at{" "}
-          <Bold>privacy@filmsnaps.app</Bold>.
+          These laws protect personal data. Our statistics contain no device or
+          advertising identifiers, no IP addresses, and no free text — the only
+          ID is the random one described above, which is deleted from your
+          device the moment statistics are turned off. If you ever want anything
+          stopped, the Settings toggle works immediately, and you can reach us
+          at <Bold>privacy@filmsnaps.app</Bold>.
         </Body>
       </Section>
 

@@ -52,6 +52,14 @@ export interface AnimeDirectPipelineState {
    *  after a real attempt came up empty. */
   attempted: boolean;
   error: string | null;
+  /** True when the empty settlement was caused by source-level ERRORS
+   *  (network / HTTP), not by servers genuinely reporting no streams. The
+   *  watch route must NOT auto-fallback to the megaplay embed in this case —
+   *  show the error card + Retry instead. This is the fix for the reported
+   *  "first launch silently falls back to megaplay without a reason" bug:
+   *  cold-start requests (cold DNS/TLS, captive portal) all failed at once
+   *  and were misread as an empty upstream. */
+  fetchFailed: boolean;
   stageMessage: string | null;
   /** Re-run the fetch pipeline (Retry). */
   refetch: () => void;
@@ -73,6 +81,8 @@ interface Progress {
   fullPool: StreamLink[];
   /** streamSource ids that already answered (success or not). */
   receivedSourceIds: Set<string>;
+  /** Last settlement for this key ended with errors and zero links. */
+  lastSettleFailed: boolean;
 }
 
 /** Caption-carrying check — the rule that decides when playback may seed. */
@@ -103,7 +113,10 @@ export function useAnimeDirectPipeline({
     key: "",
     fullPool: [],
     receivedSourceIds: new Set(),
+    lastSettleFailed: false,
   });
+  /** Last settlement ended with source errors and no links (no auto-embed). */
+  const [fetchFailed, setFetchFailed] = useState(false);
 
   const loadStreams = useCallback(() => {
     if (!enabled || malId == null || episode == null) {
@@ -133,6 +146,7 @@ export function useAnimeDirectPipeline({
       prog.key = key;
       prog.fullPool = [];
       prog.receivedSourceIds = new Set();
+      prog.lastSettleFailed = false;
       setLinks([]);
     }
     const fullPool = prog.fullPool;
@@ -162,6 +176,8 @@ export function useAnimeDirectPipeline({
       setSelectionReason(rank.selectionReason);
       setLoading(false);
       setError(null);
+      setFetchFailed(false);
+      prog.lastSettleFailed = false;
       return true;
     };
 
@@ -177,6 +193,8 @@ export function useAnimeDirectPipeline({
       setBestIndex(peek.bestIndex);
       setSelectionReason(peek.selectionReason);
       setLoading(false);
+      setError(null);
+      setFetchFailed(false);
       return;
     }
 
@@ -202,7 +220,18 @@ export function useAnimeDirectPipeline({
 
     if (missing.length === 0) {
       if (!published) {
-        if (fullPool.length === 0) {
+        if (prog.lastSettleFailed) {
+          // Previous run errored out — do not settle as "empty"; surface the
+          // error card so the user can Retry (no silent megaplay embed).
+          console.log(
+            `[Anime][hook] EMPTY: ${key} — previous run errored (not a genuine empty)`,
+          );
+          setError(
+            "Couldn't reach the JustAnime servers. Check your connection and retry.",
+          );
+          setFetchFailed(true);
+          setLoading(false);
+        } else if (fullPool.length === 0) {
           console.log(
             `[Anime][hook] EMPTY: ${key} — all sources already answered empty — embed fallback`,
           );
@@ -307,8 +336,25 @@ export function useAnimeDirectPipeline({
 
       if (published) return;
       if (prog.fullPool.length === 0) {
+        if (lastErr != null) {
+          // Every source ERRORED (network/HTTP) — this is NOT a genuine
+          // "upstream has no streams". Cold-app-start requests failing all
+          // at once used to settle as empty and silently drop the user to
+          // the megaplay embed (the reported first-launch bug). Settle as a
+          // fetch failure instead: error card + Retry, never auto-embed.
+          console.log(
+            `[Anime][hook] EMPTY: ${key} — all sources ERRORED (${lastErr}) — no embed fallback, surfacing retry`,
+          );
+          setError(
+            "Couldn't reach the JustAnime servers. Check your connection and retry.",
+          );
+          setFetchFailed(true);
+          prog.lastSettleFailed = true;
+          setLoading(false);
+          return;
+        }
         console.log(
-          `[Anime][hook] EMPTY: ${key} — no links from any source (${lastErr ?? "all failed"}) — embed fallback`,
+          `[Anime][hook] EMPTY: ${key} — no links from any source (genuine empty) — embed fallback`,
         );
         setError(
           "No streams available for this title right now. Try again later.",
@@ -337,6 +383,8 @@ export function useAnimeDirectPipeline({
       setSelectionReason(rank.selectionReason);
       setLoading(false);
       setError(null);
+      setFetchFailed(false);
+      prog.lastSettleFailed = false;
     })();
   }, [enabled, malId, episode, audio, providerId, fetchToken]);
 
@@ -366,6 +414,7 @@ export function useAnimeDirectPipeline({
     loading,
     attempted,
     error,
+    fetchFailed,
     stageMessage: loading ? "Contacting JustAnime…" : null,
     refetch,
   };

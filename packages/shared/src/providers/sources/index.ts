@@ -9,6 +9,8 @@ import { falixAdapter } from "./falix";
 import { justanimeAdapter } from "./justanime";
 import { spacedomAdapter } from "./spacedom";
 import { way2moviesAdapter } from "./way2movies";
+import { movieboxAdapter } from "./moviebox";
+import { bingAdapter } from "./bing";
 import type { StreamSourceAdapter } from "./types";
 
 const adapters = new Map<string, StreamSourceAdapter>();
@@ -19,6 +21,8 @@ adapters.set("falix", falixAdapter);
 adapters.set("spacedom", spacedomAdapter);
 adapters.set("way2movies", way2moviesAdapter);
 adapters.set("justanime", justanimeAdapter);
+adapters.set("moviebox", movieboxAdapter);
+adapters.set("bing", bingAdapter);
 
 /**
  * Get a stream source adapter by its id.
@@ -55,4 +59,6 @@ export {
   spacedomAdapter,
   way2moviesAdapter,
   justanimeAdapter,
+  movieboxAdapter,
+  bingAdapter,
 };

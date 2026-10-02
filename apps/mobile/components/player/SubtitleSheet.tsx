@@ -3,7 +3,8 @@
  * Works with PlayerAdapter interface (not raw expo-video player).
  *
  * UX structure (novice-first; read top-to-bottom as the user's task order):
- *   1. Track list — the primary task is SELECTION. Off / embedded / online.
+ *   1. Track list — the primary task is SELECTION. Off / embedded /
+ *      "With this source" sidecars / already-loaded online tracks.
  *   2. Auto Sync card — the FIX task. Its title states the user's problem;
  *      one line of mechanism; one button. Runs in the background and says so.
  *   3. Fine-tune timing — expert tool, collapsed by default, only shown when
@@ -57,6 +58,7 @@ import {
   startWatchSession,
 } from "../../lib/subtitleSync/watchSync";
 import { parseSubtitles } from "../../lib/subtitleSync/parseSubtitles";
+import { File as SidecarFile } from "expo-file-system";
 import {
   ensurePristineSidecar,
   formatFromUri,
@@ -67,6 +69,17 @@ import {
 /** Touchable that accepts Animated styles (translateY entrance). */
 const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
 
+/**
+ * Sidecar subtitle shipped alongside the stream itself (`_meta.subtitles`) —
+ * offered under "With this source" until the user loads one.
+ */
+export interface SidecarSubtitle {
+  lang: string;
+  url: string;
+  /** Server name it came with ("VAPlayer", "MovieBox" …) — the row's name. */
+  source?: string;
+}
+
 interface SubtitleSheetProps {
   visible: boolean;
   player: PlayerAdapter;
@@ -74,6 +87,8 @@ interface SubtitleSheetProps {
   storageKey?: string;
   /** When present, enables the "Load subtitles online" section. */
   onlineSearch?: SubtitleSearchQuery;
+  /** Subtitle files that ship with the active stream — tap to download+load. */
+  sidecars?: SidecarSubtitle[];
   /** When present, enables the Auto Sync card. */
   autoSync?: {
     contentId: string;
@@ -185,6 +200,7 @@ function SubtitleSheetInner({
   player,
   storageKey,
   onlineSearch,
+  sidecars,
   autoSync,
   onClose,
 }: SubtitleSheetProps) {
@@ -197,6 +213,20 @@ function SubtitleSheetInner({
   );
   const embeddedTracks = tracks.filter((t) => !t.isExternal);
   const externalTracks = tracks.filter((t) => t.isExternal);
+  // Sidecar url → attached track id. Lets a tapped sidecar select its track on
+  // later taps instead of downloading again, and dedupes it against the
+  // loaded-track lists once the player registers it.
+  const sidecarTrackIds = React.useRef<Map<string, string>>(new Map());
+  const [sidecarVersion, setSidecarVersion] = useState(0);
+  const sidecarRows = React.useMemo(
+    () =>
+      (sidecars ?? []).filter((row) => {
+        const trackId = sidecarTrackIds.current.get(row.url);
+        return !trackId || !tracks.some((t) => t.id === trackId);
+      }),
+    [sidecars, tracks, sidecarVersion],
+  );
+  const [sidecarError, setSidecarError] = useState<string | null>(null);
   const [syncSeconds, setSyncSeconds] = useState(0);
   const [autoOffsetMs, setAutoOffsetMs] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -210,14 +240,20 @@ function SubtitleSheetInner({
   const [visibleResults, setVisibleResults] = useState(RESULTS_STEP);
   const [fineTuneOpen, setFineTuneOpen] = useState(false);
   const externalFileRef = React.useRef<Map<string, string>>(new Map());
-  const autoExpandedOnline = useRef(false);
+  /**
+   * Monotonic token for the online search. The sheet stays MOUNTED across
+   * in-player episode switches (only `onlineSearch` changes), so a search
+   * started for episode 5 can resolve after the query flipped to episode 6 —
+   * bumping this token abandons such in-flight results instead of rendering
+   * the previous episode's list on the new one.
+   */
+  const searchSeqRef = useRef(0);
   const { mounted, backdrop, translateY } = useBottomSheetEntrance(visible);
 
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
     setTrackVersion((v) => v + 1);
-    autoExpandedOnline.current = false;
     if (storageKey) {
       getSubtitleOffset(storageKey)
         .then((v) => {
@@ -247,10 +283,10 @@ function SubtitleSheetInner({
 
     // Novice path: video has no subtitle tracks at all → the online section
     // IS the task. Open it (and search) instead of making the user discover
-    // a collapsed header that says nothing to them.
+    // a collapsed header that says nothing to them. Sidecar files from the
+    // active stream already answer that need — keep the list undisturbed.
     const current = player.getSubtitleTracks();
-    if (onlineSearch && current.length === 0 && !autoExpandedOnline.current) {
-      autoExpandedOnline.current = true;
+    if (onlineSearch && current.length === 0 && (sidecars?.length ?? 0) === 0) {
       setOnlineOpen(true);
     }
     return () => {
@@ -283,31 +319,56 @@ function SubtitleSheetInner({
 
   const runSearch = async () => {
     if (!onlineSearch) return;
+    const seq = ++searchSeqRef.current;
     setSearching(true);
     setOnlineError(null);
     try {
       const results = await searchSubtitles(onlineSearch);
+      // The query (episode) changed while this search was in flight — these
+      // results belong to the OLD query and must never render for the new one.
+      if (seq !== searchSeqRef.current) return;
       setOnlineResults(results);
       setVisibleResults(RESULTS_STEP);
       if (results.length === 0)
         setOnlineError("No subtitles found for this title.");
     } catch {
+      if (seq !== searchSeqRef.current) return;
       setOnlineError("Subtitles are unavailable right now.");
       setOnlineResults([]);
     } finally {
-      setSearching(false);
+      if (seq === searchSeqRef.current) setSearching(false);
     }
   };
 
-  // Auto-open triggers the search directly (the toggle handler is for taps).
+  // The episode (or title) behind the sheet changed: drop the previous
+  // query's results, error and in-flight search — a stale episode-5 list must
+  // never render on episode 6 (the sheet stays mounted across in-player
+  // episode switches; only `onlineSearch` changes). Re-run immediately when
+  // the section is already open.
+  const onlineQueryKey = onlineSearch
+    ? `${onlineSearch.mediaType}:${onlineSearch.tmdbId}:${onlineSearch.season ?? ""}:${onlineSearch.episode ?? ""}`
+    : null;
+  useEffect(() => {
+    searchSeqRef.current += 1;
+    setSearching(false);
+    setOnlineResults([]);
+    setVisibleResults(RESULTS_STEP);
+    setOnlineError(null);
+    setAddingId(null);
+    if (visible && onlineOpen && onlineSearch) void runSearch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onlineQueryKey]);
+
+  // Open section with nothing loaded → search. This covers the auto-expand
+  // path AND reopening the sheet after an episode switch cleared the results
+  // (the toggle handler covers manual taps).
   useEffect(() => {
     if (
       visible &&
       onlineOpen &&
       onlineResults.length === 0 &&
       !searching &&
-      onlineSearch &&
-      autoExpandedOnline.current
+      onlineSearch
     ) {
       void runSearch();
     }
@@ -334,21 +395,48 @@ function SubtitleSheetInner({
     }
   };
 
-  const pickOnline = async (sub: OnlineSubtitle) => {
+  const pickOnline = async (
+    sub: OnlineSubtitle,
+    onAttached?: (trackId: string) => void,
+    onError?: (msg: string) => void,
+  ) => {
     if (addingId) return;
     setAddingId(sub.id);
     setOnlineError(null);
+    const report = onError ?? setOnlineError;
     try {
       const cacheKey = `${onlineSearch?.tmdbId ?? "x"}-${sub.language}-${sub.releaseName}`;
-      const downloaded = await downloadSubtitle(sub, cacheKey);
-      const trackId = await player.addExternalSubtitle?.(
-        downloaded.uri,
-        downloaded.mimeType,
-        downloaded.language,
-        downloaded.label,
-      );
+      // downloadSubtitle is idempotent (overwrites) and self-validating, so a
+      // single automatic retry covers transient native download rejections
+      // (device 2026-09: rare "Call to function FileSystem.downloadFileAsync
+      // has been rejected" — flaky socket, not a bad file; retrying the same
+      // download resolves it).
+      let downloaded: Awaited<ReturnType<typeof downloadSubtitle>>;
+      try {
+        downloaded = await downloadSubtitle(sub, cacheKey);
+      } catch {
+        await new Promise((r) => setTimeout(r, 800));
+        downloaded = await downloadSubtitle(sub, cacheKey);
+      }
+      // addSidecarSubtitle re-prepares the native player; when that races a
+      // buffering/source-ready transition the track can register just after
+      // the 5s poll window — the file was fine, the player timing was not.
+      // One delayed retry settles that ("retry works on the same file").
+      const attach = () =>
+        player.addExternalSubtitle?.(
+          downloaded.uri,
+          downloaded.mimeType,
+          downloaded.language,
+          downloaded.label,
+        );
+      let trackId = await attach();
+      if (!trackId) {
+        await new Promise((r) => setTimeout(r, 800));
+        trackId = await attach();
+      }
       if (trackId) {
         externalFileRef.current.set(trackId, downloaded.uri);
+        onAttached?.(trackId);
         setSelectedId(trackId);
         if (onlineSearch) {
           saveSubtitleChoice(onlineSearch, {
@@ -360,22 +448,57 @@ function SubtitleSheetInner({
         }
         onClose();
       } else {
-        setOnlineError("Downloaded, but the player didn't accept this file.");
+        report("Downloaded, but the player didn't accept this file.");
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const raw = e instanceof Error ? e.message : String(e);
+      // Native rejections bury the real reason after "caused by:" — surface
+      // that instead of the boilerplate wrapper, and give it room (the old
+      // slice(0, 80) cut the cause off entirely).
+      const msg = raw.includes("caused by:")
+        ? (raw.split("caused by:").pop() ?? raw).trim()
+        : raw;
       if (msg.includes("Sidecar subtitles unsupported")) {
-        setOnlineError(
-          "Needs an app rebuild (native sidecar support missing).",
-        );
+        report("Needs an app rebuild (native sidecar support missing).");
       } else if (msg === "DOWNLOAD_EMPTY" || msg === "DOWNLOAD_NOT_SUBTITLE") {
-        setOnlineError("That file didn't arrive as a subtitle — try another.");
+        report("That file didn't arrive as a subtitle — try another.");
       } else {
-        setOnlineError(`Download failed — ${msg.slice(0, 80)}`);
+        report(`Download failed — ${msg.slice(0, 200)}`);
       }
     } finally {
       setAddingId(null);
     }
+  };
+
+  /**
+   * Download + attach a subtitle file shipped with the active stream
+   * (`_meta.subtitles`). Reuses the online path — same cache, same retry —
+   * but reports errors under the "With this source" section instead.
+   */
+  const pickSidecar = (row: SidecarSubtitle) => {
+    const mapped = sidecarTrackIds.current.get(row.url);
+    if (mapped) {
+      selectTrack(mapped);
+      return;
+    }
+    setSidecarError(null);
+    const lang = row.lang.replace(/^\./, "").trim() || "Unknown";
+    const file =
+      row.url.split("?")[0].split("/").filter(Boolean).pop() ?? "subtitle";
+    const ext = file.includes(".") ? (file.split(".").pop() ?? "") : "";
+    const format = ["srt", "ass", "ssa", "vtt", "sub"].includes(
+      ext.toLowerCase(),
+    )
+      ? ext.toLowerCase()
+      : "srt";
+    void pickOnline(
+      { id: row.url, releaseName: file, language: lang, url: row.url, format },
+      (trackId) => {
+        sidecarTrackIds.current.set(row.url, trackId);
+        setSidecarVersion((v) => v + 1);
+      },
+      setSidecarError,
+    );
   };
 
   const syncSecondsRef = useRef(0);
@@ -422,67 +545,89 @@ function SubtitleSheetInner({
     } | null,
     context: string,
   ): Promise<string | null> => {
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      if (attempt > 1) await sleep(250);
-      try {
-        player.clearExternalSubtitles?.();
-        const trackId = await player.addExternalSubtitle?.(
-          next.uri,
-          next.mimeType,
-          next.language,
-          next.label,
-        );
-        if (trackId) {
-          if (attempt > 1) {
-            console.log(
-              `[SubSync] ${context}: re-add ok on attempt ${attempt}/3 (track ${trackId})`,
-            );
-          }
-          externalFileRef.current.set(trackId, next.uri);
-          player.setSubtitleTrack?.(trackId);
-          setSelectedId(trackId);
-          setTrackVersion((v) => v + 1);
-          setSyncError(null);
-          return trackId;
-        }
+    // Pre-attach parse sanity + content signature: if the shifted file
+    // cannot produce cues natively, every re-add attempt is a guaranteed
+    // ~5s timeout and the rollback masks the real cause. Parse ONCE in JS
+    // before attaching, and log what the file actually contains — with a
+    // side-by-side against the previous (working) sidecar, so a native
+    // parse failure names itself in the logs instead of surfacing as three
+    // silent timeouts.
+    let parsesOk = true;
+    try {
+      const probe = await new SidecarFile(next.uri).text();
+      const probeCues = parseSubtitles(probe, formatFromUri(next.uri));
+      let refHead = "";
+      if (prev) {
+        try {
+          const ref = await new SidecarFile(prev.uri).text();
+          refHead = ` | prev=${ref.length}B head=${JSON.stringify(ref.slice(0, 40))}`;
+        } catch {}
+      }
+      console.log(
+        `[SubSync] ${context}: attach probe ${probe.length}B cues=${probeCues.length} ` +
+          `head=${JSON.stringify(probe.slice(0, 40))}${refHead}`,
+      );
+      if (probeCues.length === 0) {
+        parsesOk = false;
         console.log(
-          `[SubSync] ${context}: re-add attempt ${attempt}/3 returned no track id`,
-        );
-      } catch (e) {
-        console.log(
-          `[SubSync] ${context}: re-add attempt ${attempt}/3 failed: ${(e as Error)?.message ?? e}`,
+          `[SubSync] ${context}: shifted file parses to 0 cues — skipping re-add: ${next.uri}`,
         );
       }
+    } catch (e) {
+      // A read failure here is itself the diagnosis: if JS cannot read the
+      // file we hand to the native sidecar loader, the track can never
+      // appear — surface it instead of silently continuing to 3 timeouts.
+      console.log(
+        `[SubSync] ${context}: attach probe FAILED to read ${next.uri}: ` +
+          `${(e as Error)?.message ?? e}`,
+      );
     }
-    if (prev) {
-      try {
-        player.clearExternalSubtitles?.();
-        const prevId = await player.addExternalSubtitle?.(
-          prev.uri,
-          prev.mimeType,
-          prev.language,
-          prev.label,
-        );
-        if (prevId) {
-          externalFileRef.current.set(prevId, prev.uri);
-          player.setSubtitleTrack?.(prevId);
-          setSelectedId(prevId);
-          setTrackVersion((v) => v + 1);
-          console.log(
-            `[SubSync] ${context}: rolled back to previous sidecar (track ${prevId}): ${prev.uri}`,
-          );
-        } else {
-          console.log(
-            `[SubSync] ${context}: rollback also failed - no track id`,
-          );
-        }
-      } catch (e) {
-        console.log(
-          `[SubSync] ${context}: rollback failed: ${(e as Error)?.message ?? e}`,
-        );
+    if (!parsesOk) {
+      setSyncError("Couldn't adjust — try again");
+      return null;
+    }
+    try {
+      // ONE registration. The native side re-prepares exactly once and
+      // addExternalSubtitle polls up to 20s, giving slow loads time to
+      // finish. Retrying here would call addSidecarSubtitle again, which
+      // re-prepares AGAIN and aborts the in-flight load — the abort
+      // cascade that starved every attempt (device 2026-09: tap bytes
+      // frozen for 25s across four re-prepares, then the rollback itself
+      // failed the same way).
+      player.clearExternalSubtitles?.();
+      const trackId = await player.addExternalSubtitle?.(
+        next.uri,
+        next.mimeType,
+        // A languageless sidecar is fatal: expo-video's SubtitleTrack.fromFormat
+        // drops languageless Formats from availableSubtitleTracks, so the track
+        // never surfaces (device 2026-09: lang=null synced file timed out at
+        // 20s while every lang=EN attach surfaced in <2s). Native also coerces
+        // to "und" — this passes the real selected language when known.
+        next.language ?? selectedTrackLanguage ?? "und",
+        next.label,
+      );
+      if (trackId) {
+        externalFileRef.current.set(trackId, next.uri);
+        player.setSubtitleTrack?.(trackId);
+        setSelectedId(trackId);
+        setTrackVersion((v) => v + 1);
+        setSyncError(null);
+        return trackId;
       }
+      console.log(
+        `[SubSync] ${context}: track did not surface in 20s — shifted sidecar stays registered; it attaches when the background prepare completes`,
+      );
+    } catch (e) {
+      console.log(
+        `[SubSync] ${context}: attach failed: ${(e as Error)?.message ?? e}`,
+      );
     }
-    setSyncError("Couldn't adjust — try again");
+    // NO destructive rollback: re-adding the previous file would fire yet
+    // another re-prepare (aborting the shifted-sidecar load in flight) and
+    // put the OLD offset back on screen. The registered shifted sidecar is
+    // correct content — when its prepare completes, the track surfaces and
+    // the next sheet interaction selects it.
+    setSyncError("Synced subtitles are loading — try again shortly");
     return null;
   };
 
@@ -563,6 +708,11 @@ function SubtitleSheetInner({
     },
     _kind?: "first" | "refine",
   ) => {
+    // Diagnostics: confirms the apply actually reached the sheet (separates
+    // "engine computed an offset" from "UI applied it").
+    console.log(
+      `[SubSync] sheet: apply received offset=${offsetMs}ms kind=${_kind ?? "fetch"} rewritten=${rewritten ? rewritten.uri.split("/").pop() : "no (native offset)"}`,
+    );
     setAutoOffsetMs(offsetMs);
     // An apply just happened — "nudge" is now the relevant follow-up, so
     // surface the fine-tune drawer at exactly that moment.
@@ -589,22 +739,37 @@ function SubtitleSheetInner({
               label: rewritten.label ?? "",
             });
           }
-        } else {
-          console.log("[SubSync] re-add returned no track id");
+          if (storageKey) {
+            setAutoSyncPrefs(storageKey, {
+              autoOffsetMs: offsetMs,
+              autoScale: 1,
+            });
+          }
+          trackFeatureUsed("caption_autosync", "player");
+          return true;
         }
+        // Attach failed: do NOT persist the offset to prefs. Persisting an
+        // offset that is NOT actually applied poisons every later session
+        // (they adopt it as a verified baseline; device loop 2026-09).
+        console.log(
+          "[SubSync] re-add returned no track id - NOT persisting offset",
+        );
+        return false;
       } catch (e) {
         console.log(
           `[SubSync] re-add shifted subtitle failed: ${(e as Error)?.message ?? e}`,
         );
         setSyncError("Couldn't adjust — try again");
+        return false;
       }
     } else {
       player.setSubtitleOffset?.(offsetMs + syncSeconds * 1000);
+      if (storageKey) {
+        setAutoSyncPrefs(storageKey, { autoOffsetMs: offsetMs, autoScale: 1 });
+      }
+      trackFeatureUsed("caption_autosync", "player");
+      return true;
     }
-    if (storageKey) {
-      setAutoSyncPrefs(storageKey, { autoOffsetMs: offsetMs, autoScale: 1 });
-    }
-    trackFeatureUsed("caption_autosync", "player");
   };
 
   useEffect(() => {
@@ -620,17 +785,22 @@ function SubtitleSheetInner({
     (selectedId ? externalFileRef.current.get(selectedId) : undefined) ??
     autoSync?.getDefaultSubtitleUri?.() ??
     null;
+  // Watch-first: the watch session must read the CURRENT subtitle file on
+  // every window (the user may pick a different one after tapping sync).
+  const autoSyncSubtitleUriRef = useRef(autoSyncSubtitleUri);
+  autoSyncSubtitleUriRef.current = autoSyncSubtitleUri;
 
   const startWatchSessionFromTap = async (): Promise<boolean> => {
     if (!autoSync) return false;
-    const subUri =
-      autoSyncSubtitleUri ?? autoSync.getDefaultSubtitleUri?.() ?? null;
     return startWatchSession({
       contentId: autoSync.contentId,
       subtitleCacheKey: autoSync.contentId,
       fromSec: Math.max(0, player.getCurrentTime()),
       durationSec: player.getDuration(),
-      getSubtitleUri: () => subUri,
+      getSubtitleUri: () =>
+        autoSyncSubtitleUriRef.current ??
+        autoSync.getDefaultSubtitleUri?.() ??
+        null,
       getPosition: () => player.getCurrentTime(),
     });
   };
@@ -703,6 +873,8 @@ function SubtitleSheetInner({
               />
             ))}
 
+            {/* Already-downloaded files first — a subtitle the user picked
+                stays right on top instead of hiding below the full list. */}
             {externalTracks.length > 0 && (
               <>
                 <View style={styles.separator} />
@@ -717,6 +889,43 @@ function SubtitleSheetInner({
                     onPress={() => selectTrack(item.id)}
                   />
                 ))}
+              </>
+            )}
+
+            {/* Subtitles shipped with the active stream — download on tap,
+                then attach (same path as the online results below). */}
+            {sidecarRows.length > 0 && (
+              <>
+                <View style={styles.separator} />
+                <Text style={styles.sectionLabel}>WITH THIS SOURCE</Text>
+                {sidecarRows.map((row) => {
+                  const trackId = sidecarTrackIds.current.get(row.url);
+                  return (
+                    <TrackRow
+                      key={row.url}
+                      selected={!!trackId && selectedId === trackId}
+                      language={row.lang.replace(/^\./, "").trim() || "Unknown"}
+                      name={row.source ?? "With this source"}
+                      singleLineName
+                      disabled={!!addingId}
+                      right={
+                        addingId === row.url ? (
+                          <ActivityIndicator size="small" color={colors.gold} />
+                        ) : (
+                          <Ionicons
+                            name="cloud-download-outline"
+                            size={18}
+                            color={colors.textTertiary}
+                          />
+                        )
+                      }
+                      onPress={() => pickSidecar(row)}
+                    />
+                  );
+                })}
+                {sidecarError && (
+                  <Text style={styles.onlineError}>{sidecarError}</Text>
+                )}
               </>
             )}
 
@@ -854,6 +1063,7 @@ function SubtitleSheetInner({
                 </TouchableOpacity>
                 {embeddedTracks.length === 0 &&
                   externalTracks.length === 0 &&
+                  sidecarRows.length === 0 &&
                   !onlineOpen && (
                     <Text style={styles.onlineHint}>
                       This video has no built-in subtitles — search online.

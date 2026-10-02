@@ -401,6 +401,7 @@ export function PlayerShell({
             onSeekingChange={setIsSeeking}
             onSettingsOpenChange={setIsSettingsOpen}
             keyboardEnabled={keyboardEnabled}
+            visible={layout === "strip" || controlsVisible}
             sourceLabel={sourceLabel}
             onSourcePicker={onSourcePicker}
             badgePosition={alwaysShowControls ? "row" : "top"}

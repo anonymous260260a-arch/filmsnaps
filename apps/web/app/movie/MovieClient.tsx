@@ -7,9 +7,11 @@ import {
   Star,
   Clock,
   ArrowLeft,
+  ChevronLeft,
+  Film,
   Play,
+  Share2,
   Youtube,
-  ChevronDown,
 } from "lucide-react";
 import { getImageUrl, getTrailerKey } from "@/lib/tmdb";
 import dynamic from "next/dynamic";
@@ -18,6 +20,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SaveButton } from "@/components/SaveButton";
 import { useResumeTarget } from "@/hooks/useResumeTarget";
+import { useToast } from "@/hooks/use-toast";
+import { pickMoreLikeThis } from "@/lib/moreLikeThis";
 import { prefetchDirectMedia } from "@/lib/directPrefetch";
 import { useQueryClient } from "@tanstack/react-query";
 import { Suspense } from "react";
@@ -43,9 +47,13 @@ export default function MovieClient({ movie }: { movie: any }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [trailerOpen, setTrailerOpen] = useState(false);
   const [overviewOpen, setOverviewOpen] = useState(false);
   const trailerKey = getTrailerKey(movie.videos);
+  // More Like This: TMDB's /recommendations engine (site-quality) with
+  // /similar fallback — same policy as mobile detail pages.
+  const moreLikeThis = pickMoreLikeThis(movie);
   const resume = useResumeTarget(
     String(movie.id),
     "movie",
@@ -89,17 +97,49 @@ export default function MovieClient({ movie }: { movie: any }) {
     ? new Date(movie.release_date).getFullYear()
     : null;
 
+  // App-parity CTA copy: Watch Again / Resume Playback (x%) / Watch Now.
+  const ctaLabel = resume.point
+    ? resume.point.percent >= 0.95
+      ? "Watch Again"
+      : `Resume Playback (${Math.round(resume.point.percent * 100)}%)`
+    : "Watch Now";
+
+  const handleBack = () => {
+    if (window.history.state?.idx) router.back();
+    else router.push("/");
+  };
+
+  const handleShare = async () => {
+    const url = window.location.href;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: movie.title, url });
+      } catch {
+        /* user dismissed the share sheet */
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast({ title: "Link copied" });
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <main className="pt-16">
         {/* ════════════════════════════════════════════════════════════════
-            PHONE HERO  (<sm only) — full-bleed backdrop, tight
-            title block, single dominant Watch action, collapsible overview.
+            PHONE HERO  (<sm only) — mobile-app detail parity: short
+            backdrop + glass nav, poster/info row, gold CTA + Trailer/
+            Download row, Read more overview.
            ══════════════════════════════════════════════════════════════ */}
         <div className="sm:hidden">
           <div className="relative">
-            {/* Full-bleed backdrop art */}
-            <div className="relative w-full aspect-[3/4] max-h-[62vh] overflow-hidden">
+            {/* Backdrop — app parity: min(42vh, 350px), permanent fade
+                into the page background */}
+            <div className="relative w-full h-[42vh] max-h-[350px] overflow-hidden bg-[#222226]">
               {(movie.backdrop_path || movie.poster_path) && (
                 <Image
                   src={getImageUrl(
@@ -114,171 +154,166 @@ export default function MovieClient({ movie }: { movie: any }) {
                   className="object-cover"
                 />
               )}
-              <div className="absolute inset-0 bg-gradient-to-t from-[#070708] via-[#070708]/10 to-black/40" />
-              <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#070708] to-transparent" />
+              <div className="absolute inset-x-0 bottom-0 h-[70%] bg-gradient-to-t from-[#070708] via-[#070708]/55 to-transparent" />
 
-              <Link href="/" className="absolute top-3 left-3 z-10">
-                <span className="flex items-center justify-center h-10 w-10 rounded-full bg-black/40 backdrop-blur-md ring-1 ring-white/10 active:scale-95 transition-transform">
-                  <ArrowLeft className="h-5 w-5 text-white" />
-                </span>
-              </Link>
-
-              <div className="absolute top-3 right-3 z-10">
-                <SaveButton
-                  movie={movie}
-                  size="lg"
-                  className="bg-black/40 backdrop-blur-md ring-1 ring-white/10"
-                />
+              {/* Floating glass nav — back / bookmark / share */}
+              <div className="absolute inset-x-4 top-4 z-20 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  aria-label="Go back"
+                  className="flex h-[38px] w-[38px] items-center justify-center rounded-full border border-white/[0.15] bg-[#0E0E11]/75 text-foreground backdrop-blur-md transition active:scale-95"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </button>
+                <div className="flex items-center gap-2.5">
+                  <SaveButton
+                    movie={movie}
+                    showLabel={false}
+                    className="h-[38px] w-[38px] rounded-full border border-white/[0.15] p-0 backdrop-blur-md"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleShare}
+                    aria-label="Share"
+                    className="flex h-[38px] w-[38px] items-center justify-center rounded-full border border-white/[0.15] bg-[#0E0E11]/75 text-foreground backdrop-blur-md transition active:scale-95"
+                  >
+                    <Share2 className="h-[18px] w-[18px]" />
+                  </button>
+                </div>
               </div>
+            </div>
 
-              {/* Poster chip + title anchored to bottom of art */}
-              <div className="absolute inset-x-0 bottom-0 px-4 pb-4 flex items-end gap-3">
-                {movie.poster_path && (
-                  <div className="relative w-20 aspect-[2/3] rounded-lg overflow-hidden shadow-2xl shadow-black/60 ring-1 ring-white/[0.12] flex-shrink-0">
+            {/* Content — poster overlaps the backdrop by 52px (app parity) */}
+            <div className="relative z-10 -mt-[52px] px-4">
+              <div className="flex items-center">
+                {movie.poster_path ? (
+                  <div className="relative h-[156px] w-[104px] shrink-0 overflow-hidden rounded-xl border border-white/[0.06] shadow-[0_8px_28px_rgba(0,0,0,0.55)]">
                     <Image
                       src={getImageUrl(movie.poster_path ?? "", "w342")}
                       alt={movie.title}
                       fill
                       priority
+                      sizes="104px"
                       className="object-cover"
                     />
                   </div>
+                ) : (
+                  <div className="flex h-[156px] w-[104px] shrink-0 items-center justify-center rounded-xl border border-white/[0.06] bg-[#222226]">
+                    <Film className="h-7 w-7 text-zinc-600" />
+                  </div>
                 )}
-                <div className="min-w-0 pb-0.5">
-                  <h1
-                    className="font-black tracking-tight text-foreground leading-[1.08] [text-wrap:balance]"
-                    style={{ fontSize: "clamp(1.35rem, 6.5vw, 1.9rem)" }}
-                  >
+
+                <div className="ml-[18px] min-w-0 flex-1 self-center">
+                  <h1 className="mb-1.5 line-clamp-2 text-lg font-semibold leading-[22px] text-foreground">
                     {movie.title}
                   </h1>
-                  {releaseYear && (
-                    <span className="text-muted-foreground/70 font-medium text-sm">
-                      {releaseYear}
-                    </span>
+                  <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+                    {movie.vote_average > 0 && (
+                      <span className="rounded-md border border-[#D4A237]/30 bg-[#D4A237]/15 px-[7px] py-0.5 text-[11px] font-semibold text-[#D4A237]">
+                        ★ {movie.vote_average.toFixed(1)}
+                      </span>
+                    )}
+                    {releaseYear && (
+                      <span className="rounded-md bg-white/[0.08] px-[7px] py-0.5 text-[11px] font-medium text-zinc-400">
+                        {releaseYear}
+                      </span>
+                    )}
+                    {runtime && (
+                      <span className="inline-flex items-center gap-[3px] rounded-md bg-white/[0.08] px-[7px] py-0.5 text-[11px] font-medium text-zinc-400">
+                        <Clock className="h-3 w-3 text-zinc-600" />
+                        {runtime}
+                      </span>
+                    )}
+                  </div>
+                  {movie.genres && movie.genres.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {movie.genres.slice(0, 3).map((genre: any) => (
+                        <span
+                          key={genre.id}
+                          className="rounded-md border border-white/[0.06] bg-[#222226] px-[7px] py-0.5 text-[10px] font-medium text-zinc-400"
+                        >
+                          {genre.name}
+                        </span>
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>
-            </div>
 
-            {/* Body */}
-            <div className="px-4 pt-4 pb-2 space-y-4">
-              {/* Meta row */}
-              <div className="flex flex-wrap items-center gap-2.5">
-                {movie.vote_average > 0 && (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-accent/15 text-amber-accent text-xs font-bold">
-                    <Star className="h-3 w-3 fill-amber-accent" />
-                    {movie.vote_average.toFixed(1)}
-                  </span>
-                )}
-                {runtime && (
-                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                    <Clock className="h-3 w-3" />
-                    {runtime}
-                  </span>
-                )}
-                {movie.release_date && (
-                  <span className="text-xs text-muted-foreground">
-                    {new Date(movie.release_date).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
-                  </span>
-                )}
-              </div>
-
-              {movie.genres && movie.genres.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 -mt-1">
-                  {movie.genres.slice(0, 4).map((genre: any) => (
-                    <Badge
-                      key={genre.id}
-                      variant="secondary"
-                      className="bg-white/[0.04] border border-white/[0.06] text-muted-foreground px-2.5 py-0.5 text-[11px] font-medium"
-                    >
-                      {genre.name}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-
-              {/* Primary action row */}
-              <div className="flex items-center gap-2 pt-1">
+              {/* Actions — primary CTA + Trailer / Download row */}
+              <div className="mt-[18px]">
                 <Button
                   onClick={() => router.push(watchHref)}
                   onMouseEnter={handleWatchPrefetch}
                   onFocus={handleWatchPrefetch}
-                  className="flex-1 gap-2 h-12 rounded-full font-bold text-sm text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] active:scale-[0.98] active:brightness-95 transition-all duration-150"
+                  className="w-full gap-2 h-auto py-3.5 rounded-xl font-semibold text-[15px] text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] active:scale-[0.98] active:brightness-95 transition-all duration-150"
                 >
-                  <Play className="w-5 h-5 fill-current" />
-                  {resume.point ? "Resume" : "Watch Now"}
+                  <Play className="h-[18px] w-[18px] fill-current" />
+                  {ctaLabel}
                 </Button>
-                <DownloadButton tmdbId={movie.id} mediaType="movie" />
+                <div className="mt-3 flex items-center gap-2.5">
+                  {trailerKey && (
+                    <button
+                      type="button"
+                      onClick={() => setTrailerOpen(true)}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/[0.06] bg-[#0E0E11]/80 py-[11px] text-[13px] font-medium text-foreground transition active:scale-[0.98]"
+                    >
+                      <Youtube size={16} className="text-[#FF0000]" />
+                      Trailer
+                    </button>
+                  )}
+                  <DownloadButton
+                    tmdbId={movie.id}
+                    mediaType="movie"
+                    buttonClassName="flex-1 justify-center rounded-xl border-white/[0.06] bg-[#0E0E11]/80 py-[11px] text-[13px] font-medium"
+                  />
+                </div>
+                <div className="mt-3 empty:hidden">
+                  <DownloadBadge />
+                </div>
               </div>
-              <DownloadBadge />
 
-              {/* Overview — collapsible */}
+              {/* Overview */}
               {movie.overview && (
-                <div className="pt-1">
-                  <button
-                    onClick={() => setOverviewOpen((v) => !v)}
-                    className="flex items-center justify-between w-full text-left"
-                    aria-expanded={overviewOpen}
-                  >
-                    <h2 className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground/60">
-                      Overview
-                    </h2>
-                    <ChevronDown
-                      className={`h-4 w-4 text-muted-foreground/60 transition-transform duration-200 ${overviewOpen ? "rotate-180" : ""}`}
-                    />
-                  </button>
+                <div className="mt-6">
+                  <h2 className="mb-2 text-[15px] font-semibold text-foreground">
+                    Overview
+                  </h2>
                   <p
-                    className={`text-sm text-foreground/80 leading-relaxed mt-2 ${overviewOpen ? "" : "line-clamp-3"}`}
+                    className={`text-sm leading-[21px] text-zinc-400 ${overviewOpen ? "" : "line-clamp-3"}`}
                   >
                     {movie.overview}
                   </p>
-                </div>
-              )}
-
-              {/* Cast Carousel */}
-              {movie.credits?.cast?.length > 0 && (
-                <div className="pt-1 -mx-4 px-4">
-                  <CastCarousel cast={movie.credits.cast} />
-                </div>
-              )}
-
-              {/* Trailer */}
-              {trailerKey && (
-                <div className="pt-1">
-                  <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground/60">
-                      Trailer
-                    </h2>
+                  {movie.overview.length > 120 && (
                     <button
-                      onClick={() => setTrailerOpen(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A237]/10 text-[#D4A237] hover:bg-[#D4A237]/20 text-xs font-semibold transition-all"
-                      aria-label="Open trailer in modal"
+                      type="button"
+                      onClick={() => setOverviewOpen((v) => !v)}
+                      aria-expanded={overviewOpen}
+                      className="mt-1 text-xs font-medium text-[#D4A237]"
                     >
-                      <Youtube size={14} />
-                      Fullscreen
+                      {overviewOpen ? "Show less" : "Read more"}
                     </button>
-                  </div>
-                  <Suspense fallback={<SkeletonPlayer />}>
-                    <div className="rounded-xl overflow-hidden ring-1 ring-white/[0.06] shadow-xl">
-                      <VideoPlayer videoKey={trailerKey} title={movie.title} />
-                    </div>
-                  </Suspense>
+                  )}
+                </div>
+              )}
+
+              {/* Cast */}
+              {movie.credits?.cast?.length > 0 && (
+                <div className="mt-6 -mx-4 px-4">
+                  <CastCarousel cast={movie.credits.cast} />
                 </div>
               )}
             </div>
           </div>
 
-          {/* Similar Section (phone) */}
-          {movie.similar?.results?.length > 0 && (
+          {/* More Like This (phone) — TMDB's recommendations engine first */}
+          {moreLikeThis && moreLikeThis.results!.length > 0 && (
             <div className="relative py-8">
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
               <MediaCarousel
-                title="Similar Movies"
-                items={movie.similar.results}
+                title="More Like This"
+                items={moreLikeThis.results as any}
                 mediaType="movie"
               />
             </div>
@@ -402,7 +437,7 @@ export default function MovieClient({ movie }: { movie: any }) {
                       className="group gap-2.5 px-7 py-3.5 h-auto rounded-full font-bold text-sm text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
                     >
                       <Play className="w-5 h-5 fill-current" />
-                      {resume.point ? "Resume" : "Watch Now"}
+                      {ctaLabel}
                     </Button>
                     <DownloadButton tmdbId={movie.id} mediaType="movie" />
                     <DownloadBadge />
@@ -464,13 +499,13 @@ export default function MovieClient({ movie }: { movie: any }) {
             </div>
           </div>
 
-          {/* Similar Section */}
-          {movie.similar?.results?.length > 0 && (
+          {/* More Like This — TMDB's recommendations engine first */}
+          {moreLikeThis && moreLikeThis.results!.length > 0 && (
             <div className="relative py-14">
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
               <MediaCarousel
-                title="Similar Movies"
-                items={movie.similar.results}
+                title="More Like This"
+                items={moreLikeThis.results as any}
                 mediaType="movie"
               />
             </div>

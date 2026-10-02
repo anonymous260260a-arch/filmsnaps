@@ -243,7 +243,58 @@ export interface DownloadedSubtitle {
 const cacheBase = Paths.cache?.uri ?? Paths.document?.uri ?? "";
 const subtitleDirUri = `${cacheBase}${cacheBase.endsWith("/") ? "" : "/"}subtitles/`;
 
-/** Download an online subtitle into the app cache, with an error-page sniff. */
+/**
+ * Validate a subtitle file on disk. Returns a reason when the file is
+ * unusable (error page, binary junk, empty), null when it looks like a
+ * real subtitle.
+ *
+ * Checks BOTH ends of the file: error pages are sniffed at the head, and
+ * truncation (a cut-off download, e.g. the network dying mid-transfer)
+ * is caught by inspecting the tail — SRT/VTT cues always end with text;
+ * a file ending in "00:0" or a lone "-->" line was truncated.
+ */
+export function validateSubtitleFile(
+  headText: string,
+  tailText: string,
+): string | null {
+  const head = headText.slice(0, 200).toLowerCase();
+  if (
+    head.includes("<!doctype html") ||
+    head.includes("<html") ||
+    head.includes('{"error"') ||
+    head.includes('{"status":false')
+  ) {
+    return "DOWNLOAD_NOT_SUBTITLE";
+  }
+  // HTML pages with a late doctype, XML error responses, zip/binary payloads.
+  if (
+    headText.trimStart().startsWith("<?xml") ||
+    head.startsWith("pk\u0003\u0004") ||
+    head.startsWith("\u0000\u0000")
+  ) {
+    return "DOWNLOAD_NOT_SUBTITLE";
+  }
+  // SRT/VTT structure sanity: cues are numbered or carry a timestamp line.
+  const looksLikeSub =
+    /(^|\n)\d+\s*\n\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->/.test(headText) ||
+    (head.startsWith("webvtt") && headText.includes("-->")) ||
+    /\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->/.test(headText);
+  if (!looksLikeSub) return "DOWNLOAD_NOT_SUBTITLE";
+  // Truncation: a complete SRT/VTT ends with subtitle text, never with a
+  // dangling index/timestamp line. (Order matters: run BEFORE serving cache.)
+  const tail = tailText.replace(/\s+$/, "");
+  if (
+    tail.length > 0 &&
+    (/^\d+$/.test(tail.split("\n").pop() ?? "") ||
+      /-->\s*$/.test(tail) ||
+      /\d{2}:\d{2}:\d{2}[,.]\d{3}\s*$/.test(tail))
+  ) {
+    return "DOWNLOAD_TRUNCATED";
+  }
+  return null;
+}
+
+/** Download an online subtitle into the app cache, with validation. */
 export async function downloadSubtitle(
   sub: OnlineSubtitle,
   cacheKey: string,
@@ -261,10 +312,19 @@ export async function downloadSubtitle(
     // name is what tells two online files apart.
     label: `Online · ${sub.releaseName.slice(0, 48)}`,
   };
-  // Cache hit: a previous download of this exact subtitle is reused as-is
-  // (it was error-page-sniffed when it was first written).
+  // Cache hit — but a hit is only trusted after validation. The previous
+  // "exists && size > 0 → reuse" logic poisoned the cache for good when a
+  // provider returned an HTML error page or the download was cut off
+  // (reported as "some subtitle downloads throw" / "retry same file works":
+  // the poisoned file kept failing until another provider attempt overwrote
+  // it, while a different key downloaded fine).
   if (dest.exists && dest.size > 0) {
-    return result;
+    const bad = await validateSubtitleOnDisk(dest);
+    if (bad === null) return result;
+    // Poisoned cache entry: delete and fall through to a fresh download.
+    try {
+      dest.delete();
+    } catch {}
   }
   // idempotent: re-tapping the same subtitle must overwrite, not throw
   // (SDK 55 downloadFileAsync throws "file exists" by default).
@@ -274,17 +334,31 @@ export async function downloadSubtitle(
   if (!downloaded.exists || downloaded.size === 0) {
     throw new Error("DOWNLOAD_EMPTY");
   }
-  // Sniff the head — error responses can arrive as HTML pages or JSON with 200.
-  const headText = (await downloaded.text()).slice(0, 200).toLowerCase();
-  if (
-    headText.includes("<!doctype html") ||
-    headText.includes("<html") ||
-    headText.includes('{"error"') ||
-    headText.includes('{"status":false')
-  ) {
-    throw new Error("DOWNLOAD_NOT_SUBTITLE");
+  // Validate head + tail (error-page sniff + truncation catch).
+  const bad = await validateSubtitleOnDisk(dest);
+  if (bad !== null) {
+    // Delete the bad file so the poisoned-cache bug can never recur.
+    try {
+      dest.delete();
+    } catch {}
+    throw new Error(bad);
   }
   return result;
+}
+
+/**
+ * Validate a downloaded subtitle file on disk. Subtitle files are small text
+ * payloads (< 1 MB in practice) so one full read covers both the error-page
+ * head sniff and the truncation tail sniff.
+ */
+async function validateSubtitleOnDisk(file: File): Promise<string | null> {
+  try {
+    const text = await file.text();
+    return validateSubtitleFile(text.slice(0, 2000), text.slice(-300));
+  } catch {
+    // Unreadable file (binary junk, deleted mid-read) — unusable.
+    return "DOWNLOAD_NOT_SUBTITLE";
+  }
 }
 
 export async function clearDownloadedSubtitles(): Promise<void> {

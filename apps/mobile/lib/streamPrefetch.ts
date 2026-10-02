@@ -33,6 +33,7 @@ import {
   getStreamSelector,
   getEnabledProviders,
   isDirectProvider,
+  isProviderAvailableOn,
 } from "@filmsnaps/shared";
 import { fetchDirectStreams } from "./directStreams";
 import {
@@ -150,7 +151,11 @@ const EAGER_VERDICT_GRACE_MS = 350;
 const EAGER_MAX_CANDIDATES = 2;
 
 const CACHE_TTL_MS = 45 * 60 * 1000; // links are presigned for 8 h
-const EMPTY_TTL_MS = 5 * 60 * 1000;
+// Genuine 0-links negative cache. 5 min was too confident for scrapers —
+// an upstream hiccup returning an empty payload kept a provider skipped for
+// 5 minutes of retries (device 2026-09: unpredictable "skip provider that
+// has links"). Failures are NEVER negative-cached (see runPipeline).
+const EMPTY_TTL_MS = 90 * 1000;
 const MAX_ENTRIES = 32;
 
 function providerLabel(id: string): string {
@@ -239,10 +244,19 @@ function rankOptionsMatch(
 /** Direct providers for the chain: preferred id first, then registry order. */
 function buildProviderChain(preferred: string): string[] {
   const directIds = getEnabledProviders()
-    .filter((p) => isDirectProvider(p) && !p.animeOnly)
+    .filter(
+      (p) =>
+        isDirectProvider(p) &&
+        !p.animeOnly &&
+        isProviderAvailableOn(p, "mobile"),
+    )
     .map((p) => p.id);
+  // Drop a preferred id that isn't resolvable here (a web-only DIRECT source
+  // can never be fetched by this pipeline) instead of chaining it as a
+  // guaranteed-failed first hop.
+  const head = directIds.includes(preferred) ? [preferred] : [];
   const rest = directIds.filter((id) => id !== preferred);
-  return [preferred, ...rest];
+  return [...head, ...rest];
 }
 
 function writeNegative(
@@ -480,24 +494,30 @@ export async function prefetchStreams(
       }
     }
 
-    // Resolved pointer covers cross-id hits after a chain win.
-    const resolved = CACHE.get(
-      getResolvedKey(tmdbId, mediaType, season, episode),
-    );
-    if (
-      resolved &&
-      !resolved.empty &&
-      Date.now() < resolved.expiresAt &&
-      resolved.rankOptions.cellularMaxMB === rankOptions.cellularMaxMB &&
-      resolved.rankOptions.maxQuality === rankOptions.maxQuality &&
-      resolved.rankOptions.preferredAudioLanguage ===
-        rankOptions.preferredAudioLanguage
-    ) {
-      console.log(
-        `[Flow] pipeline ${cacheKey}: cache HIT via resolved → ${resolved.rankOptions.providerId}`,
+    // Resolved pointer covers cross-id hits after a chain win. NEVER for a
+    // locked provider (manual server pick / anime session): the pointer was
+    // stored under the CHAIN WINNER's provider id, so honoring it for a
+    // different explicit pick hands back the old provider's pool — the picker
+    // state moves but the video never changes.
+    if (!options.lockProvider) {
+      const resolved = CACHE.get(
+        getResolvedKey(tmdbId, mediaType, season, episode),
       );
-      reportMeta("hit", resolved.pipelineStartedAt ?? resolved.prefetchedAt);
-      return resolved;
+      if (
+        resolved &&
+        !resolved.empty &&
+        Date.now() < resolved.expiresAt &&
+        resolved.rankOptions.cellularMaxMB === rankOptions.cellularMaxMB &&
+        resolved.rankOptions.maxQuality === rankOptions.maxQuality &&
+        resolved.rankOptions.preferredAudioLanguage ===
+          rankOptions.preferredAudioLanguage
+      ) {
+        console.log(
+          `[Flow] pipeline ${cacheKey}: cache HIT via resolved → ${resolved.rankOptions.providerId}`,
+        );
+        reportMeta("hit", resolved.pipelineStartedAt ?? resolved.prefetchedAt);
+        return resolved;
+      }
     }
   }
 
@@ -737,7 +757,7 @@ async function runPipeline(
     }
     lastAttempted = providerId;
 
-    const result = await runSingleProvider(
+    const outcome = await runSingleProvider(
       providerKeyFor(providerId),
       tmdbId,
       mediaType,
@@ -747,16 +767,26 @@ async function runPipeline(
       onRanked,
     );
 
-    if (result && result.links.length > 0) {
+    if (outcome.ok) {
       onStage?.(null);
-      storeWinner(providerId, result);
-      return result;
+      storeWinner(providerId, outcome.result);
+      return outcome.result;
     }
-    writeNegative(providerKeyFor(providerId), rankFor(providerId));
-    if (providerKeyFor(providerId) !== cacheKey)
-      writeNegative(cacheKey, rankOptions);
+    // Only a GENUINE empty result may negative-cache. A fetch failure
+    // (network/DNS/timeout/crash — cold starts hit all of these) caches
+    // nothing: the next open must ask the provider again instead of
+    // skipping it via isNegativeFresh while links actually exist.
+    if (!outcome.failed) {
+      writeNegative(providerKeyFor(providerId), rankFor(providerId));
+      if (providerKeyFor(providerId) !== cacheKey)
+        writeNegative(cacheKey, rankOptions);
+    }
     console.log(
-      `[Flow] chain ${cacheKey}: ${providerId} empty/fail — ${lockProvider ? "locked, stop" : "next provider"}`,
+      `[Flow] chain ${cacheKey}: ${providerId} ` +
+        (outcome.failed
+          ? `FAILED (${outcome.reason}) — no negative cache`
+          : "empty") +
+        ` — ${lockProvider ? "locked, stop" : "next provider"}`,
     );
     if (lockProvider) break;
   }
@@ -766,6 +796,18 @@ async function runPipeline(
   return null;
 }
 
+/**
+ * A provider run ends in exactly one of two non-success ways: FAILED (fetch
+ * threw — network/DNS/TLS/timeout or an internal crash) or EMPTY (the
+ * provider answered and genuinely has 0 links). The distinction decides
+ * caching: only EMPTY may negative-cache. A transient cold-start failure
+ * used to poison a provider as "empty" for EMPTY_TTL_MS and later opens
+ * skipped it via isNegativeFresh even though it had links.
+ */
+type SingleProviderOutcome =
+  | { ok: true; result: StreamCacheResult }
+  | { ok: false; failed: boolean; reason: string };
+
 async function runSingleProvider(
   cacheKey: string,
   tmdbId: number,
@@ -774,7 +816,7 @@ async function runSingleProvider(
   episode: number | undefined,
   rankOptions: CacheEntry["rankOptions"],
   onRanked?: (early: StreamCacheResult) => void,
-): Promise<StreamCacheResult | null> {
+): Promise<SingleProviderOutcome> {
   const fetchStartedAt = Date.now();
   try {
     // ── 1. Fetch ──
@@ -803,11 +845,15 @@ async function runSingleProvider(
         fetchMs: Date.now() - fetchStartedAt,
         failed: true,
       });
-      return null;
+      return {
+        ok: false,
+        failed: true,
+        reason: err instanceof Error ? err.message : String(err),
+      };
     }
     if (rawLinks.length === 0) {
       console.log(`[Flow] fetch ${cacheKey}: 0 links — nothing to rank`);
-      return null;
+      return { ok: false, failed: false, reason: "0 links" };
     }
 
     // ── 2. Rank with THIS provider's own selector (chain never mixes pools) ──
@@ -884,20 +930,22 @@ async function runSingleProvider(
     }
 
     return {
-      links,
-      bestIndex: head.index,
-      bestValidated: head.validated,
-      validationResults: probedUrls,
-      allDead: head.allDead,
-      selectionReason: selection.selectionReason,
-      capBytes: selection.capBytes,
-      prefetchedAt: Date.now(),
+      ok: true,
+      result: {
+        links,
+        bestIndex: head.index,
+        bestValidated: head.validated,
+        validationResults: probedUrls,
+        allDead: head.allDead,
+        selectionReason: selection.selectionReason,
+        capBytes: selection.capBytes,
+        prefetchedAt: Date.now(),
+      },
     };
   } catch (error) {
-    console.log(
-      `[Flow] pipeline ${cacheKey}: crashed — ${error instanceof Error ? error.message : error}`,
-    );
-    return null;
+    const reason = error instanceof Error ? error.message : String(error);
+    console.log(`[Flow] pipeline ${cacheKey}: crashed — ${reason}`);
+    return { ok: false, failed: true, reason };
   }
 }
 
