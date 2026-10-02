@@ -1,5 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, Image, Modal, BackHandler, AppState } from "react-native";
+import {
+  View,
+  Image,
+  Modal,
+  BackHandler,
+  AppState,
+  InteractionManager,
+  useWindowDimensions,
+} from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Stack, usePathname } from "expo-router";
 import { safeGoBack, resetNavigationInterlock } from "../lib/navigation";
@@ -37,6 +45,11 @@ import {
   isPersistableQuery,
   readPersistedCacheBytes,
 } from "../lib/queryPersister";
+import {
+  hydrateAccentCache,
+  resolveSwatch,
+  warmHeroAccent,
+} from "../lib/movieAccent";
 import { DownloadToastView } from "../components/DownloadToast";
 import LegalGate from "../components/LegalGate";
 import { colors } from "../theme/colors";
@@ -47,6 +60,7 @@ import {
   setPrefAudioLang,
   trackScreenView,
   emitSessionEndOnBackground,
+  hydrateTelemetry,
 } from "../lib/telemetry";
 import { initSentryIfAllowed } from "../lib/sentry";
 import { getImageUrl } from "@filmsnaps/shared";
@@ -86,6 +100,26 @@ const queryClient = new QueryClient({
 
 // FIX 5: start cache restore at module scope (parallel with fonts + settings).
 const cacheRestoreStartedAt = launchNow();
+// Accent swatches restored in parallel too — splash release means the hero
+// wash is already warm, not just the feed data.
+const accentHydratePromise = hydrateAccentCache();
+
+// While the LegalGate still holds the UI (first launch), extract the trending
+// hero pick's swatch — the first hero ever painted already carries its
+// accent, so the user never sees a brand-gold → accent transition. Module
+// scope fires immediately; trending data may not be restored yet, in which
+// case warmHeroAccent no-ops and the cache-restore callback below retries
+// it once restore lands (usually still during the gate).
+const heroWarmGate = { fired: false };
+function warmHeroAccentOnce(): void {
+  if (heroWarmGate.fired) return;
+  // Trending data may not be restored yet on a cold boot — retry after the
+  // query cache restore lands (still while the LegalGate usually shows).
+  if (!queryClient.getQueryData(["movies", "trending"])) return;
+  heroWarmGate.fired = true;
+  void warmHeroAccent(queryClient).catch(() => {});
+}
+warmHeroAccentOnce();
 const [, persistPromise] = persistQueryClient({
   queryClient,
   persister: asyncStoragePersister,
@@ -97,6 +131,9 @@ const [, persistPromise] = persistQueryClient({
 
 const cacheRestorePromise = persistPromise
   .then(async () => {
+    // Retry the hero warm now that trending data is in the cache — usually
+    // still while the LegalGate shows, so the first hero paints tinted.
+    warmHeroAccentOnce();
     const bytes = await readPersistedCacheBytes();
     const ms = Math.round(launchNow() - cacheRestoreStartedAt);
     console.log(`[perf] cacheRestore ms=${ms} bytes=${bytes}`);
@@ -143,6 +180,26 @@ const cacheRestorePromise = persistPromise
     } catch {
       // best-effort image warm
     }
+
+    // Accent warm — prime the extraction swatches for the rows the user is
+    // about to see, straight from the restored cache (NO new TMDB calls).
+    InteractionManager.runAfterInteractions(() => {
+      const primeRow = (queryKey: readonly unknown[], cap: number) => {
+        const data = queryClient.getQueryData(queryKey) as
+          | { results?: Array<{ backdrop_path?: string | null }> }
+          | undefined;
+        let warmed = 0;
+        for (const row of data?.results ?? []) {
+          if (warmed >= cap) break;
+          if (!row.backdrop_path) continue;
+          warmed += 1;
+          void resolveSwatch(row.backdrop_path);
+        }
+      };
+      primeRow(["movies", "trending"], 20); // hero pick + first row
+      primeRow(["movies", "popular", 1], 5);
+      primeRow(["tv", "trending"], 5);
+    });
   })
   .catch(() => {
     markLaunch("cacheRestoredMs", launchNow());
@@ -163,8 +220,19 @@ function markSplashHiddenOnce(): void {
 // Phase 1C FIX 1: mount counter — exactly ONE mount per JS runtime expected.
 let rootLayoutMountCount = 0;
 
-/** Static branded hold — matches native splash (bg #070708, contain image). */
+/**
+ * Static branded hold — shown after JS boots until fonts/settings are ready.
+ *
+ * The asset is a SQUARE brand lockup (see scripts/make-splash.js) so it can be
+ * sized deterministically here and still render identically inside the native
+ * boot splash (Android 12+ icon circle / classic window splash). Contain-fit of
+ * a square at 62% of the min viewport edge keeps the mark visually identical
+ * across cold (native → hold) and warm (hold only) starts.
+ */
 function SplashHold() {
+  const { width, height } = useWindowDimensions();
+  const lockup = Math.round(Math.min(width, height) * 0.62);
+  const size = Math.max(220, Math.min(420, lockup));
   return (
     <View
       style={{
@@ -176,7 +244,7 @@ function SplashHold() {
     >
       <Image
         source={require("../assets/splash.png")}
-        style={{ width: "100%", height: "100%" }}
+        style={{ width: size, height: size }}
         resizeMode="contain"
         accessible={false}
       />
@@ -264,7 +332,7 @@ export default function RootLayout() {
         setSettingsReady(true);
       });
 
-    cacheRestorePromise
+    Promise.all([cacheRestorePromise, accentHydratePromise])
       .then(() => {
         setCacheRestored(true);
       })
@@ -333,12 +401,13 @@ function AppContent() {
   const { settings } = useSettings();
 
   // Phase 4 Package B: open/close the telemetry gate from the legal +
-  // analytics settings. Closing either drops the queue and stops sends.
-  // Sentry is crashes-only and follows the same gate.
+  // analytics settings. Opening creates/loads the anonymous install ID;
+  // closing drops the queue and deletes it. Sentry follows the same gate.
   useEffect(() => {
     const legalAccepted = settings.legalAccepted === true;
     const analyticsEnabled = settings.analyticsEnabled !== false;
     setTelemetryGate({ legalAccepted, analyticsEnabled });
+    hydrateTelemetry();
     initSentryIfAllowed({ legalAccepted, analyticsEnabled });
   }, [settings.legalAccepted, settings.analyticsEnabled]);
 
@@ -534,6 +603,16 @@ function AppContent() {
             }}
           />
         )}
+        <Stack.Screen
+          name="download/hdhub/[...id]"
+          options={{
+            headerShown: false,
+            animation: "slide_from_bottom",
+            presentation: "fullScreenModal",
+            gestureEnabled: false,
+            contentStyle: { backgroundColor: colors.playerBg },
+          }}
+        />
         <Stack.Screen
           name="download/nxsha/[...id]"
           options={{
