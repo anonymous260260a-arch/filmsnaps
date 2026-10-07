@@ -180,7 +180,7 @@ export default function LibraryScreen() {
 
   const handleHistoryPress = useCallback(
     (p: WatchProgress) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       const base =
         p.mediaType === "tv"
           ? `/watch/tv/${p.tmdbId}/${p.season ?? 1}/${p.episode ?? 1}`
@@ -308,7 +308,9 @@ export default function LibraryScreen() {
               <TouchableOpacity
                 key={tab.id}
                 onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                    () => {},
+                  );
                   setActiveTab(tab.id);
                 }}
                 activeOpacity={0.75}
@@ -623,7 +625,12 @@ export default function LibraryScreen() {
                           b.mediaType === "tv" ? "tv" : "movie",
                         );
                         if (navItem)
-                          prepareDetail(navItem, "library", queryClient, router);
+                          prepareDetail(
+                            navItem,
+                            "library",
+                            queryClient,
+                            router,
+                          );
                       }}
                       onPress={() => {
                         const navItem = toDetailNavItem(

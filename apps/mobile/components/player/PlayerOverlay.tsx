@@ -615,11 +615,17 @@ export function PlayerOverlay({
 
   // ── Control Actions ──
   const togglePlayPause = useCallback(() => {
-    if (player.isPaused()) {
-      player.play();
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    } else {
-      player.pause();
+    // Gesture/button handlers run outside any ErrorBoundary — a native throw
+    // from play()/pause() must not take the app down with it.
+    try {
+      if (player.isPaused()) {
+        player.play();
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      } else {
+        player.pause();
+      }
+    } catch (e) {
+      console.warn("[PlayerOverlay] play/pause failed:", e);
     }
     resetInteractionTimer();
   }, [player, resetInteractionTimer]);

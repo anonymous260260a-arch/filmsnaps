@@ -422,7 +422,9 @@ export function useSmartDownload() {
       const resolvedQuality = quality ?? resolveQuality();
       const server: DownloadServer = QUALITY_TO_SERVER[resolvedQuality];
 
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(
+        () => {},
+      );
 
       const id = await enqueue({
         ...meta,
@@ -430,7 +432,9 @@ export function useSmartDownload() {
         quality: resolvedQuality,
       });
 
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Success,
+      ).catch(() => {});
       return id;
     },
     [enqueue, resolveQuality],

@@ -194,7 +194,7 @@ export default function SearchScreen() {
   }, []);
 
   const removeRecentSearch = useCallback((term: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setRecentSearches((prev) => {
       const next = prev.filter((t) => t !== term);
       AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(next)).catch(
@@ -205,7 +205,7 @@ export default function SearchScreen() {
   }, []);
 
   const clearAllRecentSearches = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setRecentSearches([]);
     AsyncStorage.removeItem(RECENT_SEARCHES_KEY).catch(() => {});
   }, []);
@@ -456,7 +456,7 @@ export default function SearchScreen() {
 
   const toggleGenre = useCallback(
     (genreId: number) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       setSelectedGenreIds((prev) =>
         prev.includes(genreId)
           ? prev.filter((g) => g !== genreId)
@@ -469,7 +469,7 @@ export default function SearchScreen() {
 
   const handleMediaTypeChange = useCallback(
     (type: MediaTypeFilter) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       trackFeatureUsed(
         type === "anime" ? "mode_toggle_anime" : "mode_toggle_movie_tv",
         "search",
@@ -482,7 +482,7 @@ export default function SearchScreen() {
 
   const handleSortChange = useCallback(
     (opt: SortOption) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       setSortBy(opt);
       setShowSortPicker(false);
       resetPagination();
@@ -491,7 +491,7 @@ export default function SearchScreen() {
   );
 
   const handleClearFilters = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setSelectedGenreIds([]);
     setMediaTypeFilter(settings.mode === "anime" ? "anime" : "movie_tv");
     setSortBy("popularity.desc");
@@ -519,7 +519,7 @@ export default function SearchScreen() {
 
   const handleItemPress = useCallback(
     (item: Movie) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       if (query.trim()) saveRecentSearch(query.trim());
       const mediaType = (item as any)._mediaType || item.media_type || "movie";
       const navItem = toDetailNavItem(
@@ -561,7 +561,7 @@ export default function SearchScreen() {
 
   const handleAnimePress = useCallback(
     (item: AnimeResult) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       if (query.trim()) saveRecentSearch(query.trim());
       const twin = lookupMal(item.malId);
       const tmdbShowId = twin?.tmdbShowId;
@@ -611,7 +611,7 @@ export default function SearchScreen() {
 
   const selectTopic = useCallback(
     (topic: string) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       setQuery(topic);
       saveRecentSearch(topic);
       resetPagination();
@@ -705,7 +705,9 @@ export default function SearchScreen() {
           {query.length > 0 && (
             <TouchableOpacity
               onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                  () => {},
+                );
                 setQuery("");
                 resetPagination();
               }}
@@ -819,7 +821,9 @@ export default function SearchScreen() {
             {/* Sort Button */}
             <TouchableOpacity
               onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                  () => {},
+                );
                 setShowSortPicker((p) => !p);
               }}
               activeOpacity={0.75}

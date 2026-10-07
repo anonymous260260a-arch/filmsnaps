@@ -130,7 +130,7 @@ export function SeasonPicker({
 
   const handleSeasonChange = useCallback(
     (seasonNum: number) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       setSelectedSeason(seasonNum);
       setExpanded(false);
 
@@ -556,7 +556,9 @@ export function SeasonPicker({
           {showExpandButton && (
             <TouchableOpacity
               onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                  () => {},
+                );
                 setExpanded(!expanded);
               }}
               activeOpacity={0.75}

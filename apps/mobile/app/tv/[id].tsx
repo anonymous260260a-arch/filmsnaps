@@ -272,7 +272,7 @@ export default function TVDetailScreen() {
   const clearedTimerRef = useRef<(() => void) | null>(null);
 
   const toggleBookmark = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const next = !bookmarked;
     setBookmarked(next);
     trackFeatureUsed("bookmark_save", "detail");
@@ -297,7 +297,7 @@ export default function TVDetailScreen() {
   }, [id, bookmarked, header]);
 
   const handleShare = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     trackFeatureUsed("share_used", "detail");
     Share.share({
       message: `Check out "${title}" on FilmSnaps 🎬\nhttps://filmsnap-pro.netlify.app/tv/${id}`,

@@ -1573,7 +1573,13 @@ export function HevcPlayer({
       if (state === "background" || state === "inactive") {
         backgroundedRef.current = true;
         adapterRef.current?.setAppBackgrounded?.(true);
-        adapterRef.current?.pause();
+        // pause() reaches the native player — a throw here would be an
+        // uncaught error inside an AppState listener (no boundary above).
+        try {
+          adapterRef.current?.pause();
+        } catch (e) {
+          console.warn("[HevcPlayer] background pause failed:", e);
+        }
       } else if (state === "active") {
         backgroundedRef.current = false;
         lastActiveAtRef.current = Date.now();
@@ -2082,7 +2088,11 @@ export function HevcPlayer({
       setStreamError(null);
       pendingAutoToastRef.current = false;
       // Stop expo-video's end-of-stream play() retry loop + buffering spinner.
-      adapter.pause();
+      try {
+        adapter.pause();
+      } catch (e) {
+        console.warn("[HevcPlayer] end-of-stream pause failed:", e);
+      }
 
       if (
         mediaType === "tv" &&
@@ -2419,13 +2429,13 @@ export function HevcPlayer({
   useEffect(() => {
     const unsubs = [
       adapter.onPlayPause((paused) => {
-        if (!paused) KeepAwake.activateKeepAwakeAsync();
-        else KeepAwake.deactivateKeepAwake();
+        if (!paused) KeepAwake.activateKeepAwakeAsync().catch(() => {});
+        else KeepAwake.deactivateKeepAwake().catch(() => {});
       }),
     ];
     return () => {
       unsubs.forEach((u) => u());
-      KeepAwake.deactivateKeepAwake();
+      KeepAwake.deactivateKeepAwake().catch(() => {});
     };
   }, [adapter]);
 

@@ -241,7 +241,9 @@ export function ServerPickerSheet({
                 <TouchableOpacity
                   key={p.id}
                   onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    Haptics.impactAsync(
+                      Haptics.ImpactFeedbackStyle.Light,
+                    ).catch(() => {});
                     onSelect(p.id);
                   }}
                   activeOpacity={0.7}

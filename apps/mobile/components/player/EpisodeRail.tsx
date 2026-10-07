@@ -328,7 +328,9 @@ export function EpisodeRail({
                     <TouchableOpacity
                       key={s}
                       onPress={() => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        Haptics.impactAsync(
+                          Haptics.ImpactFeedbackStyle.Light,
+                        ).catch(() => {});
                         setPickerSeason(s);
                       }}
                       onLayout={(e) => {
@@ -442,7 +444,9 @@ export function EpisodeRail({
                 return (
                   <TouchableOpacity
                     onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      Haptics.impactAsync(
+                        Haptics.ImpactFeedbackStyle.Light,
+                      ).catch(() => {});
                       onSelect(pickerSeason, epNum);
                     }}
                     activeOpacity={0.7}

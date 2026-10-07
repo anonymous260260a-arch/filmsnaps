@@ -161,7 +161,7 @@ export function DownloadSheet({
   }, [visible, translateY, backdropOpacity]);
 
   const handleSelect = (serverKey: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     onClose();
     onSelectServer(serverKey);
   };

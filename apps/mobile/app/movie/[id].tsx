@@ -259,7 +259,7 @@ export default function MovieDetailScreen() {
   }, [rankSig]);
 
   const toggleBookmark = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const next = !bookmarked;
     setBookmarked(next);
     trackFeatureUsed("bookmark_save", "detail");
@@ -284,7 +284,7 @@ export default function MovieDetailScreen() {
   }, [id, bookmarked, header]);
 
   const handleShare = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     trackFeatureUsed("share_used", "detail");
     Share.share({
       message: `Check out "${title}" on FilmSnaps 🎬\nhttps://filmsnap-pro.netlify.app/movie/${id}`,

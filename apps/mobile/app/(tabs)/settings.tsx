@@ -108,7 +108,9 @@ function SettingsRow({
     <Content
       onPress={() => {
         if (onPress) {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+            () => {},
+          );
           onPress();
         }
       }}
@@ -195,7 +197,9 @@ function CollapsibleSection({
     <View style={{ marginBottom: 20 }}>
       <TouchableOpacity
         onPress={() => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+            () => {},
+          );
           setOpen(!open);
         }}
         activeOpacity={0.75}
@@ -303,7 +307,9 @@ export default function SettingsScreen() {
           style: "destructive",
           onPress: () => {
             setCacheSize(0);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Haptics.notificationAsync(
+              Haptics.NotificationFeedbackType.Success,
+            ).catch(() => {});
             Alert.alert("Cache Cleared", "Temporary cache has been cleared.");
           },
         },
@@ -312,7 +318,7 @@ export default function SettingsScreen() {
   }, []);
 
   const handleShareApp = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     Share.share({
       message: `🎬 Watch movies & TV shows free on FilmSnaps\nhttps://filmsnap-pro.netlify.app/download`,
     });
@@ -429,7 +435,9 @@ export default function SettingsScreen() {
                   <TouchableOpacity
                     key={m}
                     onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      Haptics.impactAsync(
+                        Haptics.ImpactFeedbackStyle.Light,
+                      ).catch(() => {});
                       trackFeatureUsed(
                         m === "anime"
                           ? "mode_toggle_anime"
@@ -470,7 +478,9 @@ export default function SettingsScreen() {
             subtitle="Preferred audio for source ranking"
             color={colors.gold}
             onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                () => {},
+              );
               setShowLangSheet(true);
             }}
             right={
@@ -518,7 +528,9 @@ export default function SettingsScreen() {
               <Switch
                 value={settings.showServerNotes}
                 onValueChange={(v) => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                    () => {},
+                  );
                   updateSetting("showServerNotes", v);
                 }}
                 trackColor={{
@@ -608,7 +620,9 @@ export default function SettingsScreen() {
           {/* Auto option */}
           <TouchableOpacity
             onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                () => {},
+              );
               updateSetting("defaultServer", "");
             }}
             activeOpacity={0.75}
@@ -675,7 +689,9 @@ export default function SettingsScreen() {
                 <Divider />
                 <TouchableOpacity
                   onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    Haptics.impactAsync(
+                      Haptics.ImpactFeedbackStyle.Light,
+                    ).catch(() => {});
                     updateSetting("defaultServer", isSelected ? "" : p.id);
                   }}
                   activeOpacity={0.75}
@@ -818,7 +834,9 @@ export default function SettingsScreen() {
               <Switch
                 value={settings.analyticsEnabled !== false}
                 onValueChange={(v) => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                    () => {},
+                  );
                   updateSetting("analyticsEnabled", v);
                 }}
                 trackColor={{
@@ -995,7 +1013,9 @@ export default function SettingsScreen() {
               </Text>
               <TouchableOpacity
                 onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                    () => {},
+                  );
                   Linking.openURL(
                     "https://github.com/anonymous260260a-arch/filmsnaps",
                   );
