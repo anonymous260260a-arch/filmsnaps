@@ -2727,14 +2727,26 @@ var _p=0;
     // V6: reactSafe providers get NO blocker at document_start (see switchProvider).
     val reactSafeInit = providerConfigForUrl(sourceUri.ifEmpty { pendingLoadUrl })?.reactSafe == true
     if (!reactSafeInit) {
-      WebViewCompat.addDocumentStartJavaScript(wv, DEVTOOT_REDIRECT_BLOCKER, setOf("*"))
+      // addDocumentStartJavaScript throws UnsupportedOperationException when the
+      // WebView APK predates DOCUMENT_START_SCRIPT (Chromium < 86). Uncaught here
+      // this escapes View.onAttachedToWindow on the UI thread and kills the app —
+      // same guard as applyCosmeticDocStart() below.
+      try {
+        WebViewCompat.addDocumentStartJavaScript(wv, DEVTOOT_REDIRECT_BLOCKER, setOf("*"))
+      } catch (e: Exception) {
+        android.util.Log.w("PlayerWebView", "doc-start blocker register failed: ${e.message}")
+      }
     }
 
     val docStartBundleInit = providerConfigForUrl(sourceUri.ifEmpty { pendingLoadUrl })?.docStartBundle != false
     if (injectedScript.isNotEmpty() && docStartBundleInit && !reactSafeInit) {
       android.util.Log.d("PlayerWebView",
-        "OVERLAY INJECTING SCRIPT length=${injectedScript.length} start=${injectedScript.take(120).replace('\n', ' ')}")
-      WebViewCompat.addDocumentStartJavaScript(wv, injectedScript, setOf("*"))
+        "OVERLAY INJECTING SCRIPT length=${injectedScript.length} preview=${injectedScript.take(120).replace('\n', ' ')}")
+      try {
+        WebViewCompat.addDocumentStartJavaScript(wv, injectedScript, setOf("*"))
+      } catch (e: Exception) {
+        android.util.Log.w("PlayerWebView", "doc-start bundle register failed: ${e.message}")
+      }
     } else if (injectedScript.isNotEmpty() && !docStartBundleInit) {
       android.util.Log.d("PlayerWebView",
         "OVERLAY INJECTING SCRIPT SKIPPED (docStartBundle=false) length=${injectedScript.length}")
