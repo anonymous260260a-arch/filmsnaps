@@ -11,10 +11,18 @@ index 2c0b7df769e37d7b7a139e7795ea6256aa8a1550..ec6b78bc32f05ef3ad238c2d7ea3e6b2
 +  compileOnly 'org.checkerframework:checker-qual:3.43.0'
  }
 diff --git a/android/src/main/java/expo/modules/video/VideoModule.kt b/android/src/main/java/expo/modules/video/VideoModule.kt
-index 336b4aac6eaa97c696d61b2b6506af80b519480c..54e7ec5e422bb2cbcd61e1ae67324a6add1f0fe2 100644
+index 336b4aac6eaa97c696d61b2b6506af80b519480c..76804e6abf933a8f057e5182ffbdff615fa72d20 100644
 --- a/android/src/main/java/expo/modules/video/VideoModule.kt
 +++ b/android/src/main/java/expo/modules/video/VideoModule.kt
-@@ -26,6 +26,13 @@ import expo.modules.video.records.SeekTolerance
+@@ -1,6 +1,7 @@
+ package expo.modules.video
+ 
+ import android.net.Uri
++import android.util.Log
+ import androidx.media3.common.PlaybackParameters
+ import androidx.media3.common.Player.REPEAT_MODE_OFF
+ import androidx.media3.common.Player.REPEAT_MODE_ONE
+@@ -26,6 +27,13 @@ import expo.modules.video.records.SeekTolerance
  import expo.modules.video.records.VideoSource
  import expo.modules.video.records.VideoThumbnailOptions
  import expo.modules.video.utils.runWithPiPMisconfigurationSoftHandling
@@ -28,7 +36,7 @@ index 336b4aac6eaa97c696d61b2b6506af80b519480c..54e7ec5e422bb2cbcd61e1ae67324a6a
  import expo.modules.video.managers.VideoManager
  import kotlinx.coroutines.async
  import kotlinx.coroutines.awaitAll
-@@ -63,6 +70,57 @@ class VideoModule : Module() {
+@@ -63,6 +71,57 @@ class VideoModule : Module() {
        VideoManager.cache.clear()
      }
  
@@ -86,7 +94,23 @@ index 336b4aac6eaa97c696d61b2b6506af80b519480c..54e7ec5e422bb2cbcd61e1ae67324a6a
      View(SurfaceVideoView::class) {
        VideoViewComponent<SurfaceVideoView>()
      }
-@@ -268,6 +326,27 @@ class VideoModule : Module() {
+@@ -74,7 +133,14 @@ class VideoModule : Module() {
+       Constructor { source: VideoSource?, /* useSynchronousReplace - iOS-only */ _: Boolean?, playerBuilderOptions: PlayerBuilderOptions? ->
+         val player = VideoPlayer(appContext.throwingActivity.applicationContext, appContext, source, playerBuilderOptions)
+         appContext.mainQueue.launch {
+-          player.prepare()
++          // mainQueue coroutines have no CoroutineExceptionHandler — an escape
++          // from prepare() (no viable media, allocator OOM) is a fatal
++          // uncaught main-thread exception. Never let it reach the handler.
++          try {
++            player.prepare()
++          } catch (t: Throwable) {
++            Log.w("ExpoVideo", "player.prepare() failed in constructor: ${t.message}")
++          }
+         }
+         return@Constructor player
+       }
+@@ -268,6 +334,27 @@ class VideoModule : Module() {
          }
        }
  
@@ -114,7 +138,30 @@ index 336b4aac6eaa97c696d61b2b6506af80b519480c..54e7ec5e422bb2cbcd61e1ae67324a6a
        Property("timeUpdateEventInterval")
          .get { ref: VideoPlayer ->
            ref.intervalUpdateClock.interval / 1000.0
-@@ -400,6 +479,16 @@ private inline fun <reified T : VideoView> ViewDefinitionBuilder<T>.VideoViewCom
+@@ -376,8 +463,20 @@ class VideoModule : Module() {
+ 
+     appContext.mainQueue.launch {
+       ref.uncommittedSource = videoSource
+-      ref.prepare()
+-      promise?.resolve()
++      // No CoroutineExceptionHandler on this queue — settle exactly once and
++      // swallow the throw instead of killing the process.
++      try {
++        ref.prepare()
++        promise?.resolve()
++      } catch (t: Throwable) {
++        Log.w("ExpoVideo", "prepare(source) failed: ${t.message}")
++        if (promise != null) {
++          try {
++            promise.reject("VIDEO_PREPARE_FAILED", t.message ?: "prepare failed", t)
++          } catch (_: Throwable) {
++          }
++        }
++      }
+     }
+   }
+ }
+@@ -400,6 +499,16 @@ private inline fun <reified T : VideoView> ViewDefinitionBuilder<T>.VideoViewCom
    Prop("contentFit") { view: T, contentFit: ContentFit ->
      view.contentFit = contentFit
    }
@@ -132,7 +179,7 @@ index 336b4aac6eaa97c696d61b2b6506af80b519480c..54e7ec5e422bb2cbcd61e1ae67324a6a
      view.autoEnterPiP = autoEnterPiP ?: false
    }
 diff --git a/android/src/main/java/expo/modules/video/VideoView.kt b/android/src/main/java/expo/modules/video/VideoView.kt
-index bdf4c8de9ced7f350c5e8c043c20d569efa465e1..c61af2d5ba46c2b1c6be915e4b9c29692f1fe84a 100644
+index bdf4c8de9ced7f350c5e8c043c20d569efa465e1..75e0dbbba6c8a5e2dc750569a011164f3a1d5bbc 100644
 --- a/android/src/main/java/expo/modules/video/VideoView.kt
 +++ b/android/src/main/java/expo/modules/video/VideoView.kt
 @@ -89,6 +89,15 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
@@ -151,7 +198,7 @@ index bdf4c8de9ced7f350c5e8c043c20d569efa465e1..c61af2d5ba46c2b1c6be915e4b9c2969
    }
  
    var pipParams by IgnoreSameSet(PiPParams()) { new, old ->
-@@ -122,6 +131,61 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+@@ -122,6 +131,67 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
        field = value
      }
  
@@ -171,6 +218,10 @@ index bdf4c8de9ced7f350c5e8c043c20d569efa465e1..c61af2d5ba46c2b1c6be915e4b9c2969
 +    }
 +
 +  fun applyImmersiveMode() {
++    // getInsetsController() is API 30+; on Android 8–10 it throws
++    // NoSuchMethodError and kills the app (prod crash 7769825319). Same guard
++    // as FullscreenPlayerActivity — immersive is a no-op below R.
++    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
 +    val window = currentActivity?.window ?: return
 +    val controller = window.insetsController ?: return
 +    if (immersiveMode) {
@@ -189,6 +240,8 @@ index bdf4c8de9ced7f350c5e8c043c20d569efa465e1..c61af2d5ba46c2b1c6be915e4b9c2969
 +  }
 +
 +  fun restoreSystemBars() {
++    // API 30+ only — same NoSuchMethodError guard as applyImmersiveMode.
++    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
 +    val window = currentActivity?.window ?: return
 +    window.insetsController?.show(
 +      android.view.WindowInsets.Type.statusBars()
@@ -213,7 +266,7 @@ index bdf4c8de9ced7f350c5e8c043c20d569efa465e1..c61af2d5ba46c2b1c6be915e4b9c2969
    var videoPlayer: VideoPlayer? = null
      set(newPlayer) {
        field?.let {
-@@ -364,6 +428,15 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+@@ -364,6 +434,15 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
    override fun onDetachedFromWindow() {
      super.onDetachedFromWindow()
  
@@ -230,7 +283,7 @@ index bdf4c8de9ced7f350c5e8c043c20d569efa465e1..c61af2d5ba46c2b1c6be915e4b9c2969
      captioningChangeListener?.let {
        val captioningManager = context.getSystemService(Context.CAPTIONING_SERVICE) as? CaptioningManager
 diff --git a/android/src/main/java/expo/modules/video/player/VideoPlayer.kt b/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
-index ee4e976659525b5d1c1039707b7bdcac800700d9..68149e27cfe4f6dc1e3791e3185dc92dff1600ad 100644
+index ee4e976659525b5d1c1039707b7bdcac800700d9..92f8c8964746996d0e1a1d1fd1b1563c282ac9f9 100644
 --- a/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
 +++ b/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
 @@ -2,6 +2,7 @@ package expo.modules.video.player
@@ -517,7 +570,7 @@ index 0000000000000000000000000000000000000000..d9e10a0056bcbf0360c1fe27f0c9df41
 +  }
 +}
 diff --git a/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt b/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
-index 460fb7bf3d81aa80951f2086de0e31211f9cec0a..339c1a75f4d72ea19cc47bcf77c7fdaa7ed53c2e 100644
+index 460fb7bf3d81aa80951f2086de0e31211f9cec0a..53c2bbe3257004abb0455d24c4e9bad4a72f6bea 100644
 --- a/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
 +++ b/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
 @@ -13,7 +13,217 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -1276,7 +1329,7 @@ index 0000000000000000000000000000000000000000..400922a07515aa412250aff94e09361f
 +}
 diff --git a/android/src/main/java/expo/modules/video/utils/LegacyTextRenderersFactory.kt b/android/src/main/java/expo/modules/video/utils/LegacyTextRenderersFactory.kt
 new file mode 100644
-index 0000000000000000000000000000000000000000..c4d93cec1659f194a52b9174d2715256422483a2
+index 0000000000000000000000000000000000000000..ab7682e12e7b37d6b2a684f78f8df28fd7c551a4
 --- /dev/null
 +++ b/android/src/main/java/expo/modules/video/utils/LegacyTextRenderersFactory.kt
 @@ -0,0 +1,69 @@
@@ -1351,7 +1404,7 @@ index 0000000000000000000000000000000000000000..c4d93cec1659f194a52b9174d2715256
 +// END legacy-text-decoding (expo-video patch)
 diff --git a/android/src/main/java/expo/modules/video/utils/PlayerAudioTap.kt b/android/src/main/java/expo/modules/video/utils/PlayerAudioTap.kt
 new file mode 100644
-index 0000000000000000000000000000000000000000..9a7a98e7f192454dfe6439f1049f9751d8e09c7c
+index 0000000000000000000000000000000000000000..81c5cfba3c7f3f2e9fd2b00f7f1e4b302a1bd6cc
 --- /dev/null
 +++ b/android/src/main/java/expo/modules/video/utils/PlayerAudioTap.kt
 @@ -0,0 +1,166 @@
@@ -4815,10 +4868,10 @@ index 0000000000000000000000000000000000000000..28d57dd8eeea8d1b25599610d5ebcfe7
 +}
 diff --git a/android/src/main/java/expo/modules/video/utils/StreamProbe.kt b/android/src/main/java/expo/modules/video/utils/StreamProbe.kt
 new file mode 100644
-index 0000000000000000000000000000000000000000..4f18d7d8bde77e0314db8808ce7fa8ae433c6fdd
+index 0000000000000000000000000000000000000000..f637b2b272395638f9ef33a04999ed242bfff4f5
 --- /dev/null
 +++ b/android/src/main/java/expo/modules/video/utils/StreamProbe.kt
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,160 @@
 +package expo.modules.video.utils
 +
 +import android.util.Base64
@@ -4915,51 +4968,73 @@ index 0000000000000000000000000000000000000000..4f18d7d8bde77e0314db8808ce7fa8ae
 +    client.newCall(builder.build()).enqueue(object : Callback {
 +      override fun onFailure(call: Call, e: IOException) {
 +        Log.i(TAG, "probe failed: ${e.message ?: "network error"}")
-+        promise.reject("PROBE_FAILED", e.message ?: "Probe network error", e)
++        // OkHttp dispatcher threads run without an exception barrier: an escape
++        // from reject() (promise already settled, module invalidated) would kill
++        // the process. Delivery is best-effort.
++        try {
++          promise.reject("PROBE_FAILED", e.message ?: "Probe network error", e)
++        } catch (t: Throwable) {
++          Log.w(TAG, "probe failure delivery failed: ${t.message}")
++        }
 +      }
 +
 +      override fun onResponse(call: Call, response: Response) {
-+        var offset = 0
-+        val buffer = ByteArray(MAX_BODY_BYTES)
++        // Dispatcher thread with no exception barrier — guard the whole body
++        // (allocation, body read, base64 boxing, promise settlement) so a
++        // non-IOException escape cannot reach the thread's uncaught handler.
 +        try {
-+          response.body?.byteStream()?.use { stream ->
-+            while (offset < MAX_BODY_BYTES) {
-+              val n = stream.read(buffer, offset, MAX_BODY_BYTES - offset)
-+              if (n < 0) break
-+              offset += n
++          var offset = 0
++          val buffer = ByteArray(MAX_BODY_BYTES)
++          try {
++            response.body?.byteStream()?.use { stream ->
++              while (offset < MAX_BODY_BYTES) {
++                val n = stream.read(buffer, offset, MAX_BODY_BYTES - offset)
++                if (n < 0) break
++                offset += n
++              }
 +            }
++          } catch (e: IOException) {
++            // Partial body is fine — classification handles short/empty reads.
++            Log.i(TAG, "probe body read interrupted at $offset bytes: ${e.message}")
++          } finally {
++            response.close()
 +          }
-+        } catch (e: IOException) {
-+          // Partial body is fine — classification handles short/empty reads.
-+          Log.i(TAG, "probe body read interrupted at $offset bytes: ${e.message}")
-+        } finally {
-+          response.close()
-+        }
 +
-+        val result = mapOf<String, Any?>(
-+          "statusCode" to response.code,
-+          "probeMs" to (System.currentTimeMillis() - startedAt).toInt(),
-+          "connectMs" to (if (connectEnd[0] > connectStart[0]) (connectEnd[0] - connectStart[0]).toInt() else 0),
-+          "tlsMs" to (if (tlsEnd[0] > tlsStart[0]) (tlsEnd[0] - tlsStart[0]).toInt() else 0),
-+          "bytesRead" to offset,
-+          "contentType" to response.header("Content-Type"),
-+          "contentRange" to response.header("Content-Range"),
-+          "contentLength" to response.header("Content-Length")?.toLongOrNull(),
-+          "acceptRanges" to response.header("Accept-Ranges"),
-+          "bodyBase64" to Base64.encodeToString(buffer.copyOf(offset), Base64.NO_WRAP),
-+        )
-+        Log.i(
-+          TAG,
-+          "probe ok: status=${response.code} probeMs=${result["probeMs"]} bytes=$offset",
-+        )
-+        promise.resolve(result)
++          val result = mapOf<String, Any?>(
++            "statusCode" to response.code,
++            "probeMs" to (System.currentTimeMillis() - startedAt).toInt(),
++            "connectMs" to (if (connectEnd[0] > connectStart[0]) (connectEnd[0] - connectStart[0]).toInt() else 0),
++            "tlsMs" to (if (tlsEnd[0] > tlsStart[0]) (tlsEnd[0] - tlsStart[0]).toInt() else 0),
++            "bytesRead" to offset,
++            "contentType" to response.header("Content-Type"),
++            "contentRange" to response.header("Content-Range"),
++            "contentLength" to response.header("Content-Length")?.toLongOrNull(),
++            "acceptRanges" to response.header("Accept-Ranges"),
++            "bodyBase64" to Base64.encodeToString(buffer.copyOf(offset), Base64.NO_WRAP),
++          )
++          Log.i(
++            TAG,
++            "probe ok: status=${response.code} probeMs=${result["probeMs"]} bytes=$offset",
++          )
++          promise.resolve(result)
++        } catch (t: Throwable) {
++          Log.w(TAG, "probe response handling failed: ${t.message}")
++          try {
++            response.close()
++          } catch (_: Throwable) {
++          }
++          try {
++            promise.reject("PROBE_FAILED", t.message ?: "Probe response error", t)
++          } catch (_: Throwable) {
++          }
++        }
 +      }
 +    })
 +  }
 +}
 diff --git a/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt b/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt
 new file mode 100644
-index 0000000000000000000000000000000000000000..a17a3cf5625040750b3dcc0b74e3490d58809410
+index 0000000000000000000000000000000000000000..e467a4b1c28a05308b5bc33f9822157ea04050d5
 --- /dev/null
 +++ b/android/src/main/java/expo/modules/video/utils/TapAudioProcessor.kt
 @@ -0,0 +1,88 @@
