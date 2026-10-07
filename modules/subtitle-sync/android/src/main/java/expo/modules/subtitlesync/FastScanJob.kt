@@ -359,37 +359,46 @@ class FastScanJob(
 
     fun start() {
         Thread {
-            val t0 = SystemClock.elapsedRealtime()
-            // G4-1: seed the throttle window at real network start (not at
-            // construction) so the cold path never bursts at line speed.
-            readThrottle.precharge()
-            if (throttleMbps > 0) {
-                d("governor: budget=${"%.2f".format(java.util.Locale.US, throttleMbps)} Mbps (G4-3 player-aware)")
-            }
-            val r = try {
-                if (container == "hls") scanHls(t0) else scanProgressive(t0)
+            // Raw non-daemon thread: the throttle log, the status line and
+            // onResult (promise.resolve) below all run AFTER the inner
+            // catch (Throwable). Any escape there reaches
+            // Thread.uncaughtExceptionHandler and kills the process, so the
+            // whole body gets its own barrier.
+            try {
+                val t0 = SystemClock.elapsedRealtime()
+                // G4-1: seed the throttle window at real network start (not at
+                // construction) so the cold path never bursts at line speed.
+                readThrottle.precharge()
+                if (throttleMbps > 0) {
+                    d("governor: budget=${"%.2f".format(java.util.Locale.US, throttleMbps)} Mbps (G4-3 player-aware)")
+                }
+                val r = try {
+                    if (container == "hls") scanHls(t0) else scanProgressive(t0)
+                } catch (t: Throwable) {
+                    if (cancelled.get()) {
+                        ExtractResult.Error("cancelled", "cancelled")
+                    } else {
+                        Log.e(TAG, "scan failed", t)
+                        d("FATAL ${t.javaClass.simpleName}: ${t.message}")
+                        ExtractResult.Error("decode-failed", "${t.javaClass.simpleName}: ${t.message}")
+                    }
+                }
+                readThrottle.logFinal()
+                d(
+                    when (r) {
+                        is ExtractResult.Success ->
+                            "DONE in ${SystemClock.elapsedRealtime() - t0}ms: ${r.bins} bins [${r.startSec}..${r.endSec}]s"
+                        is ExtractResult.Error ->
+                            "FAILED in ${SystemClock.elapsedRealtime() - t0}ms: ${r.code} - ${r.message}"
+                    }
+                )
+                // Always settle the JS promise — even on cancel. Suppressing
+                // onResult left scanAsync hanging, so extractWithRetry's poller
+                // never stopped and a restart printed interleaved trace lines.
+                onResult(r)
             } catch (t: Throwable) {
-                if (cancelled.get()) {
-                    ExtractResult.Error("cancelled", "cancelled")
-                } else {
-                    Log.e(TAG, "scan failed", t)
-                    d("FATAL ${t.javaClass.simpleName}: ${t.message}")
-                    ExtractResult.Error("decode-failed", "${t.javaClass.simpleName}: ${t.message}")
-                }
+                Log.e(TAG, "scan thread failed outside scan body", t)
             }
-            readThrottle.logFinal()
-            d(
-                when (r) {
-                    is ExtractResult.Success ->
-                        "DONE in ${SystemClock.elapsedRealtime() - t0}ms: ${r.bins} bins [${r.startSec}..${r.endSec}]s"
-                    is ExtractResult.Error ->
-                        "FAILED in ${SystemClock.elapsedRealtime() - t0}ms: ${r.code} - ${r.message}"
-                }
-            )
-            // Always settle the JS promise — even on cancel. Suppressing
-            // onResult left scanAsync hanging, so extractWithRetry's poller
-            // never stopped and a restart printed interleaved trace lines.
-            onResult(r)
         }.also { it.isDaemon = false }.start()
     }
 
