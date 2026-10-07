@@ -589,7 +589,11 @@ object BlocklistConfigLoader {
         try {
             val dir = otaDir(appContext!!)
             dir.mkdirs()
-            val ts = java.time.Instant.now().toString()
+            // java.time.Instant is API 26+ and is not desugared here: on
+            // Android 7.x (minSdk 24) it throws NoClassDefFoundError, which is
+            // an Error and would escape this catch (Exception) and kill the app.
+            val ts = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
+                .let { fmt -> fmt.timeZone = java.util.TimeZone.getTimeZone("UTC"); fmt.format(java.util.Date()) }
             val parts = mutableListOf(ts, action)
             provider?.let { parts.add("provider=$it") }
             errorCode?.let { parts.add("error=$it") }
@@ -597,7 +601,7 @@ object BlocklistConfigLoader {
             detail?.let { parts.add("detail=$it") }
             File(dir, HEAL_LOG_FILE).appendText(parts.joinToString(" | ") + "\n")
             Log.i(TAG, "[HEAL] ${parts.joinToString(" | ")}")
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
     }
 
     // ── Path helpers ────────────────────────────────────────────────
