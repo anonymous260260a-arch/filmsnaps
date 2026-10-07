@@ -193,7 +193,9 @@ const cacheRestorePromise = persistPromise
           if (warmed >= cap) break;
           if (!row.backdrop_path) continue;
           warmed += 1;
-          void resolveSwatch(row.backdrop_path);
+          // Background cache warm-up: a rejection here would be unhandled and
+          // is never actionable — swatch extraction failures are non-fatal.
+          void resolveSwatch(row.backdrop_path).catch(() => {});
         }
       };
       primeRow(["movies", "trending"], 20); // hero pick + first row
@@ -369,8 +371,17 @@ export default function RootLayout() {
   }
 
   // FIX 4: static branded view while gated — no ActivityIndicator, no spinner.
+  // Both branches render INSIDE the ErrorBoundary: SplashHold used to return
+  // early, above the boundary, so a render error during the gate white-screened
+  // with no recovery UI at all.
   if (!appReady) {
-    return <SplashHold />;
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <ErrorBoundary>
+          <SplashHold />
+        </ErrorBoundary>
+      </GestureHandlerRootView>
+    );
   }
 
   return (

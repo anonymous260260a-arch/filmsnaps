@@ -11,15 +11,34 @@ import { requireNativeModule } from "expo-modules-core";
 import { getPlayerTuning } from "../../lib/playerConfig";
 import type { PlayerAdapter, AudioTrackInfo, SubtitleTrackInfo } from "./types";
 
-/** Native expo-video module — hosts probeStream + setSubtitleOffset (patch). */
-const ExpoVideoNativeModule = requireNativeModule("ExpoVideo") as {
-  setSubtitleOffset?: (ms: number) => void;
-  probeStream?: (
-    url: string,
-    headers: Record<string, string>,
-    timeoutMs: number,
-  ) => Promise<Record<string, any>>;
-};
+/** Native expo-video module — hosts probeStream + setSubtitleOffset (patch).
+ *  Resolved defensively: requireNativeModule() throws when the module is not
+ *  registered (native/OTA mismatch), and a throw at module scope happens during
+ *  import — before any ErrorBoundary exists — so it white-screens the app.
+ *  Callers already use optional chaining (setSubtitleOffset?.), so a missing
+ *  module degrades to a no-op instead of a crash. */
+const ExpoVideoNativeModule = (() => {
+  try {
+    return requireNativeModule("ExpoVideo") as {
+      setSubtitleOffset?: (ms: number) => void;
+      probeStream?: (
+        url: string,
+        headers: Record<string, string>,
+        timeoutMs: number,
+      ) => Promise<Record<string, any>>;
+    };
+  } catch (e) {
+    console.warn("[ExpoVideoAdapter] ExpoVideo native module unavailable:", e);
+    return {} as {
+      setSubtitleOffset?: (ms: number) => void;
+      probeStream?: (
+        url: string,
+        headers: Record<string, string>,
+        timeoutMs: number,
+      ) => Promise<Record<string, any>>;
+    };
+  }
+})();
 // Sidecar-subtitle functions live on the player SharedObject (patch adds them
 // inside Class("VideoPlayer")), so they're called on the player instance.
 const playerWithSidecarApi = (player: VideoPlayer) =>

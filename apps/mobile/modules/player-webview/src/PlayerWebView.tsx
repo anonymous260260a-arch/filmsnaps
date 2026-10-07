@@ -44,7 +44,19 @@ export interface PlayerWebViewRef {
   injectJavaScript: (script: string) => void;
 }
 
-const NativeView = requireNativeViewManager("PlayerWebview");
+// A module-scope requireNativeViewManager() throw happens during import, when
+// no ErrorBoundary can exist yet (native module not autolinked / OTA mismatch),
+// and it takes down the whole app. Fall back to a no-op view so the screen
+// renders and the error surfaces through the normal onLoadingStart/onHttpError
+// paths instead of a white screen.
+const NativeView: React.ComponentType<any> = (() => {
+  try {
+    return requireNativeViewManager("PlayerWebview");
+  } catch (e) {
+    console.warn("[PlayerWebView] native view unavailable:", e);
+    return React.forwardRef((_props: any, _ref: any) => null) as any;
+  }
+})();
 
 const PlayerWebView = React.forwardRef<PlayerWebViewRef, PlayerWebViewProps>(
   (props, ref) => {
