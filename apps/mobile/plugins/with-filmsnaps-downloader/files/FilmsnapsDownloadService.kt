@@ -328,7 +328,12 @@ class FilmsnapsDownloadService : Service() {
                 runCatching { execute() }.onFailure { e ->
                     if (cancelled.get() || paused.get()) return@onFailure // expected, not an error
                     if (e is CancellationException) return@onFailure
-                    listener?.onError(taskId, e.message ?: "Unknown download error", -1)
+                    // This scope has no CoroutineExceptionHandler — an escape
+                    // from onError (promise/event delivery) would be fatal.
+                    try {
+                        listener?.onError(taskId, e.message ?: "Unknown download error", -1)
+                    } catch (_: Throwable) {
+                    }
                 }
             }
         }
