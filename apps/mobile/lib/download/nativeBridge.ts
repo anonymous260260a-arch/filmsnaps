@@ -90,6 +90,17 @@ export const NativeDownloadBridge = {
       return Promise.reject(missingModule("cancelDownload"));
     return FilmsnapsDownloader.cancelDownload(taskId);
   },
+  /** Apply a user-configured speed cap (bytes/sec) to a running native job.
+   *  0 = unlimited. Additive API — Android-only today; iOS resolves true but
+   *  ignores it (the Swift module has no setSpeedLimit method, so this must
+   *  never gate correctness). */
+  setSpeedLimit(taskId: string, bytesPerSecond: number): Promise<boolean> {
+    if (!FilmsnapsDownloader)
+      return Promise.reject(missingModule("setSpeedLimit"));
+    if (typeof FilmsnapsDownloader.setSpeedLimit !== "function")
+      return Promise.resolve(false);
+    return FilmsnapsDownloader.setSpeedLimit(taskId, bytesPerSecond);
+  },
   deleteFile(uri: string): Promise<void> {
     if (!FilmsnapsDownloader)
       return Promise.reject(missingModule("deleteFile"));

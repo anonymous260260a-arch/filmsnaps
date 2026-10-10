@@ -35,7 +35,10 @@ import Constants from "expo-constants";
 import { colors } from "../../theme/colors";
 import * as Haptics from "expo-haptics";
 import { LanguagePromptSheet } from "../../components/player/LanguagePromptSheet";
+import { SpeedLimitSheet, formatSpeed } from "../../components/SpeedLimitSheet";
 import { trackFeatureUsed } from "../../lib/telemetry";
+import { useSlotImpression } from "../../hooks/useSlotImpression";
+import { AdSlot } from "../../lib/ads";
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes === 0) return "0 B";
@@ -267,10 +270,15 @@ export default function SettingsScreen() {
   const { all: downloads } = useDownloadList();
   const appVersion = Constants.expoConfig?.version || "1.0.0";
 
+  // M1 — impression measurement: candidate footer ad slot (visit-based
+  // upper bound — the footer is below the fold until scrolled).
+  useSlotImpression("settings_footer", "settings");
+
   const [cacheSize, setCacheSize] = useState<number | null>(null);
   const [calculatingStorage, setCalculatingStorage] = useState(false);
   const storageCalculated = useRef(false);
   const [showLangSheet, setShowLangSheet] = useState(false);
+  const [showSpeedSheet, setShowSpeedSheet] = useState(false);
 
   const totalDownloadSize = useMemo(() => {
     return downloads
@@ -333,6 +341,8 @@ export default function SettingsScreen() {
   );
 
   const selectedServer = settings.defaultServer;
+  const speedLimitKBps = settings.downloadSpeedLimitKBps ?? 0;
+  const speedLabel = speedLimitKBps > 0 ? formatSpeed(speedLimitKBps) : "Off";
   const selectedProviderName = useMemo(() => {
     if (!selectedServer) return "Auto (Recommended)";
     const p = serverProviders.find((sp) => sp.id === selectedServer);
@@ -586,6 +596,61 @@ export default function SettingsScreen() {
                 size={16}
                 color={colors.textTertiary}
               />
+            }
+          />
+          <Divider />
+          <SettingsRow
+            icon="speedometer-outline"
+            label="Download Speed Limit"
+            subtitle={
+              speedLimitKBps > 0
+                ? `Capped at ${formatSpeed(speedLimitKBps)}`
+                : "No cap — tap to set a limit"
+            }
+            color={colors.info}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                () => {},
+              );
+              setShowSpeedSheet(true);
+            }}
+            right={
+              <View
+                style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
+              >
+                <View
+                  style={{
+                    paddingHorizontal: 8,
+                    paddingVertical: 3,
+                    borderRadius: 9999,
+                    backgroundColor:
+                      speedLimitKBps > 0
+                        ? colors.goldBadge
+                        : "rgba(255,255,255,0.05)",
+                    borderWidth: 0.5,
+                    borderColor:
+                      speedLimitKBps > 0
+                        ? "rgba(212,162,55,0.4)"
+                        : colors.borderSubtle,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontFamily: "Inter_600SemiBold",
+                      color:
+                        speedLimitKBps > 0 ? colors.gold : colors.textSecondary,
+                    }}
+                  >
+                    {speedLabel}
+                  </Text>
+                </View>
+                <Ionicons
+                  name="chevron-forward"
+                  size={16}
+                  color={colors.textTertiary}
+                />
+              </View>
             }
           />
         </SectionCard>
@@ -1046,6 +1111,9 @@ export default function SettingsScreen() {
           </LinearGradient>
         </View>
 
+        {/* M2 — candidate footer ad slot (above the app-info footer). */}
+        <AdSlot slot="settings_footer" bottomMargin={8} />
+
         {/* ── App Info & Privacy Assurance ── */}
         <View
           style={{
@@ -1090,6 +1158,14 @@ export default function SettingsScreen() {
           updateSetting("preferredAudioLanguage", value);
           setShowLangSheet(false);
         }}
+      />
+
+      {/* Download speed limit picker — presets + custom value */}
+      <SpeedLimitSheet
+        visible={showSpeedSheet}
+        value={speedLimitKBps}
+        onChange={(v) => updateSetting("downloadSpeedLimitKBps", v)}
+        onClose={() => setShowSpeedSheet(false)}
       />
     </View>
   );

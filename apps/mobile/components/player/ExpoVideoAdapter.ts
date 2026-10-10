@@ -262,6 +262,22 @@ export class ExpoVideoAdapter implements PlayerAdapter {
           const errorType = this.classifyError(err);
           this.currentError = this.errorMessageForType(errorType, err);
           const currentErr = this.currentError;
+          // DIAG (offline playback audit): the raw error before classification
+          // rewrites it, plus the player state at the moment it fired.
+          console.log(
+            "[ExpoVideo] statusError raw=",
+            typeof rawErr === "string" ? rawErr : JSON.stringify(rawErr),
+            " classified=",
+            currentErr,
+            " st=",
+            this.player?.status,
+            " pos=",
+            this.player?.currentTime,
+            " dur=",
+            this.player?.duration,
+            " tracks=",
+            this.player?.availableAudioTracks?.length ?? -1,
+          );
           this.errorListeners.forEach((l) => l(currentErr));
         }
       }),
@@ -344,6 +360,17 @@ export class ExpoVideoAdapter implements PlayerAdapter {
         const errorType = this.classifyError(errMsg);
         this.currentError = this.errorMessageForType(errorType, errMsg);
         const currentErr = this.currentError;
+        // DIAG (offline playback audit): poll-path player.error, raw.
+        console.log(
+          "[ExpoVideo] polledError raw=",
+          typeof err === "string" ? err : JSON.stringify(err),
+          " classified=",
+          currentErr,
+          " st=",
+          this.player?.status,
+          " pos=",
+          this.player?.currentTime,
+        );
         this.errorListeners.forEach((l) => l(currentErr));
       }
 

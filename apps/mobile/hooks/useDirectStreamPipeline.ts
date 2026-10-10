@@ -124,6 +124,10 @@ export function useDirectStreamPipeline({
   );
 
   const loadStreams = useCallback(() => {
+    // Offline/local playback (?fileUri=) never touches the network — no
+    // registry provider, no prefetch join, no ranking/probing. The player
+    // mounts straight on the file.
+    if (!isDirectPlayback) return;
     if (!id) return;
     // Only load when a registry direct provider is actually in play —
     // embed-only sessions never touch the direct APIs.
@@ -370,6 +374,7 @@ export function useDirectStreamPipeline({
       cancelled = true;
     };
   }, [
+    isDirectPlayback,
     provider,
     id,
     type,

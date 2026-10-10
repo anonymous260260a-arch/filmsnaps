@@ -87,6 +87,8 @@ import {
   trackFeatureUsed,
   trackPlayerError,
   trackExitDuringSwitch,
+  trackWatchProgress,
+  getSessionId,
 } from "../lib/telemetry";
 import { setPlayerStruggling } from "expo-subtitle-sync";
 import {
@@ -110,6 +112,7 @@ import {
   selectBestStream,
   type PreferredLanguage,
 } from "../lib/streamSelector";
+import { bucketQuality } from "../lib/telemetry/types";
 
 interface HevcPlayerProps {
   /** Direct video URL — used when playing a single source (Falix, local files). */
@@ -171,6 +174,11 @@ interface HevcPlayerProps {
   externalPlayer?: VideoPlayer | null;
   /** D3: cache key the external player was held under (for release-on-close). */
   earlyPlayerKey?: string;
+  /** Offline/local playback — mount straight into fullscreen landscape. */
+  startFullscreen?: boolean;
+  /** Source is a downloaded file: no chain to fall back through, no provider
+   *  hop — a failure is a bad file, and the card must say so. */
+  offline?: boolean;
 }
 
 interface SwitchInfo {
@@ -181,6 +189,14 @@ interface SwitchInfo {
 interface StreamErrorInfo {
   title: string;
   detail: string;
+}
+
+/** Error card for a downloaded file — there is no other source to hop to. */
+function offlineErrorInfo(reason: string): StreamErrorInfo {
+  return {
+    title: "Couldn't play the downloaded file",
+    detail: `${reason} The file may be incomplete or unsupported — re-download it from the Downloads tab.`,
+  };
 }
 
 // Switch/rebuffer limits live in lib/playerConfig (remote-tunable).
@@ -333,10 +349,12 @@ export function HevcPlayer({
   externalPlayer,
   earlyPlayerKey,
   isAnime,
+  startFullscreen = false,
+  offline = false,
 }: HevcPlayerProps) {
   const { settings } = useSettings();
   const screenFit = settings.playerScreenFit ?? "contain";
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(() => startFullscreen);
   // Start index skips a probe-dead default (the probes already condemned it —
   // playing it first is how "best badge on a failed URL" happened).
   const [initialStart] = useState(() =>
@@ -433,6 +451,13 @@ export function HevcPlayer({
     (autoProviderSwitch = true) => {
       if (exhaustedRef.current) return;
       exhaustedRef.current = true;
+      if (offline) {
+        console.log(
+          "[Flow] offline source failed — showing file error card (no chain to fall back through)",
+        );
+        setStreamError(offlineErrorInfo("Playback failed."));
+        return;
+      }
       setExhausted(true);
       perfRef.current?.noteFailed();
       if (autoProviderSwitch) onExhausted?.();
@@ -441,7 +466,7 @@ export function HevcPlayer({
           "[Flow] exhausted before any playback — showing recovery card, provider switch left to the user",
         );
     },
-    [onExhausted],
+    [onExhausted, offline],
   );
   const switchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recheckTokenRef = useRef(0);
@@ -1410,6 +1435,8 @@ export function HevcPlayer({
 
   // Track continuous playback position across source switches and seeking
   const lastPlaybackTimeRef = useRef(startAt);
+  // Watch progress threshold tracking — fires at 25/50/75/100% crossings.
+  const watchedThresholdsRef = useRef<Set<number>>(new Set());
   // Episode identity the applied source belongs to. The setup factory below
   // runs DURING render (useVideoPlayer → useReleasingSharedObject useMemo),
   // before the links effect resets lastPlaybackTimeRef — so the carry read
@@ -1421,7 +1448,7 @@ export function HevcPlayer({
   // order stays stable; the external instance is what VideoView/adapter drive).
   const hookPlayer = useVideoPlayer(videoSource, (playerInstance) => {
     console.log(
-      `[Flow] player: opening #${activeIndexRef.current} ${currentLink?.quality ?? "?"} ${activeUrl.slice(0, 60)} (container=${container}, codec=${codec})`,
+      `[Flow] player: opening #${activeIndexRef.current} ${currentLink?.quality ?? "?"} ${activeUrl.slice(0, 60)} (container=${container}, codec=${codec}) wrapped=${videoSource.uri.slice(0, 80)} offline=${offline}`,
     );
     // [watchperf] FIX 2 — sourceSet: URL applied to the video player instance.
     perfRef.current?.mark("sourceSet", {
@@ -1914,6 +1941,42 @@ export function HevcPlayer({
             completed: false,
           }).catch(() => {});
         }
+
+        // Watch progress threshold tracking — fires at 25/50/75/100% crossings.
+        if (dur > 0 && tmdbId) {
+          const pct = (time / dur) * 100;
+          const thresholds: Array<{
+            threshold: 25 | 50 | 75 | 100;
+            pct: number;
+          }> = [
+            { threshold: 25, pct: 25 },
+            { threshold: 50, pct: 50 },
+            { threshold: 75, pct: 75 },
+            { threshold: 100, pct: 100 },
+          ];
+          const link = links?.[activeIndexRef.current];
+          for (const { threshold, pct: thresholdPct } of thresholds) {
+            if (
+              pct >= thresholdPct &&
+              !watchedThresholdsRef.current.has(threshold)
+            ) {
+              watchedThresholdsRef.current.add(threshold);
+              trackWatchProgress({
+                sessionId: getSessionId(),
+                tmdbId: Number(tmdbId),
+                mediaType: mediaType ?? "movie",
+                season: playSeasonRef.current ?? undefined,
+                episode: playEpisodeRef.current ?? undefined,
+                watchedPctThreshold: threshold,
+                qualityBucket: link?.quality
+                  ? bucketQuality(link.quality)
+                  : undefined,
+                providerId: link?._meta?.providerId ?? undefined,
+                surface: "direct",
+              });
+            }
+          }
+        }
       }
     });
     return unsub;
@@ -2183,11 +2246,17 @@ export function HevcPlayer({
       // priority chain takes over (with the last-working rescue at the end).
       isManualSelectionRef.current = false;
       setStreamError(null);
+      // Downloaded file: no chain, no provider hop — the card states the
+      // real failure and offers a plain retry of the same file.
+      if (offline) {
+        setStreamError(offlineErrorInfo(errMsg));
+        return;
+      }
       fallbackToNextLink(activeLinkIndex, "error");
     });
 
     return unsubscribe;
-  }, [adapter, isMultiLink, links, activeLinkIndex]);
+  }, [adapter, isMultiLink, links, activeLinkIndex, offline]);
 
   // ── User actions ──
 
@@ -2357,6 +2426,29 @@ export function HevcPlayer({
       return externalFullscreen;
     });
   }, [externalFullscreen]);
+
+  // Offline/local playback opens directly in fullscreen landscape. The lock is
+  // taken on mount and released on unmount — closing via the Android back
+  // button never calls handleClose, so the cleanup is what guarantees the app
+  // returns to portrait after a local file finishes playing.
+  useEffect(() => {
+    if (!startFullscreen) return;
+    ScreenOrientation.getOrientationAsync()
+      .then((o) =>
+        console.log(
+          `[Flow] offline mount: orientation=${o} → locking LANDSCAPE (fullscreen-at-mount)`,
+        ),
+      )
+      .catch(() => {});
+    ScreenOrientation.lockAsync(
+      ScreenOrientation.OrientationLock.LANDSCAPE,
+    ).catch(() => {});
+    return () => {
+      ScreenOrientation.lockAsync(
+        ScreenOrientation.OrientationLock.PORTRAIT_UP,
+      ).catch(() => {});
+    };
+  }, [startFullscreen]);
 
   // ── Close handler — save progress, restore orientation ──
   const handleClose = useCallback(async () => {

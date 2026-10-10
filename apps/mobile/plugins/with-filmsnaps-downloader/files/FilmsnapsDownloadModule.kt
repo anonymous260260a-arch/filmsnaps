@@ -98,6 +98,18 @@ class FilmsnapsDownloadModule(private val reactContext: ReactApplicationContext)
     }
 
     @ReactMethod
+    fun setSpeedLimit(taskId: String, bytesPerSecond: Double, promise: Promise) {
+        val svc = service
+        if (svc == null) { promise.reject("E_SERVICE_NOT_BOUND", "Download service not bound yet"); return }
+        try {
+            svc.setSpeedLimit(taskId, bytesPerSecond.toLong())
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("E_SPEED_LIMIT_FAILED", e.message, e)
+        }
+    }
+
+    @ReactMethod
     fun startDownload(taskId: String, url: String, fileName: String, headers: ReadableMap?, promise: Promise) {
         val svc = service
         if (svc == null) { promise.reject("E_SERVICE_NOT_BOUND", "Download service not bound yet"); return }

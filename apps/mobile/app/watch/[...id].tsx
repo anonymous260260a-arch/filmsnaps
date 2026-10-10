@@ -72,6 +72,8 @@ export default function WatchScreen() {
     fileUri?: string;
     title?: string;
     startAt?: string;
+    /** "1" — mount the player in fullscreen landscape (local playback). */
+    fs?: string;
     /** Resume position in seconds (details pages pass `t`) */
     t?: string;
     isAnime?: string;
@@ -174,6 +176,11 @@ export default function WatchScreen() {
   const videoUrl = params.videoUrl || undefined;
   const fileUri = params.fileUri || undefined;
   const title = params.title || undefined;
+  // Offline playback (?fileUri=) — play the downloaded file straight through
+  // HevcPlayer: no provider resolution, no stream fetch, no language gate.
+  const isLocalPlayback = !!fileUri;
+  // ?fs=1 mounts the player in fullscreen landscape (used by local playback).
+  const startFullscreen = params.fs === "1";
   // Resume position: details pages pass `t` (seconds); honor `startAt` too
   const startAt = params.startAt
     ? Number(params.startAt)
@@ -392,6 +399,7 @@ export default function WatchScreen() {
   const animeSurface = isAnime && activeDirectProvider === ANIME_PROVIDER_ID;
   const animeActive =
     isAnime &&
+    !isLocalPlayback &&
     activeDirectProvider === ANIME_PROVIDER_ID &&
     providerReady &&
     animeResolved != null &&
@@ -445,7 +453,10 @@ export default function WatchScreen() {
     id,
     type,
     isDirectPlayback:
-      isDirectPlayback && !!activeDirectProvider && providerReady,
+      isDirectPlayback &&
+      !isLocalPlayback &&
+      !!activeDirectProvider &&
+      providerReady,
     provider: isAnime
       ? animeGeneric
         ? (activeDirectProvider ?? undefined)
@@ -616,6 +627,7 @@ export default function WatchScreen() {
     );
   } else if (
     isDirectPlayback &&
+    !isLocalPlayback &&
     activeDirectProvider &&
     activeDirectProvider !== "falix"
   ) {
@@ -703,13 +715,17 @@ export default function WatchScreen() {
     content = (
       <HevcPlayer
         videoUrl={directVideoUrl}
-        tmdbId={id}
+        // Downloads without a TMDB id play with a "0" route segment (the route
+        // needs one) — never write watch history for that placeholder.
+        tmdbId={Number(id) > 0 ? id : undefined}
         mediaType={type}
         season={season}
         episode={episode}
         startAt={startAt}
         title={title}
         backdropUrl={backdropUrl}
+        startFullscreen={startFullscreen}
+        offline={isLocalPlayback}
         onClose={() => nav.goBack({ fallback: "/(tabs)" })}
       />
     );
