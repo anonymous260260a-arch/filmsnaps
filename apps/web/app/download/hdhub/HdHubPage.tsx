@@ -17,8 +17,9 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+
 import {
   AlertCircle,
   CheckCircle2,
@@ -42,11 +43,36 @@ import {
   buildDownloadFileName,
   describeDownloadFile,
   downloadMetaSegments,
+  passesDownloadFilter,
   rankDownloadLinks,
   type DownloadFileDetails,
+  type DownloadRankOptions,
   type MetaTone,
   type StreamLink,
 } from "@filmsnaps/shared";
+
+const QUALITY_OPTIONS: { label: string; value: string }[] = [
+  { label: "All qualities", value: "" },
+  { label: "4K", value: "4K" },
+  { label: "1080p", value: "1080p" },
+  { label: "720p", value: "720p" },
+  { label: "480p", value: "480p" },
+];
+
+const SIZE_OPTIONS: { label: string; value: string }[] = [
+  { label: "Any size", value: "" },
+  { label: "≤ 1 GB", value: "1gb" },
+  { label: "1–4 GB", value: "4gb" },
+  { label: "4–8 GB", value: "8gb" },
+  { label: "> 8 GB", value: "gt8gb" },
+];
+
+const LANGUAGE_OPTIONS: { label: string; value: string }[] = [
+  { label: "Any language", value: "" },
+  { label: "Multi / Dual", value: "multi" },
+  { label: "Hindi", value: "hindi" },
+  { label: "English", value: "english" },
+];
 
 /** Class per meta segment — gold quality, sky language, amber warnings. */
 const META_TONE_CLASS: Record<MetaTone, string> = {
@@ -78,7 +104,6 @@ export default function HdHubDownloadPage() {
   const [pickedEpisode, setPickedEpisode] = useState<number>(
     searchParams.get("episode") ? Number(searchParams.get("episode")) : 1,
   );
-  // Bumped by Retry to force a refetch without touching the pickers.
   const [retryKey, setRetryKey] = useState(0);
 
   const available = isDownloadAvailable();
@@ -86,6 +111,10 @@ export default function HdHubDownloadPage() {
   const { settings } = useSettings();
 
   const [title, setTitle] = useState("");
+  /** Real season bound from TMDB — 0 until the details call resolves. */
+  const [seasonCount, setSeasonCount] = useState(0);
+  /** Real episode count for `effectiveSeason` — 0 until that season loads. */
+  const [episodeCount, setEpisodeCount] = useState(0);
   const [links, setLinks] = useState<StreamLink[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -93,7 +122,32 @@ export default function HdHubDownloadPage() {
   const effectiveSeason = pickedSeason || 1;
   const effectiveEpisode = pickedEpisode || 1;
 
-  // ── Title (for the header + generated filenames) ──
+  const [qualityFilter, setQualityFilter] = useState<string>(
+    searchParams.get("q") ?? "",
+  );
+  const [sizeFilter, setSizeFilter] = useState<string>(
+    searchParams.get("sz") ?? "",
+  );
+  const [languageFilter, setLanguageFilter] = useState<string>(
+    searchParams.get("lg") ?? "",
+  );
+
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search);
+    if (qualityFilter) next.set("q", qualityFilter);
+    else next.delete("q");
+    if (sizeFilter) next.set("sz", sizeFilter);
+    else next.delete("sz");
+    if (languageFilter) next.set("lg", languageFilter);
+    else next.delete("lg");
+    const changed = next.toString();
+    if (changed !== window.location.search.slice(1)) {
+      window.history.replaceState(null, "", "/download/hdhub?" + changed);
+    }
+  }, [qualityFilter, sizeFilter, languageFilter]);
+
+  // ── Title (for the header + generated filenames) — also the source of
+  // the season picker's real bound. ──
   useEffect(() => {
     if (!id) return;
     let alive = true;
@@ -101,9 +155,30 @@ export default function HdHubDownloadPage() {
       ? tmdbApi.getTVDetails(id)
       : tmdbApi.getMovieDetails(id);
     details
-      .then((d: { title?: string; name?: string }) => {
-        if (alive) setTitle(d?.title || d?.name || "");
-      })
+      .then(
+        (d: {
+          title?: string;
+          name?: string;
+          number_of_seasons?: number;
+          seasons?: { season_number?: number }[];
+        }) => {
+          if (!alive) return;
+          setTitle(d?.title || d?.name || "");
+          if (!isTV) return;
+          // Prefer the highest season TMDB actually lists (survives gaps
+          // in numbering); fall back to number_of_seasons.
+          const nums = (d?.seasons ?? [])
+            .map((s) => s.season_number ?? 0)
+            .filter((n) => n > 0);
+          const max =
+            nums.length > 0 ? Math.max(...nums) : (d?.number_of_seasons ?? 0);
+          if (max > 0) {
+            setSeasonCount(max);
+            // A season from the URL/share link can exceed the real count.
+            setPickedSeason((s) => (s > max ? max : s));
+          }
+        },
+      )
       .catch(() => {
         // Filename falls back to a generic scheme below — not fatal.
       });
@@ -150,20 +225,30 @@ export default function HdHubDownloadPage() {
     };
   }, [id, isTV, effectiveSeason, effectiveEpisode, retryKey]);
 
-  // ── Episode title for filenames — gated on `links`, so TMDB is never
-  // called before there is anything to name. ──
+  // ── Season metadata: the episode picker's real bound + the episode name
+  // for filenames. Deliberately NOT gated on `links` — the picker must show
+  // the true episode count even while HDHub is loading (or after it fails). ──
   const [episodeName, setEpisodeName] = useState("");
   useEffect(() => {
-    if (!isTV || !id || !links) return;
+    if (!isTV || !id) return;
     let alive = true;
     tmdbApi
       .getSeason(id, effectiveSeason)
       .then(
-        (data: { episodes?: { episode_number?: number; name?: string }[] }) => {
+        (data: {
+          episode_count?: number;
+          episodes?: { episode_number?: number; name?: string }[];
+        }) => {
           if (!alive) return;
-          const ep = data?.episodes?.find(
-            (e) => e.episode_number === effectiveEpisode,
-          );
+          const eps = data?.episodes ?? [];
+          const count = eps.length || data?.episode_count || 0;
+          if (count > 0) {
+            setEpisodeCount(count);
+            // A picked episode (URL, or a long previous season) can exceed
+            // this season's real count — snap it back into range.
+            setPickedEpisode((e) => (e > count ? count : e));
+          }
+          const ep = eps.find((e) => e.episode_number === effectiveEpisode);
           setEpisodeName(ep?.name || "");
         },
       )
@@ -173,14 +258,30 @@ export default function HdHubDownloadPage() {
     return () => {
       alive = false;
     };
-  }, [isTV, id, links, effectiveSeason, effectiveEpisode]);
+  }, [isTV, id, effectiveSeason, effectiveEpisode]);
 
   // Ranked by the shared download chain: the user's preferred audio language
   // first, then language → quality → audio format → clean print → size.
+  const filterState = useMemo(
+    () => ({
+      quality: qualityFilter,
+      size: sizeFilter,
+      language: languageFilter,
+    }),
+    [qualityFilter, sizeFilter, languageFilter],
+  );
+
   const rows: HdHubRow[] = useMemo(() => {
+    // Ask the ranker to attach filter dimensions onto each link's _meta so the
+    // filter UI can use the same derived data the row renders. attachDimensions
+    // only mutates _meta — the ranking itself is unchanged.
     const ranked = rankDownloadLinks(links ?? [], {
-      preferredLanguage: settings.preferredAudioLanguage,
-    });
+      preferredLanguage:
+        settings.preferredAudioLanguage !== "auto"
+          ? settings.preferredAudioLanguage
+          : undefined,
+      attachDimensions: true,
+    } as DownloadRankOptions);
     const nameCtx = {
       title: title || undefined,
       episodeName: episodeName || undefined,
@@ -192,8 +293,13 @@ export default function HdHubDownloadPage() {
     }));
   }, [links, settings.preferredAudioLanguage, title, episodeName]);
 
-  const directRows = rows.filter((r) => !r.gateway);
-  const externalRows = rows.filter((r) => r.gateway);
+  const filteredRows = rows.filter((r) =>
+    passesDownloadFilter(r.link, filterState),
+  );
+  const directRows = filteredRows.filter((r) => !r.gateway);
+  const externalRows = filteredRows.filter((r) => r.gateway);
+  const activeFilterCount =
+    (qualityFilter ? 1 : 0) + (sizeFilter ? 1 : 0) + (languageFilter ? 1 : 0);
 
   const getRowState = useCallback(
     (link: StreamLink): RowState => {
@@ -241,6 +347,12 @@ export default function HdHubDownloadPage() {
 
   const retry = () => setRetryKey((k) => k + 1);
 
+  const clearFilters = () => {
+    setQualityFilter("");
+    setSizeFilter("");
+    setLanguageFilter("");
+  };
+
   // ── Missing id ──
   if (!id) {
     return (
@@ -283,19 +395,20 @@ export default function HdHubDownloadPage() {
             </div>
           </div>
 
-          {/* TV season / episode picker */}
+          {/* TV season / episode picker — bounds come from TMDB, not the
+              old hardcoded 50/300; fallbacks hold until those resolve. */}
           {isTV && (
             <div className="flex items-center gap-2">
               <NumSelect
                 label="S"
                 value={pickedSeason}
-                max={50}
+                max={seasonCount || 50}
                 onChange={setPickedSeason}
               />
               <NumSelect
                 label="E"
                 value={pickedEpisode}
-                max={300}
+                max={episodeCount || 300}
                 onChange={setPickedEpisode}
               />
               <button
@@ -308,7 +421,61 @@ export default function HdHubDownloadPage() {
               </button>
             </div>
           )}
+
+          {/* Filters */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <FilterSelect
+              label="Quality"
+              options={QUALITY_OPTIONS}
+              value={qualityFilter}
+              onChange={(v) => setQualityFilter(v ?? "")}
+            />
+            <FilterSelect
+              label="Size"
+              options={SIZE_OPTIONS}
+              value={sizeFilter}
+              onChange={(v) => setSizeFilter(v ?? "")}
+            />
+            <FilterSelect
+              label="Language"
+              options={LANGUAGE_OPTIONS}
+              value={languageFilter}
+              onChange={(v) => setLanguageFilter(v ?? "")}
+            />
+          </div>
         </div>
+
+        {/* Filter bar (visible whenever we have a loaded list, even if empty) */}
+        {!loading && (
+          <div className="flex items-center gap-2 flex-wrap mb-3">
+            <FilterSelect
+              label="Quality"
+              options={QUALITY_OPTIONS}
+              value={qualityFilter}
+              onChange={(v) => setQualityFilter(v ?? "")}
+            />
+            <FilterSelect
+              label="Size"
+              options={SIZE_OPTIONS}
+              value={sizeFilter}
+              onChange={(v) => setSizeFilter(v ?? "")}
+            />
+            <FilterSelect
+              label="Language"
+              options={LANGUAGE_OPTIONS}
+              value={languageFilter}
+              onChange={(v) => setLanguageFilter(v ?? "")}
+            />
+            {activeFilterCount > 0 && (
+              <button
+                onClick={clearFilters}
+                className="text-[11px] text-[#D4A237] hover:underline ml-auto"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Loading */}
         {loading && (
@@ -344,34 +511,33 @@ export default function HdHubDownloadPage() {
           />
         )}
 
-        {/* Empty */}
-        {!loading && !error && rows.length === 0 && (
-          <StateCard
-            icon={<AlertCircle className="h-8 w-8 text-[#D4A237]" />}
-            title="No files found"
-            body={
-              isTV
-                ? `HDHub has no download links for Season ${effectiveSeason}, Episode ${effectiveEpisode}. Try another episode.`
-                : "HDHub has no download links for this title yet."
-            }
-            action={
-              <button
-                onClick={retry}
-                className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
-              >
-                <RefreshCw size={14} />
-                Retry
-              </button>
-            }
-          />
-        )}
+        {/* Empty (after filters) */}
+        {!loading &&
+          !error &&
+          filteredRows.length === 0 &&
+          rows.length > 0 &&
+          activeFilterCount > 0 && (
+            <StateCard
+              icon={<AlertCircle className="h-8 w-8 text-[#D4A237]" />}
+              title="No files match your filters"
+              body={`None of the ${rows.length} files match the selected quality, size and language. Clear the filters to see everything.`}
+              action={
+                <button
+                  onClick={clearFilters}
+                  className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
+                >
+                  Clear filters
+                </button>
+              }
+            />
+          )}
 
         {/* Direct files */}
         {!loading && !error && directRows.length > 0 && (
           <>
             <p className="text-xs uppercase tracking-[0.12em] text-faint mb-3">
-              {directRows.length} download{directRows.length === 1 ? "" : "s"} ·
-              HDHub
+              {directRows.length} download
+              {directRows.length === 1 ? "" : "s"} · HDHub
             </p>
             <div className="space-y-2.5">
               {directRows.map((row, idx) => {
@@ -426,7 +592,7 @@ export default function HdHubDownloadPage() {
             </p>
             <p className="text-[12px] text-muted-foreground mb-3">
               These hosts serve a web page instead of a direct file, so they
-              can&apos;t be downloaded in-app.
+              can't be downloaded in-app.
             </p>
             <div className="space-y-2.5">
               {externalRows.map((row, idx) => (
@@ -534,11 +700,14 @@ function NumSelect({
   max: number;
   onChange: (n: number) => void;
 }) {
+  // A URL-seeded pick can exceed the real count for one render (before the
+  // clamp effect lands) — clamp for display so <select> always has a match.
+  const clamped = Math.min(Math.max(value || 1, 1), Math.max(max, 1));
   return (
     <label className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2 py-1.5">
       <span className="text-[11px] font-bold text-faint">{label}</span>
       <select
-        value={value}
+        value={clamped}
         onChange={(e) => onChange(Number(e.target.value))}
         className="bg-transparent text-sm text-foreground outline-none [&>option]:bg-[#16161A]"
       >
@@ -548,6 +717,50 @@ function NumSelect({
           </option>
         ))}
       </select>
+    </label>
+  );
+}
+
+function FilterSelect({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { label: string; value: string }[];
+  value: string;
+  onChange: (v: string | undefined) => void;
+}) {
+  const active = value;
+  return (
+    <label className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2 py-1.5 hover:bg-white/[0.06] transition-colors">
+      <span className="text-[11px] font-bold text-faint shrink-0">{label}</span>
+      <select
+        value={active}
+        onChange={(e) => onChange(e.target.value || undefined)}
+        className="bg-transparent text-sm text-foreground outline-none [&>option]:bg-[#16161A]"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      {active && (
+        <button
+          type="button"
+          tabIndex={-1}
+          onClick={(e) => {
+            e.stopPropagation();
+            onChange("");
+          }}
+          className="shrink-0 text-[10px] leading-none text-faint hover:text-foreground transition-colors"
+          title={`Clear ${label} filter`}
+        >
+          ×
+        </button>
+      )}
     </label>
   );
 }

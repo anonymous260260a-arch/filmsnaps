@@ -12,6 +12,7 @@ import React, {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import {
   View,
@@ -36,6 +37,7 @@ import {
   formatDate,
   serverLabel,
   useDownloadInfra,
+  groupDownloadsForSections,
 } from "../lib/download";
 import { EmptyState } from "../components/EmptyState";
 import type { DownloadTask } from "../lib/download";
@@ -85,7 +87,29 @@ function formatETA(remainingBytes: number, bytesPerSec: number): string {
 
 // ── Task Row ──
 
+/**
+ * Route to the in-app HEVC player for a downloaded file. The watch route
+ * plays `fileUri` straight through HevcPlayer (no streaming pipeline) and
+ * `fs=1` opens it in fullscreen landscape. Tasks stored without a TMDB id
+ * fall back to a "0" segment — the player skips history writes for it.
+ */
+function playPathFor(task: DownloadTask): string {
+  const type = task.mediaType === "tv" ? "tv" : "movie";
+  const tmdbId = task.tmdbId || "0";
+  const base =
+    type === "tv" && task.season != null && task.episode != null
+      ? `/watch/tv/${tmdbId}/${task.season}/${task.episode}`
+      : `/watch/${type}/${tmdbId}`;
+  const qs = new URLSearchParams({
+    fileUri: task.fileUri ?? "",
+    title: task.title || task.fileName || "",
+    fs: "1",
+  }).toString();
+  return `${base}?${qs}`;
+}
+
 function TaskRow({ taskId }: { taskId: string }) {
+  const nav = useSafeNavigation();
   const { task, progress, pause, resume, cancel, retry, remove } =
     useDownload(taskId);
   const speedSamples = useRef<SpeedSample[]>([]);
@@ -153,13 +177,26 @@ function TaskRow({ taskId }: { taskId: string }) {
             >
               {title || fileName}
             </Text>
-            <View className="flex-row items-center gap-2 mt-1">
+            <View className="flex-row flex-wrap items-center gap-1.5 mt-1">
               <View className="bg-zinc-800 rounded-sm px-1.5 py-0.5">
                 <Text className="text-zinc-400 text-[9px] font-semibold">
                   {serverLabel(server)}
                 </Text>
               </View>
-              {quality && (
+              {(task.badges ?? []).slice(0, 4).map((badge) => (
+                <View
+                  key={badge}
+                  className="bg-zinc-800/70 rounded-sm px-1.5 py-0.5"
+                >
+                  <Text
+                    className="text-zinc-400 text-[9px] font-semibold"
+                    numberOfLines={1}
+                  >
+                    {badge}
+                  </Text>
+                </View>
+              ))}
+              {!task.badges?.length && quality && (
                 <Text className="text-zinc-500 text-[10px]">{quality}</Text>
               )}
               {fileName !== title && (
@@ -336,10 +373,18 @@ function TaskRow({ taskId }: { taskId: string }) {
         {/* Completed */}
         {status === "completed" && (
           <>
+            {fileUri && (
+              <TaskAction
+                icon="play"
+                label="Play"
+                color={colors.gold}
+                onPress={() => nav.push(playPathFor(task))}
+              />
+            )}
             <TaskAction
               icon="play-circle-outline"
               label="VLC"
-              color={colors.gold}
+              color={colors.textSecondary}
               onPress={() => openInVLC(fileUri, task.extension)}
             />
             <TaskAction
@@ -409,6 +454,161 @@ function TaskRow({ taskId }: { taskId: string }) {
   );
 }
 
+// ── Show Group Row — TV episodes grouped under their show ──
+
+function showTitleFor(task: DownloadTask): string {
+  const fromTitle = task.title?.replace(/\sS\d{1,3}E\d{1,3}.*$/, "");
+  if (fromTitle) return fromTitle;
+  return (
+    task.fileName
+      ?.replace(/-S\d{1,3}E\d{1,3}.*$/, "")
+      .replace(/_+|\.(mkv|mp4|m4v|avi|ts|m2ts|webm)$/gi, " ")
+      .trim() ?? "Show"
+  );
+}
+
+/**
+ * A TV show's episodes as ONE expandable entry — never 10 loose episode rows.
+ * The header carries aggregate progress ("3/10 episodes · 2 downloading"),
+ * the union of the episodes' badges, and the partially-downloaded state.
+ * Expanding reveals the individual episode TaskRows with full controls.
+ */
+function ShowGroupRow({
+  taskIds,
+  defaultExpanded = false,
+}: {
+  taskIds: string[];
+  defaultExpanded?: boolean;
+}) {
+  const { store } = useDownloadInfra();
+  const [expanded, setExpanded] = useState(defaultExpanded);
+
+  const tasks = useSyncExternalStore(
+    (cb: () => void) => store.subscribe(cb),
+    () => store.getAll(),
+  );
+
+  const episodes = useMemo(() => {
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    return taskIds
+      .map((id) => byId.get(id))
+      .filter((t): t is DownloadTask => !!t)
+      .sort(
+        (a, b) =>
+          (a.season ?? 0) - (b.season ?? 0) ||
+          (a.episode ?? 0) - (b.episode ?? 0),
+      );
+  }, [tasks, taskIds]);
+
+  if (episodes.length === 0) return null;
+
+  const title = showTitleFor(episodes[0]);
+  const completedCount = episodes.filter(
+    (t) => t.status === "completed",
+  ).length;
+  const activeCount = episodes.filter((t) =>
+    ["downloading", "pending", "retrying"].includes(t.status),
+  ).length;
+  const pausedCount = episodes.filter((t) => t.status === "paused").length;
+  const failedCount = episodes.filter((t) => t.status === "failed").length;
+
+  const totalBytes = episodes.reduce((s, t) => s + (t.totalBytes || 0), 0);
+  const receivedBytes = episodes.reduce(
+    (s, t) => s + (t.receivedBytes || 0),
+    0,
+  );
+  const fraction = totalBytes > 0 ? Math.min(receivedBytes / totalBytes, 1) : 0;
+
+  const badges = episodes
+    .flatMap((t) => t.badges ?? [])
+    .filter((b, i, a) => a.indexOf(b) === i)
+    .slice(0, 4);
+
+  const statusBits: string[] = [];
+  if (activeCount > 0) statusBits.push(`${activeCount} downloading`);
+  if (pausedCount > 0) statusBits.push(`${pausedCount} paused`);
+  if (failedCount > 0) statusBits.push(`${failedCount} failed`);
+
+  return (
+    <View
+      className="rounded-xl mb-2 overflow-hidden"
+      style={{
+        backgroundColor: colors.bgCard,
+        borderWidth: 0.5,
+        borderColor: colors.border,
+      }}
+    >
+      <TouchableOpacity
+        onPress={() => setExpanded((v) => !v)}
+        activeOpacity={0.7}
+        className="px-3 pt-3 pb-2"
+      >
+        <View className="flex-row items-start">
+          <View className="flex-1 mr-2">
+            <Text
+              className="text-zinc-100 text-sm font-bold leading-tight"
+              numberOfLines={2}
+            >
+              {title}
+            </Text>
+            <View className="flex-row flex-wrap items-center gap-1.5 mt-1">
+              <View className="bg-zinc-800 rounded-sm px-1.5 py-0.5">
+                <Text className="text-zinc-400 text-[9px] font-semibold">
+                  {completedCount}/{episodes.length} episodes
+                </Text>
+              </View>
+              {badges.map((badge) => (
+                <View
+                  key={badge}
+                  className="bg-zinc-800/70 rounded-sm px-1.5 py-0.5"
+                >
+                  <Text
+                    className="text-zinc-400 text-[9px] font-semibold"
+                    numberOfLines={1}
+                  >
+                    {badge}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+          <Ionicons
+            name={expanded ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={colors.textTertiary}
+            style={{ marginTop: 2 }}
+          />
+        </View>
+
+        <View className="mt-2">
+          <ProgressBar
+            fraction={fraction}
+            color={activeCount > 0 ? colors.gold : colors.textTertiary}
+          />
+          <Text className="text-zinc-500 text-[10px] mt-1">
+            {statusBits.length > 0
+              ? statusBits.join(" · ")
+              : completedCount === episodes.length
+                ? "All episodes saved"
+                : `${Math.round(fraction * 100)}% downloaded`}
+          </Text>
+        </View>
+      </TouchableOpacity>
+
+      {expanded && (
+        <View
+          className="px-2 pb-2 border-t"
+          style={{ borderTopColor: colors.border }}
+        >
+          {episodes.map((t) => (
+            <TaskRow key={t.id} taskId={t.id} />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ── Action Button ──
 
 function TaskAction({
@@ -426,7 +626,7 @@ function TaskAction({
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.7}
-      className="flex-row items-center mr-4 py-1 px-2 rounded-md"
+      className="flex-row items-center mr-3 py-1 px-2 rounded-md"
       style={{ backgroundColor: "rgba(255,255,255,0.04)" }}
     >
       <Ionicons name={icon} size={14} color={color} />
@@ -638,54 +838,12 @@ export default function DownloadsScreen() {
 
   const keyExtractor = useCallback((item: string) => item, []);
 
-  // Build sectioned flatlist data with just IDs for efficient rendering
-  const sections = useMemo(() => {
-    const items: Array<{
-      type: "header" | "id";
-      key: string;
-      section?: string;
-    }> = [];
-
-    if (active.length > 0) {
-      items.push({ type: "header", key: "active-header" });
-      active.forEach((t) =>
-        items.push({ type: "id", key: `a-${t.id}`, section: "active" }),
-      );
-    }
-    if (paused.length > 0) {
-      items.push({ type: "header", key: "paused-header" });
-      paused.forEach((t) =>
-        items.push({ type: "id", key: `p-${t.id}`, section: "paused" }),
-      );
-    }
-    if (completed.length > 0) {
-      items.push({ type: "header", key: "completed-header" });
-      completed.forEach((t) =>
-        items.push({ type: "id", key: `c-${t.id}`, section: "completed" }),
-      );
-    }
-    if (failed.length > 0) {
-      items.push({ type: "header", key: "failed-header" });
-      failed.forEach((t) =>
-        items.push({ type: "id", key: `f-${t.id}`, section: "failed" }),
-      );
-    }
-    if (cancelled.length > 0) {
-      items.push({ type: "header", key: "cancelled-header" });
-      cancelled.forEach((t) =>
-        items.push({ type: "id", key: `x-${t.id}`, section: "cancelled" }),
-      );
-    }
-
-    if (retrying.length > 0) {
-      items.push({ type: "header", key: "retrying-header" });
-      retrying.forEach((t) =>
-        items.push({ type: "id", key: `r-${t.id}`, section: "retrying" }),
-      );
-    }
-
-    return items;
-  }, [active, paused, completed, failed, cancelled, retrying]);
+  // Sectioned flatlist data — TV episodes grouped under their show as one
+  // expandable entry (pure module, see lib/download/grouping.ts).
+  const sections = useMemo(
+    () => groupDownloadsForSections(downloads),
+    [downloads],
+  );
 
   if (!loaded) {
     return (
@@ -831,12 +989,13 @@ export default function DownloadsScreen() {
           showsVerticalScrollIndicator={false}
           renderItem={({ item, index }) => {
             if (item.type === "header") {
-              const sectionKey = sections[index + 1]?.section;
+              const sectionKey = item.section;
+              const count = item.count ?? 0;
               if (sectionKey === "active") {
                 return (
                   <SectionRow
                     title="Downloading"
-                    count={active.length}
+                    count={count}
                     action={() => control("pause", { status: "downloading" })}
                     actionLabel="Pause All"
                     actionColor={colors.gold}
@@ -847,7 +1006,7 @@ export default function DownloadsScreen() {
                 return (
                   <SectionRow
                     title="Paused"
-                    count={paused.length}
+                    count={count}
                     action={() => control("resume", { status: "paused" })}
                     actionLabel="Resume All"
                     actionColor={colors.successGreen}
@@ -858,7 +1017,7 @@ export default function DownloadsScreen() {
                 return (
                   <SectionRow
                     title="Completed"
-                    count={completed.length}
+                    count={count}
                     action={() => control("remove", { status: "completed" })}
                     actionLabel="Clear All"
                     actionColor={colors.error}
@@ -869,7 +1028,7 @@ export default function DownloadsScreen() {
                 return (
                   <SectionRow
                     title="Failed"
-                    count={failed.length}
+                    count={count}
                     action={() => control("retry", { status: "failed" })}
                     actionLabel="Retry All"
                     actionColor={colors.gold}
@@ -880,7 +1039,7 @@ export default function DownloadsScreen() {
                 return (
                   <SectionRow
                     title="Cancelled"
-                    count={cancelled.length}
+                    count={count}
                     action={() => control("remove", { status: "cancelled" })}
                     actionLabel="Clear All"
                     actionColor={colors.error}
@@ -891,7 +1050,7 @@ export default function DownloadsScreen() {
                 return (
                   <SectionRow
                     title="Retrying"
-                    count={retrying.length}
+                    count={count}
                     action={() => control("cancel", { status: "retrying" })}
                     actionLabel="Cancel All"
                     actionColor={colors.error}
@@ -901,8 +1060,13 @@ export default function DownloadsScreen() {
               return null;
             }
 
-            const taskId = item.key.replace(/^(a-|p-|c-|f-|x-|r-)/, "");
-            return <TaskRow taskId={taskId} />;
+            if (item.type === "show") {
+              return (
+                <ShowGroupRow taskIds={item.ids} defaultExpanded={false} />
+              );
+            }
+
+            return <TaskRow taskId={item.id} />;
           }}
         />
       )}

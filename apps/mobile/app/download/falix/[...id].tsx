@@ -26,7 +26,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useDownloadInfra, useDownloadList } from "../../../lib/download";
+import { useDownloadList, useDownloadTrigger } from "../../../lib/download";
 import { tmdbApi } from "../../../lib/api";
 import { getProviderApiBase } from "../../../lib/directStreams";
 import { getImageUrl } from "@filmsnaps/shared";
@@ -383,7 +383,7 @@ export default function FalixDownloadScreen() {
   const [allExpanded, setAllExpanded] = useState(false);
   const [bulkQualityTier, setBulkQualityTier] = useState<QualityTier>("mid");
   const [showBulkPanel, setShowBulkPanel] = useState(false);
-  const { enqueue } = useDownloadInfra();
+  const { trigger } = useDownloadTrigger();
   const { all: downloads } = useDownloadList();
 
   // ── Fetch data from Falix API (cached via react-query) ──
@@ -496,21 +496,29 @@ export default function FalixDownloadScreen() {
       const url = await buildDownloadUrl(fileId, fileName);
       const ext = fileName.split(".").pop() || "mkv";
       const filename = `${data?.title || "video"}-${quality}.${ext}`;
+      const badges = [quality, ...extractLanguages(fileName)]
+        .filter(Boolean)
+        .filter((b, i, a) => a.indexOf(b) === i)
+        .slice(0, 5);
 
-      enqueue({
-        url,
-        fileName: filename,
-        server: "falix",
-        mediaType: params.type,
-        tmdbId: params.id,
-        quality,
-        title: data?.title,
-        season: params.season,
-        episode: params.episode,
-        extension: ext,
-      });
+      // Stays on this screen — toast confirms, no navigation to /downloads.
+      void trigger(
+        {
+          url,
+          fileName: filename,
+          server: "falix",
+          mediaType: params.type,
+          tmdbId: params.id,
+          quality,
+          title: data?.title,
+          season: params.season,
+          episode: params.episode,
+          extension: ext,
+        },
+        { badges },
+      );
     },
-    [params.id, params.type, params.season, params.episode, data, enqueue],
+    [params.id, params.type, params.season, params.episode, data, trigger],
   );
 
   // ── Open in external browser ──
@@ -596,19 +604,27 @@ export default function FalixDownloadScreen() {
               const url = await buildDownloadUrl(file.id, file.name);
               const ext = file.name.split(".").pop() || "mkv";
               const filename = `${data?.title || "video"}-S${String(selectedSeason).padStart(2, "0")}E${String(episode.episode_number).padStart(2, "0")}-${file.quality}.${ext}`;
+              const badges = [file.quality, ...extractLanguages(file.name)]
+                .filter(Boolean)
+                .filter((b, i, a) => a.indexOf(b) === i)
+                .slice(0, 5);
 
-              enqueue({
-                url,
-                fileName: filename,
-                server: "falix",
-                mediaType: "tv",
-                tmdbId: params.id,
-                quality: file.quality,
-                title: data?.title,
-                season: selectedSeason,
-                episode: episode.episode_number,
-                extension: ext,
-              });
+              // Toasts confirm each start; no navigation away.
+              void trigger(
+                {
+                  url,
+                  fileName: filename,
+                  server: "falix",
+                  mediaType: "tv",
+                  tmdbId: params.id,
+                  quality: file.quality,
+                  title: data?.title,
+                  season: selectedSeason,
+                  episode: episode.episode_number,
+                  extension: ext,
+                },
+                { badges },
+              );
             }
           },
         },
@@ -620,7 +636,7 @@ export default function FalixDownloadScreen() {
     data,
     selectedSeason,
     params.id,
-    enqueue,
+    trigger,
   ]);
 
   // ── Render episode list ──

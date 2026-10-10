@@ -743,10 +743,9 @@ export default function DownloadScreen() {
         });
 
         addLog("✅ Download queued: " + id);
-        showStatus("✅ Added to queue — check Downloads page!");
-
-        // Navigate to downloads page so user can see progress
-        setTimeout(() => nav.push("/downloads"), 1500);
+        showStatus("✅ Download started");
+        // Stay on this screen — the toast/status confirms the start. Navigation
+        // to /downloads is user-initiated only (download overhaul UX rule).
       } catch (e: any) {
         showStatus("❌ Enqueue failed");
         addLog("Enqueue error: " + e.message);

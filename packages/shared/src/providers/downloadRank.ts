@@ -34,6 +34,9 @@ export type DownloadPreferredLanguage = "auto" | "multi" | "hindi" | "english";
 export interface DownloadRankOptions {
   /** User's `preferredAudioLanguage` setting — the "Your language" bucket. */
   preferredLanguage?: DownloadPreferredLanguage;
+  /** Bake the available dimensions into each link so a filter UI can render
+   *  size / quality / language chips without re-deriving them per row. */
+  attachDimensions?: boolean;
 }
 
 // ── Language ──────────────────────────────────────────────────────
@@ -662,9 +665,10 @@ export function downloadMetaSegments(
  */
 export function rankDownloadLinks(
   links: StreamLink[],
-  options: DownloadRankOptions = {},
+  options?: DownloadRankOptions,
 ): StreamLink[] {
-  const preferred = options.preferredLanguage ?? "auto";
+  const opts = options ?? {};
+  const preferred = opts.preferredLanguage ?? "auto";
   const isMulti = (langs: string[]) =>
     langs.some((l) => {
       const lower = l.toLowerCase();
@@ -682,12 +686,36 @@ export function rankDownloadLinks(
       const wantsPreferred =
         preferred !== "auto" &&
         (langs.some((l) => l.toLowerCase() === preferred) || isMulti(langs));
-      return {
+      const entry = {
         link,
         details,
         bucket: languageBucketRank(langs),
         wantsPreferred,
       };
+      if (opts.attachDimensions) {
+        // Mutate the link's _meta in place so the caller's existing
+        // StreamLink reference picks up the filter-readable fields.
+        // Defaults first: spreading a possibly-undefined `_meta` would
+        // otherwise widen the required fields to optional.
+        const meta = entry.link._meta;
+        entry.link._meta = {
+          codec: meta?.codec ?? "",
+          audio: meta?.audio ?? "",
+          source: meta?.source ?? "",
+          isDownloadOnly: meta?.isDownloadOnly ?? false,
+          isWebReady: meta?.isWebReady ?? false,
+          ...meta,
+          __filter: {
+            // The SAME label the row renders (qualityLabel maps 2160p →
+            // "4K"), so filtering matches what the user actually sees.
+            // Scanning the raw name for "4k" missed every 2160p release.
+            qualities: details.quality ? [details.quality] : [],
+            sizeBytes: details.sizeBytes,
+            languages: details.languages,
+          },
+        };
+      }
+      return entry;
     });
 
   return entries
@@ -710,6 +738,72 @@ export function rankDownloadLinks(
       return ha - hb;
     })
     .map((entry) => entry.link);
+}
+
+// ── Filtering ─────────────────────────────────────────────────────
+
+/** The three dimensions the download pages expose as filter chips/selects. */
+export interface DownloadFilterState {
+  quality: string;
+  size: string;
+  language: string;
+}
+
+const GIB = 1024 ** 3;
+
+/** "2160p"/"UHD" → "4k" so a row labelled 4K matches the 4K chip. */
+function normalizeQuality(label: string): string {
+  const l = label.trim().toLowerCase();
+  if (l === "2160p" || l === "2160" || l === "uhd") return "4k";
+  if (l === "fhd") return "1080p";
+  return l;
+}
+
+/**
+ * Does one link pass the given filter? Shared by web + mobile so both
+ * platforms filter identically.
+ *
+ * Dimensions come from `rankDownloadLinks(..., { attachDimensions: true })`.
+ * A link without them passes — there is nothing to compare against, and
+ * silently dropping rows would be worse than showing them.
+ *
+ * Size buckets use 1024-based GiB because that is how `formatFileSize`
+ * renders the size the user reads on the row ("1.0 GB" = 1 GiB).
+ */
+export function passesDownloadFilter(
+  link: StreamLink,
+  f: DownloadFilterState,
+): boolean {
+  const dims = link._meta?.__filter;
+  if (!dims) return true;
+
+  if (f.quality) {
+    const want = normalizeQuality(f.quality);
+    const have = dims.qualities.map(normalizeQuality);
+    if (!have.some((q) => q === want || q.includes(want) || want.includes(q)))
+      return false;
+  }
+
+  if (f.size) {
+    const bytes = dims.sizeBytes;
+    if (bytes <= 0) return false;
+    if (f.size === "1gb" && bytes > GIB) return false;
+    if (f.size === "4gb" && (bytes <= GIB || bytes > 4 * GIB)) return false;
+    if (f.size === "8gb" && (bytes <= 4 * GIB || bytes > 8 * GIB)) return false;
+    if (f.size === "gt8gb" && bytes <= 8 * GIB) return false;
+  }
+
+  if (f.language) {
+    const lower = dims.languages.map((l) => l.toLowerCase());
+    const isMulti = lower.some(
+      (l) => l.startsWith("multi") || l.startsWith("dual"),
+    );
+    if (f.language === "multi") return isMulti;
+    if (lower.includes(f.language.toLowerCase()) || isMulti) return true;
+    return false;
+  }
+
+  return true;
 }
 
 // ── File name ─────────────────────────────────────────────────────

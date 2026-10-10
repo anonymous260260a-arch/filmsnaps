@@ -77,6 +77,7 @@ export type {
 } from "./providers/streamSelector";
 export {
   rankDownloadLinks,
+  passesDownloadFilter,
   describeDownloadFile,
   downloadDisplayName,
   downloadMetaSegments,
@@ -91,6 +92,7 @@ export type {
   DownloadRankOptions,
   DownloadPreferredLanguage,
   DownloadFileNameInput,
+  DownloadFilterState,
   MetaSegment,
   MetaTone,
 } from "./providers/downloadRank";

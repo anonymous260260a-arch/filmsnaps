@@ -29,12 +29,15 @@ import {
 } from "react-native";
 import { WebView } from "react-native-webview";
 import { useLocalSearchParams } from "expo-router";
+import { useQuery } from "@tanstack/react-query";
 import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../../theme/colors";
 import { EpisodeRail } from "../../../components/player/EpisodeRail";
-import { useDownloadInfra, useDownloadList } from "../../../lib/download";
+import { useDownloadList, useDownloadTrigger } from "../../../lib/download";
+import { tmdbApi } from "../../../lib/api";
+import { extractLanguages } from "@filmsnaps/shared";
 import { fetchNxshaSources } from "../../../lib/nxshaApi";
 import { getProviderApiBase } from "../../../lib/directStreams";
 import {
@@ -716,7 +719,7 @@ export default function NxshaDownloadScreen() {
   const [pickedEpisode, setPickedEpisode] = useState<number | null>(null);
   // Toast feedback replaced the old Modal popup — see context.tsx for status toasts
 
-  const { enqueue } = useDownloadInfra();
+  const { trigger } = useDownloadTrigger();
   const { all: downloads } = useDownloadList();
 
   const params = useMemo(() => {
@@ -732,6 +735,28 @@ export default function NxshaDownloadScreen() {
   const effectiveSeason = pickedSeason ?? params.season ?? 1;
   const effectiveEpisode = pickedEpisode ?? params.episode ?? 1;
   const isTV = params.type === "tv";
+
+  // Title/artwork — same query keys as the detail screens so this renders
+  // from cache. Used ONLY for display naming (title-based file names) and
+  // metadata; nxsha itself stays filename-parse-only per provider policy.
+  const movieQuery = useQuery({
+    queryKey: ["movie", params.id],
+    queryFn: ({ signal }) => tmdbApi.getMovieDetails(params.id!, signal),
+    enabled: !!params.id && !isTV,
+    staleTime: 30 * 60 * 1000,
+  });
+  const tvQuery = useQuery({
+    queryKey: ["tv", params.id],
+    queryFn: ({ signal }) => tmdbApi.getTVDetails(params.id!, signal),
+    enabled: !!params.id && isTV,
+    staleTime: 30 * 60 * 1000,
+  });
+  const details = (isTV ? tvQuery.data : movieQuery.data) as
+    | { title?: string; name?: string; poster_path?: string | null }
+    | undefined;
+  const showTitle =
+    details?.title || details?.name || (isTV ? "Episode" : "Title");
+  const posterPath = details?.poster_path || "";
 
   // dl/ URL base comes from the remote provider registry (30-min cache,
   // bundled fallback) so a domain change needs no app update. Resolves in
@@ -828,26 +853,43 @@ export default function NxshaDownloadScreen() {
       const finalUrl = link.downloadUrl || link.url;
       const ext = getExt(finalUrl);
       const qualityStr = link.quality ? `-${link.quality}` : "";
+      // Title-based naming: "Title-S01E02-1080p.mkv" / "Title-1080p.mkv".
+      // nxsha gives us no API metadata — the quality tag comes from the link
+      // label, languages from parsing the upstream filename (nxshaLinks).
+      const baseName =
+        showTitle.replace(/[\\/:*?"<>|]+/g, "").trim() || "video";
       const filename = isTV
-        ? `nxsha-S${effectiveSeason}E${effectiveEpisode}${qualityStr}-${link.server.replace(/[^a-zA-Z0-9]/g, "")}.${ext}`
-        : `nxsha${qualityStr}-${link.server.replace(/[^a-zA-Z0-9]/g, "")}.${ext}`;
+        ? `${baseName}-S${String(effectiveSeason).padStart(2, "0")}E${String(effectiveEpisode).padStart(2, "0")}${qualityStr}.${ext}`
+        : `${baseName}${qualityStr}.${ext}`;
 
-      enqueue({
-        url: finalUrl,
-        fileName: filename,
-        server: "nxsha",
-        mediaType: params.type,
-        tmdbId: params.id,
-        quality: link.quality || undefined,
-        title: `Nxsha ${link.server} ${link.quality || ""}`.trim(),
-        season: isTV ? effectiveSeason : undefined,
-        episode: isTV ? effectiveEpisode : undefined,
-        extension: ext,
-      });
+      const upstreamName = link.filename || extractFilename(finalUrl) || "";
+      const badges = [
+        link.quality || undefined,
+        ...extractLanguages(upstreamName),
+      ]
+        .filter(Boolean)
+        .filter((b, i, a) => a.indexOf(b) === i)
+        .slice(0, 5) as string[];
 
-      // Download queued — toast appears automatically via context.tsx
-      // Navigate to downloads page so user can see progress
-      nav.push("/downloads");
+      // Stays on this screen — toast confirms, no navigation to /downloads.
+      void trigger(
+        {
+          url: finalUrl,
+          fileName: filename,
+          server: "nxsha",
+          mediaType: params.type,
+          tmdbId: params.id,
+          quality: link.quality || undefined,
+          title: isTV
+            ? `${showTitle} S${String(effectiveSeason).padStart(2, "0")}E${String(effectiveEpisode).padStart(2, "0")}`
+            : showTitle,
+          posterPath: posterPath || undefined,
+          season: isTV ? effectiveSeason : undefined,
+          episode: isTV ? effectiveEpisode : undefined,
+          extension: ext,
+        },
+        { badges },
+      );
     },
     [
       params.type,
@@ -855,8 +897,9 @@ export default function NxshaDownloadScreen() {
       isTV,
       effectiveSeason,
       effectiveEpisode,
-      enqueue,
-      nav,
+      showTitle,
+      posterPath,
+      trigger,
     ],
   );
 
