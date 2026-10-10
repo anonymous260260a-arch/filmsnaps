@@ -9,7 +9,15 @@
 
 import Constants from "expo-constants";
 import NetInfo from "@react-native-community/netinfo";
-import { enqueue, getSessionSnapshot, startNewSession } from "./queue";
+import {
+  enqueue,
+  getSessionSnapshot,
+  startNewSession,
+  generateSessionId,
+  getSessionId as queueGetSessionId,
+  setSessionId,
+  resetSessionCounters,
+} from "./queue";
 import {
   bucketCappedQuality,
   bucketDurationMs,
@@ -52,12 +60,46 @@ import {
   type SearchPerformedDims,
   type SessionEndDims,
   type WatchEndDims,
+  type SessionStartDims,
+  type DetailViewedDims,
+  type SearchResultClickedDims,
+  type OnboardingStepDims,
+  type WatchProgressDims,
+  type AdSlotViewDims,
+  type AdImpressionDims,
+  type OnboardingStep,
+  type PositionClickedBucket,
+  type DwellingSecondsBucket,
+  bucketDwellingSeconds,
+  bucketPositionClicked,
+  bucketDaysSinceInstall,
 } from "./types";
 
 let cachedAppVersion: string | null = null;
 let cachedConnection: ConnectionClass = "unknown";
 let cachedTier: DeviceTier = "unknown";
 let cachedPrefAudioLang: PrefAudioLang = "auto";
+
+// Track which features have been used this session (for retention analysis).
+const sessionFeaturesUsed = new Set<string>();
+
+// Track whether onboarding steps have fired (one-shot per install).
+const onboardingStepsFired = new Set<string>();
+
+/** Days since the anonId was created (approx install time). */
+let installedAtEpoch = 0;
+
+function getDaysSinceInstall(): number {
+  if (!installedAtEpoch) return 0;
+  return Math.max(0, Math.floor((Date.now() - installedAtEpoch) / 86_400_000));
+}
+
+/** Record install time when anonId is first created. */
+export function recordInstallTime(): void {
+  if (!installedAtEpoch) {
+    installedAtEpoch = Date.now();
+  }
+}
 
 function appVersion(): string {
   if (cachedAppVersion) return cachedAppVersion;
@@ -249,9 +291,10 @@ export function trackWatchEnd(
 
 /** T2 — provider_switch at every beginSwitch site. */
 export function trackProviderSwitchRaw(dims: ProviderSwitchDims): void {
+  const sessionId = queueGetSessionId();
   enqueue(
     "provider_switch",
-    { from: dims.from, to: dims.to, reason: dims.reason },
+    { sessionId, from: dims.from, to: dims.to, reason: dims.reason },
     baseEnvelope(),
   );
 }
@@ -299,6 +342,7 @@ export function trackPlayerStart(dims: PlayerStartDims): void {
   enqueue(
     "player_start",
     {
+      sessionId: queueGetSessionId(),
       outcome: dims.outcome,
       intentToFirstFrameMs: bucketFetchMs(dims.intentToFirstFrameMs),
       providerId: dims.providerId,
@@ -313,6 +357,7 @@ export function trackPlayerError(dims: PlayerErrorDims): void {
   enqueue(
     "player_error",
     {
+      sessionId: queueGetSessionId(),
       errorClass: dims.errorClass,
       ...(dims.surface === undefined ? {} : { surface: dims.surface }),
       providerId: dims.providerId,
@@ -324,7 +369,11 @@ export function trackPlayerError(dims: PlayerErrorDims): void {
 
 /** P2 — one count per screen focus (adoption histogram). */
 export function trackScreenView(dims: ScreenViewDims): void {
-  enqueue("screen_view", { screen: dims.screen }, baseEnvelope());
+  enqueue(
+    "screen_view",
+    { sessionId: queueGetSessionId(), screen: dims.screen },
+    baseEnvelope(),
+  );
 }
 
 /** P2 — one event per completed search (live + settled). */
@@ -332,6 +381,8 @@ export function trackSearchPerformed(dims: SearchPerformedDims): void {
   enqueue(
     "search_performed",
     {
+      sessionId: queueGetSessionId(),
+
       queryLengthBucket: dims.queryLengthBucket,
       resultsCountBucket: dims.resultsCountBucket,
       tookMs: bucketFetchMs(dims.tookMs),
@@ -360,6 +411,7 @@ export function trackWatchOpened(dims: {
   enqueue(
     "watch_opened",
     {
+      sessionId: queueGetSessionId(),
       surface: dims.surface,
       ...(dims.mediaType ? { mediaType: dims.mediaType } : {}),
     },
@@ -381,6 +433,7 @@ export function trackSeekLatency(dims: {
   enqueue(
     "seek_latency",
     {
+      sessionId: queueGetSessionId(),
       latencyMs: bucketFetchMs(dims.latencyMs),
       kind: dims.kind,
       ...(dims.providerId ? { providerId: dims.providerId } : {}),
@@ -400,9 +453,47 @@ export function trackExitDuringSwitch(dims: {
 }): void {
   enqueue(
     "exit_during_switch",
-    { surface: dims.surface, switchKind: dims.switchKind },
+    {
+      sessionId: queueGetSessionId(),
+      surface: dims.surface,
+      switchKind: dims.switchKind,
+    },
     baseEnvelope(),
   );
+}
+
+/** P3 — one session_start per foreground app session. */
+export function trackSessionStart(
+  resumeFromBackground: boolean,
+  lastScreen?: string,
+): void {
+  // On resume from background, the session was already started (new ID
+  // generated + counters reset) when the app was backgrounded via
+  // emitSessionEndOnBackground → startNewSession(). Reuse that ID so
+  // the session_start emitted here pairs with the session_end that
+  // started this session.
+  const sessionId = queueGetSessionId() || generateSessionId();
+  // Anchor the session clock to when trackSessionStart actually fired.
+  // For cold-start / gate-open paths this corrects the drift between
+  // module init and the first foreground session; for resume paths
+  // startNewSession() already reset sessionStartedAt on background.
+  if (!resumeFromBackground) {
+    // Reset counters + start time for a fresh foreground session while
+    // keeping the sessionId we just generated above.
+    resetSessionCounters(true);
+  }
+  setSessionId(sessionId);
+  enqueue(
+    "session_start",
+    {
+      sessionId,
+      resumeFromBackground,
+      ...(lastScreen ? { lastScreen } : {}),
+    },
+    baseEnvelope(),
+  );
+  // Record install time on first session start (approx install epoch).
+  recordInstallTime();
 }
 
 /** P3 — one session_end per foreground app session (AppState background). */
@@ -410,11 +501,18 @@ export function trackSessionEnd(dims: SessionEndDims): void {
   enqueue(
     "session_end",
     {
+      sessionId: dims.sessionId,
       durationMs: bucketDurationMs(dims.durationMs),
       eventCount: dims.eventCount,
+      watchCount: dims.watchCount,
+      totalWatchMs: bucketDurationMs(dims.totalWatchMs),
       providerSwitches: dims.providerSwitches,
       prefAudioLang: cachedPrefAudioLang,
       ...(dims.lastScreen ? { lastScreen: dims.lastScreen } : {}),
+      ...(dims.crashed === true ? { crashed: true } : {}),
+      ...(dims.backgroundedWithActiveWatch === true
+        ? { backgroundedWithActiveWatch: true }
+        : {}),
     },
     baseEnvelope(),
   );
@@ -426,10 +524,16 @@ export function trackSessionEnd(dims: SessionEndDims): void {
  * Zero-signal sessions (no events, no screen seen) are dropped instead of
  * written as junk rows — iOS/Android can fire background during transitions.
  */
-export function emitSessionEndOnBackground(): void {
+export function emitSessionEndOnBackground(
+  backgroundedWithActiveWatch = false,
+): void {
   const snap = getSessionSnapshot();
   if (snap.eventCount > 0 || snap.lastScreen) {
-    trackSessionEnd(snap);
+    trackSessionEnd({
+      ...snap,
+      crashed: snap.watchCount === 0 && snap.eventCount > 0 ? false : undefined,
+      backgroundedWithActiveWatch,
+    } as SessionEndDims);
   }
   startNewSession();
 }
@@ -460,12 +564,16 @@ export function trackDownloadEvent(dims: DownloadEventDims): void {
 /**
  * E6 — feature adoption. Enum + coarse context only; zero values or free text.
  * Context defaults to "player" (the most common surface) — callers pass others.
+ * Tracks first-time vs repeat usage this session via useIndex dim.
  */
 export function trackFeatureUsed(
   feature: FeatureName,
   context: FeatureContext = "player",
   extra?: { fromTab?: string; surface?: "direct" | "embed" },
 ): void {
+  // Track first-time vs repeat usage this session.
+  const isFirstUseThisSession = !sessionFeaturesUsed.has(feature);
+  sessionFeaturesUsed.add(feature);
   enqueue(
     "feature_used",
     {
@@ -473,9 +581,15 @@ export function trackFeatureUsed(
       context,
       ...(extra?.fromTab ? { fromTab: extra.fromTab } : {}),
       ...(extra?.surface ? { surface: extra.surface } : {}),
+      ...(isFirstUseThisSession ? { useIndex: 1 } : { useIndex: 2 }),
     },
     baseEnvelope(),
   );
+}
+
+/** Reset session-level feature tracking (called on session start). */
+export function resetSessionFeatures(): void {
+  sessionFeaturesUsed.clear();
 }
 
 /**
@@ -502,6 +616,109 @@ export function trackBoundaryError(dims: BoundaryErrorDims): void {
   enqueue("boundary_error", { errorClass: dims.errorClass }, baseEnvelope());
 }
 
+/** P2 — watch progress threshold crossing (25/50/75/100%). */
+export function trackWatchProgress(dims: WatchProgressDims): void {
+  enqueue(
+    "watch_progress",
+    {
+      sessionId: queueGetSessionId(),
+      tmdbId: dims.tmdbId,
+      mediaType: dims.mediaType,
+      ...(dims.season ? { season: dims.season } : {}),
+      ...(dims.episode ? { episode: dims.episode } : {}),
+      watchedPctThreshold: dims.watchedPctThreshold,
+      ...(dims.qualityBucket ? { qualityBucket: dims.qualityBucket } : {}),
+      ...(dims.providerId ? { providerId: dims.providerId } : {}),
+      ...(dims.surface ? { surface: dims.surface } : {}),
+    },
+    baseEnvelope(),
+  );
+}
+
+/** P2 — detail page viewed with dwelling time. */
+export function trackDetailViewed(dims: DetailViewedDims): void {
+  enqueue(
+    "detail_viewed",
+    {
+      sessionId: queueGetSessionId(),
+      screen: dims.screen,
+      tmdbId: dims.tmdbId,
+      mediaType: dims.mediaType,
+      fromTab: dims.fromTab,
+      dwellingSecondsBucket: dims.dwellingSecondsBucket,
+    },
+    baseEnvelope(),
+  );
+}
+
+/** P2 — search result clicked (tracks search success). */
+export function trackSearchResultClicked(dims: SearchResultClickedDims): void {
+  enqueue(
+    "search_result_clicked",
+    {
+      sessionId: queueGetSessionId(),
+      queryLengthBucket: dims.queryLengthBucket,
+      resultsCountBucket: dims.resultsCountBucket,
+      tookMs: bucketFetchMs(dims.tookMs),
+      positionClickedBucket: dims.positionClickedBucket,
+      ...(dims.mediaType ? { mediaType: dims.mediaType } : {}),
+      ...(dims.mode ? { mode: dims.mode } : {}),
+    },
+    baseEnvelope(),
+  );
+}
+
+/** Onboarding step tracking — one-shot per step per install. */
+export function trackOnboardingStep(step: OnboardingStep): void {
+  if (onboardingStepsFired.has(step)) return;
+  onboardingStepsFired.add(step);
+  enqueue(
+    "onboarding_step",
+    {
+      step,
+      daysSinceInstallBucket: bucketDaysSinceInstall(getDaysSinceInstall()),
+    },
+    baseEnvelope(),
+  );
+}
+
+/**
+ * M1 — a candidate ad slot rendered on a focused screen (an impression
+ * opportunity). Measurement only: the app shows no ads. view carries the
+ * fidelity tier (tierA = rendered on visit; tierB = viewport-verified).
+ */
+export function trackAdSlotView(dims: AdSlotViewDims): void {
+  enqueue(
+    "ad_slot_view",
+    {
+      sessionId: queueGetSessionId(),
+      slot: dims.slot,
+      screen: dims.screen,
+      view: dims.view,
+    },
+    baseEnvelope(),
+  );
+}
+
+/**
+ * M2 — a real ad SDK outcome inside an enabled slot (only fires when the
+ * remote ads-config has the SDK active; never fires in measurement-only).
+ */
+export function trackAdImpression(dims: AdImpressionDims): void {
+  enqueue(
+    "ad_impression",
+    {
+      sessionId: queueGetSessionId(),
+      slot: dims.slot,
+      network: dims.network,
+      format: dims.format,
+      outcome: dims.outcome,
+      test: dims.test,
+    },
+    baseEnvelope(),
+  );
+}
+
 export type {
   EagerVerdict,
   HandoffUsed,
@@ -520,4 +737,7 @@ export type {
   ScreenName,
   QueryLengthBucket,
   PrefAudioLang,
+  OnboardingStep,
+  PositionClickedBucket,
+  DwellingSecondsBucket,
 };
