@@ -8,10 +8,14 @@ import React, {
   useCallback,
   type ReactNode,
 } from "react";
+import { Platform } from "react-native";
 import { DownloadManager } from "./manager";
 import { createDownloadStore, type DownloadStore } from "./store";
 import { DownloadNotifications } from "./notifications";
 import { logger } from "./logger";
+import { classifyDownloadError } from "./errorClassify";
+import { downloadToast } from "../../components/DownloadToast";
+import { useSettings } from "../settings";
 import type {
   DownloadMeta,
   DownloadTask,
@@ -23,7 +27,10 @@ import type {
 interface DownloadInfraContext {
   manager: DownloadManager;
   store: DownloadStore;
-  enqueue: (meta: DownloadMeta) => Promise<string>;
+  enqueue: (
+    meta: DownloadMeta,
+    opts?: { allowInsufficientSpace?: boolean },
+  ) => Promise<string>;
   control: (action: ControlAction, target: ControlTarget) => Promise<void>;
   loaded: boolean;
 }
@@ -60,6 +67,21 @@ export function DownloadInfraProvider({
 
   const manager = managerRef.current;
   const store = storeRef.current;
+  const { settings } = useSettings();
+
+  // ── User-configurable speed limit ──
+  // Every new download inherits the setting; changing it live-applies to all
+  // currently-running native jobs (additive Android API — iOS no-ops).
+  const speedLimitBps = Math.max(
+    0,
+    Math.round((settings.downloadSpeedLimitKBps ?? 0) * 1024),
+  );
+  const speedLimitRef = useRef(speedLimitBps);
+  speedLimitRef.current = speedLimitBps;
+
+  useEffect(() => {
+    manager.applySpeedLimitToActive(speedLimitBps).catch(() => {});
+  }, [manager, speedLimitBps]);
 
   // Expert follow-up: inject store reference so initialize() can push DB corrections
   // into the store via store.upsertMany().
@@ -131,18 +153,37 @@ export function DownloadInfraProvider({
         updatedAt: Date.now(),
       });
 
-      // Show notification for terminal states
+      // Show notification for terminal states. On Android the native service
+      // posts rich terminal notifications itself (with progress, actions and
+      // deep links) — posting here too would notify the user TWICE. iOS has no
+      // native downloader notification layer, so expo-notifications covers it.
       if (s.status === "completed") {
-        DownloadNotifications.showCompleted(
-          s.taskId,
-          task.title ?? task.fileName,
-        ).catch(() => {});
+        if (Platform.OS === "ios") {
+          DownloadNotifications.showCompleted(
+            s.taskId,
+            task.title ?? task.fileName,
+          ).catch(() => {});
+        }
       } else if (s.status === "failed") {
-        DownloadNotifications.showFailed(
-          s.taskId,
-          task.title ?? task.fileName,
-          s.error ?? "Unknown error",
-        ).catch(() => {});
+        if (Platform.OS === "ios") {
+          DownloadNotifications.showFailed(
+            s.taskId,
+            task.title ?? task.fileName,
+            s.error ?? "Unknown error",
+          ).catch(() => {});
+        }
+        // In-app toast with the same actionable message ("pick another stream",
+        // "free up space", …) so failures are visible without opening the shade.
+        downloadToast.error(
+          `${task.title ?? task.fileName}: ${s.error ?? "Download failed"}`,
+          5000,
+        );
+      } else if (s.status === "cancelled" || s.status === "paused") {
+        // State-sync guarantee: a download that is no longer active must never
+        // keep a "downloading/complete"-era notification on screen. Dismiss any
+        // notification we own for this task (the native foreground summary is
+        // removed by the service itself when its job map drains).
+        DownloadNotifications.dismissForTask(s.taskId).catch(() => {});
       }
     });
 
@@ -154,7 +195,10 @@ export function DownloadInfraProvider({
 
   // ─── Enqueue ───
   const enqueue = useCallback(
-    async (meta: DownloadMeta): Promise<string> => {
+    async (
+      meta: DownloadMeta,
+      opts?: { allowInsufficientSpace?: boolean },
+    ): Promise<string> => {
       logger.debug(
         "Context enqueue",
         meta.title,
@@ -162,13 +206,35 @@ export function DownloadInfraProvider({
         meta.quality,
         meta.tmdbId,
       );
+
+      // ── Double-tap / duplicate guard (store level) ──
+      // manager.add dedups against the DB, but the store row for a duplicate
+      // was created BEFORE that check — a fast double-tap produced two store
+      // entries, one of which never reached the DB and sat pending forever.
+      // Return the existing active task instead of creating a second one.
+      const activeStatuses = ["pending", "downloading", "paused", "retrying"];
+      const existing = store
+        .getAll()
+        .find((t) => t.url === meta.url && activeStatuses.includes(t.status));
+      if (existing) {
+        logger.debug(
+          "Context enqueue: duplicate URL already active, returning existing",
+          existing.id,
+        );
+        return existing.id;
+      }
+
       const id = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
       const task: DownloadTask = {
         ...meta,
         id,
         fileUri: null,
-        totalBytes: 0,
+        // Seed the size from the provider's listing so the queued-size space
+        // check works before the HTTP Content-Length is known.
+        totalBytes: meta.sizeBytes ?? 0,
+        // Inherit the user's global speed limit unless the caller pins one.
+        speedLimit: meta.speedLimit ?? speedLimitRef.current,
         receivedBytes: 0,
         status: "pending",
         createdAt: Date.now(),
@@ -184,9 +250,15 @@ export function DownloadInfraProvider({
 
       // Hand off to manager (non-fatal)
       try {
-        await manager.add(task);
+        await manager.add(task, opts);
         logger.debug("Context enqueue: manager.add succeeded", id);
       } catch (err) {
+        // Insufficient-space rejections bubble to the caller (useDownloadTrigger
+        // shows the warn + override dialog) — remove the provisional store row.
+        if (err instanceof Error && err.name === "InsufficientSpaceError") {
+          store.remove(id);
+          throw err;
+        }
         logger.error("Context enqueue failed:", err);
         await store.upsert({
           ...task,

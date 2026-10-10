@@ -37,6 +37,11 @@ export interface ToastEvent {
   actionLabel?: string;
   /** Optional action button callback */
   onAction?: () => void;
+  /** Optional secondary line under the message (muted, single line) */
+  subtitle?: string;
+  /** Optional 0–1 progress — renders a slim accent line along the capsule's
+   *  bottom edge (e.g. mirror an active download's progress). */
+  progress?: number;
 }
 
 type Listener = (event: ToastEvent) => void;
@@ -246,36 +251,66 @@ export function DownloadToastView() {
       ]}
       pointerEvents="box-none"
     >
-      <TouchableOpacity
-        onPress={handlePress}
-        activeOpacity={0.88}
-        style={styles.toastCapsule}
-      >
-        {/* Glowing Icon Badge */}
-        <View style={[styles.iconWrap, { backgroundColor: cfg.badgeBg }]}>
-          <Ionicons name={cfg.icon} size={16} color={cfg.color} />
-        </View>
+      <View style={styles.capsuleWrap}>
+        <TouchableOpacity
+          onPress={handlePress}
+          activeOpacity={0.88}
+          style={styles.toastCapsule}
+        >
+          {/* Glowing Icon Badge */}
+          <View style={[styles.iconWrap, { backgroundColor: cfg.badgeBg }]}>
+            <Ionicons name={cfg.icon} size={16} color={cfg.color} />
+          </View>
 
-        {/* Message */}
-        <Text style={styles.message} numberOfLines={2}>
-          {event.message}
-        </Text>
+          {/* Message (+ optional subtitle) */}
+          <View style={styles.textWrap}>
+            <Text style={styles.message} numberOfLines={event.subtitle ? 1 : 2}>
+              {event.message}
+            </Text>
+            {event.subtitle ? (
+              <Text style={styles.subtitle} numberOfLines={1}>
+                {event.subtitle}
+              </Text>
+            ) : null}
+          </View>
 
-        {/* Action button or subtle close */}
-        {event.actionLabel && event.onAction ? (
-          <TouchableOpacity
-            onPress={handleAction}
-            style={[styles.actionBtn, { backgroundColor: cfg.color }]}
-            activeOpacity={0.75}
+          {/* Action button or subtle close */}
+          {event.actionLabel && event.onAction ? (
+            <TouchableOpacity
+              onPress={handleAction}
+              style={[styles.actionBtn, { backgroundColor: cfg.color }]}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.actionLabel}>{event.actionLabel}</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.closeWrap}>
+              <Ionicons name="close" size={14} color={colors.textTertiary} />
+            </View>
+          )}
+        </TouchableOpacity>
+
+        {/* Live progress line (when the toast mirrors an active download) */}
+        {event.progress != null && (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.progressTrack,
+              { overflow: "hidden", borderRadius: 9999 },
+            ]}
           >
-            <Text style={styles.actionLabel}>{event.actionLabel}</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.closeWrap}>
-            <Ionicons name="close" size={14} color={colors.textTertiary} />
+            <View
+              style={[
+                styles.progressFill,
+                {
+                  width: `${Math.min(Math.max(event.progress, 0), 1) * 100}%`,
+                  backgroundColor: cfg.color,
+                },
+              ]}
+            />
           </View>
         )}
-      </TouchableOpacity>
+      </View>
     </Animated.View>
   );
 }
@@ -288,6 +323,10 @@ const styles = StyleSheet.create({
     left: 16,
     right: 16,
     zIndex: 99999,
+    alignItems: "center",
+  },
+  capsuleWrap: {
+    position: "relative",
     alignItems: "center",
   },
   toastCapsule: {
@@ -314,6 +353,30 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  textWrap: {
+    flexShrink: 1,
+    marginRight: 6,
+  },
+  subtitle: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: colors.textTertiary,
+    lineHeight: 14,
+    marginTop: 1,
+  },
+  progressTrack: {
+    position: "absolute",
+    left: 10,
+    right: 10,
+    bottom: 0,
+    height: 2,
+    borderRadius: 9999,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  progressFill: {
+    height: 2,
+    borderRadius: 9999,
+  },
   iconWrap: {
     width: 28,
     height: 28,
@@ -328,7 +391,6 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: colors.textPrimary,
     lineHeight: 18,
-    marginRight: 6,
   },
   closeWrap: {
     marginLeft: 4,

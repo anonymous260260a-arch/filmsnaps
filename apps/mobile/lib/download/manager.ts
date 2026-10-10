@@ -41,9 +41,16 @@ import {
   type DownloadStage,
   type QualityBucket,
 } from "../telemetry";
+import {
+  classifyDownloadError,
+  InsufficientSpaceError,
+  type DownloadErrorKind,
+} from "./errorClassify";
 
 // ─── Constants ───
 const RETRY_DELAYS = [5_000, 15_000, 60_000];
+/** Native service error code for user-initiated cancellation (Android notification action). */
+const CODE_CANCELLED_BY_USER = 1001;
 const DB_WRITE_INTERVAL = 3_000;
 const PROGRESS_EMIT_INTERVAL = 400;
 
@@ -57,6 +64,15 @@ function qualityBucketForTask(task: DownloadTask): QualityBucket {
   const q = task.quality ?? SERVER_TO_QUALITY[task.server];
   return DOWNLOAD_QUALITY_TO_BUCKET[q] ?? "unknown";
 }
+
+const FAILURE_KIND_TO_CLASS: Record<DownloadErrorKind, DownloadFailureClass> = {
+  expired: "http",
+  storage: "storage",
+  http: "http",
+  network: "network",
+  incomplete: "incomplete",
+  unknown: "other",
+};
 
 // ─── Speed Tracker ───
 class SpeedTracker {
@@ -362,7 +378,11 @@ export class DownloadManager {
             realExt,
             realFileName,
           ),
-        onError: (error: Error) => this.handleNativeError(task, error),
+        onError: (error: Error, code?: number) =>
+          this.handleNativeError(task, error, code),
+        onPaused: (received, total) => {
+          void this.handleUnexpectedPause(taskId, received, total);
+        },
       },
       fileName,
     );
@@ -403,7 +423,52 @@ export class DownloadManager {
   // ═══════════════════════════════════════════════════════════
 
   // ─── Q6 FIX: stale-task dedup ──────────────────────────────
-  async add(task: DownloadTask): Promise<string> {
+  /**
+   * How much space is already committed by non-terminal downloads (pending,
+   * downloading, paused, retrying)? The pre-enqueue space check must account
+   * for the whole queue, not just the new file — three 30 GB downloads queued
+   * on a 50 GB-free device would otherwise each "fit" and all fail mid-write.
+   */
+  private async queuedBytes(): Promise<number> {
+    try {
+      const all = await DownloadDatabase.getAll();
+      const activeStatuses = ["pending", "downloading", "paused", "retrying"];
+      return all
+        .filter((t) => activeStatuses.includes(t.status))
+        .reduce((sum, t) => sum + (t.totalBytes || 0), 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Space fit check for a prospective download, accounting for everything
+   * already queued. Used by the UI to warn (not hard-block) before enqueue.
+   */
+  async checkSpaceFor(bytes: number): Promise<{
+    fits: boolean;
+    freeBytes: number;
+    queuedBytes: number;
+    neededBytes: number;
+  }> {
+    const { freeBytes } = await this.storage.canFit(bytes);
+    const queued = await this.queuedBytes();
+    const neededBytes = bytes + queued;
+    // With a known size we require size+queue to leave the safety buffer;
+    // with an unknown size (0) only the buffer itself is required.
+    const reserve = bytes > 0 ? 500 * 1024 * 1024 : 0;
+    return {
+      fits: freeBytes >= neededBytes + reserve,
+      freeBytes,
+      queuedBytes: queued,
+      neededBytes,
+    };
+  }
+
+  async add(
+    task: DownloadTask,
+    opts?: { allowInsufficientSpace?: boolean },
+  ): Promise<string> {
     logger.debug("Manager add", {
       id: task.id,
       title: task.title,
@@ -448,23 +513,24 @@ export class DownloadManager {
       await DownloadDatabase.delete(stale.id);
     }
 
-    // Storage check
-    const spaceCheck = await this.storage.canFit(task.totalBytes || 0);
-    if (!spaceCheck.ok) {
-      logger.debug("Manager add: insufficient space, freeing storage");
-      const freed = await this.storage.evictOldest(
-        task.totalBytes || 500 * 1024 * 1024,
-      );
-      if (freed < (task.totalBytes || 500 * 1024 * 1024)) {
-        logger.error(
-          "Manager add: evicted",
-          freed,
-          "bytes but still insufficient for",
-          task.totalBytes,
+    // Space check — warn-first, never hard-block, NEVER auto-delete.
+    // Seed the size from the provider's listing when Content-Length is unknown;
+    // queued bytes are included so the whole queue must fit, not just this file.
+    const estimatedBytes = task.totalBytes || task.sizeBytes || 0;
+    const space = await this.checkSpaceFor(estimatedBytes);
+    if (!space.fits) {
+      if (opts?.allowInsufficientSpace) {
+        logger.warn(
+          "Manager add: proceeding despite tight storage (user override)",
+          {
+            freeBytes: space.freeBytes,
+            neededBytes: space.neededBytes,
+          },
         );
-        throw new Error("Insufficient storage space for this download.");
+      } else {
+        logger.warn("Manager add: insufficient space for", task.id, space);
+        throw new InsufficientSpaceError(space.freeBytes, space.neededBytes);
       }
-      logger.debug("Manager add: evicted", freed, "bytes, now proceeding");
     }
 
     // Ensure download directory exists
@@ -619,6 +685,7 @@ export class DownloadManager {
         fileName,
         offsetBytes,
         {
+          speedLimit: task.speedLimit ?? 0,
           onProgress: (received, total) => {
             // ── Bug 2: Guard — ignore progress if task no longer active (cancelled) ──
             if (!this.activeInstances.has(taskId)) return;
@@ -662,7 +729,11 @@ export class DownloadManager {
               realExt,
               realFileName,
             ),
-          onError: (error) => this.handleNativeError(task, error),
+          onError: (error: Error, code?: number) =>
+            this.handleNativeError(task, error, code),
+          onPaused: (received, total) => {
+            void this.handleUnexpectedPause(taskId, received, total);
+          },
         },
       );
 
@@ -810,6 +881,36 @@ export class DownloadManager {
     this.notifyQueue();
     this.processQueue();
     logger.debug("Manager remove done", taskId);
+  }
+
+  /**
+   * Live-apply the user's speed limit to every running native job, and persist
+   * it on the active DB rows so resume keeps the cap. 0 = unlimited.
+   */
+  async applySpeedLimitToActive(bytesPerSecond: number): Promise<void> {
+    const bps = Math.max(0, Math.round(bytesPerSecond));
+    for (const [taskId] of this.activeInstances) {
+      try {
+        await this.adapter.setSpeedLimit(taskId, bps);
+      } catch (err) {
+        logger.warn("Manager applySpeedLimitToActive failed for", taskId, err);
+      }
+    }
+    try {
+      const statuses = ["downloading", "paused", "pending", "retrying"];
+      const all = await DownloadDatabase.getAll();
+      for (const t of all) {
+        if (!statuses.includes(t.status) || (t.speedLimit ?? 0) === bps)
+          continue;
+        await DownloadDatabase.update({
+          id: t.id,
+          speedLimit: bps,
+          updatedAt: Date.now(),
+        });
+      }
+    } catch (err) {
+      logger.warn("Manager applySpeedLimitToActive db persist failed", err);
+    }
   }
 
   async pauseAll(): Promise<void> {
@@ -1011,7 +1112,7 @@ export class DownloadManager {
       url: task.url,
       filePath,
       headers: {},
-      speedLimit: 0,
+      speedLimit: task.speedLimit ?? 0,
       externalId: taskId,
 
       onProgress: (received: number, total: number) => {
@@ -1067,8 +1168,12 @@ export class DownloadManager {
         );
       },
 
-      onError: (error: Error) => {
-        this.handleNativeError(task, error);
+      onError: (error: Error, code?: number) => {
+        this.handleNativeError(task, error, code);
+      },
+
+      onPaused: (received: number, total: number) => {
+        void this.handleUnexpectedPause(taskId, received, total);
       },
     });
 
@@ -1307,13 +1412,67 @@ export class DownloadManager {
   private async handleNativeError(
     task: DownloadTask,
     error: Error,
+    errorCode?: number,
   ): Promise<void> {
     logger.debug("Manager handleNativeError", {
       taskId: task.id,
       error: error.message,
+      errorCode,
       retryCount: task.retryCount,
     });
     this.activeInstances.delete(task.id);
+
+    // ── User cancelled from the Android notification ──
+    // JS was not part of that decision, so sync its state here: cancelled,
+    // notification dismissed, no failure toast, no retry.
+    if (errorCode === CODE_CANCELLED_BY_USER) {
+      logger.debug(
+        "Manager handleNativeError: cancelled by user (notification)",
+        task.id,
+      );
+      await DownloadDatabase.update({
+        id: task.id,
+        status: "cancelled",
+        resumeData: null,
+        error: undefined,
+        updatedAt: Date.now(),
+      }).catch(() => {});
+      const current = this.store?.getById(task.id);
+      if (current) {
+        this.store?.upsert({
+          ...current,
+          status: "cancelled",
+          error: undefined,
+        });
+      }
+      this.emitStatus({
+        taskId: task.id,
+        status: "cancelled",
+        receivedBytes: this.liveReceived.get(task.id) ?? 0,
+      });
+      this.cleanup(task.id);
+      this.notifyQueue();
+      this.processQueue();
+      return;
+    }
+
+    // ── Permanent failures never retry ──
+    // Expired/dead links (HTTP 403/404/410/451) and disk-full (ENOSPC) cannot
+    // be fixed by retrying. Fail immediately with an actionable message so the
+    // user goes back and picks another stream (or frees space) instead of
+    // watching three pointless backoff cycles burn the retry budget.
+    const classified = classifyDownloadError(error);
+    if (classified.permanent) {
+      logger.warn(
+        "Manager handleNativeError: permanent failure, failing immediately",
+        { taskId: task.id, kind: classified.kind, error: error.message },
+      );
+      await this.failTask(task, error, classified.userMessage);
+      this.cleanup(task.id);
+      this.notifyQueue();
+      this.processQueue();
+      return;
+    }
 
     if (!this.config.autoRetry) {
       logger.debug(
@@ -1373,40 +1532,81 @@ export class DownloadManager {
     this.processQueue();
   }
 
-  private async failTask(task: DownloadTask, err: unknown): Promise<void> {
+  private async failTask(
+    task: DownloadTask,
+    err: unknown,
+    userMessage?: string,
+  ): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
-    logger.debug("Manager failTask", { taskId: task.id, error: msg });
+    const classified = classifyDownloadError(msg);
+    // The persisted error is the USER-facing message — it is surfaced verbatim
+    // in the downloads list, toasts and failure notifications. The raw native
+    // message stays in the log above for debugging.
+    const displayError = userMessage ?? classified.userMessage;
+    logger.debug("Manager failTask", {
+      taskId: task.id,
+      raw: msg,
+      kind: classified.kind,
+    });
     await DownloadDatabase.update({
       id: task.id,
       status: "failed",
-      error: msg,
+      error: displayError,
       updatedAt: Date.now(),
     }).catch(() => {});
     this.emitStatus({
       taskId: task.id,
       status: "failed",
-      error: msg,
+      error: displayError,
       receivedBytes: this.liveReceived.get(task.id) ?? 0,
       totalBytes: this.liveTotal.get(task.id) ?? 0,
     });
-    const lower = msg.toLowerCase();
-    const failureClass: DownloadFailureClass = /http|status ?\d{3}|4\d\d|5\d\d/.test(
-      lower,
-    )
-      ? "http"
-      : /storage|space|disk|no space/.test(lower)
-        ? "storage"
-        : /cancel/.test(lower)
-          ? "cancelled"
-          : /timed? ?out|timeout|network|connect|resolve|unreachable|interrupted/.test(
-                lower,
-              )
-            ? "network"
-            : /incomplete/.test(lower)
-              ? "incomplete"
-              : "other";
+    const failureClass = FAILURE_KIND_TO_CLASS[classified.kind];
     this.emitDownloadEvent(task, "failed", failureClass);
     logger.debug("Manager failTask done", task.id);
+  }
+
+  /**
+   * The user paused from the Android notification — JS had no pause in flight.
+   * Sync DB + store + UI to paused, and release the queue slot. (The native
+   * side already updated its own notification state.)
+   */
+  private async handleUnexpectedPause(
+    taskId: string,
+    receivedBytes: number,
+    totalBytes: number,
+  ): Promise<void> {
+    logger.debug("Manager handleUnexpectedPause (notification action)", taskId);
+    this.activeInstances.delete(taskId);
+    this.speedTrackers.delete(taskId);
+    await DownloadDatabase.update({
+      id: taskId,
+      status: "paused",
+      ...(receivedBytes > 0
+        ? { receivedBytes, resumeData: String(receivedBytes) }
+        : {}),
+      ...(totalBytes > 0 ? { totalBytes } : {}),
+      updatedAt: Date.now(),
+    }).catch(() => {});
+    const current = this.store?.getById(taskId);
+    if (current) {
+      this.store?.upsert({
+        ...current,
+        status: "paused",
+        receivedBytes:
+          receivedBytes > 0 ? receivedBytes : current.receivedBytes,
+        totalBytes: totalBytes > 0 ? totalBytes : current.totalBytes,
+        updatedAt: Date.now(),
+      });
+    }
+    this.emitStatus({
+      taskId,
+      status: "paused",
+      ...(receivedBytes > 0 ? { receivedBytes } : {}),
+      ...(totalBytes > 0 ? { totalBytes } : {}),
+    });
+    this.notifyQueue();
+    this.processQueue();
   }
 
   /** E5: fire-and-forget download_event teardown/start telemetry. */

@@ -93,6 +93,26 @@ export const DownloadNotifications = {
     } catch {}
   },
 
+  /**
+   * State-sync guarantee: when a download leaves the active set (cancelled,
+   * removed, paused after a stale completion), any notification we own for it
+   * must disappear immediately — no stale "downloading"-era notifications.
+   * The native foreground summary is handled by the service itself; this
+   * covers the expo-notifications layer.
+   */
+  async dismissForTask(taskId: string): Promise<void> {
+    try {
+      const presented = await Notifications.getPresentedNotificationsAsync();
+      for (const notif of presented) {
+        if (notif.request.content.data?.taskId === taskId) {
+          await Notifications.dismissNotificationAsync(
+            notif.request.identifier,
+          );
+        }
+      }
+    } catch {}
+  },
+
   async resetPermissionState(): Promise<void> {
     await AsyncStorage.multiRemove([DENIED_KEY, ASKED_KEY]);
   },

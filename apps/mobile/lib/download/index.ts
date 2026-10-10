@@ -33,7 +33,14 @@ export { NativeDownloaderAdapter } from "./nativeAdapter";
 export { NetworkAwarePolicy } from "./networkPolicy";
 export { StorageManager } from "./storageManager";
 export { DownloadDatabase } from "./database";
+export { groupDownloadsForSections, isEpisodeTask } from "./grouping";
+export type { DownloadSection, DownloadSectionItem } from "./grouping";
 export { DownloadNotifications } from "./notifications";
+export { classifyDownloadError, InsufficientSpaceError } from "./errorClassify";
+export type {
+  DownloadErrorKind,
+  ClassifiedDownloadError,
+} from "./errorClassify";
 export { createDownloadStore, type DownloadStore } from "./store";
 
 // ─── Types ───
@@ -79,6 +86,8 @@ export { useEpisodeDownloads } from "./useEpisodeDownloads";
 export type { UseEpisodeDownloadsReturn } from "./useEpisodeDownloads";
 export { useDownloadQueue } from "./useDownloadQueue";
 export type { QueueConfig, QueueState } from "./useDownloadQueue";
+export { useDownloadTrigger } from "./useDownloadTrigger";
+export type { DownloadTriggerOptions } from "./useDownloadTrigger";
 export {
   useMediaDownloadState,
   useSmartDownload,
