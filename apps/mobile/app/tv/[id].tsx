@@ -18,7 +18,12 @@ import { useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { trackFeatureUsed } from "../../lib/telemetry";
+import {
+  trackFeatureUsed,
+  trackDetailViewed,
+  getSessionId,
+} from "../../lib/telemetry";
+
 import { colors } from "../../theme/colors";
 import { getImageUrl, getTrailerKey } from "@filmsnaps/shared";
 import { ProgressiveImage } from "../../components/ProgressiveImage";
@@ -26,6 +31,8 @@ import { FilmGrain } from "../../components/FilmGrain";
 import { HeroTint } from "../../components/HeroTint";
 import { useTVDetails } from "../../hooks/useTMDB";
 import { useMovieTheme } from "../../hooks/useMovieTheme";
+import { useSlotImpression } from "../../hooks/useSlotImpression";
+import { AdSlot } from "../../lib/ads";
 import {
   beginDetail,
   markDetailFirstFrame,
@@ -173,6 +180,9 @@ export default function TVDetailScreen() {
   const [resumeState, setResumeState] = useState<WatchProgress | null>(null);
   const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
   const downloadSummary = useMediaDownloadState("tv", String(id));
+  // Detail viewing dwelling time tracking.
+  const detailEnteredAt = useRef(Date.now());
+  const detailTrackedRef = useRef(false);
 
   // FIX 7: rank-option deps are value-level; selection re-prefetch debounced 500ms.
   // B1: prefetch only while focused — defer rank changes until next focus.
@@ -323,6 +333,40 @@ export default function TVDetailScreen() {
     header?.backdrop_path ?? null,
     header?.poster_path ?? null,
   );
+
+  // Track detail viewing dwelling time — fires when the page is visible.
+  useEffect(() => {
+    detailEnteredAt.current = Date.now();
+    detailTrackedRef.current = false;
+    const updateDwelling = () => {
+      if (detailTrackedRef.current) return;
+      const elapsed = Date.now() - detailEnteredAt.current;
+      const bucket =
+        elapsed < 3000
+          ? "<3"
+          : elapsed < 10000
+            ? "3-10"
+            : elapsed < 30000
+              ? "10-30"
+              : "30+";
+      trackDetailViewed({
+        sessionId: getSessionId(),
+        screen: "detail_tv",
+        tmdbId: parseInt(id),
+        mediaType: "tv",
+        fromTab: "home",
+        dwellingSecondsBucket: bucket as "<3" | "3-10" | "10-30" | "30+",
+      });
+      detailTrackedRef.current = true;
+    };
+    const timer = setTimeout(updateDwelling, 3000);
+    return () => clearTimeout(timer);
+  }, [id]);
+
+  // M1 — impression measurement: candidate ad slot on the detail page,
+  // between the action buttons row and the overview text (above the fold).
+  // key=id so title A → title B counts as two page impressions.
+  useSlotImpression("detail_above_overview", "detail_tv", { key: id });
 
   // Deep link / cold route with no header params → full skeleton until data.
   if (!header && isLoading) {
@@ -955,6 +999,10 @@ export default function TVDetailScreen() {
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* M2 — candidate ad slot between action buttons and overview.
+              Renders nothing until the remote ads-config enables it. */}
+          <AdSlot slot="detail_above_overview" />
 
           {/* Overview — query-dependent */}
           {queryReady && show.overview ? (
