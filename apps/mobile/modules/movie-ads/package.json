@@ -1,0 +1,16 @@
+{
+  "name": "movie-ads",
+  "version": "0.1.0",
+  "description": "Start.io in-app ads bridge (banner/mrec/cover + interstitial), OTA-gated",
+  "main": "index.ts",
+  "keywords": [
+    "expo",
+    "start.io",
+    "ads"
+  ],
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}

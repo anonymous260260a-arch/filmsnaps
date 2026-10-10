@@ -23,6 +23,8 @@ import { useRouter } from "expo-router";
 import { useSafeNavigation } from "@/lib/navigation";
 import { MOVIE_GENRES, TV_GENRES } from "@filmsnaps/shared";
 import { useDebounce } from "../../hooks/useDebounce";
+import { useSlotImpression } from "../../hooks/useSlotImpression";
+import { AdSlot } from "../../lib/ads";
 import {
   openDetail,
   prepareDetail,
@@ -54,8 +56,11 @@ import * as Haptics from "expo-haptics";
 import {
   trackSearchPerformed,
   trackFeatureUsed,
+  trackSearchResultClicked,
+  getSessionId,
   bucketQueryLength,
   bucketLinkCount,
+  bucketPositionClicked,
   type SearchMode,
 } from "../../lib/telemetry";
 
@@ -156,6 +161,9 @@ export default function SearchScreen() {
   const { width: SCREEN_WIDTH } = useWindowDimensions();
   const queryClient = useQueryClient();
   const { settings } = useSettings();
+
+  // M1 — impression measurement: candidate ad slot in the results list.
+  useSlotImpression("search_list", "search");
 
   // ── Search state ──
   const [query, setQuery] = useState("");
@@ -1133,6 +1141,7 @@ export default function SearchScreen() {
           showsVerticalScrollIndicator={false}
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.3}
+          ListHeaderComponent={<AdSlot slot="search_list" />}
           ListEmptyComponent={
             !isFirstLoad && page === 1 && !isFetchingCurrent ? (
               <View

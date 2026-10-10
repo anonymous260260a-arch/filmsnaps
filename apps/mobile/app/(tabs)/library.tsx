@@ -29,6 +29,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeNavigation } from "@/lib/navigation";
 import { useSettings } from "@/lib/settings";
 import { useFocusEffect } from "expo-router";
+import { useSlotImpression } from "../../hooks/useSlotImpression";
+import { AdSlot } from "../../lib/ads";
 import { useDownloadList } from "../../lib/download";
 import { tmdbToAnimeIds } from "../../lib/anime/resolve";
 import { getAllBookmarks } from "../../lib/bookmarks";
@@ -79,6 +81,10 @@ export default function LibraryScreen() {
   const { width: SCREEN_WIDTH } = useWindowDimensions();
 
   const [activeTab, setActiveTab] = useState<TabType>("watching");
+
+  // M1 — impression measurement: candidate ad slot on the library grid
+  // (visit-based upper bound — grid may be below the fold).
+  useSlotImpression("library_list", "library");
 
   // Poster dimensions for 3-column grid
   const posterWidth = Math.floor((SCREEN_WIDTH - 32 - CARD_GAP * 2) / 3);
@@ -937,6 +943,9 @@ export default function LibraryScreen() {
             )}
           </View>
         )}
+
+        {/* M2 — candidate ad slot at the bottom of library content. */}
+        <AdSlot slot="library_list" bottomMargin={16} />
       </ScrollView>
     </View>
   );
