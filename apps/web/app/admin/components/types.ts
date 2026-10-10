@@ -18,7 +18,13 @@ export type Dashboard = {
     providerSwitches: Record<string, number>;
     bufferStalls: number;
   };
-  features: { feature: string; context: string; n: number }[];
+  features: {
+    feature: string;
+    context: string;
+    n: number;
+    users: number;
+    adoptionRate: number;
+  }[];
   screens: Record<string, number>;
   sessions: {
     closeFromScreen: Record<string, number>;
@@ -41,6 +47,31 @@ export type Dashboard = {
     };
   };
   totals: Record<string, number>;
+  totalUsers: number;
+  /** M1 — candidate ad-slot impression aggregates (measurement only). */
+  impressions?: {
+    note?: string;
+    slots: {
+      slot: string;
+      screen: string;
+      views: number;
+      users: number;
+      avgPerDay: number;
+      activeDays: number;
+      screenViews: number;
+      fillRate: number | null;
+    }[];
+    byDay: { day: string; slot: string; n: number }[];
+    totalViews: number;
+    totalUsers: number;
+  };
+  filters?: {
+    appVersion: string | null;
+    anonId: string | null;
+    event: string | null;
+    fromDay: string;
+    toDay: string;
+  };
 };
 
 export type RawRow = {
@@ -59,6 +90,8 @@ export type DrillState = {
   from: string;
   to: string;
   title: string;
+  appVersion?: string;
+  anonId?: string;
 } | null;
 
 export type Range =

@@ -83,21 +83,39 @@ export async function GET(req: Request) {
 
   // Drill-down mode: raw recent rows for one event name (no aggregates).
   // Powers the dashboard's "click a card → see the actual events" flow.
+  // Supports appVersion/anonId filters for admin deep-dives.
   if (url.searchParams.get("mode") === "raw" && eventName) {
     const limit = Math.min(
       100,
       Math.max(1, Number(url.searchParams.get("limit")) || 30),
     );
+    // Build raw-mode filters.
+    const rawFilterClauses: string[] = [];
+    const rawFilterParams: unknown[] = [];
+    const rv = url.searchParams.get("appVersion")?.trim();
+    const ra = url.searchParams.get("anonId")?.trim();
+    if (rv) {
+      rawFilterClauses.push("app_version = ?");
+      rawFilterParams.push(rv);
+    }
+    if (ra) {
+      rawFilterClauses.push("anon_id = ?");
+      rawFilterParams.push(ra);
+    }
+    const rawFilterSql =
+      rawFilterClauses.length > 0
+        ? ` AND ${rawFilterClauses.join(" AND ")}`
+        : "";
     try {
       const rawRes = await db
         .prepare(
           `SELECT name, ts, app_version AS appVersion, connection_class AS connectionClass,
                   device_tier AS deviceTier, anon_id AS anonId, dims_json AS dims
            FROM telemetry_events
-           WHERE ts >= ?1 AND ts <= ?2 AND name = ?3
+           WHERE ts >= ?1 AND ts <= ?2 AND name = ?3${rawFilterSql}
            ORDER BY ts DESC LIMIT ?4`,
         )
-        .bind(fromTs, toTs, eventName, limit)
+        .bind(fromTs, toTs, eventName, limit, ...rawFilterParams)
         .all();
       const rows = (rawRes.results ?? []).map((r: any) => {
         let dims: Record<string, unknown> = {};
@@ -132,16 +150,35 @@ export async function GET(req: Request) {
   const eventClause = eventName ? " AND name = ?3" : "";
 
   try {
+    // Build filter clause for appVersion / anonId (admin-only debug filters).
+    // These are additive to the time range — they let admins inspect a single
+    // app version or trace one anonymous install's full event stream.
+    const filterClauses: string[] = [];
+    const filterParams: unknown[] = [];
+    const appVersion = url.searchParams.get("appVersion")?.trim();
+    const anonId = url.searchParams.get("anonId")?.trim();
+    if (appVersion) {
+      filterClauses.push("app_version = ?");
+      filterParams.push(appVersion);
+    }
+    if (anonId) {
+      filterClauses.push("anon_id = ?");
+      filterParams.push(anonId);
+    }
+    const filterSql =
+      filterClauses.length > 0 ? ` AND ${filterClauses.join(" AND ")}` : "";
+    const allParams = [...params, ...filterParams];
+
     // ── Daily counts by event name ──
     const dailyRes = await db
       .prepare(
         `SELECT (ts / 86400000) * 86400000 AS dayStart, name, COUNT(*) AS n
-         FROM telemetry_events
-         WHERE ${rangeWhere}${eventClause}
-         GROUP BY dayStart, name
-         ORDER BY dayStart`,
+       FROM telemetry_events
+       WHERE ${rangeWhere}${eventClause}${filterSql}
+       GROUP BY dayStart, name
+       ORDER BY dayStart`,
       )
-      .bind(...params)
+      .bind(...allParams)
       .all();
 
     // ── Audience: distinct anonymous installs (random per-install UUIDs,
@@ -151,18 +188,18 @@ export async function GET(req: Request) {
         `SELECT (ts / 86400000) * 86400000 AS dayStart,
                 COUNT(DISTINCT anon_id) AS uniques
          FROM telemetry_events
-         WHERE ${rangeWhere} AND anon_id IS NOT NULL
+         WHERE ${rangeWhere} AND anon_id IS NOT NULL${filterSql}
          GROUP BY dayStart ORDER BY dayStart`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
     const audienceTotalRes = await db
       .prepare(
         `SELECT COUNT(DISTINCT anon_id) AS uniques, COUNT(*) AS events
          FROM telemetry_events
-         WHERE ${rangeWhere} AND anon_id IS NOT NULL`,
+         WHERE ${rangeWhere} AND anon_id IS NOT NULL${filterSql}`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .first();
 
     // ── watch_end by surface (direct native vs embed webview) — the
@@ -172,10 +209,10 @@ export async function GET(req: Request) {
         `SELECT json_extract(dims_json, '$.surface') AS surface, COUNT(*) AS n,
                 SUM(json_extract(dims_json, '$.durationMs')) AS durMs
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'watch_end'
+         WHERE ${rangeWhere} AND name = 'watch_end'${filterSql}
          GROUP BY surface`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
 
     // ── feature_used breakdown ──
@@ -185,21 +222,46 @@ export async function GET(req: Request) {
                 json_extract(dims_json, '$.context') AS context,
                 COUNT(*) AS n
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'feature_used'
+         WHERE ${rangeWhere} AND name = 'feature_used'${filterSql}
          GROUP BY feature, context ORDER BY n DESC`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
+
+    // ── Feature adoption rates: for each feature, how many DISTINCT anonIds
+    //    used it vs total distinct anonIds in range. This gives "X out of Y
+    //    users" instead of raw counts. ──
+    const featureAdoptRes = await db
+      .prepare(
+        `SELECT json_extract(dims_json, '$.feature') AS feature,
+                COUNT(DISTINCT anon_id) AS users
+         FROM telemetry_events
+         WHERE ${rangeWhere} AND name = 'feature_used'${filterSql}
+         GROUP BY feature ORDER BY users DESC`,
+      )
+      .bind(...allParams)
+      .all();
+
+    // Total distinct users in range (for adoption rate denominator).
+    const totalUsersRes = await db
+      .prepare(
+        `SELECT COUNT(DISTINCT anon_id) AS totalUsers
+         FROM telemetry_events
+         WHERE ${rangeWhere} AND anon_id IS NOT NULL${filterSql}`,
+      )
+      .bind(...allParams)
+      .first();
+    const totalUsers = Number(totalUsersRes?.totalUsers ?? 0);
 
     // ── watch funnel: watch_opened by surface ──
     const funnelRes = await db
       .prepare(
         `SELECT json_extract(dims_json, '$.surface') AS surface, COUNT(*) AS n
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'watch_opened'
+         WHERE ${rangeWhere} AND name = 'watch_opened'${filterSql}
          GROUP BY surface`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
 
     // ── player_start outcomes + errors ──
@@ -207,20 +269,20 @@ export async function GET(req: Request) {
       .prepare(
         `SELECT json_extract(dims_json, '$.outcome') AS outcome, COUNT(*) AS n
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'player_start'
+         WHERE ${rangeWhere} AND name = 'player_start'${filterSql}
          GROUP BY outcome`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
     const playerErrRes = await db
       .prepare(
         `SELECT json_extract(dims_json, '$.errorClass') AS errorClass,
                 json_extract(dims_json, '$.surface') AS surface, COUNT(*) AS n
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'player_error'
+         WHERE ${rangeWhere} AND name = 'player_error'${filterSql}
          GROUP BY errorClass, surface ORDER BY n DESC`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
 
     // ── screen adoption + session close-from-screen ──
@@ -257,17 +319,17 @@ export async function GET(req: Request) {
       .prepare(
         `SELECT json_extract(dims_json, '$.reason') AS reason, COUNT(*) AS n
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'provider_switch'
+         WHERE ${rangeWhere} AND name = 'provider_switch'${filterSql}
          GROUP BY reason ORDER BY n DESC`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
     const stallRes = await db
       .prepare(
         `SELECT COUNT(*) AS n FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'buffer_stall'`,
+         WHERE ${rangeWhere} AND name = 'buffer_stall'${filterSql}`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .first();
 
     // ── Playback health: chosen-quality distribution + rebuffer load ──
@@ -275,10 +337,10 @@ export async function GET(req: Request) {
       .prepare(
         `SELECT json_extract(dims_json, '$.qualityBucket') AS bucket, COUNT(*) AS n
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'watch_end'
+         WHERE ${rangeWhere} AND name = 'watch_end'${filterSql}
          GROUP BY bucket`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
     const rebufRes = await db
       .prepare(
@@ -286,9 +348,9 @@ export async function GET(req: Request) {
                 SUM(json_extract(dims_json, '$.stallMs')) AS stallMs,
                 COUNT(*) AS sessions
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'watch_end'`,
+         WHERE ${rangeWhere} AND name = 'watch_end'${filterSql}`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .first();
 
     // ── Intent→first-frame percentiles (raw sorted values, cheap at this
@@ -297,10 +359,10 @@ export async function GET(req: Request) {
       .prepare(
         `SELECT json_extract(dims_json, '$.intentToFirstFrameMs') AS ms
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'player_start'
+         WHERE ${rangeWhere} AND name = 'player_start'${filterSql}
          ORDER BY ms LIMIT 2000`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
     const itffVals = (itffRes.results ?? [])
       .map((r: any) => Number(r.ms))
@@ -321,10 +383,10 @@ export async function GET(req: Request) {
       .prepare(
         `SELECT json_extract(dims_json, '$.watchedPctBucket') AS bucket, COUNT(*) AS n
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'watch_end'
+         WHERE ${rangeWhere} AND name = 'watch_end'${filterSql}
          GROUP BY bucket`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
 
     // ── P5: resume correction rate ──
@@ -332,10 +394,10 @@ export async function GET(req: Request) {
       .prepare(
         `SELECT json_extract(dims_json, '$.resumeCorrection') AS corrected, COUNT(*) AS n
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'watch_end'
+         WHERE ${rangeWhere} AND name = 'watch_end'${filterSql}
          GROUP BY corrected`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
 
     // ── P5: seek latency by kind (raw ms → client-side p50/p95 compute) ──
@@ -345,10 +407,10 @@ export async function GET(req: Request) {
                 AVG(json_extract(dims_json, '$.latencyMs')) AS avgMs,
                 MAX(json_extract(dims_json, '$.latencyMs')) AS maxMs
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'seek_latency'
+         WHERE ${rangeWhere} AND name = 'seek_latency'${filterSql}
          GROUP BY kind`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
 
     // ── P5: exit-during-switch ──
@@ -356,10 +418,10 @@ export async function GET(req: Request) {
       .prepare(
         `SELECT json_extract(dims_json, '$.switchKind') AS kind, COUNT(*) AS n
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'exit_during_switch'
+         WHERE ${rangeWhere} AND name = 'exit_during_switch'${filterSql}
          GROUP BY kind`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
 
     // ── P5: time-of-day histogram of watch_opened (UTC hour) ──
@@ -367,10 +429,10 @@ export async function GET(req: Request) {
       .prepare(
         `SELECT (ts / 3600000) % 24 AS hour, COUNT(*) AS n
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'watch_opened'
+         WHERE ${rangeWhere} AND name = 'watch_opened'${filterSql}
          GROUP BY hour ORDER BY hour`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
       .all();
 
     // ── P5: sessions per day ──
@@ -378,20 +440,52 @@ export async function GET(req: Request) {
       .prepare(
         `SELECT (ts / 86400000) * 86400000 AS dayStart, COUNT(*) AS n
          FROM telemetry_events
-         WHERE ${rangeWhere} AND name = 'session_end'
+         WHERE ${rangeWhere} AND name = 'session_end'${filterSql}
          GROUP BY dayStart ORDER BY dayStart`,
       )
-      .bind(fromTs, toTs)
+      .bind(...allParams)
+      .all();
+
+    // ── M1: candidate ad-slot impressions (separate section — used for the
+    //    monetization decision; the app ships NO ads yet). Per-slot totals +
+    //    reach, plus the daily series for the trend chart. Bound WITHOUT the
+    //    ?event param (no eventClause here) — only range + filters. ──
+    const slotParams = [fromTs, toTs, ...filterParams];
+    const slotRes = await db
+      .prepare(
+        `SELECT json_extract(dims_json, '$.slot') AS slot,
+                json_extract(dims_json, '$.screen') AS screen,
+                COUNT(*) AS views,
+                COUNT(DISTINCT anon_id) AS users,
+                COUNT(DISTINCT (ts / 86400000)) AS activeDays
+         FROM telemetry_events
+         WHERE ${rangeWhere} AND name = 'ad_slot_view'${filterSql}
+         GROUP BY slot, screen
+         ORDER BY views DESC`,
+      )
+      .bind(...slotParams)
+      .all();
+    const slotDayRes = await db
+      .prepare(
+        `SELECT (ts / 86400000) * 86400000 AS dayStart,
+                json_extract(dims_json, '$.slot') AS slot,
+                COUNT(*) AS n
+         FROM telemetry_events
+         WHERE ${rangeWhere} AND name = 'ad_slot_view'${filterSql}
+         GROUP BY dayStart, slot
+         ORDER BY dayStart`,
+      )
+      .bind(...slotParams)
       .all();
 
     // ── Totals by event (compact) ──
     const totalsRes = await db
       .prepare(
         `SELECT name, COUNT(*) AS n FROM telemetry_events
-         WHERE ${rangeWhere}${eventClause}
+         WHERE ${rangeWhere}${eventClause}${filterSql}
          GROUP BY name ORDER BY n DESC`,
       )
-      .bind(...params)
+      .bind(...allParams)
       .all();
 
     const daily: Record<string, Record<string, number>> = {};
@@ -411,6 +505,12 @@ export async function GET(req: Request) {
         ]),
       );
 
+    // Feature adoption: merge raw counts with distinct-user counts.
+    const featureAdoptMap = new Map<string, number>();
+    for (const r of featureAdoptRes.results ?? []) {
+      featureAdoptMap.set(String(r.feature ?? "unknown"), Number(r.users));
+    }
+
     const sessionDurBuckets: Record<string, number> = {};
     for (const row of sessionDurRes.results ?? []) {
       const ms = Number(row.dur);
@@ -429,6 +529,41 @@ export async function GET(req: Request) {
       sessionDurBuckets[label] =
         (sessionDurBuckets[label] ?? 0) + Number(row.n);
     }
+
+    // ── M1: ad-slot impressions — merge with screen_view denominators so
+    //    the dashboard can show what % of screen visits reached the slot. ──
+    const screenVisitMap = new Map<string, number>();
+    for (const row of screensRes.results ?? []) {
+      screenVisitMap.set(String(row.screen ?? "unknown"), Number(row.n));
+    }
+    let slotTotalViews = 0;
+    const slotTotalUsersRes = await db
+      .prepare(
+        `SELECT COUNT(DISTINCT anon_id) AS users
+         FROM telemetry_events
+         WHERE ${rangeWhere} AND name = 'ad_slot_view'
+           AND anon_id IS NOT NULL${filterSql}`,
+      )
+      .bind(...slotParams)
+      .first();
+    const impressionSlots = (slotRes.results ?? []).map((r: any) => {
+      const views = Number(r.views);
+      const activeDays = Math.max(1, Number(r.activeDays));
+      const screen = String(r.screen ?? "unknown");
+      const screenViews = screenVisitMap.get(screen) ?? 0;
+      slotTotalViews += views;
+      return {
+        slot: String(r.slot ?? "unknown"),
+        screen,
+        views,
+        users: Number(r.users),
+        avgPerDay: Math.round((views / activeDays) * 10) / 10,
+        activeDays,
+        screenViews,
+        fillRate:
+          screenViews > 0 ? Math.round((views / screenViews) * 100) : null,
+      };
+    });
 
     return NextResponse.json(
       {
@@ -469,8 +604,28 @@ export async function GET(req: Request) {
           feature: String(r.feature ?? "unknown"),
           context: String(r.context ?? ""),
           n: Number(r.n),
+          users: featureAdoptMap.get(String(r.feature ?? "unknown")) ?? 0,
+          adoptionRate:
+            totalUsers > 0
+              ? Math.round(
+                  ((featureAdoptMap.get(String(r.feature ?? "unknown")) ?? 0) /
+                    totalUsers) *
+                    1000,
+                ) / 10
+              : 0,
         })),
         screens: byName(screensRes.results, "screen"),
+        impressions: {
+          note: "view = slot rendered while its screen was focused (tierA). Above-fold slots (home_hero, announcements_page) are exact; below-fold slots are visit-based upper bounds until viewport tracking (tierB) ships. No ads run in the app — measurement only.",
+          slots: impressionSlots,
+          byDay: (slotDayRes.results ?? []).map((r: any) => ({
+            day: isoDay(Number(r.dayStart)),
+            slot: String(r.slot ?? "unknown"),
+            n: Number(r.n),
+          })),
+          totalViews: slotTotalViews,
+          totalUsers: Number(slotTotalUsersRes?.users ?? 0),
+        },
         sessions: {
           closeFromScreen: byName(closeScreenRes.results, "screen"),
           durationBuckets: sessionDurBuckets,
@@ -503,6 +658,14 @@ export async function GET(req: Request) {
           },
         },
         totals: byName(totalsRes.results, "name"),
+        totalUsers,
+        filters: {
+          appVersion: appVersion ?? null,
+          anonId: anonId ?? null,
+          event: eventName,
+          fromDay,
+          toDay,
+        },
       },
       { headers: { "cache-control": "no-store" } },
     );

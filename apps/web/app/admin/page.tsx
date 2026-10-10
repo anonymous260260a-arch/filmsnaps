@@ -7,15 +7,15 @@
  * dashboard API. The browser prompts for credentials and replays them
  * automatically on fetch calls — no token plumbing here.
  *
- * Redesigned with modular architecture, Recharts data visualization, and
- * actionable product insight cards.
+ * Redesigned: every event type visible, adoption shown as "X of Y users",
+ * filter by app version + anonymous ID, full raw event inspector.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dashboard, DrillState, Range } from "./components/types";
 import { dayStr, sum } from "./components/utils";
 import { GOLD } from "./components/constants";
-import { Section, Card, Skeleton } from "./components/shared";
+import { Section, Card, Skeleton, NoData } from "./components/shared";
 
 // Section components
 import { DashboardHeader } from "./components/DashboardHeader";
@@ -26,8 +26,13 @@ import { EngagementSection } from "./components/EngagementSection";
 import { PlaybackQuality } from "./components/PlaybackQuality";
 import { ReliabilitySection } from "./components/ReliabilitySection";
 import { AdoptionSection } from "./components/AdoptionSection";
+import { AdSlotImpressions } from "./components/AdSlotImpressions";
 import { EventVolume } from "./components/EventVolume";
 import { DrillDrawer } from "./components/DrillDrawer";
+import { FilterBar } from "./components/FilterBar";
+
+// Event type labels for the full inventory.
+import { LABELS } from "./components/constants";
 
 export default function AdminPage() {
   const [range, setRange] = useState<Range>({ kind: "preset", days: 7 });
@@ -37,6 +42,10 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [drill, setDrill] = useState<DrillState>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [filters, setFilters] = useState<{
+    appVersion?: string;
+    anonId?: string;
+  }>({});
 
   // Resolve current range into UTC date strings + previous comparison window
   const { from, to, prevFrom, prevTo } = useMemo(() => {
@@ -62,11 +71,21 @@ export default function AdminPage() {
     setLoading(true);
     setError(null);
     try {
-      const q = (f: string, t: string) =>
-        `/api/telemetry/dashboard?from=${f}&to=${t}`;
+      const q = (f: string, t: string, extra?: string) =>
+        `/api/telemetry/dashboard?from=${f}&to=${t}${extra ?? ""}`;
+
+      const filterStr =
+        `appVersion=${encodeURIComponent(filters.appVersion ?? "")}&anonId=${encodeURIComponent(filters.anonId ?? "")}`
+          .replace(/[&=]$/, "")
+          .replace(/&&/g, "&");
+
       const [curRes, prevRes] = await Promise.all([
-        fetch(q(from, to), { credentials: "same-origin" }),
-        fetch(q(prevFrom, prevTo), { credentials: "same-origin" }),
+        fetch(q(from, to, filterStr ? `&${filterStr}` : ""), {
+          credentials: "same-origin",
+        }),
+        fetch(q(prevFrom, prevTo, filterStr ? `&${filterStr}` : ""), {
+          credentials: "same-origin",
+        }),
       ]);
 
       if (!curRes.ok) {
@@ -91,18 +110,25 @@ export default function AdminPage() {
     } finally {
       setLoading(false);
     }
-  }, [from, to, prevFrom, prevTo]);
+  }, [from, to, prevFrom, prevTo, filters]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  // Drill-down helper
+  // Drill-down helper — passes current filters to the raw event query.
   const openDrill = useCallback(
     (event: string, title: string, fromD = from, toD = to) => {
-      setDrill({ event, from: fromD, to: toD, title });
+      setDrill({
+        event,
+        from: fromD,
+        to: toD,
+        title,
+        appVersion: filters.appVersion ?? undefined,
+        anonId: filters.anonId ?? undefined,
+      });
     },
-    [from, to],
+    [from, to, filters],
   );
 
   const rangeDays =
@@ -117,6 +143,11 @@ export default function AdminPage() {
           ),
         );
 
+  const activeFilters =
+    (filters.appVersion ? 1 : 0) +
+    (filters.anonId ? 1 : 0) +
+    (cur?.filters?.event ? 1 : 0);
+
   return (
     <div className="min-h-screen bg-[#0B0B0D] text-white/[0.88] font-sans antialiased selection:bg-[#D4A237]/30">
       {/* ── Sticky Navigation Header ── */}
@@ -128,6 +159,22 @@ export default function AdminPage() {
         loading={loading}
         onRefresh={() => void load()}
         updatedAt={updatedAt}
+      />
+
+      {/* ── Filter Bar ── */}
+      <FilterBar
+        appVersion={filters.appVersion ?? cur?.filters?.appVersion ?? null}
+        anonId={filters.anonId ?? cur?.filters?.anonId ?? null}
+        event={cur?.filters?.event ?? null}
+        fromDay={from}
+        toDay={to}
+        onFilterChange={(f) => {
+          if (f.clear) {
+            setFilters({});
+          } else {
+            setFilters((prev) => ({ ...prev, ...f }));
+          }
+        }}
       />
 
       <main className="max-w-[1360px] mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-20">
@@ -228,8 +275,19 @@ export default function AdminPage() {
             {/* ── 5. Reliability ── */}
             <ReliabilitySection cur={cur} openDrill={openDrill} />
 
-            {/* ── 6. Adoption ── */}
-            <AdoptionSection cur={cur} openDrill={openDrill} />
+            {/* ── 6. Adoption (redesigned) ── */}
+            <AdoptionSection
+              cur={cur}
+              openDrill={openDrill}
+              totalUsers={cur.totalUsers}
+            />
+
+            {/* ── 6b. Ad-slot impressions (measurement for monetization) ── */}
+            <AdSlotImpressions
+              cur={cur}
+              openDrill={openDrill}
+              rangeDays={rangeDays}
+            />
 
             {/* ── 7. Total Event Volume ── */}
             <EventVolume cur={cur} openDrill={openDrill} />
@@ -249,7 +307,14 @@ export default function AdminPage() {
       </footer>
 
       {/* ── Slide-over Raw Event Drawer ── */}
-      {drill && <DrillDrawer state={drill} onClose={() => setDrill(null)} />}
+      {drill && (
+        <DrillDrawer
+          state={drill}
+          onClose={() => setDrill(null)}
+          appVersion={drill.appVersion ?? filters.appVersion ?? undefined}
+          anonId={drill.anonId ?? filters.anonId ?? undefined}
+        />
+      )}
     </div>
   );
 }
