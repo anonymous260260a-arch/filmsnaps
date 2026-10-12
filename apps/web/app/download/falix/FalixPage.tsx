@@ -51,7 +51,7 @@ import { tmdbApi, apiUrl } from "@/lib/tmdb";
 
 // ── API ──
 
-const FALIX_API_BASE = "https://dl.falixmovies.com";
+const FALIX_API_BASE = "https://download-falixm.koyeb.app";
 
 interface FalixTelegramFile {
   quality: string;

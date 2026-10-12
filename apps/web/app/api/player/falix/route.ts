@@ -3,7 +3,7 @@ import { desktopSkip } from "../../desktop-skip";
 
 export const revalidate = 1;
 
-const FALIX_BASE = "https://dl.falixmovies.com";
+const FALIX_BASE = "https://download-falixm.koyeb.app";
 
 /**
  * Server-side proxy for the Falix metadata API.
@@ -11,7 +11,7 @@ const FALIX_BASE = "https://dl.falixmovies.com";
  * and returns the JSON to the client.
  *
  * This proxy exists to:
- * 1. Avoid CORS issues from browser to the HF Space
+ * 1. Avoid CORS issues from browser to the Falix host
  * 2. Keep the API endpoint internal
  * 3. Allow future response caching
  */

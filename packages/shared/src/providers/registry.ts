@@ -232,7 +232,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     enabled: true,
     forDownloadOnly: true,
     order: 7,
-    baseUrl: "https://download-falix-falixmovies-backend-hf.hf.space",
+    baseUrl: "https://download-falixm.koyeb.app",
     embed: {
       movie: (id) => `/api/id/${id}`,
       tv: (id) => `/api/id/${id}`,

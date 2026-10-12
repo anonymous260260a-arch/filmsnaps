@@ -9,7 +9,7 @@
     },
     {
       "id": "falix",
-      "apiBase": "https://dl.falixmovies.com",
+      "apiBase": "https://download-falixm.koyeb.app",
       "kind": "downloads",
       "enabled": true
     },

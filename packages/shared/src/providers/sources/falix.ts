@@ -20,19 +20,61 @@ export interface FalixFile {
   quality?: string;
 }
 
+/** New-style file entry: `sources[].encoded_id` is the /dl id. */
+export interface FalixFileEntry {
+  id?: string;
+  quality?: string;
+  filename?: string;
+  size?: string;
+  season?: number;
+  episode?: number;
+  sources?: Array<{
+    id?: string;
+    type?: string;
+    encoded_id?: string;
+    is_primary?: boolean;
+  }>;
+}
+
+interface FalixEpisode {
+  episode_number?: number;
+  telegram?: FalixFile[];
+  files?: FalixFileEntry[];
+}
+
 /** Shape of the Falix API response (movie or TV). */
 export interface FalixData {
   title?: string;
   telegram?: FalixFile[];
+  files?: FalixFileEntry[];
   seasons?: Array<{
     season_number?: number;
-    episodes?: Array<{
-      episode_number?: number;
-      telegram?: FalixFile[];
-    }>;
+    episodes?: FalixEpisode[];
   }>;
+  /** Season-scoped response (?season_number=): episodes at the top level. */
+  episodes?: FalixEpisode[];
   /** Caller-injected base for building /dl URLs (worker proxy or direct host). */
   _dlBase?: string;
+}
+
+/** New `files[]` entries → FalixFile (one per source; encoded_id = /dl id). */
+function filesToFalixFiles(files?: FalixFileEntry[]): FalixFile[] {
+  if (!Array.isArray(files)) return [];
+  const out: FalixFile[] = [];
+  for (const f of files) {
+    if (!f?.filename) continue;
+    for (const s of f.sources ?? []) {
+      if (s?.encoded_id) {
+        out.push({
+          id: s.encoded_id,
+          name: f.filename,
+          size: f.size,
+          quality: f.quality,
+        });
+      }
+    }
+  }
+  return out;
 }
 
 /** Parse human-readable size string to bytes. E.g. "8.2 GB" → 8804682957 */
@@ -91,8 +133,16 @@ export function mapFalixFiles(
 }
 
 /**
- * Extract the files array from a Falix response for a specific episode.
- * Returns empty array if the season/episode is not found.
+ * Extract the files for a specific episode/title from a Falix response.
+ *
+ * Handles every shape the API serves:
+ *  - full TV response:      seasons[] → episodes[] (telegram[] + files[])
+ *  - season-scoped response: episodes[] at the top level (?season_number=)
+ *  - movie:                  top-level telegram[] / files[]
+ *
+ * `telegram[]` (legacy entries) and `files[]` (sources[].encoded_id) hold the
+ * same /dl ids — merged and deduped so either (or both) work. Returns [] when
+ * the season/episode is not found.
  */
 export function extractEpisodeFiles(
   data: FalixData,
@@ -100,20 +150,22 @@ export function extractEpisodeFiles(
   season?: number,
   episode?: number,
 ): FalixFile[] {
-  if (
-    mediaType === "tv" &&
-    "seasons" in data &&
-    season != null &&
-    episode != null
-  ) {
-    const s = data.seasons?.find((s) => s.season_number === season);
-    const ep = s?.episodes?.find((e) => e.episode_number === episode);
-    return ep?.telegram ?? [];
+  const collect = (src?: FalixEpisode): FalixFile[] => {
+    if (!src) return [];
+    const merged = [...(src.telegram ?? []), ...filesToFalixFiles(src.files)];
+    const seen = new Set<string>();
+    return merged.filter(
+      (f) => !!f.id && !!f.name && !seen.has(f.id) && (seen.add(f.id), true),
+    );
+  };
+
+  if (mediaType === "tv" && season != null && episode != null) {
+    const episodes =
+      data.seasons?.find((s) => s.season_number === season)?.episodes ??
+      data.episodes;
+    return collect(episodes?.find((e) => e.episode_number === episode));
   }
-  if ("telegram" in data) {
-    return data.telegram ?? [];
-  }
-  return [];
+  return collect(data);
 }
 
 export function createFalixAdapter(

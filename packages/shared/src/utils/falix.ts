@@ -6,7 +6,7 @@
  * was duplicated (~350 lines) with the language markers byte-for-byte.
  */
 
-export const FALIX_API_BASE = "https://dl.falixmovies.com";
+export const FALIX_API_BASE = "https://download-falixm.koyeb.app";
 
 /** Build a Falix download URL: `<base>/dl/<fileId>/<encodedName>`. */
 export function buildFalixDownloadUrl(
