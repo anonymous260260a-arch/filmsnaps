@@ -98,6 +98,9 @@ export function parseWay2MoviesResponse(
       _meta: {
         codec: container === "hls" ? "hls" : "unknown",
         audio: language,
+        // The selector's server priority (s39 > s33 > s31 > s42) keys off
+        // _meta.source — without it every link ranked 99 (no-op priority).
+        source: server,
         isDownloadOnly: false,
         isWebReady: true,
         // Subtitles on the first link only

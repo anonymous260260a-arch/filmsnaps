@@ -31,7 +31,7 @@ import {
   mapFalixFiles,
   resolveStreams,
 } from "@filmsnaps/shared";
-import type { FalixFile } from "@filmsnaps/shared";
+import type { FalixData } from "@filmsnaps/shared";
 import type { StreamLink } from "../components/player/streamTypes";
 import { resolveMovie, resolveShowIds } from "./anime/resolve";
 
@@ -90,7 +90,7 @@ const BUNDLED_CONFIG: StreamProvidersConfig = {
     },
     {
       id: "falix",
-      apiBase: "https://dl.falixmovies.com",
+      apiBase: "https://download-falixm.koyeb.app",
       kind: "downloads",
       enabled: true,
     },
@@ -103,7 +103,10 @@ const BUNDLED_CONFIG: StreamProvidersConfig = {
   ],
 };
 
-const CONFIG_CACHE_KEY = "@filmsnaps/stream-providers/v1";
+// v2: bumped when falix moved hosts (download-falixm.koyeb.app) — any v1
+// entry cached on a device is ignored, so the dead dl.falixmovies.com base
+// can't linger in AsyncStorage for a full TTL window.
+const CONFIG_CACHE_KEY = "@filmsnaps/stream-providers/v2";
 const CONFIG_TTL_MS = 30 * 60 * 1000; // 30 min
 
 function getConfigUrl(): string {
@@ -348,15 +351,13 @@ async function fetchWithTimeout(
  * the same pool, ranked together with the primary's by the stream pipeline
  * (lib/streamPrefetch → selectBestStream).
  *
- * Falix keys titles inconsistently (some by zero-stripped IMDB numeric id,
- * some by their real TMDB id — its "tmdb_id" field stores whichever), so
- * both ids are tried.
- *
- * Some ISPs intermittently block dl.falixmovies.com at the connection level
- * ("Network request failed" — metadata API and /dl/ streams share the host).
- * When a direct lookup fails that way, the remaining lookups AND the stream
- * URLs go through the web app's worker proxy (/api/player/falix*), the same
- * Cloudflare channel as the TMDB pass-through. Never throws.
+ * Endpoint: `GET {falixBase}/api/id/{id}` (TV scopes to one season via
+ * `?season_number=`). Records are TMDB-keyed (verified); some movie records
+ * historically used the zero-stripped IMDb numeric key, so that's the
+ * fallback on a miss. Stream URLs are
+ * `{falixBase}/dl/{encoded_id}/{urlencoded-name}`. Never throws; a slow or
+ * dead falix host only costs this background fetch (ranking never waits on
+ * it — see onLateLinks in fetchDirectStreams).
  */
 async function fetchFalixLinks(
   tmdbId: number,
@@ -368,89 +369,79 @@ async function fetchFalixLinks(
   let apiBase: string;
   try {
     apiBase = await getProviderApiBase("falix");
-  } catch (err: any) {
+  } catch {
     return [];
   }
 
-  const workerBase = getApiBaseUrl().replace(/\/$/, "");
-  let directReachable = true;
-  let useProxy = false;
-  let data: Record<string, unknown> | null = null;
+  const startedAt = Date.now();
+  let data: FalixData | null = null;
 
+  // TMDB key first (verified for TV), zero-stripped IMDb numeric as fallback.
+  const idCandidates = [String(tmdbId)];
   const imdbNum = imdbId.replace(/^tt0*/, "");
-  for (const id of [imdbNum, String(tmdbId)]) {
-    if (!id) continue;
-    if (directReachable) {
-      try {
-        // 4s — an ISP-blocked host won't answer within this anyway, and a
-        // hung direct attempt must not gate the whole pipeline (the worker
-        // proxy picks up immediately after).
-        const res = await fetchWithTimeout(`${apiBase}/api/id/${id}`, 4_000);
-        if (res.ok) {
-          try {
-            data = (await res.json()) as Record<string, unknown>;
-          } catch (err: any) {
-            // Non-JSON body — e.g. an ISP hijack/challenge page returned as 200.
-            continue;
-          }
-          break;
-        }
-        continue;
-      } catch (err: any) {
-        directReachable = false;
-      }
-    }
+  if (imdbNum && imdbNum !== idCandidates[0]) idCandidates.push(imdbNum);
+
+  for (const id of idCandidates) {
+    // TV: scope to the requested season so a long-running show doesn't drag
+    // its whole episode catalog over the wire (the season-scoped response
+    // puts episodes at the top level — extractEpisodeFiles handles both).
+    const url =
+      mediaType === "tv" && season != null
+        ? `${apiBase}/api/id/${id}?season_number=${season}`
+        : `${apiBase}/api/id/${id}`;
     try {
-      const res = await fetchWithTimeout(
-        `${workerBase}/api/player/falix?id=${id}`,
-        12_000,
-      );
+      const res = await fetchWithTimeout(url, 8_000, {
+        headers: { Accept: "application/json" },
+      });
       if (res.ok) {
-        try {
-          data = (await res.json()) as Record<string, unknown>;
-        } catch (err: any) {
-          continue;
-        }
-        useProxy = true;
+        data = (await res.json()) as FalixData;
         break;
       }
-    } catch (err: any) {}
+      console.log(
+        `[Flow] falix: HTTP ${res.status} for ${mediaType}:${id} (${Date.now() - startedAt}ms)`,
+      );
+    } catch (err) {
+      console.log(
+        `[Flow] falix: fetch failed for ${mediaType}:${id} (${Date.now() - startedAt}ms) — ${err instanceof Error ? err.message : err}`,
+      );
+      break; // network-level failure — retrying the same host with another id won't help
+    }
   }
 
-  if (!data) {
+  if (!data) return [];
+
+  const files = extractEpisodeFiles(data, mediaType, season, episode);
+  if (files.length === 0) {
+    console.log(
+      `[Flow] falix: 0 files for ${mediaType}:${tmdbId}${season != null ? ` s${season}e${episode}` : ""} (${Date.now() - startedAt}ms)`,
+    );
     return [];
   }
 
-  const files: FalixFile[] = extractEpisodeFiles(
-    data,
-    mediaType,
-    season,
-    episode,
+  // Season-scoped payloads carry no title — derive one from the release name
+  // ("Fakes Farzi S01E01 Artist 720p …mkv" → "Fakes Farzi").
+  const title = data.title || titleFromReleaseName(files[0]?.name) || "Unknown";
+  const links = mapFalixFiles(files, title, `${apiBase}/dl`);
+  console.log(
+    `[Flow] falix: ${links.length} links in ${Date.now() - startedAt}ms (files=${files.length})`,
   );
-  if (mediaType === "tv" && files.length === 0) {
-    const seasons = (data as { seasons?: unknown[] }).seasons?.length ?? 0;
-  }
-
-  if (files.length === 0) return [];
-
-  const title = (data as { title?: string }).title || "Unknown";
-  const links = mapFalixFiles(
-    files,
-    title,
-    useProxy ? `${workerBase}/api/player/falix/stream/dl` : `${apiBase}/dl`,
-  );
-
   return links;
+}
+
+/** Strip the SxxEyy episode token onward from a scene release name. */
+function titleFromReleaseName(name?: string): string {
+  const m = name?.match(/^(.*?)\s+S\d{1,2}E\d{1,3}\b/i);
+  return m?.[1]?.trim() ?? "";
 }
 
 /**
  * Fetch stream links on-device from BOTH providers: the HDHub-style stream
- * API (primary) and falix — for every title, no link-count gate. The merged
- * pool is ranked once by the stream pipeline (lib/streamPrefetch →
- * selectBestStream). Falix problems never fail the load; a primary failure
- * is rescued by falix links when it has any.
- * Throws only when both providers come up empty-and-broken, so callers can
- * surface their own error state.
+ * API (primary) and falix — for every title, no link-count gate. When the
+ * primary produces links the bundle returns immediately (falix never blocks
+ * ranking); late falix links are delivered via `onLateLinks` for a
+ * post-handoff cache merge. A primary failure/empty is still rescued by
+ * awaiting falix. Throws only when both providers come up empty-and-broken,
+ * so callers can surface their own error state.
  */
 /** Track whether the legacy hdhub+falix pipeline warned about a provider. */
 const warnedProviders = new Set<string>();
@@ -530,6 +521,14 @@ export async function fetchDirectStreams(
   episode?: number,
   /** Registry provider id — set for non-legacy direct providers (spacedom…). */
   providerId?: string,
+  /**
+   * Non-blocking falix (legacy direct path only): fired at most once with
+   * falix links that landed AFTER the primary already had links to hand off.
+   * The caller merges them into its pipeline cache; the returned bundle is
+   * primary-only. When the primary fails/empties, falix is still awaited as
+   * the rescue and this is never called.
+   */
+  onLateLinks?: (links: StreamLink[]) => void,
 ): Promise<DirectStreamBundle> {
   const fetchStartedAt = Date.now();
   // Anime-mapped title fetched by a tmdb-scheme provider (MovieBox/PenguPlay):
@@ -538,15 +537,34 @@ export async function fetchDirectStreams(
   // both schemes with identical rows (probed). Regular titles and every other
   // provider keep the resolved tt… id (unchanged behavior).
   const idDef = providerId ? getProvider(providerId) : undefined;
-  const imdbId =
-    idDef?.idScheme === "tmdb" && isAnimeMappedTitle(mediaType, tmdbId)
-      ? `tmdb:${tmdbId}`
-      : await resolveImdbId(mediaType, tmdbId);
-  if (!imdbId) {
-    throw new Error("Couldn't resolve this title's IMDB id.");
+  // TMDB-keyed registry providers (spacedom — templates use only {tmdbId})
+  // never substitute {imdbId}: skip the resolve round-trip entirely. Saves a
+  // cold resolveImdbId network call (up to seconds) on the critical path and
+  // lets titles the IMDb resolver can't map still play. The legacy hdhub
+  // pipeline and imdb-keyed providers (moviebox, way2movies) are unchanged.
+  const usesImdbTemplate =
+    !idDef?.streamSources ||
+    idDef.streamSources.length === 0 ||
+    idDef.streamSources.some((s) =>
+      [s.urlTemplate, s.urlTemplateTv, s.bodyTemplate, s.bodyTemplateTv].some(
+        (t) => typeof t === "string" && t.includes("{imdbId}"),
+      ),
+    );
+  let imdbId: string;
+  if (!usesImdbTemplate) {
+    imdbId = "";
+  } else {
+    const resolved =
+      idDef?.idScheme === "tmdb" && isAnimeMappedTitle(mediaType, tmdbId)
+        ? `tmdb:${tmdbId}`
+        : await resolveImdbId(mediaType, tmdbId);
+    if (!resolved) {
+      throw new Error("Couldn't resolve this title's IMDB id.");
+    }
+    imdbId = resolved;
   }
   console.log(
-    `[Flow] fetch ${mediaType}:${tmdbId}: imdb=${imdbId} resolved in ${Date.now() - fetchStartedAt}ms — provider=${providerId ?? "direct"}`,
+    `[Flow] fetch ${mediaType}:${tmdbId}: imdb=${imdbId || "(not needed)"} resolved in ${Date.now() - fetchStartedAt}ms — provider=${providerId ?? "direct"}`,
   );
 
   // Registry-driven direct provider (e.g. spacedom): tiered resolution over
@@ -573,6 +591,7 @@ export async function fetchDirectStreams(
 
   // Falix starts regardless of what the primary provider does — even a
   // disabled/unreachable primary doesn't stop it.
+  const falixStartedAt = Date.now();
   const falixPromise = fetchFalixLinks(
     tmdbId,
     imdbId,
@@ -587,8 +606,10 @@ export async function fetchDirectStreams(
       ? `${apiBase}/stream/series/${imdbId}:${season}:${episode}.json`
       : `${apiBase}/stream/movie/${imdbId}.json`;
 
-  // Both fetches run concurrently; results are collected sequentially so a
-  // slow primary never delays an already-finished falix response.
+  // Both fetches start together; the PRIMARY's result is what unblocks
+  // ranking. Falix no longer gates it — a slow falix response (20s+ observed
+  // on titles it has nothing for) used to stall the whole pipeline while
+  // hdhub's ready pool sat idle.
   const hdhubPromise = (async (): Promise<StreamLink[]> => {
     // Same URL the download screen uses — a payload already in memory means
     // neither side needs the network.
@@ -601,23 +622,34 @@ export async function fetchDirectStreams(
     }
 
     let res: Response;
+    let httpMs = 0;
     try {
+      const httpStartedAt = Date.now();
       res = await fetchWithTimeout(apiUrl, 15_000, {
         headers: { Accept: "application/json" },
       });
+      httpMs = Date.now() - httpStartedAt;
     } catch {
       throw new Error("Couldn't reach the stream provider.");
     }
     if (!res.ok) {
       throw new Error(`Stream provider returned HTTP ${res.status}`);
     }
+    const jsonStartedAt = Date.now();
     const raw = (await res.json()) as { streams?: unknown[] };
+    const jsonMs = Date.now() - jsonStartedAt;
+    const parseStartedAt = Date.now();
     const parsed = hdhubAdapter.parseResponse(raw, {
       imdbId,
       mediaType,
       season,
       episode,
     });
+    const parseMs = Date.now() - parseStartedAt;
+    console.log(
+      `[Flow] hdhub: http=${httpMs}ms json=${jsonMs}ms parse=${parseMs}ms ` +
+        `streams=${raw.streams?.length ?? 0} → ${parsed.length} links`,
+    );
     writeHdHubPayload(apiUrl, parsed);
     return parsed;
   })();
@@ -637,7 +669,25 @@ export async function fetchDirectStreams(
     );
   }
 
+  // Primary has links — hand back NOW. Falix keeps running in the background
+  // and merges into the pipeline cache when it lands (onLateLinks).
+  if (links.length > 0) {
+    falixPromise
+      .then((falixLinks) => {
+        console.log(
+          `[Flow] falix: ${falixLinks.length} links in ${Date.now() - falixStartedAt}ms (late — post-handoff)`,
+        );
+        if (falixLinks.length > 0) onLateLinks?.(falixLinks);
+      })
+      .catch(() => {});
+    return { tmdbId, imdbId, mediaType, links };
+  }
+
+  // Primary came up empty/failed — falix IS the rescue: wait for it.
   const falixLinks = await falixPromise;
+  console.log(
+    `[Flow] falix: ${falixLinks.length} links in ${Date.now() - falixStartedAt}ms (rescue)`,
+  );
   if (falixLinks.length > 0) {
     links.push(...falixLinks);
   }
