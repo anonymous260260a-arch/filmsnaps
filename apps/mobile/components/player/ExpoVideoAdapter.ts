@@ -106,6 +106,9 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   constructor(private player: VideoPlayer) {
     // Initial user intent is to play
     this._userPaused = !player.playing;
+    // [Q] pinpoint: epoch of construction (≈ sourceSet) so native status
+    // lines can be correlated with render/commit/effect [Q] lines.
+    console.log(`[Q] adapter-ctor status=${player.status} t=${Date.now()}`);
 
     // 1. Time updates
     this.subs.push(
@@ -184,6 +187,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       player.addListener("statusChange", (status) => {
         if (this.destroyed) return;
 
+        console.log(`[Q] native-status ${status.status} t=${Date.now()}`);
         const isBuffering = status.status === "loading";
         this.bufferingListeners.forEach((l) => l(isBuffering));
         this.statusListeners.forEach((l) => l(status.status));

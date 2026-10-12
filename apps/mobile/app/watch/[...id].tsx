@@ -61,6 +61,30 @@ import {
 } from "../../lib/telemetry";
 
 export default function WatchScreen() {
+  // [Q] pinpoint: first render of the watch route (epoch correlates with
+  // other [Q] lines; splits tap → watchEntry into nav vs effects).
+  const qRenderRef = React.useRef(0);
+  qRenderRef.current += 1;
+  if (qRenderRef.current <= 6) {
+    console.log(`[Q] watch-render#${qRenderRef.current} t=${Date.now()}`);
+  }
+  // [Q] heartbeat: a 100ms timer that logs whenever its own callback is more
+  // than 200ms late — the lateness IS the JS-block duration. Covers the
+  // sourceSet→passive window without guessing which code blocks it.
+  React.useEffect(() => {
+    let last = Date.now();
+    const startedAt = last;
+    const iv = setInterval(() => {
+      const now = Date.now();
+      const gap = now - last - 100;
+      if (gap > 200) {
+        console.log(`[Q] js-block gap=${gap}ms t=${now}`);
+      }
+      last = now;
+      if (now - startedAt > 25000) clearInterval(iv);
+    }, 100);
+    return () => clearInterval(iv);
+  }, []);
   const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
   const { settings, updateSetting } = useSettings();
@@ -101,6 +125,7 @@ export default function WatchScreen() {
   // FIX 9: stamp watchEntry on the details-started perf session (if any).
   useEffect(() => {
     markWatchEntry();
+    console.log(`[Q] watch-entry t=${Date.now()}`);
   }, []);
 
   // Last direct provider for this title (tier 4). D1: with NO route param we
@@ -539,6 +564,7 @@ export default function WatchScreen() {
   const earlyPlayerStateRef = useRef<{
     key: string;
     player: VideoPlayer;
+    url: string;
   } | null>(null);
   // If the holder was taken but HevcPlayer never mounted (language prompt,
   // gate, error), release on unmount so no orphan player survives to home.
@@ -565,7 +591,11 @@ export default function WatchScreen() {
     const earlyKey = `${type}:${parseInt(id, 10)}:s${season ?? 0}:e${episode ?? 0}:${activeDirectProvider}`;
     const taken = takeEarlyPlayer(earlyKey);
     if (taken) {
-      earlyPlayerStateRef.current = { key: earlyKey, player: taken.player };
+      earlyPlayerStateRef.current = {
+        key: earlyKey,
+        player: taken.player,
+        url: taken.url,
+      };
     }
   }
 
@@ -707,6 +737,7 @@ export default function WatchScreen() {
           }}
           earlyPlayer={earlyPlayerStateRef.current?.player ?? null}
           earlyPlayerKey={earlyPlayerStateRef.current?.key}
+          earlyPlayerUrl={earlyPlayerStateRef.current?.url}
         />
       );
     }

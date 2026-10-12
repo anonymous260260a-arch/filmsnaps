@@ -51,7 +51,8 @@ function shouldSkip(url: string): boolean {
   // Falix download-only / local files / content URIs — not pipeline heads.
   if (lower.startsWith("file://") || lower.startsWith("content://"))
     return true;
-  if (lower.includes("falixmovies.com")) return true;
+  // Matches both falix hosts (dl.falixmovies.com, download-falixm.koyeb.app).
+  if (lower.includes("falix")) return true;
   return false;
 }
 
@@ -181,4 +182,11 @@ export function releaseAllEarlyPlayers(): void {
 /** Debug/telemetry: how many warm players are held. */
 export function earlyPlayerCount(): number {
   return holders.size;
+}
+
+/** True when a warm (not-yet-taken) player is held for this key — lets the
+ *  details READY reconcile skip a re-hold without trusting its own refs
+ *  (watch may have taken the holder since). */
+export function hasEarlyPlayer(key: string): boolean {
+  return holders.has(key);
 }

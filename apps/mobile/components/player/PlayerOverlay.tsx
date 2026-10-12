@@ -168,6 +168,13 @@ export function PlayerOverlay({
   const [showAudioSheet, setShowAudioSheet] = useState(false);
   const [showSubtitleSheet, setShowSubtitleSheet] = useState(false);
   const [showSettingsSheet, setShowSettingsSheet] = useState(false);
+  // D5: each sheet mounts on FIRST open — the player's critical first render
+  // skips their hooks/subtree entirely (they also stop re-rendering hidden on
+  // every 4 Hz time tick). Once opened they stay mounted, so closing is still
+  // a `visible` flip and entrance/exit animations behave exactly as before.
+  const [audioSheetMounted, setAudioSheetMounted] = useState(false);
+  const [subtitleSheetMounted, setSubtitleSheetMounted] = useState(false);
+  const [settingsSheetMounted, setSettingsSheetMounted] = useState(false);
 
   // ── Chrome context ──
   const audioTracks = player.getAudioTracks();
@@ -703,10 +710,12 @@ export function PlayerOverlay({
   // ── Sheet openers (close-then-open keeps one Modal at a time) ──
   const openAudioSheet = useCallback(() => {
     setShowSettingsSheet(false);
+    setAudioSheetMounted(true);
     setShowAudioSheet(true);
   }, []);
   const openSubtitleSheet = useCallback(() => {
     setShowSettingsSheet(false);
+    setSubtitleSheetMounted(true);
     setShowSubtitleSheet(true);
   }, []);
 
@@ -889,7 +898,10 @@ export function PlayerOverlay({
 
                 {/* ⋮ menu — speed / audio language / screen fit (landscape: + lock) */}
                 <TouchableOpacity
-                  onPress={() => setShowSettingsSheet(true)}
+                  onPress={() => {
+                    setSettingsSheetMounted(true);
+                    setShowSettingsSheet(true);
+                  }}
                   style={styles.iconButton}
                   activeOpacity={0.6}
                   accessibilityRole="button"
@@ -1092,39 +1104,45 @@ export function PlayerOverlay({
         </TouchableOpacity>
       )}
 
-      {/* Settings & Option Sheets */}
-      <AudioTrackSheet
-        visible={showAudioSheet}
-        player={player}
-        onSelectTrack={onAudioTrackSelected}
-        onClose={closeAudioSheet}
-      />
-      <SubtitleSheet
-        visible={showSubtitleSheet}
-        player={player}
-        storageKey={subtitleKey}
-        onlineSearch={subtitleOnlineSearch}
-        sidecars={subtitleSidecars}
-        autoSync={autoSync}
-        onClose={closeSubtitleSheet}
-      />
-      <PlayerSettingsSheet
-        visible={showSettingsSheet}
-        player={player}
-        isFullscreen={isFullscreen}
-        currentSpeed={player.getPlaybackRate()}
-        onSelectSpeed={handleSelectSpeed}
-        screenFit={screenFit}
-        onSelectFit={handleSelectFit}
-        subtitleBottomMargin={settings.subtitleBottomMargin}
-        onSelectSubtitleMargin={(fraction) =>
-          updateSetting("subtitleBottomMargin", fraction)
-        }
-        lockAvailable={lockAvailable}
-        isLocked={isLocked}
-        onLock={handleLock}
-        onClose={closeSettingsSheet}
-      />
+      {/* Settings & Option Sheets — mounted on first open (D5) */}
+      {audioSheetMounted && (
+        <AudioTrackSheet
+          visible={showAudioSheet}
+          player={player}
+          onSelectTrack={onAudioTrackSelected}
+          onClose={closeAudioSheet}
+        />
+      )}
+      {subtitleSheetMounted && (
+        <SubtitleSheet
+          visible={showSubtitleSheet}
+          player={player}
+          storageKey={subtitleKey}
+          onlineSearch={subtitleOnlineSearch}
+          sidecars={subtitleSidecars}
+          autoSync={autoSync}
+          onClose={closeSubtitleSheet}
+        />
+      )}
+      {settingsSheetMounted && (
+        <PlayerSettingsSheet
+          visible={showSettingsSheet}
+          player={player}
+          isFullscreen={isFullscreen}
+          currentSpeed={player.getPlaybackRate()}
+          onSelectSpeed={handleSelectSpeed}
+          screenFit={screenFit}
+          onSelectFit={handleSelectFit}
+          subtitleBottomMargin={settings.subtitleBottomMargin}
+          onSelectSubtitleMargin={(fraction) =>
+            updateSetting("subtitleBottomMargin", fraction)
+          }
+          lockAvailable={lockAvailable}
+          isLocked={isLocked}
+          onLock={handleLock}
+          onClose={closeSettingsSheet}
+        />
+      )}
     </View>
   );
 }

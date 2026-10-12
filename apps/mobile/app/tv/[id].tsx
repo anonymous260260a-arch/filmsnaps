@@ -71,6 +71,7 @@ import { resolvePlaybackProviderId } from "../../lib/resolvePlaybackProvider";
 import { beginDetailsTap } from "../../lib/perfMetrics";
 import {
   holdEarlyPlayer,
+  hasEarlyPlayer,
   releaseEarlyPlayer,
 } from "../../lib/earlyPlayerHolder";
 import { useSettings } from "../../lib/settings";
@@ -195,6 +196,9 @@ export default function TVDetailScreen() {
   const navigatedToWatchRef = useRef(false);
   // D3: last cache key we held a warm player for (release on leave-without-watch).
   const heldEarlyKeyRef = useRef<string | null>(null);
+  // D3: URL the current hold is on — READY skips re-holding the same head
+  // (a re-hold would release the already-warmed instance and start over).
+  const heldEarlyUrlRef = useRef<string | null>(null);
   // Bookmark / resume loads stay mount-driven (not focus-gated).
   useEffect(() => {
     if (!id) return;
@@ -233,21 +237,52 @@ export default function TVDetailScreen() {
           .then((providerId) => {
             if (!providerId || cancelled || cleared) return;
             resolvedProviderRef.current = providerId;
+            const key = `tv:${parseInt(id)}:s${season}:e1:${providerId}`;
             return prefetchStreams(parseInt(id), "tv", season, 1, {
               cellularMaxMB: settings.cellularMaxMB,
               maxQuality: settings.maxQuality,
               preferredAudioLanguage: settings.preferredAudioLanguage,
               providerId,
               trigger: "details",
+              // D3: hold at RANK (unverified head) — the head walk runs
+              // while the native player warms; READY reconciles below if
+              // the walk advances the head.
+              onEarlyHead: (head) => {
+                // Blur cancels the chain, but if the user already tapped
+                // Watch the holder is FOR the watch screen (adopts on next
+                // render) — hold anyway; the cleanup release still guards
+                // on navigatedToWatch so back-nav cannot orphan it.
+                // (cleared is set in the same cleanup as cancelled — must
+                // not bypass the Watch-tap exemption, matching movie/[id].)
+                if (cancelled && !navigatedToWatchRef.current) return;
+                if (holdEarlyPlayer(key, head)) {
+                  heldEarlyKeyRef.current = key;
+                  heldEarlyUrlRef.current = head.url;
+                }
+              },
             })
               .then((snap) => {
                 // D3: pipeline READY during details dwell → warm player on head.
-                if (cancelled || cleared || !snap || snap.links.length === 0)
+                if (
+                  (cancelled && !navigatedToWatchRef.current) ||
+                  !snap ||
+                  snap.links.length === 0
+                )
                   return;
                 const head = snap.links[snap.bestIndex];
-                const key = `tv:${parseInt(id)}:s${season}:e1:${providerId}`;
+                // RANK hold already sits on this exact head — keep the
+                // warmed instance instead of releasing it and starting over.
+                // hasEarlyPlayer guards stale refs: watch may have taken the
+                // holder since (back-navigation re-focus).
+                if (
+                  heldEarlyKeyRef.current === key &&
+                  heldEarlyUrlRef.current === head?.url &&
+                  hasEarlyPlayer(key)
+                )
+                  return;
                 if (holdEarlyPlayer(key, head)) {
                   heldEarlyKeyRef.current = key;
+                  heldEarlyUrlRef.current = head?.url ?? null;
                 }
               })
               .catch((err) => {
@@ -268,6 +303,7 @@ export default function TVDetailScreen() {
         if (!navigatedToWatchRef.current && heldEarlyKeyRef.current) {
           releaseEarlyPlayer(heldEarlyKeyRef.current);
           heldEarlyKeyRef.current = null;
+          heldEarlyUrlRef.current = null;
         }
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps

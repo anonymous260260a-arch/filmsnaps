@@ -8,7 +8,11 @@
  * retry state for the player.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getProvider, isDirectProvider } from "@filmsnaps/shared";
+import {
+  getProvider,
+  isDirectProvider,
+  effectiveQuality,
+} from "@filmsnaps/shared";
 import type { ValidationResult } from "../lib/streamValidator";
 import {
   forgetWorkingSource,
@@ -178,6 +182,12 @@ export function useDirectStreamPipeline({
       setSelectionReason(handoff.result.selectionReason);
       setLastWorkingIndex(undefined);
       setLoading(false);
+      {
+        const hh = handoff.result.links[handoff.result.bestIndex];
+        console.log(
+          `[Q] handoff-head ${type}:${id}: idx=${handoff.result.bestIndex} rawQ=${hh?.quality ?? "?"} effQ=${hh ? effectiveQuality(hh) : "?"} size=${hh?._meta?.sizeBytes ?? 0} url=${hh?.url.slice(0, 90)}`,
+        );
+      }
     } else {
       markPerfStage("handoff", { used: false, providerId: provider ?? null });
       setPerfContext({ handoff: "none" });
@@ -346,6 +356,22 @@ export function useDirectStreamPipeline({
         setSelectionReason(snap.selectionReason);
         setBestIndex(nextBestIndex);
         setLastWorkingIndex(lastUsed);
+        {
+          const fh = nextLinks[nextBestIndex];
+          console.log(
+            `[Q] feed-head ${type}:${id}: idx=${nextBestIndex}/${nextLinks.length} rawQ=${fh?.quality ?? "?"} size=${fh?._meta?.sizeBytes ?? 0} url=${fh?.url.slice(0, 90)}`,
+          );
+          console.log(
+            `[Q] feed-top3 ${type}:${id}: ` +
+              nextLinks
+                .slice(0, 3)
+                .map(
+                  (l, i) =>
+                    `#${i} rawQ=${l.quality ?? "?"} url=…${l.url.slice(-45)}`,
+                )
+                .join(" | "),
+          );
+        }
         // linksSet after last-working promotion — player may consume a reordered head.
         const head2 = nextLinks[nextBestIndex];
         const fed = head2?._meta?.providerId ?? consumedProvider;

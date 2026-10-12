@@ -20,6 +20,7 @@ import React, {
   useMemo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useState,
   useRef,
 } from "react";
@@ -174,6 +175,10 @@ interface HevcPlayerProps {
   externalPlayer?: VideoPlayer | null;
   /** D3: cache key the external player was held under (for release-on-close). */
   earlyPlayerKey?: string;
+  /** D3: URI the warm player was actually held with. When it differs from
+   *  videoSource (rank-time hold + walk advanced, or a late merge reordered
+   *  the pool), adoption syncs the source on the first URL-change pass. */
+  earlyPlayerUrl?: string;
   /** Offline/local playback — mount straight into fullscreen landscape. */
   startFullscreen?: boolean;
   /** Source is a downloaded file: no chain to fall back through, no provider
@@ -348,6 +353,7 @@ export function HevcPlayer({
   onNextEpisode,
   externalPlayer,
   earlyPlayerKey,
+  earlyPlayerUrl,
   isAnime,
   startFullscreen = false,
   offline = false,
@@ -534,6 +540,14 @@ export function HevcPlayer({
     // FIX 1: hevcMounted marks first render; legacy "tap" is the fresh-session first mark.
     perfRef.current.mark("hevcMounted");
     setActivePerfSession(perfRef.current);
+  }
+  // [Q] pinpoint: which render pass is this, and when — a 2.9s render→effect
+  // gap means either many re-renders or one blocked render. Epoch correlates
+  // this line with every other [Q] line carrying t=.
+  const renderCountRef = useRef(0);
+  renderCountRef.current += 1;
+  if (renderCountRef.current <= 6) {
+    console.log(`[Q] render#${renderCountRef.current} t=${Date.now()}`);
   }
   /** Episode identity — a change here drops carried-over playback position. */
   const lastEpKeyRef = useRef(`${season ?? ""}:${episode ?? ""}`);
@@ -858,6 +872,19 @@ export function HevcPlayer({
       }
       console.log(
         `[HevcPlayer] links → ${links.length} rows (sub=${sub} dub=${dub}${other ? ` other=${other}` : ""}) [${firsts.join(" | ")}]`,
+      );
+      console.log(
+        `[Q] player-array first3: ` +
+          links
+            .slice(0, 3)
+            .map(
+              (l, i) =>
+                `#${i} rawQ=${l.quality ?? "?"} size=${l._meta?.sizeBytes ?? 0} url=…${l.url.slice(-45)}`,
+            )
+            .join(" | "),
+      );
+      console.log(
+        `[Q] player-default idx=${defaultIndex} startIdx=${initialStart.index} rawQ=${links[defaultIndex]?.quality ?? "?"} url=${(links[defaultIndex]?.url ?? links[0]?.url ?? "").slice(0, 90)}`,
       );
     }
     // A links refresh while something is already playing (racing prefetch vs
@@ -1435,6 +1462,8 @@ export function HevcPlayer({
 
   // Track continuous playback position across source switches and seeking
   const lastPlaybackTimeRef = useRef(startAt);
+  /** [Flow] diagnostic — epoch when the current source was applied. */
+  const sourceSetAtRef = useRef(0);
   // Watch progress threshold tracking — fires at 25/50/75/100% crossings.
   const watchedThresholdsRef = useRef<Set<number>>(new Set());
   // Episode identity the applied source belongs to. The setup factory below
@@ -1443,12 +1472,53 @@ export function HevcPlayer({
   // must be keyed or a cross-episode switch seeks to the old episode's time.
   const sourceEpKeyRef = useRef(`${season ?? ""}:${episode ?? ""}`);
 
+  // [Q] pinpoint: split sourceSet (render/factory) → commit → passive-flush.
+  // A layout effect runs synchronously at commit (before paint); the paired
+  // passive effect runs after paint. The gap between them = JS thread busy /
+  // React scheduling; commit−sourceSet = remaining render phase.
+  useLayoutEffect(() => {
+    console.log(
+      `[Q] commit sinceSourceSet=${
+        sourceSetAtRef.current ? Date.now() - sourceSetAtRef.current : "n/a"
+      }ms t=${Date.now()}`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    console.log(
+      `[Q] passive sinceSourceSet=${
+        sourceSetAtRef.current ? Date.now() - sourceSetAtRef.current : "n/a"
+      }ms t=${Date.now()}`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Create video player — immediate (no gating). D3: when details held a warm
   // player for this key, ADOPT it (hookPlayer is still constructed so hook
   // order stays stable; the external instance is what VideoView/adapter drive).
-  const hookPlayer = useVideoPlayer(videoSource, (playerInstance) => {
+  // CRITICAL: when adopting, construct the hook player with a NULL source.
+  // A real-source hook player begins its native load at construction (pause()
+  // does NOT stop it), so adoption used to spawn TWO concurrent HEVC decoders
+  // on the same stream — that starved the JS thread for ~38s and pushed
+  // decode to 41s on the emulator. Null source = idle hook player, no second
+  // decoder. The player is keyed on the stringified source, so if externalPlayer
+  // ever flips the hook player is recreated (old one released by the hook).
+  const hookSource = externalPlayer ? null : videoSource;
+  const hookPlayer = useVideoPlayer(hookSource, (playerInstance) => {
+    // Adopted early player drives playback — this idle instance must never
+    // play (double audio) or touch the real source. sourceSet/playerOpen are
+    // marked by the adoption effect instead.
+    if (externalPlayer) {
+      try {
+        playerInstance.pause();
+      } catch {}
+      return;
+    }
     console.log(
       `[Flow] player: opening #${activeIndexRef.current} ${currentLink?.quality ?? "?"} ${activeUrl.slice(0, 60)} (container=${container}, codec=${codec}) wrapped=${videoSource.uri.slice(0, 80)} offline=${offline}`,
+    );
+    console.log(
+      `[Q] player-open idx=${activeIndexRef.current} rawQ=${currentLink?.quality ?? "?"} size=${currentLink?._meta?.sizeBytes ?? 0} name=${JSON.stringify((currentLink?.name ?? "").slice(0, 80))} url=${activeUrl.slice(0, 90)} t=${Date.now()}`,
     );
     // [watchperf] FIX 2 — sourceSet: URL applied to the video player instance.
     perfRef.current?.mark("sourceSet", {
@@ -1456,6 +1526,7 @@ export function HevcPlayer({
       codec,
       provider: currentLink?._meta?.providerId,
     });
+    sourceSetAtRef.current = Date.now();
     playerInstance.loop = false;
     playerInstance.timeUpdateEventInterval = 0.25;
     // Native default is FALSE (despite docs saying true) — without this,
@@ -1478,15 +1549,9 @@ export function HevcPlayer({
     if (initialTime > 0) {
       playerInstance.currentTime = initialTime;
     }
-    // When a warm external player is adopted, this hook player is only kept
-    // for stable hook order — it must never play (double audio).
-    if (externalPlayer) {
-      try {
-        playerInstance.pause();
-      } catch {}
-    } else {
-      playerInstance.play();
-    }
+    // Reaching here means externalPlayer was null at construction (the adopt
+    // case early-returns above) — this is the sole playback player.
+    playerInstance.play();
   });
 
   const adoptedExternalRef = useRef(false);
@@ -1504,6 +1569,7 @@ export function HevcPlayer({
       provider: currentLink?._meta?.providerId,
       via: "early-adopt",
     });
+    sourceSetAtRef.current = Date.now();
     // The warm player may already be readyToPlay — surface that immediately
     // instead of waiting for a fresh statusChange we may never receive.
     try {
@@ -1527,7 +1593,10 @@ export function HevcPlayer({
       externalPlayer.play();
     } catch {}
     // E1: segment open is owned by the URL-change effect (first pass included).
-    lastExternalUriRef.current = videoSource?.uri ?? null;
+    // Seed with the URI the held player ACTUALLY has — when it differs from
+    // videoSource (rank-time hold, then the walk advanced or a late merge
+    // reordered), the URL-change effect below replaces on this first pass.
+    lastExternalUriRef.current = earlyPlayerUrl ?? videoSource?.uri ?? null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalPlayer]);
 
@@ -1584,6 +1653,12 @@ export function HevcPlayer({
   useEffect(() => {
     if (!adapter.onStatusChange) return;
     return adapter.onStatusChange((status) => {
+      const sinceSrc = sourceSetAtRef.current
+        ? Date.now() - sourceSetAtRef.current
+        : -1;
+      console.log(
+        `[Flow] player: status=${status} (+${sinceSrc}ms since sourceSet)`,
+      );
       if (status === "readyToPlay") {
         perfRef.current?.mark("playerReady", { status });
       }
@@ -2690,6 +2765,14 @@ export function HevcPlayer({
   // unmount / focus loss. No edge-to-edge letterboxing surprises: safe-area
   // insets collapse to ~0 while immersive, so the surface re-expands cleanly.
   const immersive = surfaceFillsScreen;
+
+  // [Q] pinpoint: end of the render body — body-end − render#N = pure render
+  // time; commit − body-end = React reconciliation/children of this pass.
+  if (renderCountRef.current <= 6) {
+    console.log(
+      `[Q] render#N body-end n=${renderCountRef.current} t=${Date.now()}`,
+    );
+  }
 
   return (
     <View style={styles.container}>
