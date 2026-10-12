@@ -1156,6 +1156,9 @@ export default function SettingsScreen() {
         subtitle="New sources are ranked to match this. Already-playing streams are never interrupted."
         onSelect={(value) => {
           updateSetting("preferredAudioLanguage", value);
+          // Answering here means the user has chosen a language — the
+          // first-run prompt on the watch page must not reappear.
+          updateSetting("hasAnsweredLanguagePrompt", true);
           setShowLangSheet(false);
         }}
       />
