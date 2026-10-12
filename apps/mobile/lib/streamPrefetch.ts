@@ -34,6 +34,7 @@ import {
   getEnabledProviders,
   isDirectProvider,
   isProviderAvailableOn,
+  type StreamSelection,
 } from "@filmsnaps/shared";
 import { fetchDirectStreams } from "./directStreams";
 import {
@@ -79,6 +80,13 @@ export interface StreamCacheOptions {
   onStage?: (stage: ChainStage | null) => void;
   /** [watchperf] FIX 1 — mode + start time of the pipeline that answers. */
   onPipelineMeta?: (meta: PipelineFeedMeta) => void;
+  /**
+   * D3: fired once at RANK with the unverified head so the details page can
+   * construct the warm player BEFORE the head walk finishes (READY then
+   * reconciles if the walk advanced the head). Only the pipeline STARTer
+   * receives it — a joiner falls back to the READY-time hold.
+   */
+  onEarlyHead?: (head: StreamLink) => void;
 }
 
 /** B3 — what the chain is doing while the user waits. */
@@ -138,6 +146,32 @@ const EARLY = new Map<
     resolve: (r: StreamCacheResult | null) => void;
   }
 >();
+/**
+ * Non-blocking falix: links that landed AFTER the primary handoff, buffered
+ * per cacheKey until the pipeline writes its cache entry (storeWinner then
+ * re-invokes applyLateLinks). The handed-out head is never mutated — the
+ * merged pool serves the next peek (re-open, episode switch, fallback).
+ */
+const PENDING_LATE = new Map<string, StreamLink[]>();
+
+/**
+ * Rank-order memo — every registry selector is a pure function of
+ * (links, options), so a pool we already ranked under the exact same
+ * options always produces the identical order. A full pipeline re-run after
+ * a TTL/LRU miss re-fetches the SAME pool (provider payload cache hit) and
+ * then spends 1–3 s re-ranking it — the memo hands back the previous order
+ * instead. Any change in pool content, runtime, selector (via providerId),
+ * or rank option invalidates the entry, so the order handed out is always
+ * byte-identical to what a fresh rank would produce.
+ */
+interface RankMemo {
+  fingerprint: string;
+  runtimeMinutes: number;
+  rankOptions: CacheEntry["rankOptions"];
+  selection: StreamSelection;
+}
+const RANK_MEMO = new Map<string, RankMemo>();
+const MAX_RANK_MEMO = 16;
 
 /**
  * Startup budget for the head walk. The champion's probe verdict normally
@@ -229,7 +263,7 @@ function normalizeOptions(options: StreamCacheOptions) {
 }
 
 function rankOptionsMatch(
-  cached: CacheEntry,
+  cached: { rankOptions: CacheEntry["rankOptions"] },
   rankOptions: CacheEntry["rankOptions"],
 ): boolean {
   return (
@@ -239,6 +273,78 @@ function rankOptionsMatch(
     cached.rankOptions.preferredAudioLanguage ===
       rankOptions.preferredAudioLanguage
   );
+}
+
+/**
+ * Content hash of the rank pool — StreamLink is plain JSON, so the
+ * serialized pool covers every field the ranker reads (name/quality/url/
+ * size/_meta). Two independent FNV-1a passes make a false hit
+ * (wrong order served) astronomically unlikely. Returns null when the pool
+ * isn't serializable → callers fall back to a fresh rank.
+ */
+function fingerprintRankPool(links: StreamLink[]): string | null {
+  let json: string;
+  try {
+    json = JSON.stringify(links);
+  } catch {
+    return null;
+  }
+  let h1 = 0x811c9dc5;
+  let h2 = 0xcbf29ce4;
+  for (let i = 0; i < json.length; i++) {
+    const c = json.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x01000197);
+  }
+  return `${json.length}:${(h1 >>> 0).toString(16)}${(h2 >>> 0).toString(16)}`;
+}
+
+/**
+ * Rank with memo lookup. On hit: previous order reused (refreshes recency).
+ * On miss: fresh rank, then stored keyed by this provider-scoped cacheKey.
+ */
+async function rankWithMemo(
+  cacheKey: string,
+  links: StreamLink[],
+  runtimeMinutes: number,
+  rankOptions: CacheEntry["rankOptions"],
+  rank: () => Promise<StreamSelection>,
+): Promise<StreamSelection> {
+  let fingerprint: string | null = null;
+  const prior = RANK_MEMO.get(cacheKey);
+  if (prior) {
+    fingerprint = fingerprintRankPool(links);
+    if (
+      fingerprint !== null &&
+      fingerprint === prior.fingerprint &&
+      prior.runtimeMinutes === runtimeMinutes &&
+      rankOptionsMatch(prior, rankOptions)
+    ) {
+      // Map iterates in insertion order — re-insert to refresh recency.
+      RANK_MEMO.delete(cacheKey);
+      RANK_MEMO.set(cacheKey, prior);
+      console.log(
+        `[Flow] rank ${cacheKey}: memo HIT — pool unchanged (${links.length} links), previous order reused`,
+      );
+      return prior.selection;
+    }
+  }
+  const selection = await rank();
+  if (fingerprint === null) fingerprint = fingerprintRankPool(links);
+  if (fingerprint !== null) {
+    while (RANK_MEMO.size >= MAX_RANK_MEMO) {
+      const oldest = RANK_MEMO.keys().next().value;
+      if (oldest === undefined) break;
+      RANK_MEMO.delete(oldest);
+    }
+    RANK_MEMO.set(cacheKey, {
+      fingerprint,
+      runtimeMinutes,
+      rankOptions: { ...rankOptions },
+      selection,
+    });
+  }
+  return selection;
 }
 
 /** Direct providers for the chain: preferred id first, then registry order. */
@@ -290,6 +396,96 @@ function storeSuccess(
     pipelineStartedAt: pipelineStartedAt ?? result.prefetchedAt,
     rankOptions,
   });
+}
+
+/**
+ * Non-blocking falix merge: re-rank (primary links + late links) with the
+ * same provider selector and overwrite the cache entry. No-op while the
+ * entry doesn't exist yet (rank/walk still running — storeWinner flushes
+ * after the write) or when nothing new survived URL-dedup. Returns the
+ * merged result (so the chain winner can mirror it onto the caller keys),
+ * null on no-op.
+ */
+async function applyLateLinks(
+  cacheKey: string,
+  tmdbId: number,
+  mediaType: "movie" | "tv",
+  season: number | undefined,
+  episode: number | undefined,
+  rankOptions: CacheEntry["rankOptions"],
+): Promise<StreamCacheResult | null> {
+  const pending = PENDING_LATE.get(cacheKey);
+  const entry = CACHE.get(cacheKey);
+  if (!pending?.length) return null;
+  if (!entry || entry.empty || Date.now() >= entry.expiresAt) return null;
+  PENDING_LATE.delete(cacheKey);
+
+  const existing = new Set(entry.links.map((l) => l.url));
+  const fresh = pending.filter((l) => !existing.has(l.url));
+  if (fresh.length === 0) {
+    console.log(
+      `[Flow] late merge ${cacheKey}: +0 links (all ${pending.length} dupes)`,
+    );
+    return null;
+  }
+
+  const providerDef = getProvider(rankOptions.providerId);
+  const runtimeMinutes = mediaType === "tv" ? 45 : 120;
+  const pool = [...entry.links, ...fresh];
+  const selection = await rankWithMemo(
+    cacheKey,
+    pool,
+    runtimeMinutes,
+    rankOptions,
+    () =>
+      getStreamSelector(providerDef?.selection).select(pool, {
+        cellularMaxMB: rankOptions.cellularMaxMB,
+        maxQuality: rankOptions.maxQuality,
+        preferredLanguage: rankOptions.preferredAudioLanguage,
+        runtimeMinutes,
+      }),
+  );
+  const merged = selection.sortedLinks;
+  const champ = merged[0];
+  const champValidated =
+    champ != null &&
+    entry.validationResults.get(champ.url)?.outcome === "valid";
+  const champGb = (champ?._meta?.sizeBytes ?? 0) / 1e9;
+  console.log(
+    `[Flow] rank ${cacheKey}: late merge ${entry.links.length} → ${merged.length} playable · ` +
+      `head #0 = ${champ ? effectiveQuality(champ) : "?"} ` +
+      `${champGb > 0 ? `${champGb.toFixed(2)}GB ` : ""}` +
+      `— ${selection.selectionReason} (+${fresh.length} late links)`,
+  );
+
+  const result: StreamCacheResult = {
+    links: merged,
+    bestIndex: 0,
+    bestValidated: champValidated,
+    validationResults: entry.validationResults,
+    allDead: false,
+    selectionReason: selection.selectionReason,
+    capBytes: selection.capBytes,
+    prefetchedAt: Date.now(),
+  };
+  storeSuccess(cacheKey, result, rankOptions, entry.pipelineStartedAt);
+
+  // Mirror onto the :resolved pointer when it points at this same provider.
+  const resolvedKey = getResolvedKey(tmdbId, mediaType, season, episode);
+  const resolved = CACHE.get(resolvedKey);
+  if (
+    resolved &&
+    !resolved.empty &&
+    resolved.rankOptions.providerId === rankOptions.providerId
+  ) {
+    storeSuccess(
+      resolvedKey,
+      result,
+      resolved.rankOptions,
+      resolved.pipelineStartedAt,
+    );
+  }
+  return result;
 }
 
 /**
@@ -608,6 +804,12 @@ export async function prefetchStreams(
   });
   EARLY.set(cacheKey, { promise: earlyPromise, resolve: resolveEarly });
   const onRanked = (early: StreamCacheResult) => {
+    // D3: warm-player hook — construct the native player at RANK (unverified
+    // head) so the demuxer warms during the head walk instead of after READY.
+    // Runs BEFORE the waiter gate: a details dwell without a joiner still
+    // holds. READY reconciles if the walk advances the head.
+    const earlyHead = early.links[early.bestIndex];
+    if (earlyHead) options.onEarlyHead?.(earlyHead);
     const waiters = WAITERS.get(cacheKey) ?? 0;
     if (waiters <= 0) return;
     // Fire-and-forget: probeHeadWalk must not wait on the grace loop (they
@@ -672,8 +874,9 @@ export async function prefetchStreams(
  * Advance only on hard fetch failure or 0 links (negative-cached results
  * skip without fetching). Never starts a second provider while one is
  * in-flight. Embeds are never chained (unchanged). The legacy "direct"
- * provider still merges hdhub∥falix *inside* fetchDirectStreams — that
- * pre-existing single-provider merge is intentional and stays.
+ * provider fetches hdhub∥falix inside fetchDirectStreams — hdhub unblocks
+ * ranking; slow falix lands later and merges into the cache post-handoff
+ * (PENDING_LATE / applyLateLinks), never delaying the head.
  */
 async function runPipeline(
   cacheKey: string,
@@ -727,6 +930,28 @@ async function runPipeline(
       );
     }
     purgeExpired();
+    // Falix links that landed while the pipeline was still running merge now
+    // that the entry exists (the fetch callback no-oped before this write).
+    applyLateLinks(
+      providerKey,
+      tmdbId,
+      mediaType,
+      season,
+      episode,
+      rankFor(providerId),
+    )
+      .then((merged) => {
+        if (merged && providerKey !== cacheKey) {
+          storeSuccess(cacheKey, merged, rankOptions, pipelineStartedAt);
+          storeSuccess(
+            getResolvedKey(tmdbId, mediaType, season, episode),
+            merged,
+            { ...rankOptions, providerId },
+            pipelineStartedAt,
+          );
+        }
+      })
+      .catch(() => {});
   };
 
   // Preferred provider first; remaining direct providers in registry order.
@@ -829,6 +1054,27 @@ async function runSingleProvider(
         season,
         episode,
         rankOptions.providerId,
+        // Non-blocking falix: buffered + merged into the cache once the
+        // pipeline writes its entry (storeWinner flushes; a late arrival
+        // after that merges immediately).
+        (lateLinks) => {
+          if (lateLinks.length === 0) return;
+          console.log(
+            `[Flow] late merge ${cacheKey}: falix +${lateLinks.length} links after handoff`,
+          );
+          PENDING_LATE.set(cacheKey, [
+            ...(PENDING_LATE.get(cacheKey) ?? []),
+            ...lateLinks,
+          ]);
+          applyLateLinks(
+            cacheKey,
+            tmdbId,
+            mediaType,
+            season,
+            episode,
+            rankOptions,
+          ).catch(() => {});
+        },
       );
       rawLinks = bundle.links;
       fetchMs = Date.now() - fetchStartedAt;
@@ -857,18 +1103,25 @@ async function runSingleProvider(
     }
 
     // ── 2. Rank with THIS provider's own selector (chain never mixes pools) ──
+    const rankStartedAt = Date.now();
     const providerDef = rankOptions.providerId
       ? getProvider(rankOptions.providerId)
       : undefined;
-    const selection = await getStreamSelector(providerDef?.selection).select(
+    const runtimeMinutes = mediaType === "tv" ? 45 : 120;
+    const selection = await rankWithMemo(
+      cacheKey,
       rawLinks,
-      {
-        cellularMaxMB: rankOptions.cellularMaxMB,
-        maxQuality: rankOptions.maxQuality,
-        preferredLanguage: rankOptions.preferredAudioLanguage,
-        runtimeMinutes: mediaType === "tv" ? 45 : 120,
-      },
+      runtimeMinutes,
+      rankOptions,
+      () =>
+        getStreamSelector(providerDef?.selection).select(rawLinks, {
+          cellularMaxMB: rankOptions.cellularMaxMB,
+          maxQuality: rankOptions.maxQuality,
+          preferredLanguage: rankOptions.preferredAudioLanguage,
+          runtimeMinutes,
+        }),
     );
+    const rankMs = Date.now() - rankStartedAt;
     const links = selection.sortedLinks;
     const champion = links[0];
     const champGb = (champion?._meta?.sizeBytes ?? 0) / 1e9;
@@ -876,7 +1129,21 @@ async function runSingleProvider(
       `[Flow] rank ${cacheKey}: ${rawLinks.length} → ${links.length} playable · ` +
         `head #0 = ${champion ? effectiveQuality(champion) : "?"} ` +
         `${champGb > 0 ? `${champGb.toFixed(2)}GB ` : ""}` +
-        `(cap ${Math.round(selection.capBytes / 1e6)}MB) — ${selection.selectionReason}`,
+        `(cap ${Math.round(selection.capBytes / 1e6)}MB) — ${selection.selectionReason} ` +
+        `(fetch=${fetchMs}ms rank=${rankMs}ms)`,
+    );
+    console.log(
+      `[Q] rank-head ${cacheKey}: rawQ=${champion?.quality ?? "?"} effQ=${champion ? effectiveQuality(champion) : "?"} size=${champion?._meta?.sizeBytes ?? 0} name=${JSON.stringify((champion?.name ?? "").slice(0, 80))} url=${champion?.url.slice(0, 90)}`,
+    );
+    console.log(
+      `[Q] rank-top3 ${cacheKey}: ` +
+        links
+          .slice(0, 3)
+          .map(
+            (l, i) =>
+              `#${i} rawQ=${l.quality ?? "?"} effQ=${effectiveQuality(l)} url=…${l.url.slice(-45)}`,
+          )
+          .join(" | "),
     );
 
     // Phase 4 T2 + E3 — provider_fetch OK after ranking, so the event can carry
@@ -910,7 +1177,14 @@ async function runSingleProvider(
     }
 
     // ── 3. Head walk ──
+    const walkStartedAt = Date.now();
     const head = await probeHeadWalk(links, 0, probedUrls);
+    console.log(
+      `[Flow] head-walk ${cacheKey}: ${Date.now() - walkStartedAt}ms ` +
+        `(head #${head.index} ${
+          head.allDead ? "all-dead" : head.validated ? "valid" : "unverified"
+        })`,
+    );
 
     // Phase 4 T2 — provider_fetch at head probe (probeMs + verdict).
     {
@@ -929,6 +1203,12 @@ async function runSingleProvider(
       });
     }
 
+    {
+      const hl = links[head.index];
+      console.log(
+        `[Q] walk-head ${cacheKey}: idx=${head.index} rawQ=${hl?.quality ?? "?"} effQ=${hl ? effectiveQuality(hl) : "?"} url=${hl?.url.slice(0, 90)}`,
+      );
+    }
     return {
       ok: true,
       result: {
@@ -1087,10 +1367,12 @@ async function probeHeadWalk(
 /** Drop the whole cache (player close, media change, "re-check all" flow). */
 export function clearPrefetchCache(): void {
   CACHE.clear();
+  RANK_MEMO.clear();
   IN_FLIGHT.clear();
   streamHandoff = null;
   pinnedCacheKey = null;
   WAITERS.clear();
+  PENDING_LATE.clear();
   for (const e of EARLY.values()) e.resolve(null);
   EARLY.clear();
 }
