@@ -42,6 +42,7 @@ export interface PlaybackProviderQuery {
 function isValidCandidate(
   id: string | null | undefined,
   platform: ProviderPlatform,
+  anime?: boolean,
 ): string | null {
   if (!id) return null;
   const def = getProvider(id);
@@ -49,7 +50,15 @@ function isValidCandidate(
   // A stale/foreign default pointing at a web-only DIRECT source (e.g. bing
   // deep-linked from web) must fall through to the next tier, not open a
   // dead server. Embeds always pass.
-  return isProviderAvailableOn(def, platform) ? def.id : null;
+  if (!isProviderAvailableOn(def, platform)) return null;
+  // Anime session: a savedServer/lastProvider that is NOT anime-capable (its
+  // mediaTypes lacks "anime", e.g. spacedom) must not win over the anime
+  // default (justanime). Without this, a stale movie/TV provider resolves,
+  // returns empty for an anime title, and the player walks spacedom →
+  // moviebox → justanime (seconds of dead-provider chase) before the MAL
+  // pipeline engages. Manual picks bypass this via pickedProvider.
+  if (anime && !(def.mediaTypes ?? ["movie_tv"]).includes("anime")) return null;
+  return def.id;
 }
 
 export interface ResolvedPlaybackProvider {
@@ -78,7 +87,7 @@ export function resolvePlaybackProviderIdTiered(
     [q.lastProvider, "last"],
   ];
   for (const [id, tier] of candidates) {
-    const valid = isValidCandidate(id, platform);
+    const valid = isValidCandidate(id, platform, q.anime);
     if (valid) return { providerId: valid, tier };
   }
   return {
