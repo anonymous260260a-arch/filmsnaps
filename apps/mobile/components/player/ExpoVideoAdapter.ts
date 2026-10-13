@@ -63,6 +63,8 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   /** Seek generation whose "suppressing pre-seek update" line was last logged. */
   private _suppressLogGen = -1;
   private _seekSafetyTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 12s give-up: emits the REAL position if a held seek never resolves. */
+  private _seekBackstopTimer: ReturnType<typeof setTimeout> | null = null;
 
   private timeListeners: ((time: number, duration: number) => void)[] = [];
   private playPauseListeners: ((isPaused: boolean) => void)[] = [];
@@ -100,6 +102,10 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     // the seek resolved instantly and the UI bounced optimistic → old → new.
     // ExoPlayer seeks exactly, so ±3s around the target is a safe landing
     // window; the 5s safety timer un-sticks anything weirder.
+    // Near-zero reports while a deeper target is pending are pre-seek
+    // residue, never a landing — without this, a seek to ≤15s "resolved"
+    // at 0s and the bar dropped to 0% until the chunk loaded.
+    if (time <= 2 && target >= time + 3) return false;
     return target <= 15 ? time <= target + 3 : Math.abs(time - target) <= 3;
   }
 
@@ -138,6 +144,9 @@ export class ExpoVideoAdapter implements PlayerAdapter {
             // seek shows the pre-seek updates the UI must NOT display.
             if (this._suppressLogGen !== this._seekGeneration) {
               this._suppressLogGen = this._seekGeneration;
+              console.log(
+                `[Bar] adapter hold residue t=${time.toFixed(2)} target=${this._targetSeekTime} status=${this.player?.status} playing=${this.player?.playing}`,
+              );
             }
             return;
           }
@@ -427,10 +436,14 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       if (dur > 0) {
         this.metadataLoaded = true;
         const time = Number.isFinite(this.player?.currentTime)
-          ? Math.max(0, this.player?.currentTime)
+          ? Math.max(0, this.player.currentTime)
           : 0;
 
-        this.timeListeners.forEach((l) => l(time, dur));
+        // Hold duration-only polls back during an active seek — a ~0 time
+        // here would reach the bar unfiltered.
+        if (!this._isSeeking) {
+          this.timeListeners.forEach((l) => l(time, dur));
+        }
         return;
       }
 
@@ -640,17 +653,39 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     }, 400);
 
     if (this._seekSafetyTimer) clearTimeout(this._seekSafetyTimer);
+    if (this._seekBackstopTimer) clearTimeout(this._seekBackstopTimer);
     this._seekSafetyTimer = setTimeout(() => {
       // Only clear if a newer seek hasn't superseded this one
       if (this._seekGeneration !== myGeneration) return;
-      this._isSeeking = false;
       const actualTime = Number.isFinite(this.player?.currentTime)
         ? this.player?.currentTime
         : clamped;
-      const resolvedTime = this.isSeekResolved(actualTime)
-        ? actualTime
-        : clamped;
-      this.timeListeners.forEach((l) => l(resolvedTime, this.getDuration()));
+      const landed = this.isSeekResolved(actualTime);
+      if (landed) {
+        this._isSeeking = false;
+        this.timeListeners.forEach((l) => l(actualTime, this.getDuration()));
+      } else {
+        // Slow chunk: keep the optimistic target on screen AND keep
+        // `_isSeeking` so native ~0 residue stays suppressed — force-
+        // clearing here let the next native tick through and the bar
+        // jumped to 0% until the chunk loaded. The 12s backstop gives up
+        // and reports the real position if the seek never resolves.
+        console.log(
+          `[Bar] seek safety held t=${actualTime?.toFixed(2)} target=${clamped}`,
+        );
+        this.timeListeners.forEach((l) => l(clamped, this.getDuration()));
+        this._seekBackstopTimer = setTimeout(() => {
+          if (this.destroyed || this._seekGeneration !== myGeneration) return;
+          this._isSeeking = false;
+          const finalTime = Number.isFinite(this.player?.currentTime)
+            ? this.player?.currentTime
+            : clamped;
+          console.warn(
+            `[Bar] seek backstop t=${finalTime} target=${clamped} (seek never resolved)`,
+          );
+          this.timeListeners.forEach((l) => l(finalTime, this.getDuration()));
+        }, 7000);
+      }
 
       // If the player failed to seek (stuck near 0 while target was >10s),
       // signal error to trigger fallback to a seekable backup stream
@@ -927,6 +962,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
 
     // Clear all timers
     if (this._seekSafetyTimer) clearTimeout(this._seekSafetyTimer);
+    if (this._seekBackstopTimer) clearTimeout(this._seekBackstopTimer);
     if (this.errorCheckTimer) clearInterval(this.errorCheckTimer);
 
     // Remove all subscriptions

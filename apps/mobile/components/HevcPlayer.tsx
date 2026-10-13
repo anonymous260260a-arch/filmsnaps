@@ -1429,6 +1429,11 @@ export function HevcPlayer({
     }),
     [activeUrl, currentLink?.headers],
   );
+  // [Bar] a URI change recreates the hook player (keyed on the stringified
+  // source) — the trigger for the "bar reset while loading" report.
+  useEffect(() => {
+    console.log(`[Bar] videoSource → ${videoSource.uri.slice(0, 90)}`);
+  }, [videoSource.uri]);
 
   // Detect container & codec from current link for buffer tuning + badges
   const container = detectContainer(currentLink?.name ?? "", activeUrl);
@@ -2760,6 +2765,22 @@ export function HevcPlayer({
   // native prop (patched expo-video); other platforms ignore it.
   const subtitleMarginFraction =
     settings.subtitleBottomMargin ?? (winW > winH ? 0.2 : 0.14);
+  // [SubPos] logs: value handed to the native VideoView prop. Fires when the
+  // setting changes (or orientation default switches) — anime issue is this
+  // value changing but subs not moving (native) vs never changing (JS).
+  useEffect(() => {
+    console.log(
+      `[SubPos] prop value=${subtitleMarginFraction.toFixed(3)} rawSetting=${
+        settings.subtitleBottomMargin
+      } landscape=${winW > winH} fullscreen=${isFullscreen}`,
+    );
+  }, [
+    subtitleMarginFraction,
+    settings.subtitleBottomMargin,
+    winW,
+    winH,
+    isFullscreen,
+  ]);
   // Immersive video — while the surface fills the screen, the VideoView hides
   // the OS status + navigation bars (native patch) and restores them on
   // unmount / focus loss. No edge-to-edge letterboxing surprises: safe-area
@@ -2806,6 +2827,7 @@ export function HevcPlayer({
           {/* Controls overlay (also carries the switching pill + buffering spinner) */}
           <PlayerOverlay
             player={adapter}
+            mediaKey={`${season ?? ""}:${episode ?? ""}`}
             title={title}
             backdropUrl={backdropUrl}
             isFullscreen={isFullscreen}
