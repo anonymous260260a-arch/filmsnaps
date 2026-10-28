@@ -22,13 +22,20 @@ export type TelemetryEventName =
   | "screen_view"
   | "search_performed"
   | "session_end"
+  | "session_start"
   | "download_event"
   | "feature_used"
   | "network_speed"
   | "boundary_error"
   | "watch_opened"
   | "seek_latency"
-  | "exit_during_switch";
+  | "exit_during_switch"
+  | "watch_progress"
+  | "detail_viewed"
+  | "search_result_clicked"
+  | "onboarding_step"
+  | "ad_slot_view"
+  | "ad_impression";
 
 export type LinkCountBucket = "<5" | "5-15" | "16-30" | "30+";
 export type FetchOutcome = "ok" | "empty" | "fail";
@@ -161,9 +168,12 @@ export const EVENT_DIMS: Record<TelemetryEventName, readonly string[]> = {
     "chosenQualityBucket",
   ],
   watch_end: [
+    "sessionId",
     "providerId",
     "mediaType",
     "tmdbId",
+    "season",
+    "episode",
     "durationMs",
     "fallbacks",
     "switchedProvider",
@@ -180,8 +190,9 @@ export const EVENT_DIMS: Record<TelemetryEventName, readonly string[]> = {
     "watchedPctBucket",
     "resumeCorrection",
     "surface",
+    "isRewatch",
   ],
-  provider_switch: ["from", "to", "reason"],
+  provider_switch: ["sessionId", "from", "to", "reason"],
   app_launch: [
     "splashMs",
     "contentReadyMs",
@@ -191,15 +202,21 @@ export const EVENT_DIMS: Record<TelemetryEventName, readonly string[]> = {
   ],
   buffer_stall: ["positionMs", "durationMs", "providerId", "mediaType"],
   player_start: [
+    "sessionId",
     "outcome",
     "intentToFirstFrameMs",
     "providerId",
     "mediaType",
-    "seekLatencyMs",
   ],
-  seek_latency: ["latencyMs", "kind", "providerId", "mediaType"],
-  player_error: ["errorClass", "surface", "providerId", "mediaType"],
-  screen_view: ["screen"],
+  seek_latency: ["sessionId", "latencyMs", "kind", "providerId", "mediaType"],
+  player_error: [
+    "sessionId",
+    "errorClass",
+    "surface",
+    "providerId",
+    "mediaType",
+  ],
+  screen_view: ["sessionId", "screen"],
   search_performed: [
     "queryLengthBucket",
     "resultsCountBucket",
@@ -209,12 +226,18 @@ export const EVENT_DIMS: Record<TelemetryEventName, readonly string[]> = {
     "mode",
     "retriedAfterFail",
   ],
+  session_start: ["sessionId", "resumeFromBackground", "lastScreen"],
   session_end: [
+    "sessionId",
     "durationMs",
     "eventCount",
+    "watchCount",
+    "totalWatchMs",
     "providerSwitches",
     "prefAudioLang",
     "lastScreen",
+    "crashed",
+    "backgroundedWithActiveWatch",
   ],
   download_event: [
     "stage",
@@ -223,11 +246,42 @@ export const EVENT_DIMS: Record<TelemetryEventName, readonly string[]> = {
     "failureClass",
     "mediaType",
   ],
-  feature_used: ["feature", "context", "fromTab", "surface"],
+  feature_used: ["feature", "context", "fromTab", "surface", "useIndex"],
   exit_during_switch: ["surface", "switchKind"],
-  watch_opened: ["surface", "mediaType"],
+  watch_opened: ["sessionId", "surface", "mediaType"],
   network_speed: ["mbpsBucket", "connectionClass", "latencyBucket"],
   boundary_error: ["errorClass"],
+  watch_progress: [
+    "sessionId",
+    "tmdbId",
+    "mediaType",
+    "season",
+    "episode",
+    "watchedPctBucket",
+    "qualityBucket",
+    "providerId",
+    "surface",
+  ],
+  detail_viewed: [
+    "sessionId",
+    "screen",
+    "tmdbId",
+    "mediaType",
+    "fromTab",
+    "dwellingSecondsBucket",
+  ],
+  search_result_clicked: [
+    "sessionId",
+    "queryLengthBucket",
+    "resultsCountBucket",
+    "tookMs",
+    "positionClickedBucket",
+    "mediaType",
+    "mode",
+  ],
+  onboarding_step: ["step", "daysSinceInstallBucket"],
+  ad_slot_view: ["sessionId", "slot", "screen", "view"],
+  ad_impression: ["sessionId", "slot", "network", "format", "outcome", "test"],
 } as const;
 
 export interface ProviderFetchDims {
@@ -492,4 +546,155 @@ export function bucketLatencyMs(ms: number): number {
 /** E1 — 60s abandonment marker (durationMs is already 30s-bucketed upstream). */
 export function isAbandonedWatch(durationMs: number): boolean {
   return durationMs < 60_000;
+}
+
+/** P3 — session start dims. */
+export interface SessionStartDims {
+  sessionId: string;
+  resumeFromBackground: boolean;
+  lastScreen?: string;
+}
+
+/** P3 — session end dims (enriched). */
+export interface SessionEndDims {
+  sessionId: string;
+  durationMs: number;
+  eventCount: number;
+  watchCount: number;
+  totalWatchMs: number;
+  providerSwitches: number;
+  prefAudioLang?: PrefAudioLang;
+  lastScreen?: string;
+  crashed?: boolean;
+  backgroundedWithActiveWatch?: boolean;
+}
+
+/** P2 — detail page viewed dims. */
+export interface DetailViewedDims {
+  sessionId: string;
+  screen: ScreenName;
+  tmdbId: number;
+  mediaType: "movie" | "tv";
+  fromTab: string;
+  dwellingSecondsBucket: "<3" | "3-10" | "10-30" | "30+";
+}
+
+/** P2 — search result clicked dims. */
+export interface SearchResultClickedDims {
+  sessionId: string;
+  queryLengthBucket: QueryLengthBucket;
+  resultsCountBucket: LinkCountBucket;
+  tookMs: number;
+  positionClickedBucket: "1-3" | "4-10" | "11+";
+  mediaType?: "movie" | "tv" | "mixed";
+  mode?: SearchMode;
+}
+
+/** Onboarding step dims. */
+export interface OnboardingStepDims {
+  step: OnboardingStep;
+  daysSinceInstallBucket: "0" | "1" | "2-7" | "8+";
+}
+
+/** Onboarding step enum. */
+export type OnboardingStep =
+  | "legal_accepted"
+  | "first_search"
+  | "first_watch"
+  | "first_download"
+  | "first_bookmark"
+  | "first_settings_change";
+
+/**
+ * M1 — candidate ad-placement slots (impression measurement phase).
+ * No ads ship in the app; these ids only measure how often a slot would
+ * have been on screen so the monetization decision can use real numbers.
+ */
+export type AdSlotName =
+  | "home_hero"
+  | "search_list"
+  | "library_list"
+  | "settings_footer"
+  | "detail_above_overview"
+  | "announcements_page";
+
+/** Screen the slot lives on (announcements is a stack route, not a tab). */
+export type AdSlotScreen = ScreenName | "announcements";
+
+/**
+ * Measurement fidelity per impression:
+ *  - tierA: slot rendered while the screen was focused (above-fold slots are
+ *    exact; below-fold slots are visit-based upper bounds).
+ *  - tierB (future): real viewport visibility (≥50% for ≥1s) via scroll wiring.
+ */
+export type AdSlotViewKind = "tierA" | "tierB";
+
+export interface AdSlotViewDims {
+  sessionId?: string;
+  slot: AdSlotName;
+  screen: AdSlotScreen;
+  view: AdSlotViewKind;
+}
+
+/**
+ * M2 — a REAL ad rendered (or failed to) inside an enabled slot.
+ * Distinct from ad_slot_view (opportunity measurement, always on): this
+ * only fires when the ad SDK is active and a slot is live. outcome:
+ *  - filled: creative received and attached
+ *  - no_fill: network returned nothing for this slot (adblock / no demand)
+ *  - error: SDK threw while creating the view
+ */
+export type AdImpressionOutcome = "filled" | "no_fill" | "error";
+
+export interface AdImpressionDims {
+  sessionId?: string;
+  slot: AdSlotName;
+  network: "startio";
+  format: "banner" | "mrec" | "cover";
+  outcome: AdImpressionOutcome;
+  test: boolean;
+}
+
+/** P2 — watch progress thresholds. */
+export type WatchedPctThreshold = 25 | 50 | 75 | 100;
+
+export interface WatchProgressDims {
+  sessionId: string;
+  tmdbId: number;
+  mediaType: "movie" | "tv";
+  season?: number;
+  episode?: number;
+  watchedPctThreshold: WatchedPctThreshold;
+  qualityBucket?: QualityBucket;
+  providerId?: string;
+  surface?: PlayerSurface;
+}
+
+/** Search result click position bucket. */
+export type PositionClickedBucket = "1-3" | "4-10" | "11+";
+
+/** Dwelling seconds bucket for detail view. */
+export type DwellingSecondsBucket = "<3" | "3-10" | "10-30" | "30+";
+
+/** Bucket dwelling seconds. */
+export function bucketDwellingSeconds(s: number): DwellingSecondsBucket {
+  if (s < 3) return "<3";
+  if (s < 10) return "3-10";
+  if (s < 30) return "10-30";
+  return "30+";
+}
+
+/** Bucket search result click position. */
+export function bucketPositionClicked(pos: number): PositionClickedBucket {
+  if (pos <= 3) return "1-3";
+  if (pos <= 10) return "4-10";
+  return "11+";
+}
+
+/** Bucket days since install. */
+export function bucketDaysSinceInstall(days: number): "0" | "1" | "2-7" | "8+" {
+  if (days <= 0) return "0";
+  if (days === 1) return "1";
+  if (days <= 7) return "2-7";
+  return "8+";
 }

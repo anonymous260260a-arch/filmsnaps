@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCorsHeaders, handleOptions } from "@/lib/cors";
 import { desktopSkip } from "../../../../desktop-skip";
 
-const FALIX_BASE = "https://dl.falixmovies.com";
+const FALIX_BASE = "https://download-falixm.koyeb.app";
 
 // Catch-all routes need generateStaticParams for output: 'export'.
 // Desktop never calls this route — return one dummy segment so it compiles.
@@ -17,7 +17,7 @@ export async function OPTIONS(request: Request) {
 /**
  * Streaming proxy for Falix /dl video files.
  *
- * Some mobile ISPs intermittently block dl.falixmovies.com outright
+ * Some mobile ISPs intermittently block the Falix host outright
  * (connection-level, metadata API and /dl/ streams share the host). The
  * mobile app detects that during the metadata lookup and, when it happens,
  * reads the metadata AND streams the files through this worker route instead

@@ -25,6 +25,8 @@ import {
   scrub,
   type TelemetryEnvelope,
   type TelemetryEventName,
+  type SessionStartDims,
+  type SessionEndDims,
 } from "./types";
 import { getAnonId, initAnonId } from "./anonId";
 
@@ -32,6 +34,7 @@ const MAX_QUEUE = 400;
 const BATCH_SIZE = 20;
 const FLUSH_INTERVAL_MS = 30_000;
 const QUEUE_KEY = "telemetry:queue:v1";
+const SESSION_KEY = "telemetry:session:v1";
 
 let queue: TelemetryEnvelope[] = [];
 let legalAccepted = false;
@@ -40,11 +43,15 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushing = false;
 let appStateSub: { remove: () => void } | null = null;
 
-// P3 — per foreground-session counters for session_end (reset on background).
+// P3 — per foreground-session state (reset on background / resume).
 let sessionStartedAt = Date.now();
+let sessionId = "";
 let lastScreenSeen = "";
 let sessionEventCount = 0;
 let sessionProviderSwitches = 0;
+let sessionWatchCount = 0;
+let sessionTotalWatchMs = 0;
+let sessionCrashed = false;
 
 // app_launch fires at cold start, which is BEFORE the settings hydrate and the
 // legal/analytics gate opens — so it would be dropped at enqueue time and lost
@@ -63,6 +70,15 @@ function ensureListeners(): void {
       void flushAll();
     }
   });
+}
+
+/** Generate a short random session ID (ephemeral, one session only). */
+export function generateSessionId(): string {
+  let out = "";
+  for (let i = 0; i < 8; i++) {
+    out += Math.floor(Math.random() * 16).toString(16);
+  }
+  return out;
 }
 
 function clearListeners(): void {
@@ -110,10 +126,19 @@ async function restoreQueue(): Promise<void> {
   }
 }
 
-/** Called when the analytics gate opens: restore pending events + anon ID. */
+/** Called when the analytics gate opens: restore pending events + anon ID + session. */
 export function hydrateTelemetry(): void {
   void restoreQueue().then(() => {
     if (gateOpen() && queue.length > 0) scheduleFlush();
+  });
+  // Restore session context for crash recovery.
+  void restoreSessionContext().then((ctx) => {
+    if (ctx && gateOpen()) {
+      // If there's a session without a session_end (crashed), mark it.
+      sessionCrashed = ctx.crashed || false;
+      // Don't restore sessionId — start fresh. The crash will be detected
+      // by unpaired session_start on the server.
+    }
   });
 }
 
@@ -219,8 +244,15 @@ export function enqueue(
   if (name === "screen_view") lastScreenSeen = String(dims.screen ?? "");
   else if (name === "download_event") lastScreenSeen = "download";
   if (name === "provider_switch") sessionProviderSwitches += 1;
+  // P3 — track watch count + total watch time for session_end.
+  if (name === "watch_end") {
+    sessionWatchCount += 1;
+    const dm = dims.durationMs;
+    if (typeof dm === "number") sessionTotalWatchMs += dm;
+  }
 
   queue.push(full);
+  persistSessionContext();
   if (queue.length > MAX_QUEUE) {
     queue.splice(0, queue.length - MAX_QUEUE);
   }
@@ -233,27 +265,120 @@ export function enqueue(
 }
 
 /** P3 — snapshot this foreground session's counters for session_end. */
-export function getSessionSnapshot(): {
+export function getSessionSnapshot(resumeFromBackground = false): {
   durationMs: number;
   eventCount: number;
+  watchCount: number;
+  totalWatchMs: number;
   providerSwitches: number;
   lastScreen: string;
+  sessionId: string;
 } {
   return {
     durationMs: Date.now() - sessionStartedAt,
     eventCount: sessionEventCount,
+    watchCount: sessionWatchCount,
+    totalWatchMs: sessionTotalWatchMs,
     providerSwitches: sessionProviderSwitches,
     lastScreen: lastScreenSeen,
+    sessionId: sessionId,
   };
 }
 
 /** P3 — a foreground session ended (app backgrounded): reset counters. */
-export function startNewSession(): void {
+export function startNewSession(
+  resumeFromBackground = false,
+  carryLastScreen = "",
+): void {
+  sessionStartedAt = Date.now();
+  sessionId = generateSessionId();
+  sessionEventCount = 0;
+  sessionProviderSwitches = 0;
+  sessionWatchCount = 0;
+  sessionTotalWatchMs = 0;
+  sessionCrashed = false;
+  lastScreenSeen = carryLastScreen;
+  persistSessionContext();
+}
+
+/** Get the current session ID. */
+export function getSessionId(): string {
+  return sessionId;
+}
+
+/** Set the current session ID (for sync after resume). */
+export function setSessionId(id: string): void {
+  sessionId = id;
+}
+
+/**
+ * Persist the session ID to AsyncStorage so it survives process restart.
+ * Called after trackSessionStart generates a new ID, so that if the app
+ * crashes and restarts mid-session, the session ID can be recovered and
+ * session_end (on background or crash) will reference the same ID as
+ * session_start — keeping the session's event stream coherent on the server.
+ */
+export function syncSessionId(id: string): void {
+  setSessionId(id);
+  persistSessionContext();
+}
+
+/**
+ * Reset only the session start time + counters, keeping the current
+ * sessionId intact. Called by trackSessionStart on cold-start paths to
+ * anchor the session clock to when the foreground session actually began
+ * (not module init time).
+ */
+export function resetSessionCounters(keepSessionId = false): void {
   sessionStartedAt = Date.now();
   sessionEventCount = 0;
   sessionProviderSwitches = 0;
+  sessionWatchCount = 0;
+  sessionTotalWatchMs = 0;
+  sessionCrashed = false;
+  if (!keepSessionId) {
+    sessionId = generateSessionId();
+  }
+  lastScreenSeen = "";
+  persistSessionContext();
 }
 
+/** Persist current session context for crash recovery. */
+function persistSessionContext(): void {
+  if (!sessionId) return;
+  AsyncStorage.setItem(
+    SESSION_KEY,
+    JSON.stringify({
+      sessionId,
+      startedAt: sessionStartedAt,
+      crashed: sessionCrashed,
+    }),
+  ).catch(() => {});
+}
+
+/** Restore session context from storage (crash recovery). */
+async function restoreSessionContext(): Promise<{
+  sessionId: string;
+  startedAt: number;
+  crashed: boolean;
+} | null> {
+  try {
+    const raw = await AsyncStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as {
+      sessionId: string;
+      startedAt: number;
+      crashed: boolean;
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Clear persisted session context. */
+function clearSessionContext(): void {
+  AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
+}
 /** Send up to batchSize events; true = server acknowledged the batch. */
 async function postBatch(batch: TelemetryEnvelope[]): Promise<boolean> {
   try {
@@ -328,4 +453,10 @@ export function resetTelemetryForTests(): void {
   legalAccepted = false;
   analyticsEnabled = true;
   clearListeners();
+  clearSessionContext();
+  sessionId = "";
+  sessionStartedAt = Date.now();
+  sessionWatchCount = 0;
+  sessionTotalWatchMs = 0;
+  sessionCrashed = false;
 }

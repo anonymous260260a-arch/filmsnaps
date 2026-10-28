@@ -42,13 +42,20 @@ class AudioExtractJob(
     fun cancel() { cancelled.set(true) }
 
     fun start() = CoroutineScope(Dispatchers.Default).launch {
-        val r = try {
-            extract()
+        // onResult -> promise.resolve can throw (settled promise, OOM while
+        // boxing). This scope has no CoroutineExceptionHandler, so an escape is
+        // fatal — settle attempt failures must not reach the default handler.
+        try {
+            val r = try {
+                extract()
+            } catch (t: Throwable) {
+                if (cancelled.get()) ExtractResult.Error("cancelled", "cancelled")
+                else ExtractResult.Error("decode-failed", t.message ?: "decode failed")
+            }
+            onResult(r)
         } catch (t: Throwable) {
-            if (cancelled.get()) ExtractResult.Error("cancelled", "cancelled")
-            else ExtractResult.Error("decode-failed", t.message ?: "decode failed")
+            android.util.Log.e("SubSyncExtract", "extract completion callback failed", t)
         }
-        onResult(r)
     }
 
     /**

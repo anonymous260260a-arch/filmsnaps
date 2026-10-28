@@ -39,6 +39,8 @@ import {
   usePopularMovies,
   useMoreLikeThis,
 } from "../../hooks/useTMDB";
+import { useSlotImpression } from "../../hooks/useSlotImpression";
+import { AdSlot } from "../../lib/ads";
 import { tmdbApi } from "../../lib/api";
 import { useDownloadList } from "../../lib/download";
 import {
@@ -72,7 +74,14 @@ import {
   toDetailNavItem,
 } from "../../lib/openDetail";
 import { beginIntentTap } from "../../lib/perfMetrics";
-import { trackFeatureUsed } from "../../lib/telemetry";
+import {
+  trackFeatureUsed,
+  trackDetailViewed,
+  getSessionId,
+  type DwellingSecondsBucket,
+} from "../../lib/telemetry";
+import { bucketDwellingSeconds } from "../../lib/telemetry/types";
+
 import { useRouter } from "expo-router";
 import NetInfo from "@react-native-community/netinfo";
 import { useSettings } from "../../lib/settings";
@@ -108,6 +117,9 @@ export default function HomeScreen() {
   const queryClient = useQueryClient();
   const { width: SCREEN_WIDTH } = useWindowDimensions();
   const refreshing = useRef(false);
+
+  // M1 — impression measurement: candidate ad slot under the hero.
+  useSlotImpression("home_hero", "home");
 
   const {
     data: trendingMovies,
@@ -350,13 +362,27 @@ export default function HomeScreen() {
     nav.push("/list/popular-movies");
   }, [nav]);
 
+  // Detail viewed tracking — fires when user taps a card (dwelling starts).
+  // The actual dwelling time is measured on the detail page, but we track
+  // the click here with fromTab="home".
   const handleMoviePressIn = useCallback(
     (item: Movie) => {
       const navItem = toDetailNavItem(
         item,
         item.media_type === "tv" ? "tv" : "movie",
       );
-      if (navItem) prepareDetail(navItem, "home", queryClient, router);
+      if (navItem) {
+        prepareDetail(navItem, "home", queryClient, router);
+        // Track detail view intent (dwelling measured on detail page).
+        trackDetailViewed({
+          sessionId: getSessionId(),
+          screen: navItem.mediaType === "tv" ? "detail_tv" : "detail_movie",
+          tmdbId: item.id,
+          mediaType: navItem.mediaType === "tv" ? "tv" : "movie",
+          fromTab: "home",
+          dwellingSecondsBucket: "<3", // will be updated on detail page if they stay
+        });
+      }
     },
     [queryClient, router],
   );
@@ -835,6 +861,12 @@ export default function HomeScreen() {
               }}
             />
           ) : null)}
+
+        {/* M2 — candidate ad slot under the hero. Renders nothing until the
+             remote ads-config enables it (measurement hook is separate). */}
+        {settings.mode === "movie_tv" && (
+          <AdSlot slot="home_hero" bottomMargin={16} />
+        )}
 
         {/* ── Announcements — inline under hero, above first section.
              Cache-first → present at first paint (no shift for returning users).

@@ -297,7 +297,7 @@ export function FalixPlayer({
   // Build video URL from telegram entry
   const videoUrl = useMemo(() => {
     if (!currentEntry) return "";
-    const url = `https://dl.falixmovies.com/dl/${currentEntry.id}/${encodeURIComponent(currentEntry.name)}`;
+    const url = `https://download-falixm.koyeb.app/dl/${currentEntry.id}/${encodeURIComponent(currentEntry.name)}`;
     console.log(`[Falix] Step 2f: Video URL built — ${url}`);
     return url;
   }, [currentEntry]);

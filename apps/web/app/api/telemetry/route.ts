@@ -99,6 +99,8 @@ const EVENT_DIMS: Record<string, readonly string[]> = {
   watch_opened: ["surface", "mediaType"],
   network_speed: ["mbpsBucket", "connectionClass", "latencyBucket"],
   boundary_error: ["errorClass"],
+  ad_slot_view: ["sessionId", "slot", "screen", "view"],
+  ad_impression: ["sessionId", "slot", "network", "format", "outcome", "test"],
 };
 
 const MAX_EVENTS = 50;

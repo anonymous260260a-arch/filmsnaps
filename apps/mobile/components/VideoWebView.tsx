@@ -625,6 +625,9 @@ interface VideoWebViewProps {
   /** D3: warm player adopted from the details page (ready before links land). */
   earlyPlayer?: VideoPlayer | null;
   earlyPlayerKey?: string;
+  /** D3: URI the warm player was held with — adoption syncs the source when
+   *  the head moved after RANK (walk advance / late merge). */
+  earlyPlayerUrl?: string;
 }
 
 export function VideoWebView({
@@ -649,6 +652,7 @@ export function VideoWebView({
   onDirectEpisodeChange,
   earlyPlayer,
   earlyPlayerKey,
+  earlyPlayerUrl,
 }: VideoWebViewProps) {
   useKeepAwake();
   const insets = useSafeAreaInsets();
@@ -1938,10 +1942,11 @@ export function VideoWebView({
     setIntroSegments(nativeIntroSegments);
   }, [isTV, isDirect, nativeIntroSegments]);
 
-  // ── Direct TV: next-episode info + links prefetch ──
+  // ── Direct TV: next-episode info ──
   // Resolves the next episode once per episode change so the HEVC player can
-  // show the countdown card, and prefetches its links (cache TTL covers the
-  // episode) so "Next Episode" starts with zero network time.
+  // show the countdown card. The links PREFETCH is gated separately on ≤5 min
+  // remaining (updateOverlaysFromEngine) so it never competes with the
+  // current episode's first-frame window (network + JS).
   const [directNextEp, setDirectNextEp] = useState<{
     season: number;
     episode: number;
@@ -1949,6 +1954,8 @@ export function VideoWebView({
   const directNextEpKeyRef = useRef("");
   // FIX 11: one re-warm attempt per episode key.
   const nextEpRewarmDoneRef = useRef(false);
+  // Links prefetch fired once per next-episode key (≤5-min gate).
+  const nextEpPrefetchedKeyRef = useRef("");
   useEffect(() => {
     if (!isDirect || type !== "tv" || !currentSeason || !currentEpisode) {
       setDirectNextEp(null);
@@ -1958,6 +1965,7 @@ export function VideoWebView({
     if (directNextEpKeyRef.current === key) return;
     directNextEpKeyRef.current = key;
     nextEpRewarmDoneRef.current = false;
+    nextEpPrefetchedKeyRef.current = "";
     let cancelled = false;
     setDirectNextEp(null);
     getNextEpisode(id, currentSeason, currentEpisode)
@@ -1975,55 +1983,8 @@ export function VideoWebView({
         }
         setDirectNextEp({ season: nextSeason, episode: nextEp });
         console.log(
-          `[VideoWebView] Direct next episode resolved: S${nextSeason}E${nextEp} (prefetching links)`,
+          `[VideoWebView] Direct next episode resolved: S${nextSeason}E${nextEp} (links prefetch at ≤5min remaining)`,
         );
-        // FIX 1: next-episode prefetch must use the provider watch will open.
-        // Anime on an anime-capable registry direct (MovieBox) warms the
-        // generic cache with the TMDB episode; JustAnime and anime embeds
-        // stay on their own MAL-keyed cache; the movie/TV path resolves the
-        // provider watch would open instead.
-        if (!cancelled && isAnime) {
-          const animeCur = getProvider(providerId);
-          if (
-            animeCur &&
-            isDirectProvider(animeCur) &&
-            animeCur.animeOnly !== true
-          ) {
-            void prefetchStreams(parseInt(id, 10), "tv", nextSeason, nextEp, {
-              cellularMaxMB: settingsRef.current.cellularMaxMB,
-              maxQuality: settingsRef.current.maxQuality,
-              preferredAudioLanguage:
-                settingsRef.current.preferredAudioLanguage,
-              providerId: animeCur.id,
-              trigger: "next-episode",
-            }).catch(() => {});
-            return;
-          }
-          const r = resolveShow(id, nextSeason, nextEp);
-          if (!r.ok) return;
-          void prefetchAnimeStreams(r.malId, r.episode, audio, {
-            providerId: ANIME_PROVIDER_ID,
-            trigger: "next-episode",
-          }).catch(() => {});
-          return;
-        }
-        void resolvePlaybackProviderId({
-          mediaType: "tv",
-          tmdbId: parseInt(id, 10),
-          savedServer: settingsRef.current.defaultServer,
-        })
-          .then((nextProviderId) => {
-            if (!nextProviderId || cancelled) return;
-            return prefetchStreams(parseInt(id, 10), "tv", nextSeason, nextEp, {
-              cellularMaxMB: settingsRef.current.cellularMaxMB,
-              maxQuality: settingsRef.current.maxQuality,
-              preferredAudioLanguage:
-                settingsRef.current.preferredAudioLanguage,
-              providerId: nextProviderId,
-              trigger: "next-episode",
-            });
-          })
-          .catch(() => {});
       })
       .catch(() => {});
     return () => {
@@ -2416,6 +2377,86 @@ export function VideoWebView({
     }
     prevPctRef.current = state.percent;
 
+    // Next-episode links prefetch — gated on ≤5 min remaining so the warm-up
+    // (fetch + rank + probe) never competes with the current episode's
+    // first-frame window. Fires once per next-episode key; next-episode
+    // METADATA (countdown card) still resolves on episode change.
+    if (
+      isDirect &&
+      isTV &&
+      directNextEp &&
+      state.episodeKey === currentKey &&
+      state.duration > 0 &&
+      state.duration - state.currentTime <= 5 * 60 &&
+      nextEpPrefetchedKeyRef.current !==
+        `${id}:${directNextEp.season}:${directNextEp.episode}`
+    ) {
+      const gateNext = directNextEp;
+      nextEpPrefetchedKeyRef.current = `${id}:${gateNext.season}:${gateNext.episode}`;
+      console.log(
+        `[VideoWebView] next-ep prefetch (≤5min remaining) → S${gateNext.season}E${gateNext.episode}`,
+      );
+      // FIX 1: prefetch must use the provider watch will open. Anime on an
+      // anime-capable registry direct (MovieBox) warms the generic cache with
+      // the TMDB episode; JustAnime stays on its own MAL-keyed cache; the
+      // movie/TV path resolves the provider watch would open instead.
+      if (isAnime) {
+        const animeCur = providerRef.current;
+        if (
+          animeCur &&
+          isDirectProvider(animeCur) &&
+          animeCur.animeOnly !== true
+        ) {
+          void prefetchStreams(
+            parseInt(id, 10),
+            "tv",
+            gateNext.season,
+            gateNext.episode,
+            {
+              cellularMaxMB: settingsRef.current.cellularMaxMB,
+              maxQuality: settingsRef.current.maxQuality,
+              preferredAudioLanguage:
+                settingsRef.current.preferredAudioLanguage,
+              providerId: animeCur.id,
+              trigger: "next-episode",
+            },
+          ).catch(() => {});
+        } else {
+          const r = resolveShow(id, gateNext.season, gateNext.episode);
+          if (r.ok) {
+            void prefetchAnimeStreams(r.malId, r.episode, audio, {
+              providerId: ANIME_PROVIDER_ID,
+              trigger: "next-episode",
+            }).catch(() => {});
+          }
+        }
+      } else {
+        void resolvePlaybackProviderId({
+          mediaType: "tv",
+          tmdbId: parseInt(id, 10),
+          savedServer: settingsRef.current.defaultServer,
+        })
+          .then((nextProviderId) => {
+            if (!nextProviderId) return;
+            return prefetchStreams(
+              parseInt(id, 10),
+              "tv",
+              gateNext.season,
+              gateNext.episode,
+              {
+                cellularMaxMB: settingsRef.current.cellularMaxMB,
+                maxQuality: settingsRef.current.maxQuality,
+                preferredAudioLanguage:
+                  settingsRef.current.preferredAudioLanguage,
+                providerId: nextProviderId,
+                trigger: "next-episode",
+              },
+            );
+          })
+          .catch(() => {});
+      }
+    }
+
     // FIX 11: re-warm next-episode links when the original prefetch is
     // within ~5 min of its 45 min TTL (age >= 40 min). Once per episode.
     if (
@@ -2492,7 +2533,13 @@ export function VideoWebView({
               );
             })
             .catch(() => {});
-        } else if (age === null) {
+        } else if (
+          age === null &&
+          // Only after OUR prefetch fired: age===null before the ≤5-min gate
+          // is the normal pre-prefetch state — never warm ahead of the gate.
+          nextEpPrefetchedKeyRef.current ===
+            `${id}:${directNextEp.season}:${directNextEp.episode}`
+        ) {
           // Miss (expired/evicted) — also re-warm once.
           nextEpRewarmDoneRef.current = true;
           void resolveWarmProvider()
@@ -2926,6 +2973,7 @@ export function VideoWebView({
               onTryProvider={openServerPicker}
               externalPlayer={earlyPlayer ?? undefined}
               earlyPlayerKey={earlyPlayerKey}
+              earlyPlayerUrl={earlyPlayerUrl}
             />
           ) : null
         ) : (

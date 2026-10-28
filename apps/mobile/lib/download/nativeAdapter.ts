@@ -15,7 +15,10 @@ interface PerTaskCallbacks {
     realExt?: string,
     realFileName?: string,
   ) => void;
-  onError?: (error: Error) => void;
+  onError?: (error: Error, errorCode?: number) => void;
+  /** Unexpected pause — no JS pause() was in flight (e.g. the user tapped
+   *  Pause on the Android notification). The manager must sync its state. */
+  onPaused?: (receivedBytes: number, totalBytes: number) => void;
 }
 
 /**
@@ -78,19 +81,26 @@ export class NativeDownloaderAdapter {
           this.pauseWaiters.delete(e.taskId);
           waiter.reject(new Error(e.error));
         }
-        cb?.onError?.(new Error(e.error));
+        // errorCode lets the manager distinguish user cancellations (from the
+        // Android notification) from genuine failures.
+        cb?.onError?.(new Error(e.error), e.errorCode);
       }),
     );
 
     this.subscriptions.push(
       NativeDownloadBridge.onPaused((e: PausedEvent) => {
+        const waiter = this.pauseWaiters.get(e.taskId);
         // This is the truthful signal that the task actually stopped. Only NOW do we
         // clear the callback map — resolving pause() before this was Bug 1's root cause.
+        const cb = this.activeCallbacks.get(e.taskId);
         this.activeCallbacks.delete(e.taskId);
-        const waiter = this.pauseWaiters.get(e.taskId);
         if (waiter) {
           this.pauseWaiters.delete(e.taskId);
           waiter.resolve();
+        } else if (cb) {
+          // No pause was in flight: the user paused from the notification.
+          // Forward so the manager can sync DB + store (state-sync rule).
+          cb.onPaused?.(e.bytesDownloaded, e.bytesTotal);
         }
       }),
     );
@@ -112,6 +122,19 @@ export class NativeDownloaderAdapter {
     setTimeout(() => this.deadTasks.delete(taskId), 30_000);
   }
 
+  /** Live-apply the user's speed cap to a running native job (0 = unlimited).
+   *  Android-only; resolves false where the native method doesn't exist. */
+  async setSpeedLimit(
+    taskId: string,
+    bytesPerSecond: number,
+  ): Promise<boolean> {
+    try {
+      return await NativeDownloadBridge.setSpeedLimit(taskId, bytesPerSecond);
+    } catch {
+      return false;
+    }
+  }
+
   getDestinationPath(fileName: string): string {
     return `${getNativeDownloadDir()}${fileName}`;
   }
@@ -129,7 +152,8 @@ export class NativeDownloaderAdapter {
       realExt?: string,
       realFileName?: string,
     ) => void;
-    onError?: (error: Error) => void;
+    onError?: (error: Error, errorCode?: number) => void;
+    onPaused?: (receivedBytes: number, totalBytes: number) => void;
   }): Promise<DownloadInstance> {
     const id =
       options.externalId ??
@@ -140,6 +164,7 @@ export class NativeDownloaderAdapter {
       onProgress: options.onProgress,
       onDone: options.onDone,
       onError: options.onError,
+      onPaused: options.onPaused,
     });
     await NativeDownloadBridge.start(
       id,
@@ -147,6 +172,13 @@ export class NativeDownloaderAdapter {
       fileName,
       options.headers,
     );
+    // Apply the user-configured speed cap after the job exists in the service
+    // (additive API; a no-op on iOS or older native builds).
+    if ((options.speedLimit ?? 0) > 0) {
+      NativeDownloadBridge.setSpeedLimit(id, options.speedLimit!).catch(
+        () => {},
+      );
+    }
     return this.createInstance(id, fileName);
   }
 
@@ -163,7 +195,9 @@ export class NativeDownloaderAdapter {
         realExt?: string,
         realFileName?: string,
       ) => void;
-      onError?: (error: Error) => void;
+      onError?: (error: Error, errorCode?: number) => void;
+      onPaused?: (receivedBytes: number, totalBytes: number) => void;
+      speedLimit?: number;
     },
   ): Promise<DownloadInstance> {
     const safeName = sanitizeForNative(buildFileName(fileName));
@@ -172,8 +206,14 @@ export class NativeDownloaderAdapter {
       onProgress: options.onProgress,
       onDone: options.onDone,
       onError: options.onError,
+      onPaused: options.onPaused,
     });
     await NativeDownloadBridge.resume(taskId, url, safeName, offsetBytes);
+    if ((options.speedLimit ?? 0) > 0) {
+      NativeDownloadBridge.setSpeedLimit(taskId, options.speedLimit!).catch(
+        () => {},
+      );
+    }
     return this.createInstance(taskId, safeName);
   }
 
@@ -218,7 +258,8 @@ export class NativeDownloaderAdapter {
         realExt?: string,
         realFileName?: string,
       ) => void;
-      onError?: (error: Error) => void;
+      onError?: (error: Error, errorCode?: number) => void;
+      onPaused?: (receivedBytes: number, totalBytes: number) => void;
     },
     fileName: string,
   ): DownloadInstance {

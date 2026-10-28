@@ -28,7 +28,12 @@ export function useDownloadList(): DownloadGrouped & {
   const grouped = useMemo<DownloadGrouped>(() => {
     return {
       all: tasks,
-      active: tasks.filter((t) => t.status === "downloading"),
+      // "Downloading" includes queued (pending) tasks so a just-enqueued
+      // download is immediately visible in the manager instead of appearing
+      // only once its first byte lands.
+      active: tasks.filter(
+        (t) => t.status === "downloading" || t.status === "pending",
+      ),
       paused: tasks.filter((t) => t.status === "paused"),
       completed: tasks.filter((t) => t.status === "completed"),
       failed: tasks.filter((t) => t.status === "failed"),

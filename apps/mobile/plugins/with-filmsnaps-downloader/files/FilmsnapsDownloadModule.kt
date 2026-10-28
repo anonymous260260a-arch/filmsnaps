@@ -63,13 +63,22 @@ class FilmsnapsDownloadModule(private val reactContext: ReactApplicationContext)
     }
 
     init {
-        val intent = Intent(reactContext, FilmsnapsDownloadService::class.java)
-        reactContext.startService(intent)
-        reactContext.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        // startService() throws IllegalStateException when the app is not in
+        // the foreground (background-start limits on API 26+). Module creation
+        // must survive it — a throw here breaks native module init entirely.
+        try {
+            val intent = Intent(reactContext, FilmsnapsDownloadService::class.java)
+            reactContext.startService(intent)
+            reactContext.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        } catch (_: Exception) {}
     }
 
     override fun invalidate() {
         super.invalidate()
+        // Drop the service's reference before the React instance goes away:
+        // progress/complete callbacks arriving after this would otherwise call
+        // back into a dead module.
+        try { service?.setListener(null) } catch (_: Throwable) {}
         if (bound) {
             try { reactContext.unbindService(connection) } catch (_: Exception) {}
             bound = false
@@ -86,6 +95,18 @@ class FilmsnapsDownloadModule(private val reactContext: ReactApplicationContext)
         val arr = Arguments.createArray()
         service?.activeTaskIds()?.forEach { arr.pushString(it) }
         promise.resolve(arr)
+    }
+
+    @ReactMethod
+    fun setSpeedLimit(taskId: String, bytesPerSecond: Double, promise: Promise) {
+        val svc = service
+        if (svc == null) { promise.reject("E_SERVICE_NOT_BOUND", "Download service not bound yet"); return }
+        try {
+            svc.setSpeedLimit(taskId, bytesPerSecond.toLong())
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("E_SPEED_LIMIT_FAILED", e.message, e)
+        }
     }
 
     @ReactMethod
@@ -351,8 +372,15 @@ class FilmsnapsDownloadModule(private val reactContext: ReactApplicationContext)
 
     private fun sendEvent(eventName: String, params: WritableMap) {
         if (listenerCount > 0) {
-            reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                .emit(eventName, params)
+            // getJSModule() throws once the React instance is torn down (JS
+            // reload, dev refresh, backgound destroy). Service callbacks land
+            // here from an IO coroutine/raw listener — an escape kills the
+            // process, so event delivery is best-effort only.
+            try {
+                reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    .emit(eventName, params)
+            } catch (_: Throwable) {
+            }
         }
     }
 }

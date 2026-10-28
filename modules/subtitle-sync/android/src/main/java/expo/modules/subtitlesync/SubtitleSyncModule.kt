@@ -179,7 +179,16 @@ class SubtitleSyncModule : Module() {
             val headers = (options["headers"] as? Map<*, *>)
                 ?.entries?.associate { it.key.toString() to it.value.toString() } ?: emptyMap()
             CoroutineScope(Dispatchers.IO).launch {
-                val r = PlaylistProbe.probe(uri, headers)
+                // probe() can still throw outside its Result paths (e.g.
+                // MalformedURLException from resolve() on a malformed child URL).
+                // This scope has no CoroutineExceptionHandler, so an escape would
+                // be fatal — fold everything into a failure result instead.
+                val r = runCatching { PlaylistProbe.probe(uri, headers) }
+                    .getOrElse { t ->
+                        Result.failure(
+                            PlaylistProbe.PlaylistError("network", t.message ?: "probe failed")
+                        )
+                    }
                 r.fold(
                     onSuccess = { info ->
                         promise.resolve(

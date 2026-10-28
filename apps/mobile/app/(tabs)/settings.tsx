@@ -35,7 +35,10 @@ import Constants from "expo-constants";
 import { colors } from "../../theme/colors";
 import * as Haptics from "expo-haptics";
 import { LanguagePromptSheet } from "../../components/player/LanguagePromptSheet";
+import { SpeedLimitSheet, formatSpeed } from "../../components/SpeedLimitSheet";
 import { trackFeatureUsed } from "../../lib/telemetry";
+import { useSlotImpression } from "../../hooks/useSlotImpression";
+import { AdSlot } from "../../lib/ads";
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes === 0) return "0 B";
@@ -108,7 +111,9 @@ function SettingsRow({
     <Content
       onPress={() => {
         if (onPress) {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+            () => {},
+          );
           onPress();
         }
       }}
@@ -195,7 +200,9 @@ function CollapsibleSection({
     <View style={{ marginBottom: 20 }}>
       <TouchableOpacity
         onPress={() => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+            () => {},
+          );
           setOpen(!open);
         }}
         activeOpacity={0.75}
@@ -263,10 +270,15 @@ export default function SettingsScreen() {
   const { all: downloads } = useDownloadList();
   const appVersion = Constants.expoConfig?.version || "1.0.0";
 
+  // M1 — impression measurement: candidate footer ad slot (visit-based
+  // upper bound — the footer is below the fold until scrolled).
+  useSlotImpression("settings_footer", "settings");
+
   const [cacheSize, setCacheSize] = useState<number | null>(null);
   const [calculatingStorage, setCalculatingStorage] = useState(false);
   const storageCalculated = useRef(false);
   const [showLangSheet, setShowLangSheet] = useState(false);
+  const [showSpeedSheet, setShowSpeedSheet] = useState(false);
 
   const totalDownloadSize = useMemo(() => {
     return downloads
@@ -303,7 +315,9 @@ export default function SettingsScreen() {
           style: "destructive",
           onPress: () => {
             setCacheSize(0);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Haptics.notificationAsync(
+              Haptics.NotificationFeedbackType.Success,
+            ).catch(() => {});
             Alert.alert("Cache Cleared", "Temporary cache has been cleared.");
           },
         },
@@ -312,7 +326,7 @@ export default function SettingsScreen() {
   }, []);
 
   const handleShareApp = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     Share.share({
       message: `🎬 Watch movies & TV shows free on FilmSnaps\nhttps://filmsnap-pro.netlify.app/download`,
     });
@@ -327,6 +341,8 @@ export default function SettingsScreen() {
   );
 
   const selectedServer = settings.defaultServer;
+  const speedLimitKBps = settings.downloadSpeedLimitKBps ?? 0;
+  const speedLabel = speedLimitKBps > 0 ? formatSpeed(speedLimitKBps) : "Off";
   const selectedProviderName = useMemo(() => {
     if (!selectedServer) return "Auto (Recommended)";
     const p = serverProviders.find((sp) => sp.id === selectedServer);
@@ -429,7 +445,9 @@ export default function SettingsScreen() {
                   <TouchableOpacity
                     key={m}
                     onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      Haptics.impactAsync(
+                        Haptics.ImpactFeedbackStyle.Light,
+                      ).catch(() => {});
                       trackFeatureUsed(
                         m === "anime"
                           ? "mode_toggle_anime"
@@ -470,7 +488,9 @@ export default function SettingsScreen() {
             subtitle="Preferred audio for source ranking"
             color={colors.gold}
             onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                () => {},
+              );
               setShowLangSheet(true);
             }}
             right={
@@ -518,7 +538,9 @@ export default function SettingsScreen() {
               <Switch
                 value={settings.showServerNotes}
                 onValueChange={(v) => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                    () => {},
+                  );
                   updateSetting("showServerNotes", v);
                 }}
                 trackColor={{
@@ -576,6 +598,61 @@ export default function SettingsScreen() {
               />
             }
           />
+          <Divider />
+          <SettingsRow
+            icon="speedometer-outline"
+            label="Download Speed Limit"
+            subtitle={
+              speedLimitKBps > 0
+                ? `Capped at ${formatSpeed(speedLimitKBps)}`
+                : "No cap — tap to set a limit"
+            }
+            color={colors.info}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                () => {},
+              );
+              setShowSpeedSheet(true);
+            }}
+            right={
+              <View
+                style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
+              >
+                <View
+                  style={{
+                    paddingHorizontal: 8,
+                    paddingVertical: 3,
+                    borderRadius: 9999,
+                    backgroundColor:
+                      speedLimitKBps > 0
+                        ? colors.goldBadge
+                        : "rgba(255,255,255,0.05)",
+                    borderWidth: 0.5,
+                    borderColor:
+                      speedLimitKBps > 0
+                        ? "rgba(212,162,55,0.4)"
+                        : colors.borderSubtle,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontFamily: "Inter_600SemiBold",
+                      color:
+                        speedLimitKBps > 0 ? colors.gold : colors.textSecondary,
+                    }}
+                  >
+                    {speedLabel}
+                  </Text>
+                </View>
+                <Ionicons
+                  name="chevron-forward"
+                  size={16}
+                  color={colors.textTertiary}
+                />
+              </View>
+            }
+          />
         </SectionCard>
 
         {/* ── 3. Default Source ── */}
@@ -608,7 +685,9 @@ export default function SettingsScreen() {
           {/* Auto option */}
           <TouchableOpacity
             onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                () => {},
+              );
               updateSetting("defaultServer", "");
             }}
             activeOpacity={0.75}
@@ -675,7 +754,9 @@ export default function SettingsScreen() {
                 <Divider />
                 <TouchableOpacity
                   onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    Haptics.impactAsync(
+                      Haptics.ImpactFeedbackStyle.Light,
+                    ).catch(() => {});
                     updateSetting("defaultServer", isSelected ? "" : p.id);
                   }}
                   activeOpacity={0.75}
@@ -818,7 +899,9 @@ export default function SettingsScreen() {
               <Switch
                 value={settings.analyticsEnabled !== false}
                 onValueChange={(v) => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                    () => {},
+                  );
                   updateSetting("analyticsEnabled", v);
                 }}
                 trackColor={{
@@ -995,7 +1078,9 @@ export default function SettingsScreen() {
               </Text>
               <TouchableOpacity
                 onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                    () => {},
+                  );
                   Linking.openURL(
                     "https://github.com/anonymous260260a-arch/filmsnaps",
                   );
@@ -1025,6 +1110,9 @@ export default function SettingsScreen() {
             </View>
           </LinearGradient>
         </View>
+
+        {/* M2 — candidate footer ad slot (above the app-info footer). */}
+        <AdSlot slot="settings_footer" bottomMargin={8} />
 
         {/* ── App Info & Privacy Assurance ── */}
         <View
@@ -1068,8 +1156,19 @@ export default function SettingsScreen() {
         subtitle="New sources are ranked to match this. Already-playing streams are never interrupted."
         onSelect={(value) => {
           updateSetting("preferredAudioLanguage", value);
+          // Answering here means the user has chosen a language — the
+          // first-run prompt on the watch page must not reappear.
+          updateSetting("hasAnsweredLanguagePrompt", true);
           setShowLangSheet(false);
         }}
+      />
+
+      {/* Download speed limit picker — presets + custom value */}
+      <SpeedLimitSheet
+        visible={showSpeedSheet}
+        value={speedLimitKBps}
+        onChange={(v) => updateSetting("downloadSpeedLimitKBps", v)}
+        onClose={() => setShowSpeedSheet(false)}
       />
     </View>
   );

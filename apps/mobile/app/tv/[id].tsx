@@ -18,7 +18,12 @@ import { useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useSafeNavigation } from "@/lib/navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { trackFeatureUsed } from "../../lib/telemetry";
+import {
+  trackFeatureUsed,
+  trackDetailViewed,
+  getSessionId,
+} from "../../lib/telemetry";
+
 import { colors } from "../../theme/colors";
 import { getImageUrl, getTrailerKey } from "@filmsnaps/shared";
 import { ProgressiveImage } from "../../components/ProgressiveImage";
@@ -26,6 +31,8 @@ import { FilmGrain } from "../../components/FilmGrain";
 import { HeroTint } from "../../components/HeroTint";
 import { useTVDetails } from "../../hooks/useTMDB";
 import { useMovieTheme } from "../../hooks/useMovieTheme";
+import { useSlotImpression } from "../../hooks/useSlotImpression";
+import { AdSlot } from "../../lib/ads";
 import {
   beginDetail,
   markDetailFirstFrame,
@@ -64,6 +71,7 @@ import { resolvePlaybackProviderId } from "../../lib/resolvePlaybackProvider";
 import { beginDetailsTap } from "../../lib/perfMetrics";
 import {
   holdEarlyPlayer,
+  hasEarlyPlayer,
   releaseEarlyPlayer,
 } from "../../lib/earlyPlayerHolder";
 import { useSettings } from "../../lib/settings";
@@ -173,6 +181,9 @@ export default function TVDetailScreen() {
   const [resumeState, setResumeState] = useState<WatchProgress | null>(null);
   const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
   const downloadSummary = useMediaDownloadState("tv", String(id));
+  // Detail viewing dwelling time tracking.
+  const detailEnteredAt = useRef(Date.now());
+  const detailTrackedRef = useRef(false);
 
   // FIX 7: rank-option deps are value-level; selection re-prefetch debounced 500ms.
   // B1: prefetch only while focused — defer rank changes until next focus.
@@ -185,6 +196,9 @@ export default function TVDetailScreen() {
   const navigatedToWatchRef = useRef(false);
   // D3: last cache key we held a warm player for (release on leave-without-watch).
   const heldEarlyKeyRef = useRef<string | null>(null);
+  // D3: URL the current hold is on — READY skips re-holding the same head
+  // (a re-hold would release the already-warmed instance and start over).
+  const heldEarlyUrlRef = useRef<string | null>(null);
   // Bookmark / resume loads stay mount-driven (not focus-gated).
   useEffect(() => {
     if (!id) return;
@@ -223,21 +237,52 @@ export default function TVDetailScreen() {
           .then((providerId) => {
             if (!providerId || cancelled || cleared) return;
             resolvedProviderRef.current = providerId;
+            const key = `tv:${parseInt(id)}:s${season}:e1:${providerId}`;
             return prefetchStreams(parseInt(id), "tv", season, 1, {
               cellularMaxMB: settings.cellularMaxMB,
               maxQuality: settings.maxQuality,
               preferredAudioLanguage: settings.preferredAudioLanguage,
               providerId,
               trigger: "details",
+              // D3: hold at RANK (unverified head) — the head walk runs
+              // while the native player warms; READY reconciles below if
+              // the walk advances the head.
+              onEarlyHead: (head) => {
+                // Blur cancels the chain, but if the user already tapped
+                // Watch the holder is FOR the watch screen (adopts on next
+                // render) — hold anyway; the cleanup release still guards
+                // on navigatedToWatch so back-nav cannot orphan it.
+                // (cleared is set in the same cleanup as cancelled — must
+                // not bypass the Watch-tap exemption, matching movie/[id].)
+                if (cancelled && !navigatedToWatchRef.current) return;
+                if (holdEarlyPlayer(key, head)) {
+                  heldEarlyKeyRef.current = key;
+                  heldEarlyUrlRef.current = head.url;
+                }
+              },
             })
               .then((snap) => {
                 // D3: pipeline READY during details dwell → warm player on head.
-                if (cancelled || cleared || !snap || snap.links.length === 0)
+                if (
+                  (cancelled && !navigatedToWatchRef.current) ||
+                  !snap ||
+                  snap.links.length === 0
+                )
                   return;
                 const head = snap.links[snap.bestIndex];
-                const key = `tv:${parseInt(id)}:s${season}:e1:${providerId}`;
+                // RANK hold already sits on this exact head — keep the
+                // warmed instance instead of releasing it and starting over.
+                // hasEarlyPlayer guards stale refs: watch may have taken the
+                // holder since (back-navigation re-focus).
+                if (
+                  heldEarlyKeyRef.current === key &&
+                  heldEarlyUrlRef.current === head?.url &&
+                  hasEarlyPlayer(key)
+                )
+                  return;
                 if (holdEarlyPlayer(key, head)) {
                   heldEarlyKeyRef.current = key;
+                  heldEarlyUrlRef.current = head?.url ?? null;
                 }
               })
               .catch((err) => {
@@ -258,6 +303,7 @@ export default function TVDetailScreen() {
         if (!navigatedToWatchRef.current && heldEarlyKeyRef.current) {
           releaseEarlyPlayer(heldEarlyKeyRef.current);
           heldEarlyKeyRef.current = null;
+          heldEarlyUrlRef.current = null;
         }
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -272,7 +318,7 @@ export default function TVDetailScreen() {
   const clearedTimerRef = useRef<(() => void) | null>(null);
 
   const toggleBookmark = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const next = !bookmarked;
     setBookmarked(next);
     trackFeatureUsed("bookmark_save", "detail");
@@ -297,7 +343,7 @@ export default function TVDetailScreen() {
   }, [id, bookmarked, header]);
 
   const handleShare = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     trackFeatureUsed("share_used", "detail");
     Share.share({
       message: `Check out "${title}" on FilmSnaps 🎬\nhttps://filmsnap-pro.netlify.app/tv/${id}`,
@@ -323,6 +369,40 @@ export default function TVDetailScreen() {
     header?.backdrop_path ?? null,
     header?.poster_path ?? null,
   );
+
+  // Track detail viewing dwelling time — fires when the page is visible.
+  useEffect(() => {
+    detailEnteredAt.current = Date.now();
+    detailTrackedRef.current = false;
+    const updateDwelling = () => {
+      if (detailTrackedRef.current) return;
+      const elapsed = Date.now() - detailEnteredAt.current;
+      const bucket =
+        elapsed < 3000
+          ? "<3"
+          : elapsed < 10000
+            ? "3-10"
+            : elapsed < 30000
+              ? "10-30"
+              : "30+";
+      trackDetailViewed({
+        sessionId: getSessionId(),
+        screen: "detail_tv",
+        tmdbId: parseInt(id),
+        mediaType: "tv",
+        fromTab: "home",
+        dwellingSecondsBucket: bucket as "<3" | "3-10" | "10-30" | "30+",
+      });
+      detailTrackedRef.current = true;
+    };
+    const timer = setTimeout(updateDwelling, 3000);
+    return () => clearTimeout(timer);
+  }, [id]);
+
+  // M1 — impression measurement: candidate ad slot on the detail page,
+  // between the action buttons row and the overview text (above the fold).
+  // key=id so title A → title B counts as two page impressions.
+  useSlotImpression("detail_above_overview", "detail_tv", { key: id });
 
   // Deep link / cold route with no header params → full skeleton until data.
   if (!header && isLoading) {
@@ -955,6 +1035,10 @@ export default function TVDetailScreen() {
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* M2 — candidate ad slot between action buttons and overview.
+              Renders nothing until the remote ads-config enables it. */}
+          <AdSlot slot="detail_above_overview" />
 
           {/* Overview — query-dependent */}
           {queryReady && show.overview ? (

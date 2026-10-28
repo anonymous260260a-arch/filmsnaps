@@ -281,6 +281,9 @@ export function PlayerSettingsSheet({
                     key={option.label}
                     style={[styles.chip, isSelected && styles.chipActive]}
                     onPress={() => {
+                      console.log(
+                        `[SubPos] sheet chip press ${option.label} -> ${option.value}`,
+                      );
                       setDraftSubPos(option.value);
                       commitTransition(() =>
                         onSelectSubtitleMargin(option.value),

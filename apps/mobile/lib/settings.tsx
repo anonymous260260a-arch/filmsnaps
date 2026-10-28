@@ -84,6 +84,9 @@ export interface AppSettings {
   hasAnsweredLanguagePrompt: boolean;
   /** Background speed test: enabled (non-blocking, cached) */
   enableSpeedTest: boolean;
+  /** Download speed limit in KB/s (0 = unlimited). Applied to every active
+   *  download via the native throttle (FilmsnapsDownloader.setSpeedLimit). */
+  downloadSpeedLimitKBps: number;
   /**
    * Anonymous usage statistics + crash reports (default ON).
    * Telemetry never queues or sends unless legalAccepted AND this flag.
@@ -134,6 +137,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   subtitlePosMigrated: false,
   hasAnsweredLanguagePrompt: false,
   enableSpeedTest: true,
+  downloadSpeedLimitKBps: 0,
   analyticsEnabled: true,
   analyticsGrandfathered: false,
 };
@@ -188,6 +192,25 @@ function doRead(): Promise<AppSettings> {
         try {
           const stored = JSON.parse(raw) as Partial<AppSettings>;
           let merged = { ...DEFAULT_SETTINGS, ...stored } as AppSettings;
+          // One-time unit migration: older builds stored MB/s in
+          // `downloadSpeedLimitMBps`. Convert to the current KB/s field and
+          // drop the legacy key so it never persists again.
+          const legacy = stored as Partial<AppSettings> & {
+            downloadSpeedLimitMBps?: number;
+          };
+          if (
+            typeof legacy.downloadSpeedLimitMBps === "number" &&
+            stored.downloadSpeedLimitKBps === undefined
+          ) {
+            merged.downloadSpeedLimitKBps = Math.round(
+              legacy.downloadSpeedLimitMBps * 1024,
+            );
+            console.log(
+              `[Settings] migrated speed limit ${legacy.downloadSpeedLimitMBps} MB/s → ${merged.downloadSpeedLimitKBps} KB/s`,
+            );
+          }
+          delete (merged as unknown as Record<string, unknown>)
+            .downloadSpeedLimitMBps;
           // F3: one-time grandfathering for pre-toggle legacy installs. Only
           // runs when the flag is enabled AND the grandfathered marker is
           // absent; forces analytics off and marks it so the Settings screen

@@ -43,6 +43,16 @@ export const LABELS: Record<string, string> = {
   embed: "Embed",
   wifi: "Wi-Fi",
   cellular: "Cellular",
+  // M1 — ad-slot impression measurement.
+  ad_slot_view: "Ad slot view",
+  home_hero: "Home · under hero",
+  search_list: "Search · results list",
+  library_list: "Library · grid",
+  settings_footer: "Settings · footer",
+  detail_above_overview: "Detail · above overview (below buttons)",
+  announcements_page: "Announcements page",
+  tierA: "Rendered on visit",
+  tierB: "Viewport-verified",
 };
 
 export function label(k: string): string {

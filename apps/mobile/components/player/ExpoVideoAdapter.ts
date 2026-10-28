@@ -11,15 +11,34 @@ import { requireNativeModule } from "expo-modules-core";
 import { getPlayerTuning } from "../../lib/playerConfig";
 import type { PlayerAdapter, AudioTrackInfo, SubtitleTrackInfo } from "./types";
 
-/** Native expo-video module — hosts probeStream + setSubtitleOffset (patch). */
-const ExpoVideoNativeModule = requireNativeModule("ExpoVideo") as {
-  setSubtitleOffset?: (ms: number) => void;
-  probeStream?: (
-    url: string,
-    headers: Record<string, string>,
-    timeoutMs: number,
-  ) => Promise<Record<string, any>>;
-};
+/** Native expo-video module — hosts probeStream + setSubtitleOffset (patch).
+ *  Resolved defensively: requireNativeModule() throws when the module is not
+ *  registered (native/OTA mismatch), and a throw at module scope happens during
+ *  import — before any ErrorBoundary exists — so it white-screens the app.
+ *  Callers already use optional chaining (setSubtitleOffset?.), so a missing
+ *  module degrades to a no-op instead of a crash. */
+const ExpoVideoNativeModule = (() => {
+  try {
+    return requireNativeModule("ExpoVideo") as {
+      setSubtitleOffset?: (ms: number) => void;
+      probeStream?: (
+        url: string,
+        headers: Record<string, string>,
+        timeoutMs: number,
+      ) => Promise<Record<string, any>>;
+    };
+  } catch (e) {
+    console.warn("[ExpoVideoAdapter] ExpoVideo native module unavailable:", e);
+    return {} as {
+      setSubtitleOffset?: (ms: number) => void;
+      probeStream?: (
+        url: string,
+        headers: Record<string, string>,
+        timeoutMs: number,
+      ) => Promise<Record<string, any>>;
+    };
+  }
+})();
 // Sidecar-subtitle functions live on the player SharedObject (patch adds them
 // inside Class("VideoPlayer")), so they're called on the player instance.
 const playerWithSidecarApi = (player: VideoPlayer) =>
@@ -44,6 +63,8 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   /** Seek generation whose "suppressing pre-seek update" line was last logged. */
   private _suppressLogGen = -1;
   private _seekSafetyTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 12s give-up: emits the REAL position if a held seek never resolves. */
+  private _seekBackstopTimer: ReturnType<typeof setTimeout> | null = null;
 
   private timeListeners: ((time: number, duration: number) => void)[] = [];
   private playPauseListeners: ((isPaused: boolean) => void)[] = [];
@@ -81,12 +102,19 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     // the seek resolved instantly and the UI bounced optimistic → old → new.
     // ExoPlayer seeks exactly, so ±3s around the target is a safe landing
     // window; the 5s safety timer un-sticks anything weirder.
+    // Near-zero reports while a deeper target is pending are pre-seek
+    // residue, never a landing — without this, a seek to ≤15s "resolved"
+    // at 0s and the bar dropped to 0% until the chunk loaded.
+    if (time <= 2 && target >= time + 3) return false;
     return target <= 15 ? time <= target + 3 : Math.abs(time - target) <= 3;
   }
 
   constructor(private player: VideoPlayer) {
     // Initial user intent is to play
     this._userPaused = !player.playing;
+    // [Q] pinpoint: epoch of construction (≈ sourceSet) so native status
+    // lines can be correlated with render/commit/effect [Q] lines.
+    console.log(`[Q] adapter-ctor status=${player.status} t=${Date.now()}`);
 
     // 1. Time updates
     this.subs.push(
@@ -116,6 +144,9 @@ export class ExpoVideoAdapter implements PlayerAdapter {
             // seek shows the pre-seek updates the UI must NOT display.
             if (this._suppressLogGen !== this._seekGeneration) {
               this._suppressLogGen = this._seekGeneration;
+              console.log(
+                `[Bar] adapter hold residue t=${time.toFixed(2)} target=${this._targetSeekTime} status=${this.player?.status} playing=${this.player?.playing}`,
+              );
             }
             return;
           }
@@ -165,6 +196,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       player.addListener("statusChange", (status) => {
         if (this.destroyed) return;
 
+        console.log(`[Q] native-status ${status.status} t=${Date.now()}`);
         const isBuffering = status.status === "loading";
         this.bufferingListeners.forEach((l) => l(isBuffering));
         this.statusListeners.forEach((l) => l(status.status));
@@ -243,6 +275,22 @@ export class ExpoVideoAdapter implements PlayerAdapter {
           const errorType = this.classifyError(err);
           this.currentError = this.errorMessageForType(errorType, err);
           const currentErr = this.currentError;
+          // DIAG (offline playback audit): the raw error before classification
+          // rewrites it, plus the player state at the moment it fired.
+          console.log(
+            "[ExpoVideo] statusError raw=",
+            typeof rawErr === "string" ? rawErr : JSON.stringify(rawErr),
+            " classified=",
+            currentErr,
+            " st=",
+            this.player?.status,
+            " pos=",
+            this.player?.currentTime,
+            " dur=",
+            this.player?.duration,
+            " tracks=",
+            this.player?.availableAudioTracks?.length ?? -1,
+          );
           this.errorListeners.forEach((l) => l(currentErr));
         }
       }),
@@ -325,6 +373,17 @@ export class ExpoVideoAdapter implements PlayerAdapter {
         const errorType = this.classifyError(errMsg);
         this.currentError = this.errorMessageForType(errorType, errMsg);
         const currentErr = this.currentError;
+        // DIAG (offline playback audit): poll-path player.error, raw.
+        console.log(
+          "[ExpoVideo] polledError raw=",
+          typeof err === "string" ? err : JSON.stringify(err),
+          " classified=",
+          currentErr,
+          " st=",
+          this.player?.status,
+          " pos=",
+          this.player?.currentTime,
+        );
         this.errorListeners.forEach((l) => l(currentErr));
       }
 
@@ -377,10 +436,14 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       if (dur > 0) {
         this.metadataLoaded = true;
         const time = Number.isFinite(this.player?.currentTime)
-          ? Math.max(0, this.player?.currentTime)
+          ? Math.max(0, this.player.currentTime)
           : 0;
 
-        this.timeListeners.forEach((l) => l(time, dur));
+        // Hold duration-only polls back during an active seek — a ~0 time
+        // here would reach the bar unfiltered.
+        if (!this._isSeeking) {
+          this.timeListeners.forEach((l) => l(time, dur));
+        }
         return;
       }
 
@@ -590,17 +653,39 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     }, 400);
 
     if (this._seekSafetyTimer) clearTimeout(this._seekSafetyTimer);
+    if (this._seekBackstopTimer) clearTimeout(this._seekBackstopTimer);
     this._seekSafetyTimer = setTimeout(() => {
       // Only clear if a newer seek hasn't superseded this one
       if (this._seekGeneration !== myGeneration) return;
-      this._isSeeking = false;
       const actualTime = Number.isFinite(this.player?.currentTime)
         ? this.player?.currentTime
         : clamped;
-      const resolvedTime = this.isSeekResolved(actualTime)
-        ? actualTime
-        : clamped;
-      this.timeListeners.forEach((l) => l(resolvedTime, this.getDuration()));
+      const landed = this.isSeekResolved(actualTime);
+      if (landed) {
+        this._isSeeking = false;
+        this.timeListeners.forEach((l) => l(actualTime, this.getDuration()));
+      } else {
+        // Slow chunk: keep the optimistic target on screen AND keep
+        // `_isSeeking` so native ~0 residue stays suppressed — force-
+        // clearing here let the next native tick through and the bar
+        // jumped to 0% until the chunk loaded. The 12s backstop gives up
+        // and reports the real position if the seek never resolves.
+        console.log(
+          `[Bar] seek safety held t=${actualTime?.toFixed(2)} target=${clamped}`,
+        );
+        this.timeListeners.forEach((l) => l(clamped, this.getDuration()));
+        this._seekBackstopTimer = setTimeout(() => {
+          if (this.destroyed || this._seekGeneration !== myGeneration) return;
+          this._isSeeking = false;
+          const finalTime = Number.isFinite(this.player?.currentTime)
+            ? this.player?.currentTime
+            : clamped;
+          console.warn(
+            `[Bar] seek backstop t=${finalTime} target=${clamped} (seek never resolved)`,
+          );
+          this.timeListeners.forEach((l) => l(finalTime, this.getDuration()));
+        }, 7000);
+      }
 
       // If the player failed to seek (stuck near 0 while target was >10s),
       // signal error to trigger fallback to a seekable backup stream
@@ -877,6 +962,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
 
     // Clear all timers
     if (this._seekSafetyTimer) clearTimeout(this._seekSafetyTimer);
+    if (this._seekBackstopTimer) clearTimeout(this._seekBackstopTimer);
     if (this.errorCheckTimer) clearInterval(this.errorCheckTimer);
 
     // Remove all subscriptions

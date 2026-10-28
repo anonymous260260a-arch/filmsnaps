@@ -26,7 +26,7 @@ import { getProgress } from "../lib/watchHistory";
 import { getImageUrl } from "@filmsnaps/shared";
 import { ProgressiveImage } from "./ProgressiveImage";
 import * as Haptics from "expo-haptics";
-import { useDownloadInfra, useSmartDownload } from "../lib/download/context";
+import { useDownloadInfra } from "../lib/download/context";
 import type { MediaDownloadSummary } from "../lib/download/types";
 
 interface SeasonInfo {
@@ -73,7 +73,6 @@ export function SeasonPicker({
   seasons,
   initialSeason,
   backdropPath,
-  title: showTitle,
   posterPath,
   downloadSummary,
   activeHairline,
@@ -88,7 +87,6 @@ export function SeasonPicker({
   >({});
   const chipScrollRef = useRef<ScrollView>(null);
   const { store } = useDownloadInfra();
-  const { smartDownload } = useSmartDownload();
 
   const { data: seasonData, isLoading } = useSeasonEpisodes(
     tmdbId,
@@ -130,7 +128,7 @@ export function SeasonPicker({
 
   const handleSeasonChange = useCallback(
     (seasonNum: number) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       setSelectedSeason(seasonNum);
       setExpanded(false);
 
@@ -165,19 +163,17 @@ export function SeasonPicker({
   );
 
   const handleEpisodeDownload = useCallback(
-    async (episodeNumber: number) => {
-      await smartDownload({
-        url: "",
-        fileName: `${showTitle || "TV"}_S${selectedSeason}E${String(episodeNumber).padStart(2, "0")}.mp4`,
-        mediaType: "tv",
-        tmdbId,
-        title: `${showTitle || ""} S${selectedSeason}E${episodeNumber}`,
-        posterPath: posterPath ?? undefined,
-        season: selectedSeason,
-        episode: episodeNumber,
-      });
+    (episodeNumber: number) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      const qs = new URLSearchParams({
+        poster: posterPath ?? "",
+        backdrop: backdropPath ?? "",
+      }).toString();
+      nav.push(
+        `/download/hdhub/tv/${tmdbId}/${selectedSeason}/${episodeNumber}?${qs}`,
+      );
     },
-    [smartDownload, showTitle, selectedSeason, tmdbId, posterPath],
+    [nav, posterPath, backdropPath, selectedSeason, tmdbId],
   );
 
   if (!seasons || seasons.length === 0) return null;
@@ -556,7 +552,9 @@ export function SeasonPicker({
           {showExpandButton && (
             <TouchableOpacity
               onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                  () => {},
+                );
                 setExpanded(!expanded);
               }}
               activeOpacity={0.75}

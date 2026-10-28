@@ -18,6 +18,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeNavigation } from "@/lib/navigation";
 import { fetchAnnouncements } from "../lib/announcements";
 import type { Announcement } from "../lib/announcements";
+import { useSlotImpression } from "../hooks/useSlotImpression";
+import { AdSlot } from "../lib/ads";
 import { colors } from "../theme/colors";
 
 // ── Type-to-color mapping (mirrors AnnouncementBanner) ──
@@ -150,6 +152,9 @@ export default function AnnouncementsScreen() {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // M1 — impression measurement: candidate ad slot on the announcements page.
+  useSlotImpression("announcements_page", "announcements");
+
   useEffect(() => {
     (async () => {
       try {
@@ -244,6 +249,9 @@ export default function AnnouncementsScreen() {
               onPress={() => nav.push(`/announcement/${a.id}` as any)}
             />
           ))}
+
+          {/* M2 — candidate ad slot at the end of the announcements list. */}
+          <AdSlot slot="announcements_page" />
         </ScrollView>
       )}
     </View>

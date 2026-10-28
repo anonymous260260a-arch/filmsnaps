@@ -8,9 +8,16 @@ import { label, GOLD } from "./constants";
 interface DrillDrawerProps {
   state: NonNullable<DrillState>;
   onClose: () => void;
+  appVersion?: string;
+  anonId?: string;
 }
 
-export function DrillDrawer({ state, onClose }: DrillDrawerProps) {
+export function DrillDrawer({
+  state,
+  onClose,
+  appVersion,
+  anonId,
+}: DrillDrawerProps) {
   const [data, setData] = useState<RawRow[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,9 +38,13 @@ export function DrillDrawer({ state, onClose }: DrillDrawerProps) {
 
     const fromParam = state.from ? `&from=${state.from}` : "";
     const toParam = state.to ? `&to=${state.to}` : "";
+    const avParam = appVersion
+      ? `&appVersion=${encodeURIComponent(appVersion)}`
+      : "";
+    const aidParam = anonId ? `&anonId=${encodeURIComponent(anonId)}` : "";
 
     fetch(
-      `/api/telemetry/dashboard?mode=raw&event=${encodeURIComponent(state.event)}${fromParam}${toParam}&limit=60`,
+      `/api/telemetry/dashboard?mode=raw&event=${encodeURIComponent(state.event)}${fromParam}${toParam}${avParam}${aidParam}&limit=100`,
     )
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);

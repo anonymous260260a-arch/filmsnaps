@@ -32,6 +32,11 @@ export interface DownloadMeta {
   extension?: string;
   /** Speed limit in bytes per second (0 = unlimited) */
   speedLimit?: number;
+  /** Known/estimated file size in bytes (from the provider's file listing).
+   *  Used for the queued-size space check before the HTTP Content-Length arrives. */
+  sizeBytes?: number;
+  /** Display badges for the download manager UI (quality, size, languages, codec, WEB-DL…). */
+  badges?: string[];
 }
 
 /** Full task record — persisted and observable */
@@ -64,6 +69,8 @@ export interface DownloadTask extends DownloadMeta {
   speed?: number;
   /** ETA in seconds (calculated, not stored — for UI only) */
   eta?: number;
+  /** Display badges for the download manager UI (persisted as JSON in the `badges` column) */
+  badges?: string[];
 }
 
 /** Control action for batch operations */

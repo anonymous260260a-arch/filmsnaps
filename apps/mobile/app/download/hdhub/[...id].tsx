@@ -35,16 +35,18 @@ import { Ionicons } from "@expo/vector-icons";
 import {
   getImageUrl,
   rankDownloadLinks,
+  passesDownloadFilter,
   describeDownloadFile,
   downloadMetaSegments,
   buildDownloadFileName,
   type DownloadFileDetails,
+  type DownloadRankOptions,
   type MetaTone,
 } from "@filmsnaps/shared";
 import { colors } from "../../../theme/colors";
 import { ProgressiveImage } from "../../../components/ProgressiveImage";
 import { EpisodeRail } from "../../../components/player/EpisodeRail";
-import { useDownloadInfra, useDownloadList } from "../../../lib/download";
+import { useDownloadList, useDownloadTrigger } from "../../../lib/download";
 import { fetchHdHubLinks } from "../../../lib/directStreams";
 import { useSettings } from "../../../lib/settings";
 import {
@@ -80,6 +82,61 @@ interface FileRow {
   gateway: boolean;
 }
 
+type FilterKey = "q" | "sz" | "lg";
+
+const QUALITY_OPTIONS: { label: string; value: string }[] = [
+  { label: "All qualities", value: "" },
+  { label: "4K", value: "4K" },
+  { label: "1080p", value: "1080p" },
+  { label: "720p", value: "720p" },
+  { label: "480p", value: "480p" },
+];
+
+const SIZE_OPTIONS: { label: string; value: string }[] = [
+  { label: "Any size", value: "" },
+  { label: "≤ 1 GB", value: "1gb" },
+  { label: "1–4 GB", value: "4gb" },
+  { label: "4–8 GB", value: "8gb" },
+  { label: "> 8 GB", value: "gt8gb" },
+];
+
+const LANGUAGE_OPTIONS: { label: string; value: string }[] = [
+  { label: "Any language", value: "" },
+  { label: "Multi / Dual", value: "multi" },
+  { label: "Hindi", value: "hindi" },
+  { label: "English", value: "english" },
+];
+
+function readParam(
+  params: { [k: string]: unknown },
+  key: FilterKey,
+  fallbacks: string[],
+  defaultWhenEmpty?: string,
+): string {
+  const k = params[key];
+  if (k) return String(k);
+  for (const fb of fallbacks) {
+    const v = params[fb];
+    if (v) return String(v);
+  }
+  return defaultWhenEmpty ?? "";
+}
+
+function writeParam(
+  setParams: React.Dispatch<
+    React.SetStateAction<{ [k: string]: string | undefined }>
+  >,
+  key: FilterKey,
+  value: string,
+) {
+  setParams((prev) => {
+    const next = { ...prev };
+    if (value) next[key] = value;
+    else delete next[key];
+    return next;
+  });
+}
+
 export default function HdHubDownloadScreen() {
   const nav = useSafeNavigation();
   const insets = useSafeAreaInsets();
@@ -104,10 +161,19 @@ export default function HdHubDownloadScreen() {
   const [pickedEpisode, setPickedEpisode] = useState<number | null>(null);
   const [showEpPicker, setShowEpPicker] = useState(false);
 
+  // Filters persist via URL params so they survive navigation and shareable links.
+  const [filterParams, setFilterParams] = useState<{
+    [k: string]: string | undefined;
+  }>({
+    q: readParam(rawParams, "q", ["quality"]) || "",
+    sz: readParam(rawParams, "sz", ["size"]) || "",
+    lg: readParam(rawParams, "lg", ["lang", "language"]) || "",
+  });
+
   const effectiveSeason = pickedSeason ?? params.season ?? 1;
   const effectiveEpisode = pickedEpisode ?? params.episode ?? 1;
 
-  const { enqueue } = useDownloadInfra();
+  const { trigger } = useDownloadTrigger();
   const { all: downloads } = useDownloadList();
   const { settings } = useSettings();
 
@@ -190,23 +256,47 @@ export default function HdHubDownloadScreen() {
   const episodeName =
     seasonQuery.data?.episodes?.[effectiveEpisode - 1]?.name || undefined;
 
+  const qualityFilter = filterParams.q ?? "";
+  const sizeFilter = filterParams.sz ?? "";
+  const languageFilter = filterParams.lg ?? "";
+  const hasActiveFilters = !!(qualityFilter || sizeFilter || languageFilter);
+  const clearFilters = () => setFilterParams({ q: "", sz: "", lg: "" });
+
   // Ranked by the shared download chain: the user's preferred audio language
   // first, then language → quality → audio format → clean print → size.
   const rows: FileRow[] = useMemo(() => {
     const ranked = rankDownloadLinks(links ?? [], {
       preferredLanguage: settings.preferredAudioLanguage,
-    });
+      attachDimensions: true,
+    } as DownloadRankOptions);
     const nameCtx = {
       title: details ? title : undefined,
       episodeName,
     };
-    return ranked.map((link) => ({
-      link,
-      details: describeDownloadFile(link, nameCtx),
-      direct: isDirectFileUrl(link.url) && !isGatewayUrl(link.url),
-      gateway: isGatewayUrl(link.url),
-    }));
-  }, [links, settings.preferredAudioLanguage, details, title, episodeName]);
+    return ranked
+      .map((link) => ({
+        link,
+        details: describeDownloadFile(link, nameCtx),
+        direct: isDirectFileUrl(link.url) && !isGatewayUrl(link.url),
+        gateway: isGatewayUrl(link.url),
+      }))
+      .filter((row) =>
+        passesDownloadFilter(row.link, {
+          quality: qualityFilter,
+          size: sizeFilter,
+          language: languageFilter,
+        }),
+      );
+  }, [
+    links,
+    settings.preferredAudioLanguage,
+    details,
+    title,
+    episodeName,
+    qualityFilter,
+    sizeFilter,
+    languageFilter,
+  ]);
 
   const directRows = rows.filter((r) => r.direct);
   const externalRows = rows.filter((r) => !r.direct);
@@ -220,38 +310,56 @@ export default function HdHubDownloadScreen() {
         file.container ??
         "mp4";
 
-      enqueue({
-        url: link.url,
-        fileName: buildDownloadFileName({
-          details: file,
-          title,
-          mediaType: params.type,
-          season: effectiveSeason,
-          episode: effectiveEpisode,
-        }),
-        server: "hdhub",
-        mediaType: params.type,
-        tmdbId: params.id,
-        quality: file.quality,
-        title: isTV
-          ? `${title} S${effectiveSeason}E${effectiveEpisode}`
-          : title,
-        season: isTV ? effectiveSeason : undefined,
-        episode: isTV ? effectiveEpisode : undefined,
-        extension: extension.toLowerCase(),
-      });
+      // Display badges persisted with the download record (download manager UI).
+      const badges = [
+        file.quality,
+        file.sizeLabel,
+        file.languages.length > 0 ? file.languages.join(" · ") : "",
+        file.audio,
+        file.source,
+        file.codec,
+      ]
+        .filter(Boolean)
+        .filter((b, i, a) => a.indexOf(b) === i)
+        .slice(0, 5);
 
-      nav.push("/downloads");
+      // Stays on this screen — toast confirms, no navigation to /downloads.
+      // Space-too-tight is a warn dialog with an override, not a hard block.
+      void trigger(
+        {
+          url: link.url,
+          fileName: buildDownloadFileName({
+            details: file,
+            title,
+            mediaType: params.type,
+            season: effectiveSeason,
+            episode: effectiveEpisode,
+          }),
+          server: "hdhub",
+          mediaType: params.type,
+          tmdbId: params.id,
+          quality: file.quality,
+          title: isTV
+            ? `${title} S${effectiveSeason}E${effectiveEpisode}`
+            : title,
+          posterPath: posterPath || undefined,
+          season: isTV ? effectiveSeason : undefined,
+          episode: isTV ? effectiveEpisode : undefined,
+          extension: extension.toLowerCase(),
+          sizeBytes: file.sizeBytes,
+        },
+        { badges },
+      );
     },
     [
-      enqueue,
-      nav,
+      trigger,
       params.id,
       params.type,
       title,
       isTV,
       effectiveSeason,
       effectiveEpisode,
+      posterPath,
     ],
   );
 
@@ -307,7 +415,7 @@ export default function HdHubDownloadScreen() {
             color={colors.error}
           />
         </View>
-        <Text style={styles.errorTitle}>Couldn&apos;t reach HDHub</Text>
+        <Text style={styles.errorTitle}>Couldn't reach HDHub</Text>
         <Text style={styles.errorBody}>
           {error instanceof Error ? error.message : String(error)}
         </Text>
@@ -331,7 +439,10 @@ export default function HdHubDownloadScreen() {
     );
   }
 
-  if (rows.length === 0) {
+  // Genuine "HDHub returned nothing" — only when no filter is hiding rows.
+  // With filters active we keep rendering the screen (chips included) so the
+  // user can clear them instead of being stranded on an empty state.
+  if (rows.length === 0 && !hasActiveFilters) {
     return (
       <SafeAreaView style={[styles.center, { paddingHorizontal: 24 }]}>
         <StatusBar barStyle="light-content" />
@@ -458,89 +569,137 @@ export default function HdHubDownloadScreen() {
           </View>
         </View>
 
-        {/* Direct files — enqueueable in-app */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Download Options</Text>
-
-          {directRows.map((row, i) => {
-            const state = getFileState(row.link);
-            const progressTask = downloads.find(
-              (t) => t.server === "hdhub" && t.url === row.link.url,
-            );
-            const progress = progressTask?.totalBytes
-              ? progressTask.receivedBytes / progressTask.totalBytes
-              : 0;
-
-            return (
-              <FileRowView
-                key={`d-${row.link.url}-${i}`}
-                row={row}
-                progress={state === "active" ? progress : undefined}
-                right={
-                  <TouchableOpacity
-                    onPress={() => downloadFile(row)}
-                    disabled={state === "active"}
-                    style={[
-                      styles.actionBtn,
-                      state === "completed" && styles.actionBtnDone,
-                      state === "active" && { opacity: 0.6 },
-                    ]}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons
-                      name={
-                        state === "completed"
-                          ? "checkmark-circle"
-                          : state === "active"
-                            ? "arrow-down-circle"
-                            : "download-outline"
-                      }
-                      size={16}
-                      color={state === "completed" ? "#22c55e" : "#000000"}
-                    />
-                    <Text style={styles.actionText}>
-                      {state === "completed"
-                        ? "Saved"
-                        : state === "active"
-                          ? `${Math.round(progress * 100)}%`
-                          : "Download"}
-                    </Text>
-                  </TouchableOpacity>
-                }
-              />
-            );
-          })}
+        {/* Filters */}
+        <View style={styles.filterRow}>
+          <FilterChipSelect
+            label="Quality"
+            options={QUALITY_OPTIONS}
+            value={qualityFilter}
+            onChange={(v) => writeParam(setFilterParams, "q", v)}
+          />
+          <FilterChipSelect
+            label="Size"
+            options={SIZE_OPTIONS}
+            value={sizeFilter}
+            onChange={(v) => writeParam(setFilterParams, "sz", v)}
+          />
+          <FilterChipSelect
+            label="Language"
+            options={LANGUAGE_OPTIONS}
+            value={languageFilter}
+            onChange={(v) => writeParam(setFilterParams, "lg", v)}
+          />
         </View>
 
-        {/* Gateways / landing pages — not enqueueable, open externally */}
-        {externalRows.length > 0 && (
+        {/* Filters hid every file — chips above stay live so the user can
+            change or clear them instead of getting stuck. */}
+        {rows.length === 0 ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Open in Browser</Text>
-            <Text style={styles.sectionNote}>
-              These hosts serve a web page instead of a direct file, so they
-              can&apos;t be downloaded in-app.
-            </Text>
-            {externalRows.map((row, i) => (
-              <FileRowView
-                key={`e-${row.link.url}-${i}`}
-                row={row}
-                right={
-                  <TouchableOpacity
-                    onPress={() => openInBrowser(row.link.url)}
-                    style={styles.actionBtnGhost}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons
-                      name="open-outline"
-                      size={16}
-                      color={colors.gold}
-                    />
-                    <Text style={styles.actionGhostText}>Open</Text>
-                  </TouchableOpacity>
-                }
-              />
-            ))}
+            <View style={styles.emptyFilteredCard}>
+              <Ionicons name="filter-outline" size={30} color={colors.gold} />
+              <Text style={[styles.errorTitle, { marginTop: 12 }]}>
+                No files match your filters
+              </Text>
+              <Text style={[styles.errorBody, { marginBottom: 18 }]}>
+                None of the available files match the selected quality, size and
+                language.
+              </Text>
+              <TouchableOpacity
+                onPress={clearFilters}
+                style={styles.btnGold}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.btnGoldText}>Clear filters</Text>
+              </TouchableOpacity>
+            </View>
           </View>
+        ) : (
+          <>
+            {/* Direct files — enqueueable in-app */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Download Options</Text>
+
+              {directRows.map((row, i) => {
+                const state = getFileState(row.link);
+                const progressTask = downloads.find(
+                  (t) => t.server === "hdhub" && t.url === row.link.url,
+                );
+                const progress = progressTask?.totalBytes
+                  ? progressTask.receivedBytes / progressTask.totalBytes
+                  : 0;
+
+                return (
+                  <FileRowView
+                    key={`d-${row.link.url}-${i}`}
+                    row={row}
+                    progress={state === "active" ? progress : undefined}
+                    right={
+                      <TouchableOpacity
+                        onPress={() => downloadFile(row)}
+                        disabled={state === "active"}
+                        style={[
+                          styles.actionBtn,
+                          state === "completed" && styles.actionBtnDone,
+                          state === "active" && { opacity: 0.6 },
+                        ]}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons
+                          name={
+                            state === "completed"
+                              ? "checkmark-circle"
+                              : state === "active"
+                                ? "arrow-down-circle"
+                                : "download-outline"
+                          }
+                          size={16}
+                          color={state === "completed" ? "#22c55e" : "#000000"}
+                        />
+                        <Text style={styles.actionText}>
+                          {state === "completed"
+                            ? "Saved"
+                            : state === "active"
+                              ? `${Math.round(progress * 100)}%`
+                              : "Download"}
+                        </Text>
+                      </TouchableOpacity>
+                    }
+                  />
+                );
+              })}
+            </View>
+
+            {/* Gateways / landing pages — not enqueueable, open externally */}
+            {externalRows.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Open in Browser</Text>
+                <Text style={styles.sectionNote}>
+                  These hosts serve a web page instead of a direct file, so they
+                  can't be downloaded in-app.
+                </Text>
+                {externalRows.map((row, i) => (
+                  <FileRowView
+                    key={`e-${row.link.url}-${i}`}
+                    row={row}
+                    right={
+                      <TouchableOpacity
+                        onPress={() => openInBrowser(row.link.url)}
+                        style={styles.actionBtnGhost}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons
+                          name="open-outline"
+                          size={16}
+                          color={colors.gold}
+                        />
+                        <Text style={styles.actionGhostText}>Open</Text>
+                      </TouchableOpacity>
+                    }
+                  />
+                ))}
+              </View>
+            )}
+          </>
         )}
       </ScrollView>
 
@@ -613,6 +772,48 @@ function FileRowView({
       </View>
 
       {right}
+    </View>
+  );
+}
+
+/**
+ * A compact segmented picker for one filter dimension (quality / size / language).
+ * Tapping an active chip clears it; tapping inactive selects it.
+ */
+function FilterChipSelect({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { label: string; value: string }[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <View style={styles.filterGroup}>
+      <Text style={styles.filterLabel}>{label}</Text>
+      <View style={styles.chipRow}>
+        {options.map((o) => {
+          const active = value === String(o.value);
+          return (
+            <TouchableOpacity
+              key={o.value}
+              onPress={() => onChange(active ? "" : String(o.value))}
+              style={[
+                styles.chip,
+                active && [styles.chipActive, { backgroundColor: colors.gold }],
+              ]}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                {o.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -704,6 +905,49 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   epBtnText: { color: colors.gold, fontSize: 12, fontWeight: "700" },
+  filterRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  filterGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  filterLabel: {
+    color: "#a1a1aa",
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  chip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  chipActive: {
+    borderColor: colors.gold,
+  },
+  chipText: {
+    color: "#e4e4e7",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  chipTextActive: {
+    color: "#000000",
+  },
   section: { paddingHorizontal: 16, marginBottom: 24 },
   sectionTitle: {
     color: "#ffffff",
@@ -790,6 +1034,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 20,
+  },
+  emptyFilteredCard: {
+    alignItems: "center",
+    backgroundColor: "rgba(24, 24, 27, 0.85)",
+    borderWidth: 1,
+    borderColor: "rgba(63, 63, 70, 0.5)",
+    borderRadius: 14,
+    paddingVertical: 28,
+    paddingHorizontal: 20,
   },
   errorTitle: {
     color: "#d4d4d8",

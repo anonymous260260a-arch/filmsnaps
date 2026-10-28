@@ -59,6 +59,19 @@ export interface StreamLink {
      */
     intro?: [number, number] | null;
     outro?: [number, number] | null;
+    /**
+     * Filter dimensions for the download pages, attached by
+     * `rankDownloadLinks(links, { attachDimensions: true })`. Holds the
+     * values a filter UI compares against — never re-derive them per row.
+     */
+    __filter?: {
+      /** Canonical quality tiers for this file ("4K", "1080p", …). */
+      qualities: string[];
+      /** File size in bytes (0 when unknown). */
+      sizeBytes: number;
+      /** Language tags found in the release name. */
+      languages: string[];
+    };
   };
 }
 

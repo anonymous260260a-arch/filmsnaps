@@ -18,24 +18,45 @@ import { Section, Card, NoData } from "./shared";
 interface AdoptionSectionProps {
   cur: Dashboard | null;
   openDrill: (event: string, title: string) => void;
+  totalUsers: number;
 }
 
-export function AdoptionSection({ cur, openDrill }: AdoptionSectionProps) {
+export function AdoptionSection({
+  cur,
+  openDrill,
+  totalUsers,
+}: AdoptionSectionProps) {
   const featureData = useMemo(() => {
     const raw = cur?.features ?? [];
     if (raw.length === 0) return [];
 
+    // Group by feature, summing counts across contexts.
     const grouped = raw.reduce(
       (acc, f) => {
         if (!acc[f.feature]) {
-          acc[f.feature] = { total: 0, contexts: {} };
+          acc[f.feature] = {
+            total: 0,
+            users: 0,
+            adoptionRate: 0,
+            contexts: {},
+          };
         }
         acc[f.feature].total += f.n;
+        acc[f.feature].users = f.users;
+        acc[f.feature].adoptionRate = f.adoptionRate;
         acc[f.feature].contexts[f.context] =
           (acc[f.feature].contexts[f.context] || 0) + f.n;
         return acc;
       },
-      {} as Record<string, { total: number; contexts: Record<string, number> }>,
+      {} as Record<
+        string,
+        {
+          total: number;
+          users: number;
+          adoptionRate: number;
+          contexts: Record<string, number>;
+        }
+      >,
     );
 
     return Object.entries(grouped)
@@ -45,13 +66,15 @@ export function AdoptionSection({ cur, openDrill }: AdoptionSectionProps) {
           "";
         return {
           name,
-          value: data.total,
+          totalUses: data.total,
+          users: data.users,
+          adoptionRate: data.adoptionRate,
           topContext,
         };
       })
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 12);
-  }, [cur?.features]);
+      .sort((a, b) => b.users - a.users)
+      .slice(0, 20);
+  }, [cur?.features, totalUsers]);
 
   const screenData = useMemo(() => {
     const raw = cur?.screens ?? {};
@@ -86,11 +109,12 @@ export function AdoptionSection({ cur, openDrill }: AdoptionSectionProps) {
             <NoData message="No feature interactions logged in range" />
           ) : (
             <div className="h-72 w-full pt-1">
+              {" "}
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   data={featureData}
                   layout="vertical"
-                  margin={{ top: 5, right: 30, left: 30, bottom: 5 }}
+                  margin={{ top: 5, right: 30, left: 50, bottom: 5 }}
                 >
                   <CartesianGrid
                     strokeDasharray="3 3"
@@ -101,11 +125,12 @@ export function AdoptionSection({ cur, openDrill }: AdoptionSectionProps) {
                     type="number"
                     stroke="rgba(255,255,255,0.3)"
                     fontSize={10}
+                    tickFormatter={(v) => fmtInt(v)}
                   />
                   <YAxis
                     dataKey="name"
                     type="category"
-                    width={110}
+                    width={120}
                     stroke="rgba(255,255,255,0.7)"
                     fontSize={11}
                     tickLine={false}
@@ -120,7 +145,13 @@ export function AdoptionSection({ cur, openDrill }: AdoptionSectionProps) {
                         <div className="bg-[#121216] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
                           <p className="font-bold text-white">{itemLabel}</p>
                           <p className="text-emerald-400 mt-0.5">
-                            {fmtInt(d.value)} uses
+                            {fmtInt(d.users)} of {fmtInt(totalUsers)} users
+                            <span className="text-white/40 ml-1">
+                              ({d.adoptionRate}%)
+                            </span>
+                          </p>
+                          <p className="text-white/50 mt-0.5">
+                            {fmtInt(d.totalUses)} total uses
                           </p>
                           {d.topContext && (
                             <p className="text-white/40 text-[10px] mt-1">
@@ -135,7 +166,7 @@ export function AdoptionSection({ cur, openDrill }: AdoptionSectionProps) {
                     }}
                   />
                   <Bar
-                    dataKey="value"
+                    dataKey="users"
                     fill="#4ADE80"
                     radius={[0, 4, 4, 0]}
                     onClick={(d: any) =>

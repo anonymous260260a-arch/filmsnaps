@@ -106,6 +106,9 @@ interface PlayerOverlayProps {
   onClose: () => void;
   /** Embedded mode: hide the back button — the host watch page provides close. */
   hideBack?: boolean;
+  /** Media identity (e.g. "season:episode"). Same-media player recreations
+   *  keep the displayed position; a media change zeroes it. */
+  mediaKey?: string;
   /** Announcements for TalkBack/VoiceOver (source switched, resumed, etc). */
   liveAnnouncement?: string | null;
 }
@@ -143,6 +146,7 @@ export function PlayerOverlay({
   onToggleFullscreen,
   onClose,
   hideBack = false,
+  mediaKey = "",
   liveAnnouncement = null,
 }: PlayerOverlayProps) {
   const insets = useSafeAreaInsets();
@@ -160,6 +164,8 @@ export function PlayerOverlay({
     setCurrentTime(t);
   }, []);
   const [duration, setDuration] = useState(0);
+  /** Throttle for the "[Bar] zero-ish time" residue-leak diagnostic. */
+  const lastZeroLogAtRef = useRef(0);
   const [bufferedPosition, setBufferedPosition] = useState(0);
   const [isBuffering, setIsBuffering] = useState(true);
   const [showRemainingTime, setShowRemainingTime] = useState(false);
@@ -168,6 +174,13 @@ export function PlayerOverlay({
   const [showAudioSheet, setShowAudioSheet] = useState(false);
   const [showSubtitleSheet, setShowSubtitleSheet] = useState(false);
   const [showSettingsSheet, setShowSettingsSheet] = useState(false);
+  // D5: each sheet mounts on FIRST open — the player's critical first render
+  // skips their hooks/subtree entirely (they also stop re-rendering hidden on
+  // every 4 Hz time tick). Once opened they stay mounted, so closing is still
+  // a `visible` flip and entrance/exit animations behave exactly as before.
+  const [audioSheetMounted, setAudioSheetMounted] = useState(false);
+  const [subtitleSheetMounted, setSubtitleSheetMounted] = useState(false);
+  const [settingsSheetMounted, setSettingsSheetMounted] = useState(false);
 
   // ── Chrome context ──
   const audioTracks = player.getAudioTracks();
@@ -238,13 +251,25 @@ export function PlayerOverlay({
   const doubleTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seekDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Reset playback timing when player changes (new source loaded)
+  // Reset timing when the player identity changes (the hook keys the player
+  // on the stringified source, so a quality/server switch recreates it).
+  // Same media → keep displayed position & duration: the setup factory
+  // presets the carried position, and zeroing here flashed the bar to 0%
+  // for the whole load. New media (mediaKey changed) → full reset.
+  const lastMediaKeyRef = useRef(mediaKey);
   useEffect(() => {
-    applyTime(0);
-    setDuration(0);
+    const mediaChanged = lastMediaKeyRef.current !== mediaKey;
+    lastMediaKeyRef.current = mediaKey;
+    if (mediaChanged) {
+      applyTime(0);
+      setDuration(0);
+    }
     setIsBuffering(true);
     setIsPaused(true);
-  }, [player, applyTime]);
+    console.log(
+      `[Bar] reset media=${mediaChanged ? "new" : "carry"} t=${currentTimeRef.current}`,
+    );
+  }, [player, mediaKey, applyTime]);
 
   // ── Optimistic Seek Lock State Machine ──
   // Prevents stale timeUpdate events from causing the progress bar to rubber-band / bounce-back
@@ -399,13 +424,30 @@ export function PlayerOverlay({
         if (typeof buffered === "number" && Number.isFinite(buffered)) {
           setBufferedPosition(buffered);
         }
+        // Diagnostic: a near-zero time reaching the bar while a duration is
+        // known is the residue-leak signature. Throttled — episode start
+        // legitimately sits at 0.
+        if (
+          time < 1 &&
+          dur > 0 &&
+          Date.now() - lastZeroLogAtRef.current > 1500
+        ) {
+          lastZeroLogAtRef.current = Date.now();
+          console.log(
+            `[Bar] zero-ish time t=${time.toFixed(2)} dur=${dur.toFixed(0)} locked=${isSeekLockedRef.current} seeking=${player.isSeeking?.() ?? false}`,
+          );
+        }
         if (isSeekLockedRef.current) {
           const target = targetSeekTimeRef.current;
           // Mirror the adapter's tight landing rule — the old
           // `diff <= 60` also matched the still-playing pre-seek position,
           // releasing the lock early and bouncing the timeline back.
+          // Near-zero while a deeper target is pending is residue, never
+          // a landing (locking onto it dropped the bar to 0%).
+          const residue = time <= 2 && target >= time + 3;
           const isLanded =
-            target <= 15 ? time <= target + 3 : Math.abs(time - target) <= 3;
+            !residue &&
+            (target <= 15 ? time <= target + 3 : Math.abs(time - target) <= 3);
           if (isLanded) {
             releaseSeekLock();
             applyTime(time);
@@ -615,11 +657,17 @@ export function PlayerOverlay({
 
   // ── Control Actions ──
   const togglePlayPause = useCallback(() => {
-    if (player.isPaused()) {
-      player.play();
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    } else {
-      player.pause();
+    // Gesture/button handlers run outside any ErrorBoundary — a native throw
+    // from play()/pause() must not take the app down with it.
+    try {
+      if (player.isPaused()) {
+        player.play();
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      } else {
+        player.pause();
+      }
+    } catch (e) {
+      console.warn("[PlayerOverlay] play/pause failed:", e);
     }
     resetInteractionTimer();
   }, [player, resetInteractionTimer]);
@@ -697,10 +745,12 @@ export function PlayerOverlay({
   // ── Sheet openers (close-then-open keeps one Modal at a time) ──
   const openAudioSheet = useCallback(() => {
     setShowSettingsSheet(false);
+    setAudioSheetMounted(true);
     setShowAudioSheet(true);
   }, []);
   const openSubtitleSheet = useCallback(() => {
     setShowSettingsSheet(false);
+    setSubtitleSheetMounted(true);
     setShowSubtitleSheet(true);
   }, []);
 
@@ -883,7 +933,10 @@ export function PlayerOverlay({
 
                 {/* ⋮ menu — speed / audio language / screen fit (landscape: + lock) */}
                 <TouchableOpacity
-                  onPress={() => setShowSettingsSheet(true)}
+                  onPress={() => {
+                    setSettingsSheetMounted(true);
+                    setShowSettingsSheet(true);
+                  }}
                   style={styles.iconButton}
                   activeOpacity={0.6}
                   accessibilityRole="button"
@@ -1086,39 +1139,46 @@ export function PlayerOverlay({
         </TouchableOpacity>
       )}
 
-      {/* Settings & Option Sheets */}
-      <AudioTrackSheet
-        visible={showAudioSheet}
-        player={player}
-        onSelectTrack={onAudioTrackSelected}
-        onClose={closeAudioSheet}
-      />
-      <SubtitleSheet
-        visible={showSubtitleSheet}
-        player={player}
-        storageKey={subtitleKey}
-        onlineSearch={subtitleOnlineSearch}
-        sidecars={subtitleSidecars}
-        autoSync={autoSync}
-        onClose={closeSubtitleSheet}
-      />
-      <PlayerSettingsSheet
-        visible={showSettingsSheet}
-        player={player}
-        isFullscreen={isFullscreen}
-        currentSpeed={player.getPlaybackRate()}
-        onSelectSpeed={handleSelectSpeed}
-        screenFit={screenFit}
-        onSelectFit={handleSelectFit}
-        subtitleBottomMargin={settings.subtitleBottomMargin}
-        onSelectSubtitleMargin={(fraction) =>
-          updateSetting("subtitleBottomMargin", fraction)
-        }
-        lockAvailable={lockAvailable}
-        isLocked={isLocked}
-        onLock={handleLock}
-        onClose={closeSettingsSheet}
-      />
+      {/* Settings & Option Sheets — mounted on first open (D5) */}
+      {audioSheetMounted && (
+        <AudioTrackSheet
+          visible={showAudioSheet}
+          player={player}
+          onSelectTrack={onAudioTrackSelected}
+          onClose={closeAudioSheet}
+        />
+      )}
+      {subtitleSheetMounted && (
+        <SubtitleSheet
+          visible={showSubtitleSheet}
+          player={player}
+          storageKey={subtitleKey}
+          onlineSearch={subtitleOnlineSearch}
+          sidecars={subtitleSidecars}
+          autoSync={autoSync}
+          onClose={closeSubtitleSheet}
+        />
+      )}
+      {settingsSheetMounted && (
+        <PlayerSettingsSheet
+          visible={showSettingsSheet}
+          player={player}
+          isFullscreen={isFullscreen}
+          currentSpeed={player.getPlaybackRate()}
+          onSelectSpeed={handleSelectSpeed}
+          screenFit={screenFit}
+          onSelectFit={handleSelectFit}
+          subtitleBottomMargin={settings.subtitleBottomMargin}
+          onSelectSubtitleMargin={(fraction) => {
+            console.log(`[SubPos] updateSetting -> ${fraction}`);
+            updateSetting("subtitleBottomMargin", fraction);
+          }}
+          lockAvailable={lockAvailable}
+          isLocked={isLocked}
+          onLock={handleLock}
+          onClose={closeSettingsSheet}
+        />
+      )}
     </View>
   );
 }

@@ -124,7 +124,18 @@ class WatchCollector(
             val gen = ++workerGen
             worker = Thread({
                 while (!stopped && workerGen == gen) {
-                    pumpOnce()
+                    // Raw thread with no exception barrier: any escape reaches
+                    // Thread.uncaughtExceptionHandler and kills the process.
+                    // Stop the worker instead of taking the app down with it.
+                    try {
+                        pumpOnce()
+                    } catch (t: Throwable) {
+                        try {
+                            android.util.Log.e("SubSyncWatch", "watch worker stopped after error", t)
+                        } catch (_: Throwable) {
+                        }
+                        break
+                    }
                 }
             }, "SubSyncWatch").apply {
                 isDaemon = true

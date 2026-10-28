@@ -1,0 +1,19 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools">
+
+  <!-- Advertising ID — required by Start.io for targeting on API 31+. -->
+  <uses-permission android:name="android.permission.AD_ID" />
+
+  <application>
+    <!--
+      We use CODE init (StartAppSDK.initParams from JS-driven appId) so the
+      Start.io App ID is OTA-swappable via ads-config.json. Removing the
+      ContentProvider stops the SDK from auto-initializing from manifest
+      meta-data before our gate has decided whether ads are even on.
+    -->
+    <provider
+      android:name="com.startapp.sdk.adsbase.StartAppInitProvider"
+      android:authorities="${applicationId}.startappinitprovider"
+      tools:node="remove" />
+  </application>
+</manifest>

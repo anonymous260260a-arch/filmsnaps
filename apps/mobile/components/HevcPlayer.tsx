@@ -20,6 +20,7 @@ import React, {
   useMemo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useState,
   useRef,
 } from "react";
@@ -87,6 +88,8 @@ import {
   trackFeatureUsed,
   trackPlayerError,
   trackExitDuringSwitch,
+  trackWatchProgress,
+  getSessionId,
 } from "../lib/telemetry";
 import { setPlayerStruggling } from "expo-subtitle-sync";
 import {
@@ -110,6 +113,7 @@ import {
   selectBestStream,
   type PreferredLanguage,
 } from "../lib/streamSelector";
+import { bucketQuality } from "../lib/telemetry/types";
 
 interface HevcPlayerProps {
   /** Direct video URL — used when playing a single source (Falix, local files). */
@@ -171,6 +175,15 @@ interface HevcPlayerProps {
   externalPlayer?: VideoPlayer | null;
   /** D3: cache key the external player was held under (for release-on-close). */
   earlyPlayerKey?: string;
+  /** D3: URI the warm player was actually held with. When it differs from
+   *  videoSource (rank-time hold + walk advanced, or a late merge reordered
+   *  the pool), adoption syncs the source on the first URL-change pass. */
+  earlyPlayerUrl?: string;
+  /** Offline/local playback — mount straight into fullscreen landscape. */
+  startFullscreen?: boolean;
+  /** Source is a downloaded file: no chain to fall back through, no provider
+   *  hop — a failure is a bad file, and the card must say so. */
+  offline?: boolean;
 }
 
 interface SwitchInfo {
@@ -181,6 +194,14 @@ interface SwitchInfo {
 interface StreamErrorInfo {
   title: string;
   detail: string;
+}
+
+/** Error card for a downloaded file — there is no other source to hop to. */
+function offlineErrorInfo(reason: string): StreamErrorInfo {
+  return {
+    title: "Couldn't play the downloaded file",
+    detail: `${reason} The file may be incomplete or unsupported — re-download it from the Downloads tab.`,
+  };
 }
 
 // Switch/rebuffer limits live in lib/playerConfig (remote-tunable).
@@ -332,11 +353,14 @@ export function HevcPlayer({
   onNextEpisode,
   externalPlayer,
   earlyPlayerKey,
+  earlyPlayerUrl,
   isAnime,
+  startFullscreen = false,
+  offline = false,
 }: HevcPlayerProps) {
   const { settings } = useSettings();
   const screenFit = settings.playerScreenFit ?? "contain";
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(() => startFullscreen);
   // Start index skips a probe-dead default (the probes already condemned it —
   // playing it first is how "best badge on a failed URL" happened).
   const [initialStart] = useState(() =>
@@ -433,6 +457,13 @@ export function HevcPlayer({
     (autoProviderSwitch = true) => {
       if (exhaustedRef.current) return;
       exhaustedRef.current = true;
+      if (offline) {
+        console.log(
+          "[Flow] offline source failed — showing file error card (no chain to fall back through)",
+        );
+        setStreamError(offlineErrorInfo("Playback failed."));
+        return;
+      }
       setExhausted(true);
       perfRef.current?.noteFailed();
       if (autoProviderSwitch) onExhausted?.();
@@ -441,7 +472,7 @@ export function HevcPlayer({
           "[Flow] exhausted before any playback — showing recovery card, provider switch left to the user",
         );
     },
-    [onExhausted],
+    [onExhausted, offline],
   );
   const switchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recheckTokenRef = useRef(0);
@@ -509,6 +540,14 @@ export function HevcPlayer({
     // FIX 1: hevcMounted marks first render; legacy "tap" is the fresh-session first mark.
     perfRef.current.mark("hevcMounted");
     setActivePerfSession(perfRef.current);
+  }
+  // [Q] pinpoint: which render pass is this, and when — a 2.9s render→effect
+  // gap means either many re-renders or one blocked render. Epoch correlates
+  // this line with every other [Q] line carrying t=.
+  const renderCountRef = useRef(0);
+  renderCountRef.current += 1;
+  if (renderCountRef.current <= 6) {
+    console.log(`[Q] render#${renderCountRef.current} t=${Date.now()}`);
   }
   /** Episode identity — a change here drops carried-over playback position. */
   const lastEpKeyRef = useRef(`${season ?? ""}:${episode ?? ""}`);
@@ -833,6 +872,19 @@ export function HevcPlayer({
       }
       console.log(
         `[HevcPlayer] links → ${links.length} rows (sub=${sub} dub=${dub}${other ? ` other=${other}` : ""}) [${firsts.join(" | ")}]`,
+      );
+      console.log(
+        `[Q] player-array first3: ` +
+          links
+            .slice(0, 3)
+            .map(
+              (l, i) =>
+                `#${i} rawQ=${l.quality ?? "?"} size=${l._meta?.sizeBytes ?? 0} url=…${l.url.slice(-45)}`,
+            )
+            .join(" | "),
+      );
+      console.log(
+        `[Q] player-default idx=${defaultIndex} startIdx=${initialStart.index} rawQ=${links[defaultIndex]?.quality ?? "?"} url=${(links[defaultIndex]?.url ?? links[0]?.url ?? "").slice(0, 90)}`,
       );
     }
     // A links refresh while something is already playing (racing prefetch vs
@@ -1377,6 +1429,11 @@ export function HevcPlayer({
     }),
     [activeUrl, currentLink?.headers],
   );
+  // [Bar] a URI change recreates the hook player (keyed on the stringified
+  // source) — the trigger for the "bar reset while loading" report.
+  useEffect(() => {
+    console.log(`[Bar] videoSource → ${videoSource.uri.slice(0, 90)}`);
+  }, [videoSource.uri]);
 
   // Detect container & codec from current link for buffer tuning + badges
   const container = detectContainer(currentLink?.name ?? "", activeUrl);
@@ -1410,18 +1467,63 @@ export function HevcPlayer({
 
   // Track continuous playback position across source switches and seeking
   const lastPlaybackTimeRef = useRef(startAt);
+  /** [Flow] diagnostic — epoch when the current source was applied. */
+  const sourceSetAtRef = useRef(0);
+  // Watch progress threshold tracking — fires at 25/50/75/100% crossings.
+  const watchedThresholdsRef = useRef<Set<number>>(new Set());
   // Episode identity the applied source belongs to. The setup factory below
   // runs DURING render (useVideoPlayer → useReleasingSharedObject useMemo),
   // before the links effect resets lastPlaybackTimeRef — so the carry read
   // must be keyed or a cross-episode switch seeks to the old episode's time.
   const sourceEpKeyRef = useRef(`${season ?? ""}:${episode ?? ""}`);
 
+  // [Q] pinpoint: split sourceSet (render/factory) → commit → passive-flush.
+  // A layout effect runs synchronously at commit (before paint); the paired
+  // passive effect runs after paint. The gap between them = JS thread busy /
+  // React scheduling; commit−sourceSet = remaining render phase.
+  useLayoutEffect(() => {
+    console.log(
+      `[Q] commit sinceSourceSet=${
+        sourceSetAtRef.current ? Date.now() - sourceSetAtRef.current : "n/a"
+      }ms t=${Date.now()}`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    console.log(
+      `[Q] passive sinceSourceSet=${
+        sourceSetAtRef.current ? Date.now() - sourceSetAtRef.current : "n/a"
+      }ms t=${Date.now()}`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Create video player — immediate (no gating). D3: when details held a warm
   // player for this key, ADOPT it (hookPlayer is still constructed so hook
   // order stays stable; the external instance is what VideoView/adapter drive).
-  const hookPlayer = useVideoPlayer(videoSource, (playerInstance) => {
+  // CRITICAL: when adopting, construct the hook player with a NULL source.
+  // A real-source hook player begins its native load at construction (pause()
+  // does NOT stop it), so adoption used to spawn TWO concurrent HEVC decoders
+  // on the same stream — that starved the JS thread for ~38s and pushed
+  // decode to 41s on the emulator. Null source = idle hook player, no second
+  // decoder. The player is keyed on the stringified source, so if externalPlayer
+  // ever flips the hook player is recreated (old one released by the hook).
+  const hookSource = externalPlayer ? null : videoSource;
+  const hookPlayer = useVideoPlayer(hookSource, (playerInstance) => {
+    // Adopted early player drives playback — this idle instance must never
+    // play (double audio) or touch the real source. sourceSet/playerOpen are
+    // marked by the adoption effect instead.
+    if (externalPlayer) {
+      try {
+        playerInstance.pause();
+      } catch {}
+      return;
+    }
     console.log(
-      `[Flow] player: opening #${activeIndexRef.current} ${currentLink?.quality ?? "?"} ${activeUrl.slice(0, 60)} (container=${container}, codec=${codec})`,
+      `[Flow] player: opening #${activeIndexRef.current} ${currentLink?.quality ?? "?"} ${activeUrl.slice(0, 60)} (container=${container}, codec=${codec}) wrapped=${videoSource.uri.slice(0, 80)} offline=${offline}`,
+    );
+    console.log(
+      `[Q] player-open idx=${activeIndexRef.current} rawQ=${currentLink?.quality ?? "?"} size=${currentLink?._meta?.sizeBytes ?? 0} name=${JSON.stringify((currentLink?.name ?? "").slice(0, 80))} url=${activeUrl.slice(0, 90)} t=${Date.now()}`,
     );
     // [watchperf] FIX 2 — sourceSet: URL applied to the video player instance.
     perfRef.current?.mark("sourceSet", {
@@ -1429,6 +1531,7 @@ export function HevcPlayer({
       codec,
       provider: currentLink?._meta?.providerId,
     });
+    sourceSetAtRef.current = Date.now();
     playerInstance.loop = false;
     playerInstance.timeUpdateEventInterval = 0.25;
     // Native default is FALSE (despite docs saying true) — without this,
@@ -1451,15 +1554,9 @@ export function HevcPlayer({
     if (initialTime > 0) {
       playerInstance.currentTime = initialTime;
     }
-    // When a warm external player is adopted, this hook player is only kept
-    // for stable hook order — it must never play (double audio).
-    if (externalPlayer) {
-      try {
-        playerInstance.pause();
-      } catch {}
-    } else {
-      playerInstance.play();
-    }
+    // Reaching here means externalPlayer was null at construction (the adopt
+    // case early-returns above) — this is the sole playback player.
+    playerInstance.play();
   });
 
   const adoptedExternalRef = useRef(false);
@@ -1477,6 +1574,7 @@ export function HevcPlayer({
       provider: currentLink?._meta?.providerId,
       via: "early-adopt",
     });
+    sourceSetAtRef.current = Date.now();
     // The warm player may already be readyToPlay — surface that immediately
     // instead of waiting for a fresh statusChange we may never receive.
     try {
@@ -1500,7 +1598,10 @@ export function HevcPlayer({
       externalPlayer.play();
     } catch {}
     // E1: segment open is owned by the URL-change effect (first pass included).
-    lastExternalUriRef.current = videoSource?.uri ?? null;
+    // Seed with the URI the held player ACTUALLY has — when it differs from
+    // videoSource (rank-time hold, then the walk advanced or a late merge
+    // reordered), the URL-change effect below replaces on this first pass.
+    lastExternalUriRef.current = earlyPlayerUrl ?? videoSource?.uri ?? null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalPlayer]);
 
@@ -1557,6 +1658,12 @@ export function HevcPlayer({
   useEffect(() => {
     if (!adapter.onStatusChange) return;
     return adapter.onStatusChange((status) => {
+      const sinceSrc = sourceSetAtRef.current
+        ? Date.now() - sourceSetAtRef.current
+        : -1;
+      console.log(
+        `[Flow] player: status=${status} (+${sinceSrc}ms since sourceSet)`,
+      );
       if (status === "readyToPlay") {
         perfRef.current?.mark("playerReady", { status });
       }
@@ -1573,7 +1680,13 @@ export function HevcPlayer({
       if (state === "background" || state === "inactive") {
         backgroundedRef.current = true;
         adapterRef.current?.setAppBackgrounded?.(true);
-        adapterRef.current?.pause();
+        // pause() reaches the native player — a throw here would be an
+        // uncaught error inside an AppState listener (no boundary above).
+        try {
+          adapterRef.current?.pause();
+        } catch (e) {
+          console.warn("[HevcPlayer] background pause failed:", e);
+        }
       } else if (state === "active") {
         backgroundedRef.current = false;
         lastActiveAtRef.current = Date.now();
@@ -1908,6 +2021,42 @@ export function HevcPlayer({
             completed: false,
           }).catch(() => {});
         }
+
+        // Watch progress threshold tracking — fires at 25/50/75/100% crossings.
+        if (dur > 0 && tmdbId) {
+          const pct = (time / dur) * 100;
+          const thresholds: Array<{
+            threshold: 25 | 50 | 75 | 100;
+            pct: number;
+          }> = [
+            { threshold: 25, pct: 25 },
+            { threshold: 50, pct: 50 },
+            { threshold: 75, pct: 75 },
+            { threshold: 100, pct: 100 },
+          ];
+          const link = links?.[activeIndexRef.current];
+          for (const { threshold, pct: thresholdPct } of thresholds) {
+            if (
+              pct >= thresholdPct &&
+              !watchedThresholdsRef.current.has(threshold)
+            ) {
+              watchedThresholdsRef.current.add(threshold);
+              trackWatchProgress({
+                sessionId: getSessionId(),
+                tmdbId: Number(tmdbId),
+                mediaType: mediaType ?? "movie",
+                season: playSeasonRef.current ?? undefined,
+                episode: playEpisodeRef.current ?? undefined,
+                watchedPctThreshold: threshold,
+                qualityBucket: link?.quality
+                  ? bucketQuality(link.quality)
+                  : undefined,
+                providerId: link?._meta?.providerId ?? undefined,
+                surface: "direct",
+              });
+            }
+          }
+        }
       }
     });
     return unsub;
@@ -2082,7 +2231,11 @@ export function HevcPlayer({
       setStreamError(null);
       pendingAutoToastRef.current = false;
       // Stop expo-video's end-of-stream play() retry loop + buffering spinner.
-      adapter.pause();
+      try {
+        adapter.pause();
+      } catch (e) {
+        console.warn("[HevcPlayer] end-of-stream pause failed:", e);
+      }
 
       if (
         mediaType === "tv" &&
@@ -2173,11 +2326,17 @@ export function HevcPlayer({
       // priority chain takes over (with the last-working rescue at the end).
       isManualSelectionRef.current = false;
       setStreamError(null);
+      // Downloaded file: no chain, no provider hop — the card states the
+      // real failure and offers a plain retry of the same file.
+      if (offline) {
+        setStreamError(offlineErrorInfo(errMsg));
+        return;
+      }
       fallbackToNextLink(activeLinkIndex, "error");
     });
 
     return unsubscribe;
-  }, [adapter, isMultiLink, links, activeLinkIndex]);
+  }, [adapter, isMultiLink, links, activeLinkIndex, offline]);
 
   // ── User actions ──
 
@@ -2348,6 +2507,29 @@ export function HevcPlayer({
     });
   }, [externalFullscreen]);
 
+  // Offline/local playback opens directly in fullscreen landscape. The lock is
+  // taken on mount and released on unmount — closing via the Android back
+  // button never calls handleClose, so the cleanup is what guarantees the app
+  // returns to portrait after a local file finishes playing.
+  useEffect(() => {
+    if (!startFullscreen) return;
+    ScreenOrientation.getOrientationAsync()
+      .then((o) =>
+        console.log(
+          `[Flow] offline mount: orientation=${o} → locking LANDSCAPE (fullscreen-at-mount)`,
+        ),
+      )
+      .catch(() => {});
+    ScreenOrientation.lockAsync(
+      ScreenOrientation.OrientationLock.LANDSCAPE,
+    ).catch(() => {});
+    return () => {
+      ScreenOrientation.lockAsync(
+        ScreenOrientation.OrientationLock.PORTRAIT_UP,
+      ).catch(() => {});
+    };
+  }, [startFullscreen]);
+
   // ── Close handler — save progress, restore orientation ──
   const handleClose = useCallback(async () => {
     const current = adapterRef.current;
@@ -2419,13 +2601,13 @@ export function HevcPlayer({
   useEffect(() => {
     const unsubs = [
       adapter.onPlayPause((paused) => {
-        if (!paused) KeepAwake.activateKeepAwakeAsync();
-        else KeepAwake.deactivateKeepAwake();
+        if (!paused) KeepAwake.activateKeepAwakeAsync().catch(() => {});
+        else KeepAwake.deactivateKeepAwake().catch(() => {});
       }),
     ];
     return () => {
       unsubs.forEach((u) => u());
-      KeepAwake.deactivateKeepAwake();
+      KeepAwake.deactivateKeepAwake().catch(() => {});
     };
   }, [adapter]);
 
@@ -2583,11 +2765,35 @@ export function HevcPlayer({
   // native prop (patched expo-video); other platforms ignore it.
   const subtitleMarginFraction =
     settings.subtitleBottomMargin ?? (winW > winH ? 0.2 : 0.14);
+  // [SubPos] logs: value handed to the native VideoView prop. Fires when the
+  // setting changes (or orientation default switches) — anime issue is this
+  // value changing but subs not moving (native) vs never changing (JS).
+  useEffect(() => {
+    console.log(
+      `[SubPos] prop value=${subtitleMarginFraction.toFixed(3)} rawSetting=${
+        settings.subtitleBottomMargin
+      } landscape=${winW > winH} fullscreen=${isFullscreen}`,
+    );
+  }, [
+    subtitleMarginFraction,
+    settings.subtitleBottomMargin,
+    winW,
+    winH,
+    isFullscreen,
+  ]);
   // Immersive video — while the surface fills the screen, the VideoView hides
   // the OS status + navigation bars (native patch) and restores them on
   // unmount / focus loss. No edge-to-edge letterboxing surprises: safe-area
   // insets collapse to ~0 while immersive, so the surface re-expands cleanly.
   const immersive = surfaceFillsScreen;
+
+  // [Q] pinpoint: end of the render body — body-end − render#N = pure render
+  // time; commit − body-end = React reconciliation/children of this pass.
+  if (renderCountRef.current <= 6) {
+    console.log(
+      `[Q] render#N body-end n=${renderCountRef.current} t=${Date.now()}`,
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -2621,6 +2827,7 @@ export function HevcPlayer({
           {/* Controls overlay (also carries the switching pill + buffering spinner) */}
           <PlayerOverlay
             player={adapter}
+            mediaKey={`${season ?? ""}:${episode ?? ""}`}
             title={title}
             backdropUrl={backdropUrl}
             isFullscreen={isFullscreen}

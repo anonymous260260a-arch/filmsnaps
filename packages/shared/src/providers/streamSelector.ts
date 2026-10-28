@@ -513,43 +513,77 @@ export function rankStreams(
     return sz <= capBytes ? 0 : 1;
   };
 
+  // Decorate-once: every comparator input (URL parse, language regexes,
+  // quality/size/cam/container/CDN checks) is derived ONCE per link instead
+  // of re-derived per comparison — O(n log n) regex+URL work was ~2.4s for
+  // 138 links on a slow JS thread. Values are bit-identical to the inline
+  // calls, so the sort result is unchanged.
+  interface SortKeys {
+    demoted: number;
+    bucketRank: number;
+    sizeClass: 0 | 1 | 2;
+    size: number;
+    qualityIdx: number;
+    cam: number;
+    webPlayable: number;
+    cdn: number;
+    hevc: number;
+  }
+  const sortKeys = new Map<StreamLink, SortKeys>();
+  for (const link of filtered) {
+    sortKeys.set(link, {
+      demoted: isDemotedHost(link) ? 1 : 0,
+      bucketRank: bucketRankOf(link),
+      sizeClass: sizeClassOf(link),
+      size: sizeOf(link),
+      qualityIdx: qualityIndex(link),
+      cam: isCamPrint(link) ? 1 : 0,
+      webPlayable: isWebPlayable(link) ? 0 : 1,
+      cdn: cdnRankOf(link),
+      hevc: link._meta?.codec === "hevc" ? 0 : 1,
+    });
+  }
+  const K = (link: StreamLink): SortKeys => {
+    const cached = sortKeys.get(link);
+    if (cached) return cached;
+    // Defensive fallback (shouldn't happen — sort input ⊆ filtered).
+    return {
+      demoted: isDemotedHost(link) ? 1 : 0,
+      bucketRank: bucketRankOf(link),
+      sizeClass: sizeClassOf(link),
+      size: sizeOf(link),
+      qualityIdx: qualityIndex(link),
+      cam: isCamPrint(link) ? 1 : 0,
+      webPlayable: isWebPlayable(link) ? 0 : 1,
+      cdn: cdnRankOf(link),
+      hevc: link._meta?.codec === "hevc" ? 0 : 1,
+    };
+  };
+
   const sortedLinks = [...filtered].sort((a, b) => {
-    const da = isDemotedHost(a) ? 1 : 0;
-    const db = isDemotedHost(b) ? 1 : 0;
-    if (da !== db) return da - db;
-    const ba = bucketRankOf(a);
-    const bb = bucketRankOf(b);
-    if (ba !== bb) return ba - bb;
-    const ca = sizeClassOf(a);
-    const cb = sizeClassOf(b);
-    if (ca !== cb) return ca - cb;
-    if (ca === 1) {
+    const ka = K(a);
+    const kb = K(b);
+    if (ka.demoted !== kb.demoted) return ka.demoted - kb.demoted;
+    if (ka.bucketRank !== kb.bucketRank) return ka.bucketRank - kb.bucketRank;
+    if (ka.sizeClass !== kb.sizeClass) return ka.sizeClass - kb.sizeClass;
+    if (ka.sizeClass === 1 && ka.size !== kb.size) {
       // Over-cap: the least-bad (smallest) overshoot first — when nothing
       // in the bucket fits, smaller still buffers less.
-      const sa = sizeOf(a);
-      const sb = sizeOf(b);
-      if (sa !== sb) return sa - sb;
+      return ka.size - kb.size;
     }
-    const qa = qualityIndex(a);
-    const qb = qualityIndex(b);
-    if (qa !== qb) return qa - qb;
-    const ka = isCamPrint(a) ? 1 : 0;
-    const kb = isCamPrint(b) ? 1 : 0;
-    if (ka !== kb) return ka - kb;
+    if (ka.qualityIdx !== kb.qualityIdx) return ka.qualityIdx - kb.qualityIdx;
+    if (ka.cam !== kb.cam) return ka.cam - kb.cam;
     // Unknown size (0) ranks LAST — an unknown-size file once won this sort
     // and auto-played 8.9 GB on a connection with 1 GB files available.
-    const sa = sizeOf(a) || Number.POSITIVE_INFINITY;
-    const sb = sizeOf(b) || Number.POSITIVE_INFINITY;
+    const sa = ka.size || Number.POSITIVE_INFINITY;
+    const sb = kb.size || Number.POSITIVE_INFINITY;
     if (sa !== sb) return sa - sb;
-    const wa = isWebPlayable(a) ? 0 : 1;
-    const wb = isWebPlayable(b) ? 0 : 1;
-    if (wa !== wb) return wa - wb;
-    const cd = cdnRankOf(a) - cdnRankOf(b);
+    if (ka.webPlayable !== kb.webPlayable)
+      return ka.webPlayable - kb.webPlayable;
+    const cd = ka.cdn - kb.cdn;
     if (cd !== 0) return cd;
     // Full tie: HEVC wins (same bytes, better picture)
-    const ha = a._meta?.codec === "hevc" ? 0 : 1;
-    const hb = b._meta?.codec === "hevc" ? 0 : 1;
-    return ha - hb;
+    return ka.hevc - kb.hevc;
   });
 
   const champion = sortedLinks[0] ?? null;

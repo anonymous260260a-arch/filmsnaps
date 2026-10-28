@@ -359,7 +359,7 @@ export default function CategoryListScreen() {
   // Any filter/sort/media change starts a fresh result set.
   const updateFilters = useCallback(
     (patch: Partial<Filters>) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       setFilters((prev) => ({ ...prev, ...patch }));
       resetPagination();
     },
@@ -368,7 +368,7 @@ export default function CategoryListScreen() {
 
   const toggleGenre = useCallback(
     (genreId: number) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       setFilters((prev) => ({
         ...prev,
         genreIds: prev.genreIds.includes(genreId)
@@ -381,7 +381,7 @@ export default function CategoryListScreen() {
   );
 
   const resetFilters = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     // Media type is a browsing choice, not a filter — keep it.
     setFilters((prev) => ({
       ...prev,
@@ -581,7 +581,9 @@ export default function CategoryListScreen() {
         {/* Grid / list toggle */}
         <TouchableOpacity
           onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+              () => {},
+            );
             setViewMode((v) => (v === "grid" ? "list" : "grid"));
           }}
           activeOpacity={0.7}
@@ -610,7 +612,9 @@ export default function CategoryListScreen() {
         {/* Filters toggle — badge dot when any filter is engaged */}
         <TouchableOpacity
           onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+              () => {},
+            );
             setShowFilters((s) => !s);
           }}
           activeOpacity={0.7}

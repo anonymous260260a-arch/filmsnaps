@@ -87,6 +87,10 @@ async function initializeDatabase(
       column: "started_on_wifi",
       sql: "ALTER TABLE downloads ADD COLUMN started_on_wifi INTEGER DEFAULT 0",
     },
+    {
+      column: "badges",
+      sql: "ALTER TABLE downloads ADD COLUMN badges TEXT",
+    },
   ];
 
   for (const migration of migrations) {
@@ -132,6 +136,7 @@ interface DownloadRow {
   native_task_id: string | null;
   expected_hash: string | null;
   started_on_wifi: number;
+  badges: string | null;
 }
 
 function rowToTask(row: DownloadRow): DownloadTask {
@@ -163,7 +168,22 @@ function rowToTask(row: DownloadRow): DownloadTask {
     nativeTaskId: row.native_task_id ?? null,
     expectedHash: row.expected_hash ?? null,
     startedOnWifi: row.started_on_wifi === 1,
+    badges: safeParseBadges(row.badges),
   };
+}
+
+function safeParseBadges(
+  json: string | null | undefined,
+): string[] | undefined {
+  if (!json) return undefined;
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed)
+      ? parsed.filter((b) => typeof b === "string")
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // ─── Public API ───
@@ -186,8 +206,8 @@ export const DownloadDatabase = {
         downloaded_bytes, status, priority, speed_limit, retry_count,
         max_retries, error_message, server, quality, season, episode,
         extension, resume_data, created_at, updated_at, file_name,
-        poster_path, native_task_id, expected_hash, started_on_wifi
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        poster_path, native_task_id, expected_hash, started_on_wifi, badges
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         task.id,
         task.tmdbId ?? null,
@@ -216,6 +236,7 @@ export const DownloadDatabase = {
         task.nativeTaskId ?? null,
         task.expectedHash ?? null,
         task.startedOnWifi ? 1 : 0,
+        task.badges ? JSON.stringify(task.badges) : null,
       ],
     );
   },
@@ -241,6 +262,7 @@ export const DownloadDatabase = {
       resumeData: ["resume_data", (v) => (v != null ? String(v) : null)],
       retryCount: ["retry_count", (v) => v],
       priority: ["priority", (v) => v],
+      speedLimit: ["speed_limit", (v) => v],
       nativeTaskId: ["native_task_id", (v) => v],
       expectedHash: ["expected_hash", (v) => v],
       startedOnWifi: ["started_on_wifi", (v) => (v ? 1 : 0)],
@@ -248,6 +270,7 @@ export const DownloadDatabase = {
       fileName: ["file_name", (v) => v],
       extension: ["extension", (v) => v],
       posterPath: ["poster_path", (v) => v],
+      badges: ["badges", (v) => (v ? JSON.stringify(v) : null)],
     };
 
     for (const [key, [column, transform]] of Object.entries(fieldMap)) {

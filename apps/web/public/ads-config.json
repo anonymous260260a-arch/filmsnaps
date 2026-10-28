@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "enabled": false,
+  "testMode": true,
+  "rolloutPercent": 100,
+  "network": "startio",
+  "appId": "209279795",
+  "slots": {
+    "home_hero": { "enabled": true, "format": "banner" },
+    "detail_above_overview": { "enabled": true, "format": "banner" },
+    "search_list": { "enabled": true, "format": "banner" },
+    "library_list": { "enabled": true, "format": "banner" },
+    "settings_footer": { "enabled": true, "format": "banner" },
+    "announcements_page": { "enabled": true, "format": "banner" }
+  }
+}

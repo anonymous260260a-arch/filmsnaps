@@ -102,8 +102,15 @@ class PlaylistProbe {
         }
 
         private fun fetch(url: String, headers: Map<String, String>): Result<String> {
-            val conn = URL(url).openConnection() as HttpURLConnection
+            // openConnection() must stay INSIDE the try: URL(url) throws
+            // MalformedURLException (no/garbage scheme) and a non-http URL
+            // (file:, content:) throws ClassCastException on the cast below.
+            // Either escaping here would reach the probe coroutine, which has no
+            // exception handler — an uncaught throw there kills the process.
+            var open: HttpURLConnection? = null
             try {
+                val conn = URL(url).openConnection() as HttpURLConnection
+                open = conn
                 conn.connectTimeout = 10_000
                 conn.readTimeout = 15_000
                 conn.requestMethod = "GET"
@@ -126,7 +133,7 @@ class PlaylistProbe {
                 val code = if (msg.lowercase().contains("expired")) "expired-url" else "network"
                 return Result.failure(PlaylistError(code, msg))
             } finally {
-                conn.disconnect()
+                open?.disconnect()
             }
         }
     }

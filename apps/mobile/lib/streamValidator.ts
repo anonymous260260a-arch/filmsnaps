@@ -146,6 +146,30 @@ function looksLikeM3u8(buffer: ArrayBuffer | null): boolean {
   return b[0] === 0x23 && b[1] === 0x45 && b[2] === 0x58 && b[3] === 0x54;
 }
 
+/**
+ * True when the probe body is clearly an HTML/landing/error page rather than
+ * media. Mirrors the signature scan in `validateContainerSignature` but is
+ * reusable in the manifest branches, where a resolver that answers an
+ * `m3u8` URL with an HTML interstitial is definitively broken (→ `dead`) and
+ * the head walk should advance past it.
+ */
+function looksLikeHtmlErrorPage(buffer: ArrayBuffer | null): boolean {
+  if (!buffer || buffer.byteLength < 4) return false;
+  const view = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 256));
+  let head = "";
+  for (let i = 0; i < view.length; i++) head += String.fromCharCode(view[i]);
+  head = head.toLowerCase();
+  return (
+    head.includes("<!doctype html") ||
+    head.includes("<html") ||
+    head.includes("<?xml") ||
+    head.includes("<error>") ||
+    head.includes("accessdenied") ||
+    head.includes('{"error"') ||
+    head.includes('{"message"')
+  );
+}
+
 /** `<?xml` / `<MPD` magic of a DASH manifest (bytes — Hermes-safe). */
 function looksLikeMpd(buffer: ArrayBuffer | null): boolean {
   if (!buffer || buffer.byteLength < 4) return false;
@@ -204,11 +228,28 @@ function classifyProbe(
   // too small: 245473 bytes" on a working stream). A successful fetch that
   // answers with a playlist (or declares the mpegurl type) is valid; an
   // inconclusive body is unknown, never dead.
+  // Match `m3u8` as an extension (`.m3u8`) OR as a path token (`getm3u8/`,
+  // `/m3u8/`, trailing `m3u8`) — resolver endpoints like `lizer123.site/
+  // getm3u8/<id>` return an HTML/landing page, not a playlist. Requiring the
+  // literal `.m3u8` extension let those fall through to the permissive
+  // container fallback below and get marked `valid` while ExoPlayer errors.
   const isHls =
-    /\.m3u8(\?|$)/i.test(url ?? "") || /mpegurl/i.test(meta.contentType ?? "");
+    /m3u8(\?|\/|$)/i.test(url ?? "") || /mpegurl/i.test(meta.contentType ?? "");
   if (isHls && isHttpSuccess) {
     if (looksLikeM3u8(body)) {
       return { outcome: "valid", valid: true, containerType: "hls", ...base };
+    }
+    // An m3u8 URL answering with an HTML/landing page is a broken resolver
+    // (e.g. `lizer123.site/getm3u8/<id>` interstitial) — definitively dead so
+    // the head walk advances past it instead of hanging the player on a page
+    // ExoPlayer cannot extract. An inconclusive (non-HTML) body stays unknown.
+    if (looksLikeHtmlErrorPage(body)) {
+      return {
+        outcome: "dead",
+        valid: false,
+        error: "Resolver returned HTML page instead of playlist",
+        ...base,
+      };
     }
     return {
       outcome: "unknown",
@@ -312,6 +353,23 @@ function classifyProbe(
  * One probe request + full classification. No caching — the orchestrator
  * (validateStreamUrl) decides what to keep.
  */
+/** Diagnostic: slow network probes (>800ms) — API/CDN latency vs player time. */
+function logSlowProbe(
+  probeMs: number,
+  outcome: ProbeOutcome,
+  error: string | undefined,
+  url: string,
+): void {
+  if (probeMs < 800) return;
+  let host = "?";
+  try {
+    host = new URL(url).host;
+  } catch {}
+  console.log(
+    `[Flow] probe slow: ${host} ${probeMs}ms → ${outcome}${error ? ` (${error})` : ""}`,
+  );
+}
+
 async function probeAttempt(
   url: string,
   probeHeaders: Record<string, string>,
@@ -319,11 +377,15 @@ async function probeAttempt(
   const startedAt = Date.now();
   const finish = (
     result: Omit<ValidationResult, "timestamp" | "probeMs">,
-  ): ValidationResult => ({
-    ...result,
-    probeMs: Date.now() - startedAt,
-    timestamp: Date.now(),
-  });
+  ): ValidationResult => {
+    const done: ValidationResult = {
+      ...result,
+      probeMs: Date.now() - startedAt,
+      timestamp: Date.now(),
+    };
+    logSlowProbe(done.probeMs ?? 0, done.outcome, done.error, url);
+    return done;
+  };
 
   const native = getNativeProbe();
   if (native) {
@@ -337,23 +399,25 @@ async function probeAttempt(
         typeof r?.bodyBase64 === "string"
           ? base64ToArrayBuffer(r.bodyBase64)
           : null;
+      const statusCode = r?.statusCode ?? 0;
+      const classified = classifyProbe(
+        {
+          statusCode,
+          contentType: r?.contentType ?? undefined,
+          contentRange: r?.contentRange ?? undefined,
+          contentLength:
+            typeof r?.contentLength === "number" ? r.contentLength : undefined,
+          acceptRanges: r?.acceptRanges ?? undefined,
+        },
+        buffer,
+        url,
+      );
+      const probeMs =
+        typeof r?.probeMs === "number" ? r.probeMs : Date.now() - startedAt;
+      logSlowProbe(probeMs, classified.outcome, classified.error, url);
       return {
-        ...classifyProbe(
-          {
-            statusCode: r?.statusCode ?? 0,
-            contentType: r?.contentType ?? undefined,
-            contentRange: r?.contentRange ?? undefined,
-            contentLength:
-              typeof r?.contentLength === "number"
-                ? r.contentLength
-                : undefined,
-            acceptRanges: r?.acceptRanges ?? undefined,
-          },
-          buffer,
-          url,
-        ),
-        probeMs:
-          typeof r?.probeMs === "number" ? r.probeMs : Date.now() - startedAt,
+        ...classified,
+        probeMs,
         timestamp: Date.now(),
       };
     } catch (error) {

@@ -61,8 +61,13 @@ import {
   trackScreenView,
   emitSessionEndOnBackground,
   hydrateTelemetry,
+  trackSessionStart,
+  startNewSession,
+  syncSessionId,
+  getSessionId,
 } from "../lib/telemetry";
 import { initSentryIfAllowed } from "../lib/sentry";
+import { configureAds } from "../lib/ads";
 import { getImageUrl } from "@filmsnaps/shared";
 import { HERO_BACKDROP_SIZE } from "../components/heroLayout";
 import "./globals.css";
@@ -193,7 +198,9 @@ const cacheRestorePromise = persistPromise
           if (warmed >= cap) break;
           if (!row.backdrop_path) continue;
           warmed += 1;
-          void resolveSwatch(row.backdrop_path);
+          // Background cache warm-up: a rejection here would be unhandled and
+          // is never actionable — swatch extraction failures are non-fatal.
+          void resolveSwatch(row.backdrop_path).catch(() => {});
         }
       };
       primeRow(["movies", "trending"], 20); // hero pick + first row
@@ -369,8 +376,17 @@ export default function RootLayout() {
   }
 
   // FIX 4: static branded view while gated — no ActivityIndicator, no spinner.
+  // Both branches render INSIDE the ErrorBoundary: SplashHold used to return
+  // early, above the boundary, so a render error during the gate white-screened
+  // with no recovery UI at all.
   if (!appReady) {
-    return <SplashHold />;
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <ErrorBoundary>
+          <SplashHold />
+        </ErrorBoundary>
+      </GestureHandlerRootView>
+    );
   }
 
   return (
@@ -378,11 +394,11 @@ export default function RootLayout() {
       <ErrorBoundary>
         <SafeAreaProvider>
           <QueryClientProvider client={queryClient}>
-            <DownloadInfraProvider>
-              <SettingsProvider>
+            <SettingsProvider>
+              <DownloadInfraProvider>
                 <AppContent />
-              </SettingsProvider>
-            </DownloadInfraProvider>
+              </DownloadInfraProvider>
+            </SettingsProvider>
           </QueryClientProvider>
         </SafeAreaProvider>
       </ErrorBoundary>
@@ -409,7 +425,22 @@ function AppContent() {
     setTelemetryGate({ legalAccepted, analyticsEnabled });
     hydrateTelemetry();
     initSentryIfAllowed({ legalAccepted, analyticsEnabled });
+    // M2 — ads follow the legal gate only (analytics toggle = telemetry).
+    // Until ads-config.json flips `enabled`, the Start.io SDK stays inert.
+    configureAds(legalAccepted);
   }, [settings.legalAccepted, settings.analyticsEnabled]);
+
+  // Start the foreground session when the gate opens (on app launch / resume).
+  useEffect(() => {
+    if (settings.legalAccepted && settings.analyticsEnabled !== false) {
+      // Only start a session if we don't already have one (avoid double-start).
+      const existingId = getSessionId();
+      if (!existingId) {
+        trackSessionStart(false);
+        syncSessionId(getSessionId());
+      }
+    }
+  }, []);
 
   useEffect(() => {
     refreshConnectionClass();
@@ -459,14 +490,19 @@ function AppContent() {
     }
   }, [pathname]);
 
-  // P3 — session_end when the app leaves the foreground (AppState listener
-  // lives here so the queue's flush-on-background stays unchanged). iOS
-  // "inactive" fires mid-transition (notification shade, app switcher) and
+  // P3 — session lifecycle: session_start on foreground resume,
+  // session_end on background. iOS "inactive" fires mid-transition and
   // would end the session early, so only "background" counts as a leak.
   useEffect(() => {
+    let wasBackground = false;
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "background") {
-        emitSessionEndOnBackground();
+        wasBackground = true;
+        emitSessionEndOnBackground(false);
+      } else if (state === "active" && wasBackground) {
+        // Foreground resume — new session.
+        wasBackground = false;
+        trackSessionStart(true);
       }
     });
     return () => sub.remove();
