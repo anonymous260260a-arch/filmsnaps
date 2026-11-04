@@ -74,6 +74,25 @@
       "dismissible": true,
       "expiresAt": "2027-10-03T00:00:00Z",
       "hideFromVersion": "2.4.0"
+    },
+    {
+      "id": "v2-5-0-stability",
+      "type": "feature",
+      "title": "New version released — 2.5.0 stability fixes",
+      "subtitle": "Updating is NOT necessary — this is a bug-fix release for crashes mostly seen on Android 9 and 10. If you're hitting those bugs, update; otherwise feel free anyway. Download from https://filmsnaps1.anonymous260260a.workers.dev/download.",
+      "body": [
+        "FilmSnaps 2.5.0 is a stability release. Updating is not necessary — most users will see no change in features.",
+        "This release fixes bugs that were mostly experienced on Android 9 and Android 10: player crashes when a source is released mid-playback, a fatal low-memory speech-detection crash, subtitle and download workers dying in the background, and WebView exceptions that could take the app down.",
+        "Anime is also repaired: JustAnime was returning 404 on every server because the app queried with the wrong id space — it now uses AniList ids, so direct anime playback works again, including titles missing from the local mapping table.",
+        "Other fixes: fullscreen immersive mode now stays on when you switch to the next episode in fullscreen, the progress bar no longer drops to 0% on seek, Falix moved to its new host, and downloads gained speed limits, offline playback, and TV episode grouping.",
+        "If you are getting those crashes or broken anime playback, update to 2.5.0. Otherwise, feel free to update anyway. Download from https://filmsnaps1.anonymous260260a.workers.dev/download."
+      ],
+      "actionLabel": "Download",
+      "externalUrl": "https://filmsnaps1.anonymous260260a.workers.dev/download",
+      "date": "November 4, 2026",
+      "dismissible": true,
+      "expiresAt": "2027-11-04T00:00:00Z",
+      "hideFromVersion": "2.5.0"
     }
   ]
 }

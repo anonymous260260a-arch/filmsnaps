@@ -69,6 +69,8 @@ interface UseAnimeDirectPipelineParams {
   /** Gate — only fetch when a JustAnime anime session is actually in play. */
   enabled: boolean;
   malId: number | undefined;
+  /** AniList id — justanime's actual key; derived from MAL when omitted. */
+  anilistId?: number | null;
   episode: number | undefined;
   audio: AnimeAudio;
   providerId?: string;
@@ -93,6 +95,7 @@ function withCaptions(links: StreamLink[]): boolean {
 export function useAnimeDirectPipeline({
   enabled,
   malId,
+  anilistId,
   episode,
   audio,
   providerId = ANIME_PROVIDER_ID,
@@ -265,6 +268,7 @@ export function useAnimeDirectPipeline({
           try {
             res = await fetchAnimeSourceStreams({
               malId,
+              anilistId,
               episode,
               providerId,
               sourceId,
@@ -386,7 +390,7 @@ export function useAnimeDirectPipeline({
       setFetchFailed(false);
       prog.lastSettleFailed = false;
     })();
-  }, [enabled, malId, episode, audio, providerId, fetchToken]);
+  }, [enabled, malId, anilistId, episode, audio, providerId, fetchToken]);
 
   // useLayoutEffect: when the provider sync flips animeActive mid-frame, the
   // loading state must be committed BEFORE paint — otherwise the watch route

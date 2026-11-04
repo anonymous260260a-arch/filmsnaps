@@ -121,11 +121,11 @@ class AudioExtractJob(
             var srcRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
             var channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
 
-            val vad: Vad = if (useSilero) {
-                SileroVad(context)
+            val vad: Vad = (if (useSilero) {
+                SileroVad.createOrNull(context)
             } else {
-                EnergyVad()
-            }
+                null
+            }) ?: EnergyVad()
             vad.reset()
             val accumulator = SignalAccumulator(srcRate, vad)
             var startSec = -1.0

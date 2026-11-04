@@ -140,6 +140,44 @@ class SileroVad(
         private const val PROB_SAMPLE = 90
         /** R5-3/Phase-2: dump rms + first 16 samples of the first N chunks. */
         private const val HEAD_SAMPLE_CHUNKS = 10
+
+        /**
+         * Skip Silero below this total RAM (Sentry 7797005904: SIGBUS in
+         * OrtSession.createSession on a 947MB armeabi-v7a device) — EnergyVad
+         * takes over. SIGBUS is a fatal signal that Kotlin cannot catch, so the
+         * only defense is to never call createSession on at-risk devices.
+         */
+        private const val MIN_TOTAL_MEM = 1_500_000_000L
+
+        /**
+         * Create a SileroVad, or null when the device is at risk (low RAM) or
+         * session creation throws — callers fall back to EnergyVad. Gates the
+         * native createSession call that SIGBUSes on low-memory 32-bit devices.
+         */
+        fun createOrNull(
+            context: Context,
+            debug: Boolean = false,
+            log: ((String) -> Unit)? = null,
+        ): SileroVad? {
+            return try {
+                val am = context.getSystemService(Context.ACTIVITY_SERVICE)
+                    as? android.app.ActivityManager
+                val mi = android.app.ActivityManager.MemoryInfo()
+                am?.getMemoryInfo(mi)
+                if (mi.totalMem in 1 until MIN_TOTAL_MEM) {
+                    log?.invoke(
+                        "silero: skipped (totalMem=${mi.totalMem} < $MIN_TOTAL_MEM) — using energy VAD"
+                    )
+                    null
+                } else {
+                    SileroVad(context, debug, log)
+                }
+            } catch (t: Throwable) {
+                // OrtException / OOM / link errors — degrade, never crash.
+                log?.invoke("silero: init failed (${t.javaClass.simpleName}) — using energy VAD")
+                null
+            }
+        }
     }
 
     /** Mean probability this session (0 before any process()). */

@@ -970,6 +970,23 @@ export const PROVIDERS: ProviderDefinition[] = [
     },
     streamSources: [
       {
+        id: "justanime-gigi",
+        adapter: "justanime",
+        apiBase: "https://core.justanime.to",
+        kind: "raw",
+        enabled: true,
+        priority: 1,
+        timeoutMs: 12000,
+        headers: {
+          Referer: "https://justanime.to",
+          Origin: "https://justanime.to",
+        },
+        urlTemplate:
+          "https://core.justanime.to/api/watch/{anilistId}/episode/1/gigi",
+        urlTemplateTv:
+          "https://core.justanime.to/api/watch/{anilistId}/episode/{episode}/gigi",
+      },
+      {
         id: "justanime-megaplay",
         adapter: "justanime",
         apiBase: "https://core.justanime.to",
@@ -982,12 +999,12 @@ export const PROVIDERS: ProviderDefinition[] = [
           Origin: "https://justanime.to",
         },
         urlTemplate:
-          "https://core.justanime.to/api/watch/{malId}/episode/1/megaplay",
+          "https://core.justanime.to/api/watch/{anilistId}/episode/1/momo",
         urlTemplateTv:
-          "https://core.justanime.to/api/watch/{malId}/episode/{episode}/megaplay",
+          "https://core.justanime.to/api/watch/{anilistId}/episode/{episode}/momo",
       },
       {
-        id: "justanime-zokoanime",
+        id: "justanime-calm",
         adapter: "justanime",
         apiBase: "https://core.justanime.to",
         kind: "raw",
@@ -999,10 +1016,11 @@ export const PROVIDERS: ProviderDefinition[] = [
           Origin: "https://justanime.to",
         },
         urlTemplate:
-          "https://core.justanime.to/api/watch/{malId}/episode/1/zokoanime",
+          "https://core.justanime.to/api/watch/{anilistId}/episode/1/calm",
         urlTemplateTv:
-          "https://core.justanime.to/api/watch/{malId}/episode/{episode}/zokoanime",
+          "https://core.justanime.to/api/watch/{anilistId}/episode/{episode}/calm",
       },
+
       {
         id: "justanime-animegg",
         adapter: "justanime",
@@ -1016,9 +1034,9 @@ export const PROVIDERS: ProviderDefinition[] = [
           Origin: "https://justanime.to",
         },
         urlTemplate:
-          "https://core.justanime.to/api/watch/{malId}/episode/1/animegg",
+          "https://core.justanime.to/api/watch/{anilistId}/episode/1/animegg",
         urlTemplateTv:
-          "https://core.justanime.to/api/watch/{malId}/episode/{episode}/animegg",
+          "https://core.justanime.to/api/watch/{anilistId}/episode/{episode}/animegg",
       },
     ],
   },

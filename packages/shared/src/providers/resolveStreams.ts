@@ -34,6 +34,8 @@ export interface ResolveStreamsParams {
   tmdbId?: number;
   /** MAL id — used by anime-keyed upstreams (e.g. justanime) */
   malId?: number;
+  /** AniList id — justanime's /api/watch keys by AniList id, NOT MAL */
+  anilistId?: number;
   /** Media type */
   mediaType: "movie" | "tv";
   /** Season number (TV only) */
@@ -72,7 +74,7 @@ const POLL_MS = 150;
 
 /**
  * Build a source's request URL from its urlTemplate / urlTemplateTv.
- * Placeholders: {tmdbId} {malId} {imdbId} {type} {season} {episode}. For
+ * Placeholders: {tmdbId} {malId} {anilistId} {imdbId} {type} {season} {episode}. For
  * movies the trailing query (which only carried season/episode) is stripped.
  * Returns null when the source has no template — the platform fetcher owns URL
  * building for catalog-style APIs.
@@ -81,7 +83,13 @@ export function buildStreamSourceUrl(
   source: StreamSourceConfig,
   params: Pick<
     ResolveStreamsParams,
-    "imdbId" | "tmdbId" | "malId" | "mediaType" | "season" | "episode"
+    | "imdbId"
+    | "tmdbId"
+    | "malId"
+    | "anilistId"
+    | "mediaType"
+    | "season"
+    | "episode"
   >,
 ): string | null {
   const template =
@@ -92,6 +100,7 @@ export function buildStreamSourceUrl(
   let url = template
     .replace(/\{tmdbId\}/g, String(params.tmdbId ?? ""))
     .replace(/\{malId\}/g, String(params.malId ?? ""))
+    .replace(/\{anilistId\}/g, String(params.anilistId ?? ""))
     .replace(/\{imdbId\}/g, params.imdbId ?? "")
     .replace(/\{type\}/g, params.mediaType);
   if (params.mediaType === "tv") {
@@ -126,7 +135,13 @@ export function buildStreamSourceBody(
   source: StreamSourceConfig,
   params: Pick<
     ResolveStreamsParams,
-    "imdbId" | "tmdbId" | "malId" | "mediaType" | "season" | "episode"
+    | "imdbId"
+    | "tmdbId"
+    | "malId"
+    | "anilistId"
+    | "mediaType"
+    | "season"
+    | "episode"
   >,
 ): string | null {
   const template =
@@ -137,6 +152,7 @@ export function buildStreamSourceBody(
   let body = template
     .replace(/\{tmdbId\}/g, String(params.tmdbId ?? ""))
     .replace(/\{malId\}/g, String(params.malId ?? ""))
+    .replace(/\{anilistId\}/g, String(params.anilistId ?? ""))
     .replace(/\{imdbId\}/g, params.imdbId ?? "")
     .replace(/\{type\}/g, params.mediaType);
   if (params.mediaType === "tv") {
@@ -166,6 +182,7 @@ export async function resolveStreams(
       imdbId: string;
       tmdbId?: number;
       malId?: number;
+      anilistId?: number;
       mediaType: "movie" | "tv";
       season?: number;
       episode?: number;
@@ -245,6 +262,7 @@ export async function resolveStreams(
         imdbId,
         tmdbId: params.tmdbId,
         malId: params.malId,
+        anilistId: params.anilistId,
         mediaType,
         season: params.season,
         episode: params.episode,

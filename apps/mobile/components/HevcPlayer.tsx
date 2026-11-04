@@ -2785,7 +2785,21 @@ export function HevcPlayer({
   // the OS status + navigation bars (native patch) and restores them on
   // unmount / focus loss. No edge-to-edge letterboxing surprises: safe-area
   // insets collapse to ~0 while immersive, so the surface re-expands cleanly.
-  const immersive = surfaceFillsScreen;
+  //
+  // The native setter only applies immersiveMode when the prop CHANGES while
+  // the view is attached. A remount (next-episode → links refetch → spinner
+  // swaps HevcPlayer out/in) creates the VideoView with the prop already true
+  // BEFORE it attaches → setter no-ops, onAttachedToWindow never re-applies,
+  // and the bars restored by the old view's detach stay visible under the new
+  // fullscreen video. Arm one frame after mount so every (re)mount lands a
+  // false→true transition while the view is attached.
+  const [immersiveArmed, setImmersiveArmed] = useState(false);
+  useEffect(() => {
+    setImmersiveArmed(false);
+    const id = requestAnimationFrame(() => setImmersiveArmed(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+  const immersive = surfaceFillsScreen && immersiveArmed;
 
   // [Q] pinpoint: end of the render body — body-end − render#N = pure render
   // time; commit − body-end = React reconciliation/children of this pass.

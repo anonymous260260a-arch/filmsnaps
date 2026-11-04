@@ -87,6 +87,8 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   private isProbeValidated = false;
   private estimatedSizeBytes: number | undefined = undefined;
   private destroyed = false;
+  /** Latched after the native shared object was released (detach once, log once). */
+  private _nativeDetached = false;
   /** Set while the app is backgrounded — playback must stay stopped (see setAppBackgrounded). */
   private _appBackgrounded = false;
   /**
@@ -119,7 +121,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     // 1. Time updates
     this.subs.push(
       player.addListener("timeUpdate", (update) => {
-        if (this.destroyed) return;
+        if (!this.nativeAlive()) return;
         // No frames exist before the source is actually open — suppress
         // pre-ready positions (e.g. the preset resume point while still
         // loading) so a dead source can never look like one that plays.
@@ -160,7 +162,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     // 2. Native playing state changes
     this.subs.push(
       player.addListener("playingChange", (update) => {
-        if (this.destroyed) return;
+        if (!this.nativeAlive()) return;
 
         // While backgrounded, native playing transitions are leftovers from
         // play() calls issued before the background pause took effect — squash
@@ -194,7 +196,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     // 3. Status changes (loading, readyToPlay, erroring, etc.)
     this.subs.push(
       player.addListener("statusChange", (status) => {
-        if (this.destroyed) return;
+        if (!this.nativeAlive()) return;
 
         console.log(`[Q] native-status ${status.status} t=${Date.now()}`);
         const isBuffering = status.status === "loading";
@@ -299,7 +301,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     // 4. Source changes
     this.subs.push(
       player.addListener("sourceChange", () => {
-        if (this.destroyed) return;
+        if (!this.nativeAlive()) return;
         this.currentError = null;
         this.stuckSince = 0;
         this.metadataLoaded = false;
@@ -313,6 +315,72 @@ export class ExpoVideoAdapter implements PlayerAdapter {
 
     // 5. Stuck detection with progressive timeout & poll-driven time updates
     this.startStuckDetection();
+  }
+
+  /**
+   * expo-video's VideoPlayer is a shared object: once released, ANY property
+   * read throws ERR_USING_RELEASED_SHARED_OBJECT ("Cannot use shared object
+   * that was already released") — `?.` does NOT help because the JS reference
+   * is still non-null (Sentry 7826350905: getAudioTracks/getDuration in the
+   * render path). On a release error we detach (this.player = null) so every
+   * later optional chain short-circuits instead of throwing again.
+   */
+  private onNativeError(e: unknown): void {
+    const msg = String((e as any)?.message ?? e);
+    const released =
+      msg.includes("released") ||
+      (e as any)?.code === "ERR_USING_RELEASED_SHARED_OBJECT";
+    if (released) {
+      if (!this._nativeDetached) {
+        this._nativeDetached = true;
+        console.warn(
+          "[ExpoVideoAdapter] VideoPlayer shared object released — detaching native access",
+        );
+      }
+      this.player = null as any;
+    } else {
+      console.warn("[ExpoVideoAdapter] native player access failed:", e);
+    }
+  }
+
+  /** Native read; null/released player → `fallback` (never throws). */
+  private safeRead<T>(read: (p: VideoPlayer) => T, fallback: T): T {
+    const p = this.player;
+    if (this.destroyed || !p) return fallback;
+    try {
+      return read(p);
+    } catch (e) {
+      this.onNativeError(e);
+      return fallback;
+    }
+  }
+
+  /** Native write; null/released player → no-op (never throws). */
+  private safeWrite(write: (p: VideoPlayer) => void): void {
+    const p = this.player;
+    if (this.destroyed || !p) return;
+    try {
+      write(p);
+    } catch (e) {
+      this.onNativeError(e);
+    }
+  }
+
+  /**
+   * Entry guard for native event listeners & timers: false when destroyed or
+   * the shared object was released (a probe read detaches, so the rest of the
+   * callback's `this.player?.x` reads short-circuit on null).
+   */
+  private nativeAlive(): boolean {
+    const p = this.player;
+    if (this.destroyed || !p) return false;
+    try {
+      void p.status;
+      return true;
+    } catch (e) {
+      this.onNativeError(e);
+      return false;
+    }
   }
 
   /**
@@ -342,7 +410,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
 
   private startStuckDetection() {
     this.errorCheckTimer = setInterval(() => {
-      if (this.destroyed) return;
+      if (!this.nativeAlive()) return;
 
       const dur = this.getDuration();
       const time = Number.isFinite(this.player?.currentTime)
@@ -366,7 +434,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       }
 
       // Check for native player errors
-      const err = (this.player as any).error;
+      const err = (this.player as any)?.error;
       if (err && err !== this.currentError) {
         const errMsg =
           typeof err === "string" ? err : (err?.message ?? "Playback error");
@@ -431,7 +499,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     const startedAt = Date.now();
 
     const poll = () => {
-      if (this.destroyed) return;
+      if (!this.nativeAlive()) return;
       const dur = this.getDuration();
       if (dur > 0) {
         this.metadataLoaded = true;
@@ -571,28 +639,28 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   /** Internal auto-resume — logs a reason so a background-resume bug can be
    *  traced to its exact call site ([FS-BG] diagnosis). */
   private resumePlay(reason: string) {
-    this.player?.play();
+    this.safeWrite((p) => p.play());
   }
 
   setAppBackgrounded(backgrounded: boolean) {
     this._appBackgrounded = backgrounded;
     // Entering background while the player is still playing — the AppState
     // pause raced ahead of the native transition. Stop it here.
-    if (backgrounded && this.player?.playing) {
+    if (backgrounded && this.safeRead((p) => p.playing, false)) {
       this.pause();
     }
   }
 
   play() {
     this._userPaused = false;
-    this.player?.play();
+    this.safeWrite((p) => p.play());
     this.playPauseListeners.forEach((l) => l(false));
     this.bufferingListeners.forEach((l) => l(false));
   }
 
   pause() {
     this._userPaused = true;
-    this.player?.pause();
+    this.safeWrite((p) => p.pause());
     this.playPauseListeners.forEach((l) => l(true));
     // A paused player is not buffering. Without this, a pause landing while a
     // stall's buffering(true) is pending (e.g. the background pause squashing
@@ -637,15 +705,16 @@ export class ExpoVideoAdapter implements PlayerAdapter {
       if (
         this._seekGeneration === myGeneration &&
         this._isSeeking &&
-        !this.destroyed
+        this.nativeAlive()
       ) {
+        const p = this.player;
         if (
-          this.player &&
-          this.player.status === "readyToPlay" &&
-          Math.abs(this.player.currentTime - clamped) > 15
+          p &&
+          p.status === "readyToPlay" &&
+          Math.abs(p.currentTime - clamped) > 15
         ) {
           try {
-            this.player.currentTime = clamped;
+            p.currentTime = clamped;
             if (!this._userPaused) this.resumePlay("seek-reinforce");
           } catch (_) {}
         }
@@ -657,6 +726,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     this._seekSafetyTimer = setTimeout(() => {
       // Only clear if a newer seek hasn't superseded this one
       if (this._seekGeneration !== myGeneration) return;
+      if (!this.nativeAlive()) return;
       const actualTime = Number.isFinite(this.player?.currentTime)
         ? this.player?.currentTime
         : clamped;
@@ -676,7 +746,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
         this.timeListeners.forEach((l) => l(clamped, this.getDuration()));
         this._seekBackstopTimer = setTimeout(() => {
           if (this.destroyed || this._seekGeneration !== myGeneration) return;
-          this._isSeeking = false;
+          if (!this.nativeAlive()) return;
           const finalTime = Number.isFinite(this.player?.currentTime)
             ? this.player?.currentTime
             : clamped;
@@ -706,41 +776,52 @@ export class ExpoVideoAdapter implements PlayerAdapter {
 
   setVolume(volume: number) {
     this._volume = Math.max(0, Math.min(1, volume));
-    if (this.player) this.player.volume = this._volume;
+    this.safeWrite((p) => {
+      p.volume = this._volume;
+    });
   }
 
   setMuted(muted: boolean) {
     this._isMuted = muted;
-    if (this.player) this.player.muted = muted;
+    this.safeWrite((p) => {
+      p.muted = muted;
+    });
   }
 
   setPlaybackRate(rate: number) {
     this._rate = rate;
     // Null-safe post-destroy (2x-hold finalize can outlive the adapter).
-    if (this.player) this.player.playbackRate = rate;
+    this.safeWrite((p) => {
+      p.playbackRate = rate;
+    });
   }
 
   getCurrentTime(): number {
     if (this._isSeeking && this._targetSeekTime > 0) {
       return this._targetSeekTime;
     }
-    return Number.isFinite(this.player?.currentTime)
-      ? this.player?.currentTime
-      : 0;
+    return this.safeRead(
+      (p) => (Number.isFinite(p.currentTime) ? p.currentTime : 0),
+      0,
+    );
   }
 
   getDuration(): number {
-    return Number.isFinite(this.player?.duration) && this.player?.duration > 0
-      ? this.player?.duration
-      : 0;
+    return this.safeRead(
+      (p) => (Number.isFinite(p.duration) && p.duration > 0 ? p.duration : 0),
+      0,
+    );
   }
 
   /** Seconds of buffered-ahead content (expo-video bufferedPosition). */
   getBufferedPosition(): number {
-    return Number.isFinite(this.player.bufferedPosition) &&
-      this.player.bufferedPosition > 0
-      ? this.player.bufferedPosition
-      : 0;
+    return this.safeRead(
+      (p) =>
+        Number.isFinite(p.bufferedPosition) && p.bufferedPosition > 0
+          ? p.bufferedPosition
+          : 0,
+      0,
+    );
   }
 
   isPaused(): boolean {
@@ -762,27 +843,34 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   getAudioTracks(): AudioTrackInfo[] {
     // Null-safe: destroy() clears this.player, but listeners/chrome can call
     // this until the new adapter lands — crashed the player UI with
-    // "Cannot read property 'availableAudioTracks' of null".
-    const tracks = this.player?.availableAudioTracks;
-    if (!tracks) return [];
-    return tracks.map((t) => ({
-      id: t.id ?? t.language ?? "unknown",
-      label: t.label || t.language || "Audio Track",
-      language: t.language || undefined,
-    }));
+    // "Cannot read property 'availableAudioTracks' of null". Released-safe:
+    // a released shared object throws from the property read itself.
+    return this.safeRead((p) => {
+      const tracks = p.availableAudioTracks;
+      if (!tracks) return [];
+      return tracks.map((t) => ({
+        id: t.id ?? t.language ?? "unknown",
+        label: t.label || t.language || "Audio Track",
+        language: t.language || undefined,
+      }));
+    }, []);
   }
 
   setAudioTrack(trackId: string) {
-    const tracks = this.player?.availableAudioTracks;
-    const match = tracks?.find((t) => (t.id ?? t.language) === trackId);
-    if (match && this.player) {
-      this.player.audioTrack = match;
-    }
+    this.safeWrite((p) => {
+      const tracks = p.availableAudioTracks;
+      const match = tracks?.find((t) => (t.id ?? t.language) === trackId);
+      if (match) {
+        p.audioTrack = match;
+      }
+    });
   }
 
   getSelectedAudioTrackId(): string | null {
-    const t = this.player?.audioTrack;
-    return t ? (t.id ?? t.language ?? null) : null;
+    return this.safeRead((p) => {
+      const t = p.audioTrack;
+      return t ? (t.id ?? t.language ?? null) : null;
+    }, null);
   }
 
   getSubtitleTracks(): SubtitleTrackInfo[] {
@@ -791,7 +879,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     const t0 = Date.now();
     // Null-safe: chrome can read tracks after destroy() nulled this.player —
     // this was the "availableSubtitleTracks of null" ErrorBoundary crash.
-    const tracks = this.player?.availableSubtitleTracks;
+    const tracks = this.safeRead((p) => p.availableSubtitleTracks, null);
     const dt = Date.now() - t0;
     if (dt > 30) {
     }
@@ -815,22 +903,23 @@ export class ExpoVideoAdapter implements PlayerAdapter {
   }
 
   setSubtitleTrack(trackId: string) {
-    if (!this.player) return;
-    if (trackId === "off") {
-      this.subtitleEnabledAt = 0;
-      this.player.subtitleTrack = null;
-      return;
-    }
-    const tracks = this.player.availableSubtitleTracks;
-    const match = tracks.find((t) => (t.id ?? t.language) === trackId);
-    this.subtitleEnabledAt = match ? Date.now() : 0;
-    this.player.subtitleTrack = match ?? null;
+    this.safeWrite((p) => {
+      if (trackId === "off") {
+        this.subtitleEnabledAt = 0;
+        p.subtitleTrack = null;
+        return;
+      }
+      const tracks = p.availableSubtitleTracks;
+      const match = tracks.find((t) => (t.id ?? t.language) === trackId);
+      this.subtitleEnabledAt = match ? Date.now() : 0;
+      p.subtitleTrack = match ?? null;
+    });
   }
 
   getSelectedSubtitleTrackId(): string | null {
     // [SubPerf] Same main-thread synchronization risk as getSubtitleTracks.
     const t0 = Date.now();
-    const current = this.player?.subtitleTrack;
+    const current = this.safeRead((p) => p.subtitleTrack, null);
     const dt = Date.now() - t0;
     if (dt > 30) {
     }
@@ -859,18 +948,24 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     language?: string,
     label?: string,
   ): Promise<string | null> {
-    const api = playerWithSidecarApi(this.player);
-    if (typeof api.addSidecarSubtitle !== "function") {
+    const api = this.safeRead((p) => playerWithSidecarApi(p), null);
+    if (!api || typeof api.addSidecarSubtitle !== "function") {
       throw new Error(
         "Sidecar subtitles unsupported (expo-video patch missing)",
       );
     }
-    const trackId = await api.addSidecarSubtitle(
-      uri,
-      mimeType,
-      language ?? null,
-      label ?? null,
-    );
+    let trackId: string | null;
+    try {
+      trackId = await api.addSidecarSubtitle(
+        uri,
+        mimeType,
+        language ?? null,
+        label ?? null,
+      );
+    } catch (e) {
+      this.onNativeError(e);
+      return null;
+    }
     if (!trackId) return null;
 
     // After the re-prepare the merged source reloads asynchronously. The old
@@ -886,7 +981,7 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     while (Date.now() - started < 20_000) {
       await new Promise((r) => setTimeout(r, 250));
       try {
-        lastStatus = String(this.player.status);
+        lastStatus = String(this.safeRead((p) => p.status, ""));
       } catch {}
       const tracks = this.getSubtitleTracks();
       // MergingMediaSource prefixes child-source format ids with the child
@@ -911,7 +1006,9 @@ export class ExpoVideoAdapter implements PlayerAdapter {
 
   /** Drops all sidecar subtitles (takes effect at the next source prepare). */
   clearExternalSubtitles(): void {
-    playerWithSidecarApi(this.player).clearSidecarSubtitles?.();
+    this.safeWrite((p) => {
+      playerWithSidecarApi(p).clearSidecarSubtitles?.();
+    });
   }
 
   onTimeUpdate(cb: (time: number, duration: number) => void): () => void {
@@ -965,8 +1062,14 @@ export class ExpoVideoAdapter implements PlayerAdapter {
     if (this._seekBackstopTimer) clearTimeout(this._seekBackstopTimer);
     if (this.errorCheckTimer) clearInterval(this.errorCheckTimer);
 
-    // Remove all subscriptions
-    this.subs.forEach((s) => s.remove());
+    // Remove all subscriptions (remove() can throw on a released shared object)
+    this.subs.forEach((s) => {
+      try {
+        s.remove();
+      } catch {
+        /* released */
+      }
+    });
     this.subs = [];
 
     // Clear all listeners

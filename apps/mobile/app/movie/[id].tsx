@@ -96,6 +96,8 @@ export default function MovieDetailScreen() {
     vote_average?: string;
     release_date?: string;
     blurhash?: string;
+    mid?: string;
+    aid?: string;
   }>();
   const id = routeParams.id;
   const nav = useSafeNavigation();
@@ -164,7 +166,28 @@ export default function MovieDetailScreen() {
   const title = header?.title || "";
   const queryReady = !!movie;
 
-  const animeHit = useMemo(() => resolveMovie(id!) ?? null, [id]);
+  // Map first; fall back to ?mid/?aid threaded from search (map may miss).
+  const routeAnime = useMemo(() => {
+    if (!routeParams.mid) return null;
+    const malId = Number(routeParams.mid);
+    if (!Number.isFinite(malId)) return null;
+    const aid = routeParams.aid ? Number(routeParams.aid) : null;
+    return {
+      malId,
+      anilistId: aid != null && Number.isFinite(aid) ? aid : null,
+    };
+  }, [routeParams.mid, routeParams.aid]);
+  const animeHit = useMemo(() => {
+    const mapHit = resolveMovie(id!);
+    // Map is authoritative for the MAL id; search-threaded aid fills the gap
+    // when the map entry has no AniList id.
+    if (mapHit)
+      return {
+        malId: mapHit.malId,
+        anilistId: mapHit.anilistId ?? routeAnime?.anilistId ?? null,
+      };
+    return routeAnime;
+  }, [id, routeAnime]);
 
   const [bookmarked, setBookmarked] = useState(false);
   const [trailerOpen, setTrailerOpen] = useState(false);

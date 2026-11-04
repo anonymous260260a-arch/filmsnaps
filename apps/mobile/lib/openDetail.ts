@@ -29,6 +29,11 @@ export interface DetailNavItem {
   release_date?: string | null;
   first_air_date?: string | null;
   blurhash?: string | null;
+  /** MAL id from the source (search result) — threaded so the detail page
+   *  can arm anime even when the TMDB→MAL map misses. */
+  mid?: number | null;
+  /** AniList id from the source — justanime's key; map may not have it. */
+  aid?: number | null;
 }
 
 function resolveMediaType(item: DetailNavItem): "movie" | "tv" {
@@ -56,6 +61,8 @@ function detailParams(item: DetailNavItem): Record<string, string> {
   const date = item.release_date || item.first_air_date;
   if (date) params.release_date = String(date);
   if (item.blurhash) params.blurhash = String(item.blurhash);
+  if (item.mid != null) params.mid = String(item.mid);
+  if (item.aid != null) params.aid = String(item.aid);
   return params;
 }
 
@@ -190,5 +197,7 @@ export function toDetailNavItem(
     release_date: raw.release_date ?? null,
     first_air_date: raw.first_air_date ?? null,
     blurhash: raw.blurhash ?? null,
+    mid: raw.mid ?? raw.malId ?? null,
+    aid: raw.aid ?? raw.anilistId ?? null,
   };
 }

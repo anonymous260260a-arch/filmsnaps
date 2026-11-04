@@ -361,12 +361,20 @@ export default function WatchScreen() {
         }
         const ids = resolveShowIds(id);
         if (ids)
-          return { malId: ids.malId, anilistId: ids.anilistId, episode: 1 };
+          return {
+            malId: ids.malId,
+            anilistId: ids.anilistId ?? animeAnilistId ?? null,
+            episode: 1,
+          };
         return undefined;
       }
       const r = resolveShow(id, curAnimeSeason, curAnimeEpisode);
       if (r.ok) {
-        return { malId: r.malId, anilistId: r.anilistId, episode: r.episode };
+        return {
+          malId: r.malId,
+          anilistId: r.anilistId ?? animeAnilistId ?? null,
+          episode: r.episode,
+        };
       }
       // The TMDB twin map can hard-miss popular multi-split shows (no single
       // season-aligned candidate). Feed / CW always carry the MAL id + AniList
@@ -384,7 +392,12 @@ export default function WatchScreen() {
         : undefined;
     }
     const m = resolveMovie(id);
-    if (m) return { malId: m.malId, anilistId: m.anilistId, episode: 1 };
+    if (m)
+      return {
+        malId: m.malId,
+        anilistId: m.anilistId ?? animeAnilistId ?? null,
+        episode: 1,
+      };
     return animeMalId != null
       ? { malId: animeMalId, anilistId: animeAnilistId ?? null, episode: 1 }
       : undefined;
@@ -432,6 +445,7 @@ export default function WatchScreen() {
   const animeDirect = useAnimeDirectPipeline({
     enabled: animeActive && audioPrefSettled,
     malId: animeResolved?.malId,
+    anilistId: animeResolved?.anilistId,
     episode: animeResolved?.episode,
     audio: animeAudio,
     providerId: ANIME_PROVIDER_ID,

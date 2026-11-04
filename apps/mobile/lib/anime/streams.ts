@@ -25,6 +25,7 @@ import {
 } from "@filmsnaps/shared";
 import type { StreamLink } from "../../components/player/streamTypes";
 import type { IntroDbResponse, IntroSegment } from "../introDetect";
+import { malToAni } from "./resolve";
 
 export const ANIME_PROVIDER_ID = "justanime";
 
@@ -44,8 +45,13 @@ export async function fetchWithTimeout(
 }
 
 export interface FetchAnimeStreamsParams {
-  /** MAL id of the title (resolveShow/resolveMovie output). */
+  /** MAL id of the title (resolveShow/resolveMovie output) — cache keys. */
   malId: number;
+  /**
+   * AniList id — what core.justanime.to actually keys /api/watch/{id} on.
+   * Derived from the map's `a` field / m2a table when the caller has none.
+   */
+  anilistId?: number | null;
   /** MAL-relative episode number (1 for movies). */
   episode: number;
   providerId?: string;
@@ -63,6 +69,7 @@ type ResolveContext = {
   imdbId: string;
   tmdbId?: number;
   malId?: number;
+  anilistId?: number;
   mediaType: "movie" | "tv";
   season?: number;
   episode?: number;
@@ -88,7 +95,7 @@ async function fetchSourceJson(
   }
   const text = await res.text();
   console.log(
-    `[Anime] raw ${providerId}/${source.id} (MAL ${malId} e${episode}): ${text.slice(0, 220)}${text.length > 220 ? ` …(${text.length}b)` : ""}`,
+    `[Anime] raw ${providerId}/${source.id} (MAL ${malId} ani=${ctx.anilistId ?? "?"} e${episode}): ${text.slice(0, 220)}${text.length > 220 ? ` …(${text.length}b)` : ""}`,
   );
   try {
     return JSON.parse(text);
@@ -138,6 +145,7 @@ export function getAnimeSourceIds(
  */
 export async function fetchAnimeStreams({
   malId,
+  anilistId,
   episode,
   providerId = ANIME_PROVIDER_ID,
 }: FetchAnimeStreamsParams): Promise<StreamLink[]> {
@@ -146,14 +154,23 @@ export async function fetchAnimeStreams({
     console.log(`[Anime] fetch ${providerId}: no streamSources — aborting`);
     return [];
   }
+  // justanime keys /api/watch by AniList id — never send the MAL id.
+  const ani = anilistId ?? malToAni(malId);
+  if (ani == null) {
+    console.log(
+      `[Anime] fetch ${providerId}: no AniList id for MAL ${malId} (map miss) — cannot query justanime`,
+    );
+    return [];
+  }
 
   const result = await resolveStreams(
     {
       streamSources: def.streamSources,
       imdbId: "",
       malId,
-      // JustAnime's path is /api/watch/{malId}/episode/{ep}/<server> for both
-      // movies and series (MAL movies are episode 1) — routing everything
+      anilistId: ani,
+      // JustAnime's path is /api/watch/{anilistId}/episode/{ep}/<server> for
+      // both movies and series (MAL movies are episode 1) — routing everything
       // through the tv template keeps {episode} replacement in one place.
       mediaType: "tv",
       season: 1,
@@ -189,11 +206,13 @@ export async function fetchAnimeStreams({
  */
 export async function fetchAnimeSourceStreams({
   malId,
+  anilistId,
   episode,
   providerId = ANIME_PROVIDER_ID,
   sourceId,
 }: {
   malId: number;
+  anilistId?: number | null;
   episode: number;
   providerId?: string;
   sourceId: string;
@@ -207,12 +226,21 @@ export async function fetchAnimeSourceStreams({
       error: `streamSource '${sourceId}' not registered for ${providerId}`,
     };
   }
+  const ani = anilistId ?? malToAni(malId);
+  if (ani == null) {
+    return {
+      sourceId,
+      links: [],
+      error: `no AniList id for MAL ${malId} (map miss) — justanime cannot be queried`,
+    };
+  }
   try {
     const result = await resolveStreams(
       {
         streamSources: [source],
         imdbId: "",
         malId,
+        anilistId: ani,
         mediaType: "tv",
         season: 1,
         episode,

@@ -1,7 +1,7 @@
 /**
  * JustAnime stream source adapter.
  *
- * Parses the core.justanime.to /api/watch/{malId}/episode/{ep}/<server>
+ * Parses the core.justanime.to /api/watch/{anilistId}/episode/{ep}/<server>
  * response into StreamLink[]. ONE request per audio track (sub/dub):
  *
  *   {

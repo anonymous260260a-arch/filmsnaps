@@ -21,6 +21,8 @@ export interface AnimePrefetchOptions {
   trigger?: "details" | "home-cw" | "watch" | "next-episode";
   /** Bypass a fresh cache entry and re-run the fetch. */
   force?: boolean;
+  /** AniList id (justanime's key) — derived from MAL inside when omitted. */
+  anilistId?: number | null;
 }
 
 export interface AnimeStreamResult {
@@ -146,7 +148,12 @@ export async function prefetchAnimeStreams(
     `[Anime] ▶ prefetch START ${cacheKey} (trigger=${options.trigger ?? "unknown"})`,
   );
   const run = (async (): Promise<AnimeStreamResult | null> => {
-    const links = await fetchAnimeStreams({ malId, episode, providerId });
+    const links = await fetchAnimeStreams({
+      malId,
+      anilistId: options.anilistId,
+      episode,
+      providerId,
+    });
     if (links.length === 0) {
       CACHE.set(cacheKey, {
         links: [],

@@ -458,7 +458,7 @@ class FastScanJob(
         // R8-1: Silero + Energy both run from chunk 1 (collector owns the Energy
         // instance); the winner is chosen at end-of-window, never mid-scan.
         val silero = if (useSilero) {
-            SileroVad(context, debug = vadDebug, log = { msg -> d(msg) })
+            SileroVad.createOrNull(context, debug = vadDebug, log = { msg -> d(msg) })
         } else {
             null
         }
@@ -759,7 +759,7 @@ class FastScanJob(
         val toUs = (toSec * 1_000_000).toLong()
         // R8-1: dual-VAD collector (see scanProgressive) — winner chosen at end.
         val silero = if (useSilero) {
-            SileroVad(context, debug = vadDebug, log = { msg -> d(msg) })
+            SileroVad.createOrNull(context, debug = vadDebug, log = { msg -> d(msg) })
         } else {
             null
         }

@@ -574,6 +574,9 @@ export default function SearchScreen() {
       const twin = lookupMal(item.malId);
       const tmdbShowId = twin?.tmdbShowId;
       const tmdbMovieId = twin?.tmdbMovieId;
+      // Thread MAL + AniList ids from the search result itself — the map may
+      // lack the title's ids, but the search upstream already has both.
+      const ids = { mid: item.malId, aid: item.anilistId };
       if (tmdbShowId != null) {
         openDetail(
           toDetailNavItem(
@@ -581,6 +584,7 @@ export default function SearchScreen() {
               id: tmdbShowId,
               media_type: "tv",
               title: item.titleEnglish || item.title,
+              ...ids,
             },
             "tv",
           )!,
@@ -594,6 +598,7 @@ export default function SearchScreen() {
               id: tmdbMovieId,
               media_type: "movie",
               title: item.titleEnglish || item.title,
+              ...ids,
             },
             "movie",
           )!,

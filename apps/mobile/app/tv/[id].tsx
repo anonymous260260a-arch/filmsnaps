@@ -91,6 +91,8 @@ export default function TVDetailScreen() {
     vote_average?: string;
     release_date?: string;
     blurhash?: string;
+    mid?: string;
+    aid?: string;
   }>();
   const id = routeParams.id;
   const nav = useSafeNavigation();
@@ -174,7 +176,28 @@ export default function TVDetailScreen() {
   const title = header?.title || "";
   const queryReady = !!show;
 
-  const animeHit = useMemo(() => (id ? resolveShowIds(id) : null), [id]);
+  // Map first; fall back to ?mid/?aid threaded from search (map may miss).
+  const routeAnime = useMemo(() => {
+    if (!routeParams.mid) return null;
+    const malId = Number(routeParams.mid);
+    if (!Number.isFinite(malId)) return null;
+    const aid = routeParams.aid ? Number(routeParams.aid) : null;
+    return {
+      malId,
+      anilistId: aid != null && Number.isFinite(aid) ? aid : null,
+    };
+  }, [routeParams.mid, routeParams.aid]);
+  const animeHit = useMemo(() => {
+    const mapHit = id ? resolveShowIds(id) : null;
+    // Map is authoritative for the MAL id; search-threaded aid fills the gap
+    // when the map entry has no AniList id.
+    if (mapHit)
+      return {
+        malId: mapHit.malId,
+        anilistId: mapHit.anilistId ?? routeAnime?.anilistId ?? null,
+      };
+    return routeAnime;
+  }, [id, routeAnime]);
   const isAnime = animeHit != null;
 
   const [bookmarked, setBookmarked] = useState(false);
@@ -911,7 +934,10 @@ export default function TVDetailScreen() {
                       }
                     : { backdrop: backdropPath || "" },
                 );
-                const hit = isAnime && id ? resolveShowIds(id, s) : null;
+                const hit =
+                  isAnime && id
+                    ? (resolveShowIds(id, s) ?? animeHit)
+                    : animeHit;
                 if (hit) {
                   params.set("isAnime", "1");
                   params.set("mid", String(hit.malId));

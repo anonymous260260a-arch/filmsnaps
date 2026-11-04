@@ -72,6 +72,8 @@ class WatchCollector(
     private val stateLock = Any()
     private var collector: SignalCollector? = null
     private var silero: SileroVad? = null
+    /** Latched when createOrNull returns null (low-RAM/init failure) — don't retry each window. */
+    private var sileroUnavailable = false
     private var srcRate = 0
     private var channels = 0
     private var pcmEncoding = C.ENCODING_PCM_16BIT
@@ -304,8 +306,9 @@ class WatchCollector(
     // ─── internals (call with stateLock held) ─────────────────────────
 
     private fun ensureVad() {
-        if (useSilero && silero == null) {
-            silero = SileroVad(context, log = { msg -> log("watch-silero: $msg") })
+        if (useSilero && silero == null && !sileroUnavailable) {
+            silero = SileroVad.createOrNull(context, log = { msg -> log("watch-silero: $msg") })
+            if (silero == null) sileroUnavailable = true
         }
         silero?.reset()
     }

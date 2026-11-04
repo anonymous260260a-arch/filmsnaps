@@ -2427,6 +2427,7 @@ export function VideoWebView({
             void prefetchAnimeStreams(r.malId, r.episode, audio, {
               providerId: ANIME_PROVIDER_ID,
               trigger: "next-episode",
+              anilistId: r.anilistId,
             }).catch(() => {});
           }
         }
@@ -2483,6 +2484,7 @@ export function VideoWebView({
             void prefetchAnimeStreams(r.malId, r.episode, audio, {
               providerId: ANIME_PROVIDER_ID,
               trigger: "next-episode",
+              anilistId: r.anilistId,
             }).catch(() => {});
           }
         }
