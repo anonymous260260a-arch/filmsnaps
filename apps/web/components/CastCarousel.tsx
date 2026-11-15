@@ -45,7 +45,7 @@ export function CastCarousel({ cast, limit = 12 }: CastCarouselProps) {
             href={`/person?id=${member.id}`}
             className="flex-shrink-0 w-20 text-center group"
           >
-            <div className="w-20 h-20 rounded-full overflow-hidden bg-[#222226] ring-1 ring-white/[0.06] mb-2 mx-auto transition-transform group-hover:scale-105">
+            <div className="w-20 h-20 rounded-full overflow-hidden bg-subtle ring-1 ring-white/[0.06] mb-2 mx-auto transition-transform group-hover:scale-105">
               {member.profile_path ? (
                 <Image
                   src={getImageUrl(member.profile_path, "w185") ?? ""}

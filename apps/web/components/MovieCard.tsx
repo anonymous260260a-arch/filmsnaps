@@ -117,7 +117,7 @@ export function MovieCard({
 
           {/* Rating badge — always visible */}
           {rating && variant === "default" && (
-            <div className="absolute top-2.5 right-2.5 flex items-center gap-1 bg-[#16161A]/90 backdrop-blur-sm px-2 py-1 rounded-lg border border-white/[0.08]">
+            <div className="absolute top-2.5 right-2.5 flex items-center gap-1 bg-elevated/90 backdrop-blur-sm px-2 py-1 rounded-lg border border-white/[0.08]">
               <Star className="h-3 w-3 text-amber-accent fill-amber-accent" />
               <span className="text-xs font-semibold text-white tabular-nums">
                 {rating}
@@ -149,7 +149,7 @@ export function MovieCard({
       {progress != null && progress > 0 && (
         <div className="mt-1.5 h-1 w-full max-w-[92%] rounded-full overflow-hidden bg-white/[0.06]">
           <div
-            className="h-full rounded-full bg-[#5B9CF6]"
+            className="h-full rounded-full bg-info"
             style={{
               width: `${Math.min(100, Math.max(0, Math.round(progress * 100)))}%`,
             }}

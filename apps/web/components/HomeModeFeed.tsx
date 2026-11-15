@@ -10,17 +10,10 @@
 
 "use client";
 
-import dynamic from "next/dynamic";
 import { useAppMode } from "@/lib/useAppMode";
 import { AnimeHomeFeed } from "@/components/AnimeHomeFeed";
 import { ContinueWatchingWrapper } from "@/components/ContinueWatchingWrapper";
-import { MediaCarouselClient as MediaCarousel } from "@/components/MediaCarouselClient";
-import { SkeletonHero } from "@/components/SkeletonLoader";
-
-const Hero = dynamic(
-  () => import("@/components/Hero").then((mod) => ({ default: mod.Hero })),
-  { loading: () => <SkeletonHero />, ssr: true },
-);
+import { MarqueeHome } from "@/components/home/MarqueeHome";
 
 interface TmdbResult {
   results: Array<Record<string, any>>;
@@ -46,54 +39,19 @@ export function HomeModeFeed({
   if (mode === "anime") {
     return (
       <div className="home-anime-feed space-y-12 py-10 sm:space-y-16">
-        {featuredMovies && featuredMovies.length > 0 && (
-          <ContinueWatchingWrapper />
-        )}
+        <ContinueWatchingWrapper />
         <AnimeHomeFeed />
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 sm:space-y-12 lg:space-y-14 pb-10 sm:pb-14">
-      {featuredMovies && featuredMovies.length > 0 && (
-        <Hero movies={featuredMovies} />
-      )}
-      {featuredMovies && featuredMovies.length > 0 && (
-        <ContinueWatchingWrapper />
-      )}
-
-      {trendingMovies && trendingMovies.results.length > 0 && (
-        <MediaCarousel
-          title="Trending Movies"
-          items={trendingMovies.results}
-          mediaType="movie"
-        />
-      )}
-
-      {trendingTV && trendingTV.results.length > 0 && (
-        <MediaCarousel
-          title="Trending TV Shows"
-          items={trendingTV.results}
-          mediaType="tv"
-        />
-      )}
-
-      {popularMovies && popularMovies.results.length > 0 && (
-        <MediaCarousel
-          title="Popular Movies"
-          items={popularMovies.results}
-          mediaType="movie"
-        />
-      )}
-
-      {upcomingMovies && upcomingMovies.results.length > 0 && (
-        <MediaCarousel
-          title="Upcoming Movies"
-          items={upcomingMovies.results}
-          mediaType="movie"
-        />
-      )}
-    </div>
+    <MarqueeHome
+      trendingMovies={trendingMovies}
+      trendingTV={trendingTV}
+      popularMovies={popularMovies}
+      upcomingMovies={upcomingMovies}
+      featuredMovies={featuredMovies}
+    />
   );
 }

@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef } from "react";
 
-export function VideoPlayer({ videoKey, title }) {
+export function VideoPlayer({ videoKey, title, autoplay = false }) {
   const [isLoaded, setIsLoaded] = useState(false);
   const iframeRef = useRef(null);
 
@@ -22,7 +22,7 @@ export function VideoPlayer({ videoKey, title }) {
       {isLoaded && (
         <iframe
           ref={iframeRef}
-          src={`https://www.youtube.com/embed/${videoKey}?autoplay=0&modestbranding=1&rel=0`}
+          src={`https://www.youtube.com/embed/${videoKey}?autoplay=${autoplay ? 1 : 0}&modestbranding=1&rel=0`}
           title={title}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           allowFullScreen

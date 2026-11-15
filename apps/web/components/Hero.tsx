@@ -5,6 +5,7 @@ import Image from "next/image";
 import { Play, Info, Star } from "lucide-react";
 import { GlassButton } from "@/components/ui/glass-button";
 import { SaveButton } from "@/components/SaveButton";
+import { SkeletonHero } from "@/components/SkeletonLoader";
 import { tmdbApi, getImageUrl } from "@/lib/tmdb";
 import { Swiper, SwiperSlide } from "swiper/react";
 import { Autoplay, EffectFade, Navigation, Pagination } from "swiper/modules";
@@ -37,7 +38,9 @@ export function Hero({ movies = [] }: { movies: any[] }) {
     if (movies.length > 0) setCurrentMovie(movies[0]);
   }, [movies]);
 
-  if (!movies.length) return null;
+  // Hold the hero's space with its exact skeleton while data loads — the
+  // single loading state for this surface (no null-collapse, no CLS).
+  if (!movies.length) return <SkeletonHero />;
 
   return (
     <section className="hero-desktop group relative w-full h-[90vh] min-h-[600px] overflow-hidden">
@@ -140,7 +143,7 @@ export function Hero({ movies = [] }: { movies: any[] }) {
                       <div className="flex flex-wrap items-center gap-3">
                         <GlassButton
                           size="lg"
-                          className="gap-2.5 font-bold px-8 py-3.5 h-auto text-base text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] border-0 shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
+                          className="gap-2.5 font-bold px-8 py-3.5 h-auto text-base text-background bg-gradient-to-b from-primary-bright to-primary border-0 shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
                           onClick={() =>
                             router.push(`/watch?type=movie&id=${movie.id}`)
                           }

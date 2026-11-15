@@ -172,7 +172,7 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
                   {/* Central play button (always visible) */}
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="w-10 h-10 rounded-full bg-black/70 border border-white/20 flex items-center justify-center transition-all duration-300 group-hover:scale-110 group-hover:bg-black/80">
-                      <Play className="w-4.5 h-4.5 fill-[#E8BC4F] text-[#E8BC4F] ml-0.5" />
+                      <Play className="w-4.5 h-4.5 fill-primary-bright text-primary-bright ml-0.5" />
                     </div>
                   </div>
 
@@ -181,7 +181,7 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
                     entry.season != null &&
                     entry.episode != null && (
                       <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/75 border border-white/10">
-                        <span className="text-[10px] font-semibold text-[#E8BC4F]">
+                        <span className="text-[10px] font-semibold text-primary-bright">
                           S{entry.season}:E{entry.episode}
                         </span>
                       </div>
@@ -190,7 +190,7 @@ export function ContinueWatching({ entries }: ContinueWatchingProps) {
                   {/* Bottom progress bar (overlaid) */}
                   <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-white/25 rounded-b-xl overflow-hidden">
                     <div
-                      className="h-full bg-[#E8BC4F]"
+                      className="h-full bg-primary-bright"
                       style={{ width: `${pct}%` }}
                     />
                   </div>

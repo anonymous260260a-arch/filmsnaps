@@ -1,10 +1,7 @@
-// app/page.tsx
 "use client";
 
-import { Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
-import { SkeletonHero } from "@/components/SkeletonLoader";
 import { LegalFooter } from "@/components/legal/LegalFooter";
 import { HomeModeFeed } from "@/components/HomeModeFeed";
 import { tmdbApi } from "@/lib/tmdb";
@@ -56,10 +53,8 @@ function HomeContent() {
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-background text-foreground transition-colors duration-700">
-      <Suspense fallback={<SkeletonHero />}>
-        <HomeContent />
-      </Suspense>
+    <div className="min-h-screen bg-background text-foreground">
+      <HomeContent />
     </div>
   );
 }

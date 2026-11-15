@@ -35,7 +35,7 @@ export function ModeSplitToggle({ className = "" }: { className?: string }) {
             className={`h-7 rounded-full px-3 text-[11px] font-bold uppercase tracking-wide transition-all ${
               active
                 ? "bg-primary text-black"
-                : "text-zinc-400 hover:text-zinc-200"
+                : "text-muted-foreground hover:text-foreground"
             }`}
           >
             {opt.label}

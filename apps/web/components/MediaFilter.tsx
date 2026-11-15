@@ -174,17 +174,17 @@ export function MediaFilter({
         if (e.target === modalRef.current) setIsOpen(false);
       }}
     >
-      <div className="relative flex flex-col w-full max-w-2xl max-h-[90vh] bg-[#0E0E12] border border-white/10 rounded-2xl shadow-[0_25px_70px_rgba(0,0,0,0.85)] overflow-hidden animate-in zoom-in-95 duration-200">
+      <div className="relative flex flex-col w-full max-w-2xl max-h-[90vh] bg-surface border border-white/10 rounded-2xl shadow-[0_25px_70px_rgba(0,0,0,0.85)] overflow-hidden animate-in zoom-in-95 duration-200">
         {/* Ambient Top Glow */}
         <div
           aria-hidden
-          className="pointer-events-none absolute top-0 inset-x-0 h-32 bg-gradient-to-b from-[#D4A237]/10 via-[#D4A237]/5 to-transparent"
+          className="pointer-events-none absolute top-0 inset-x-0 h-32 bg-gradient-to-b from-primary/10 via-primary/5 to-transparent"
         />
 
         {/* ── Header ── */}
-        <div className="relative flex items-center justify-between px-6 py-4 border-b border-white/[0.08] bg-[#121217]/60">
+        <div className="relative flex items-center justify-between px-6 py-4 border-b border-white/[0.08] bg-surface/60">
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-[#D4A237]/15 border border-[#D4A237]/30 text-[#D4A237]">
+            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-primary/15 border border-primary/30 text-primary">
               <SlidersHorizontal className="h-4 w-4" />
             </div>
             <div>
@@ -193,12 +193,12 @@ export function MediaFilter({
                   Refine Collection
                 </h2>
                 {activeFilterCount > 0 && (
-                  <Badge className="bg-[#D4A237] text-black font-extrabold text-[11px] px-2 py-0.5 rounded-full border-none">
+                  <Badge className="bg-primary text-black font-extrabold text-[11px] px-2 py-0.5 rounded-full border-none">
                     {activeFilterCount} Active
                   </Badge>
                 )}
               </div>
-              <p className="text-xs text-zinc-400">
+              <p className="text-xs text-muted-foreground">
                 Filter titles by genre, year, rating, and language
               </p>
             </div>
@@ -208,7 +208,7 @@ export function MediaFilter({
             {activeFilterCount > 0 && (
               <button
                 onClick={handleReset}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-muted-foreground hover:text-white hover:bg-white/[0.06] transition-colors"
                 title="Reset all filters"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
@@ -217,7 +217,7 @@ export function MediaFilter({
             )}
             <button
               onClick={() => setIsOpen(false)}
-              className="flex items-center justify-center w-8 h-8 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+              className="flex items-center justify-center w-8 h-8 rounded-lg text-muted-foreground hover:text-white hover:bg-white/[0.08] transition-colors"
               aria-label="Close modal"
             >
               <X className="h-4 w-4" />
@@ -230,8 +230,8 @@ export function MediaFilter({
           <div className="space-y-7 pb-4">
             {/* 1. SORT BY */}
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                <ArrowUpDown className="h-3.5 w-3.5 text-[#D4A237]" />
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <ArrowUpDown className="h-3.5 w-3.5 text-primary" />
                 <span>Sort Order</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -245,14 +245,14 @@ export function MediaFilter({
                       className={cn(
                         "flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all text-xs font-medium gap-1.5",
                         active
-                          ? "bg-[#D4A237]/15 border-[#D4A237] text-white shadow-[0_0_15px_rgba(212,162,55,0.15)]"
-                          : "bg-white/[0.03] border-white/[0.06] text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200",
+                          ? "bg-primary/15 border-primary text-white shadow-[0_0_15px_rgba(212,162,55,0.15)]"
+                          : "bg-white/[0.03] border-white/[0.06] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground",
                       )}
                     >
                       <Icon
                         className={cn(
                           "h-4 w-4",
-                          active ? "text-[#D4A237]" : "text-zinc-500",
+                          active ? "text-primary" : "text-muted-foreground",
                         )}
                       />
                       <span className="truncate w-full">{opt.label}</span>
@@ -267,12 +267,12 @@ export function MediaFilter({
             {/* 2. GENRES */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                  <Film className="h-3.5 w-3.5 text-[#D4A237]" />
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <Film className="h-3.5 w-3.5 text-primary" />
                   <span>Genres</span>
                 </div>
                 {selectedGenres.length > 0 && (
-                  <span className="text-xs font-semibold text-[#D4A237]">
+                  <span className="text-xs font-semibold text-primary">
                     {selectedGenres.length} Selected
                   </span>
                 )}
@@ -280,18 +280,18 @@ export function MediaFilter({
 
               {/* Genre Search Box */}
               <div className="relative">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500 pointer-events-none" />
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                 <input
                   type="text"
                   placeholder="Search genres..."
                   value={genreSearch}
                   onChange={(e) => setGenreSearch(e.target.value)}
-                  className="w-full h-10 pl-10 pr-9 bg-white/[0.04] border border-white/[0.08] rounded-xl text-xs text-white placeholder:text-zinc-500 focus:outline-none focus:border-[#D4A237]/50 focus:ring-1 focus:ring-[#D4A237]/50 transition-colors"
+                  className="w-full h-10 pl-10 pr-9 bg-white/[0.04] border border-white/[0.08] rounded-xl text-xs text-white placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-colors"
                 />
                 {genreSearch && (
                   <button
                     onClick={() => setGenreSearch("")}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -309,8 +309,8 @@ export function MediaFilter({
                       className={cn(
                         "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all duration-150 active:scale-95",
                         selected
-                          ? "bg-[#D4A237] border-[#D4A237] text-black font-semibold shadow-[0_2px_10px_rgba(212,162,55,0.3)]"
-                          : "bg-white/[0.03] border-white/[0.06] text-zinc-300 hover:bg-white/[0.08] hover:text-white",
+                          ? "bg-primary border-primary text-black font-semibold shadow-[0_2px_10px_rgba(212,162,55,0.3)]"
+                          : "bg-white/[0.03] border-white/[0.06] text-foreground hover:bg-white/[0.08] hover:text-white",
                       )}
                     >
                       {selected && <Check className="h-3.5 w-3.5 stroke-[3]" />}
@@ -319,7 +319,7 @@ export function MediaFilter({
                   );
                 })}
                 {filteredGenres.length === 0 && (
-                  <p className="text-xs text-zinc-500 py-3 text-center w-full">
+                  <p className="text-xs text-muted-foreground py-3 text-center w-full">
                     No matching genres found
                   </p>
                 )}
@@ -331,8 +331,8 @@ export function MediaFilter({
             {/* 3. RELEASE YEAR */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                  <Calendar className="h-3.5 w-3.5 text-[#D4A237]" />
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <Calendar className="h-3.5 w-3.5 text-primary" />
                   <span>Release Year</span>
                 </div>
                 <div className="px-2.5 py-1 rounded-md bg-white/[0.05] border border-white/[0.08] text-xs font-mono text-white font-bold">
@@ -351,8 +351,8 @@ export function MediaFilter({
                       className={cn(
                         "px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors",
                         active
-                          ? "bg-[#D4A237]/20 border-[#D4A237] text-[#D4A237]"
-                          : "bg-white/[0.02] border-white/[0.06] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.05]",
+                          ? "bg-primary/20 border-primary text-primary"
+                          : "bg-white/[0.02] border-white/[0.06] text-muted-foreground hover:text-foreground hover:bg-white/[0.05]",
                       )}
                     >
                       {preset.label}
@@ -378,11 +378,11 @@ export function MediaFilter({
             {/* 4. TMDB RATING */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                  <Star className="h-3.5 w-3.5 text-[#D4A237]" />
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <Star className="h-3.5 w-3.5 text-primary" />
                   <span>TMDB Rating</span>
                 </div>
-                <div className="px-2.5 py-1 rounded-md bg-white/[0.05] border border-white/[0.08] text-xs font-mono text-[#D4A237] font-bold">
+                <div className="px-2.5 py-1 rounded-md bg-white/[0.05] border border-white/[0.08] text-xs font-mono text-primary font-bold">
                   {ratingRange[0].toFixed(1)} ★ — {ratingRange[1].toFixed(1)} ★
                 </div>
               </div>
@@ -398,8 +398,8 @@ export function MediaFilter({
                       className={cn(
                         "px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors",
                         active
-                          ? "bg-[#D4A237]/20 border-[#D4A237] text-[#D4A237]"
-                          : "bg-white/[0.02] border-white/[0.06] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.05]",
+                          ? "bg-primary/20 border-primary text-primary"
+                          : "bg-white/[0.02] border-white/[0.06] text-muted-foreground hover:text-foreground hover:bg-white/[0.05]",
                       )}
                     >
                       {preset.label}
@@ -424,8 +424,8 @@ export function MediaFilter({
 
             {/* 5. ORIGINAL LANGUAGE */}
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                <Languages className="h-3.5 w-3.5 text-[#D4A237]" />
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <Languages className="h-3.5 w-3.5 text-primary" />
                 <span>Original Language</span>
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -438,8 +438,8 @@ export function MediaFilter({
                       className={cn(
                         "px-3 py-1.5 rounded-lg text-xs font-medium border transition-all",
                         active
-                          ? "bg-[#D4A237] border-[#D4A237] text-black font-semibold shadow-[0_2px_10px_rgba(212,162,55,0.3)]"
-                          : "bg-white/[0.03] border-white/[0.06] text-zinc-300 hover:bg-white/[0.08] hover:text-white",
+                          ? "bg-primary border-primary text-black font-semibold shadow-[0_2px_10px_rgba(212,162,55,0.3)]"
+                          : "bg-white/[0.03] border-white/[0.06] text-foreground hover:bg-white/[0.08] hover:text-white",
                       )}
                     >
                       {lang.label}
@@ -452,23 +452,23 @@ export function MediaFilter({
         </ScrollArea>
 
         {/* ── Footer Actions ── */}
-        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-white/[0.08] bg-[#121217]/90">
+        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-white/[0.08] bg-surface/90">
           <button
             onClick={handleReset}
-            className="px-4 py-2.5 rounded-xl text-xs font-medium text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors"
+            className="px-4 py-2.5 rounded-xl text-xs font-medium text-muted-foreground hover:text-white hover:bg-white/[0.06] transition-colors"
           >
             Reset Filters
           </button>
           <div className="flex items-center gap-2.5">
             <button
               onClick={() => setIsOpen(false)}
-              className="px-4 py-2.5 rounded-xl text-xs font-semibold text-zinc-300 hover:text-white hover:bg-white/[0.08] transition-colors"
+              className="px-4 py-2.5 rounded-xl text-xs font-semibold text-foreground hover:text-white hover:bg-white/[0.08] transition-colors"
             >
               Cancel
             </button>
             <button
               onClick={handleApply}
-              className="px-6 py-2.5 rounded-xl bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] text-black font-bold text-xs shadow-[0_4px_20px_rgba(212,162,55,0.35)] hover:brightness-105 active:scale-98 transition-all"
+              className="px-6 py-2.5 rounded-xl bg-gradient-to-b from-primary-bright to-primary text-black font-bold text-xs shadow-[0_4px_20px_rgba(212,162,55,0.35)] hover:brightness-105 active:scale-98 transition-all"
             >
               Apply Changes
             </button>
@@ -486,10 +486,10 @@ export function MediaFilter({
         onClick={() => setIsOpen(true)}
         className="relative group overflow-hidden border-white/10 hover:border-white/20 transition-all"
       >
-        <Filter className="mr-2 h-4 w-4 text-[#D4A237] transition-transform group-hover:rotate-180" />
+        <Filter className="mr-2 h-4 w-4 text-primary transition-transform group-hover:rotate-180" />
         <span>Filters</span>
         {activeFilterCount > 0 && (
-          <Badge className="ml-2 bg-[#D4A237] text-black font-bold px-1.5 py-0.5 rounded-full text-[10px] border-none">
+          <Badge className="ml-2 bg-primary text-black font-bold px-1.5 py-0.5 rounded-full text-[10px] border-none">
             {activeFilterCount}
           </Badge>
         )}
