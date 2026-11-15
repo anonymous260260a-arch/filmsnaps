@@ -624,6 +624,21 @@ export class MpvManager extends EventEmitter {
   private handleEvent(msg: any): void {
     const event = msg.event;
 
+    // ── Event-chain diagnostics (issue: "Preparing Stream" stuck while video
+    // plays) — mpv IPC → handleEvent → fwd() → renderer onEvent. Log every
+    // NON-property event: the property stream (time-pos etc.) is continuous
+    // and would drown the terminal, but the lifecycle events are rare and
+    // exactly the ones the renderer's poster-gate depends on. If the renderer
+    // shows the loader while this log shows file-loaded, the break is between
+    // here and the renderer; if this never logs, mpv itself never emitted it.
+    if (event !== "property-change") {
+      logMpv.log(
+        `[MpvManager] mpv event: ${event}${
+          msg.reason ? ` reason=${msg.reason}` : ""
+        }`,
+      );
+    }
+
     switch (event) {
       case "property-change": {
         // mpv IPC shape: {"event":"property-change","id":N,"name":"...","data":<value>}
