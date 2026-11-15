@@ -16,6 +16,7 @@ import type { Dashboard, DrillState, Range } from "./components/types";
 import { dayStr, sum } from "./components/utils";
 import { GOLD } from "./components/constants";
 import { Section, Card, Skeleton, NoData } from "./components/shared";
+import { apiUrl } from "@/lib/tmdb";
 
 // Section components
 import { DashboardHeader } from "./components/DashboardHeader";
@@ -72,7 +73,7 @@ export default function AdminPage() {
     setError(null);
     try {
       const q = (f: string, t: string, extra?: string) =>
-        `/api/telemetry/dashboard?from=${f}&to=${t}${extra ?? ""}`;
+        apiUrl(`/api/telemetry/dashboard?from=${f}&to=${t}${extra ?? ""}`);
 
       const filterStr =
         `appVersion=${encodeURIComponent(filters.appVersion ?? "")}&anonId=${encodeURIComponent(filters.anonId ?? "")}`
@@ -149,7 +150,7 @@ export default function AdminPage() {
     (cur?.filters?.event ? 1 : 0);
 
   return (
-    <div className="min-h-screen bg-[#0B0B0D] text-white/[0.88] font-sans antialiased selection:bg-[#D4A237]/30">
+    <div className="min-h-screen bg-background text-white/[0.88] font-sans antialiased selection:bg-primary/30">
       {/* ── Sticky Navigation Header ── */}
       <DashboardHeader
         range={range}
@@ -180,7 +181,7 @@ export default function AdminPage() {
       <main className="max-w-[1360px] mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-20">
         {/* Error State */}
         {error && (
-          <div className="my-8 p-6 bg-[#141417] border border-red-500/30 rounded-2xl max-w-xl">
+          <div className="my-8 p-6 bg-elevated border border-red-500/30 rounded-2xl max-w-xl">
             <h2 className="text-lg font-bold text-white mb-2">
               Dashboard Unavailable
             </h2>
@@ -191,7 +192,7 @@ export default function AdminPage() {
             </p>
             <button
               onClick={() => void load()}
-              className="px-4 py-2 bg-[#D4A237] text-[#0B0B0D] font-bold text-xs rounded-lg hover:bg-[#D4A237]/90 transition-colors"
+              className="px-4 py-2 bg-primary text-background font-bold text-xs rounded-lg hover:bg-primary/90 transition-colors"
             >
               Retry Connection
             </button>
@@ -221,7 +222,7 @@ export default function AdminPage() {
               No events recorded in this time range.
             </span>{" "}
             Either no users active, or the telemetry ingest worker needs
-            redeployment (<code className="text-[#D4A237]">apps/web</code>) to
+            redeployment (<code className="text-primary">apps/web</code>) to
             ensure all event types are whitelist approved.
           </div>
         )}

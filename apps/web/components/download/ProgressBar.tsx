@@ -18,7 +18,7 @@ interface ProgressBarProps {
 
 export function ProgressBar({
   value,
-  colorClass = "bg-[#D4A237]",
+  colorClass = "bg-primary",
   showPercent = false,
   heightClass = "h-1.5",
 }: ProgressBarProps) {

@@ -25,7 +25,7 @@ export function DashboardHeader({
   updatedAt,
 }: DashboardHeaderProps) {
   return (
-    <header className="sticky top-0 z-40 flex flex-wrap items-center justify-between gap-4 px-6 py-4 bg-[#0B0B0D]/90 backdrop-blur-md border-b border-white/[0.07]">
+    <header className="sticky top-0 z-40 flex flex-wrap items-center justify-between gap-4 px-6 py-4 bg-background/90 backdrop-blur-md border-b border-white/[0.07]">
       <div className="flex flex-wrap items-center gap-5">
         <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
           <span>FilmSnaps</span>
@@ -41,7 +41,7 @@ export function DashboardHeader({
           </span>
         </h1>
 
-        <div className="flex items-center gap-1.5 bg-[#141417] p-1 rounded-xl border border-white/[0.07]">
+        <div className="flex items-center gap-1.5 bg-elevated p-1 rounded-xl border border-white/[0.07]">
           {PRESETS.map((p) => {
             const active = range.kind === "preset" && range.days === p.days;
             return (
@@ -50,7 +50,7 @@ export function DashboardHeader({
                 onClick={() => setRange({ kind: "preset", days: p.days })}
                 className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${
                   active
-                    ? "bg-[#D4A237] text-[#0B0B0D] shadow-sm font-bold"
+                    ? "bg-primary text-background shadow-sm font-bold"
                     : "text-white/60 hover:text-white hover:bg-white/[0.05]"
                 }`}
               >
@@ -71,7 +71,7 @@ export function DashboardHeader({
                 to: range.kind === "custom" ? range.to : to,
               })
             }
-            className="bg-[#141417] text-white/90 text-xs border border-white/[0.08] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#D4A237]/50"
+            className="bg-elevated text-white/90 text-xs border border-white/[0.08] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary/50"
             style={{ colorScheme: "dark" }}
           />
           <span className="text-white/30">–</span>
@@ -85,7 +85,7 @@ export function DashboardHeader({
                 to: e.target.value,
               })
             }
-            className="bg-[#141417] text-white/90 text-xs border border-white/[0.08] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#D4A237]/50"
+            className="bg-elevated text-white/90 text-xs border border-white/[0.08] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary/50"
             style={{ colorScheme: "dark" }}
           />
         </div>
@@ -104,11 +104,11 @@ export function DashboardHeader({
         <button
           onClick={onRefresh}
           disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white/70 hover:text-white bg-[#141417] border border-white/[0.08] hover:border-[#D4A237]/40 rounded-xl transition-all disabled:opacity-50"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white/70 hover:text-white bg-elevated border border-white/[0.08] hover:border-primary/40 rounded-xl transition-all disabled:opacity-50"
           title="Refresh Dashboard"
         >
           <svg
-            className={`w-3.5 h-3.5 ${loading ? "animate-spin text-[#D4A237]" : ""}`}
+            className={`w-3.5 h-3.5 ${loading ? "animate-spin text-primary" : ""}`}
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"

@@ -182,12 +182,12 @@ export default function NxshaDownloadPage() {
 
   if (!available) {
     return (
-      <div className="min-h-screen bg-[#070708] text-foreground">
+      <div className="min-h-screen bg-background text-foreground">
         <Header />
         <PageShell maxWidth="2xl">
-          <div className="rounded-xl border border-white/[0.06] bg-[#0E0E11] px-6 py-14 text-center">
-            <div className="w-16 h-16 rounded-full bg-[#16161A] flex items-center justify-center mx-auto mb-5">
-              <Download className="h-8 w-8 text-[#D4A237]" />
+          <div className="rounded-xl border border-white/[0.06] bg-surface px-6 py-14 text-center">
+            <div className="w-16 h-16 rounded-full bg-elevated flex items-center justify-center mx-auto mb-5">
+              <Download className="h-8 w-8 text-primary" />
             </div>
             <h1 className="text-2xl font-bold tracking-tight mb-2">
               Downloads need the desktop app
@@ -198,7 +198,7 @@ export default function NxshaDownloadPage() {
             </p>
             <Link
               href="/download"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-background text-sm font-semibold hover:bg-primary-dim transition-all"
             >
               Get FilmSnaps Desktop
             </Link>
@@ -210,12 +210,12 @@ export default function NxshaDownloadPage() {
 
   if (!id) {
     return (
-      <div className="min-h-screen bg-[#070708] text-foreground">
+      <div className="min-h-screen bg-background text-foreground">
         <Header />
         <PageShell maxWidth="2xl" className="text-center">
-          <AlertCircle className="h-10 w-10 text-[#E05252] mx-auto mb-4" />
+          <AlertCircle className="h-10 w-10 text-destructive mx-auto mb-4" />
           <h1 className="text-xl font-semibold mb-2">Download unavailable</h1>
-          <Link href="/" className="text-sm text-[#D4A237] hover:underline">
+          <Link href="/" className="text-sm text-primary hover:underline">
             Go home
           </Link>
         </PageShell>
@@ -224,14 +224,14 @@ export default function NxshaDownloadPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#070708] text-foreground">
+    <div className="min-h-screen bg-background text-foreground">
       <Header />
       <PageShell maxWidth="3xl">
         {/* Title row */}
         <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#D4A237]/10 flex items-center justify-center shrink-0">
-              <Download size={20} className="text-[#D4A237]" />
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+              <Download size={20} className="text-primary" />
             </div>
             <div>
               <h1
@@ -282,13 +282,13 @@ export default function NxshaDownloadPage() {
 
         {phase === "failed" && (
           <StateCard
-            icon={<AlertCircle className="h-8 w-8 text-[#E05252]" />}
+            icon={<AlertCircle className="h-8 w-8 text-destructive" />}
             title="Failed to load"
             body={error}
             action={
               <button
                 onClick={() => setScrapeKey((k) => k + 1)}
-                className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
+                className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-background text-sm font-semibold hover:bg-primary-dim transition-all"
               >
                 <RefreshCw size={14} />
                 Retry
@@ -299,7 +299,7 @@ export default function NxshaDownloadPage() {
 
         {phase === "no-links" && (
           <StateCard
-            icon={<AlertCircle className="h-8 w-8 text-[#D4A237]" />}
+            icon={<AlertCircle className="h-8 w-8 text-primary" />}
             title="No links found"
             body={
               error ||
@@ -308,7 +308,7 @@ export default function NxshaDownloadPage() {
             action={
               <button
                 onClick={() => setScrapeKey((k) => k + 1)}
-                className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
+                className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-background text-sm font-semibold hover:bg-primary-dim transition-all"
               >
                 <RefreshCw size={14} />
                 Retry
@@ -342,13 +342,13 @@ export default function NxshaDownloadPage() {
               ))}
             </div>
 
-            <div className="mt-6 flex items-center justify-between rounded-xl bg-[#0E0E11] border border-white/[0.06] px-4 py-3">
+            <div className="mt-6 flex items-center justify-between rounded-xl bg-surface border border-white/[0.06] px-4 py-3">
               <p className="text-xs text-muted-foreground">
                 Queued downloads appear in the manager with live progress.
               </p>
               <Link
                 href="/downloads"
-                className="shrink-0 ml-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[#D4A237] hover:underline"
+                className="shrink-0 ml-4 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
               >
                 <Download size={13} />
                 View Downloads
@@ -380,7 +380,7 @@ function NumSelect({
       <select
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="bg-transparent text-sm text-foreground outline-none [&>option]:bg-[#16161A]"
+        className="bg-transparent text-sm text-foreground outline-none [&>option]:bg-elevated"
       >
         {Array.from({ length: max }, (_, i) => i + 1).map((n) => (
           <option key={n} value={n}>
@@ -403,11 +403,8 @@ function StatusCard({
   // show that instead of the captcha-scrape step list.
   if (statusText) {
     return (
-      <div className="rounded-xl border border-white/[0.06] bg-[#0E0E11] px-6 py-10 text-center">
-        <Loader2
-          size={22}
-          className="text-[#D4A237] animate-spin mx-auto mb-4"
-        />
+      <div className="rounded-xl border border-white/[0.06] bg-surface px-6 py-10 text-center">
+        <Loader2 size={22} className="text-primary animate-spin mx-auto mb-4" />
         <p className="text-sm text-muted-foreground">{statusText}</p>
         <p className="text-[11px] text-faint mt-2 tabular-nums">
           Talking to nxsha&apos;s own API — no browser needed
@@ -418,7 +415,7 @@ function StatusCard({
   const step = phase === "loading" ? 0 : 1;
   const steps = ["Loading nxsha page", "Solving CAPTCHA", "Extracting links"];
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-[#0E0E11] px-6 py-10">
+    <div className="rounded-xl border border-white/[0.06] bg-surface px-6 py-10">
       <div className="max-w-xs mx-auto space-y-4">
         {steps.map((label, i) => {
           const done = i < step;
@@ -426,11 +423,11 @@ function StatusCard({
           return (
             <div key={label} className="flex items-center gap-3">
               {done ? (
-                <CheckCircle2 size={18} className="text-[#3FB950]" />
+                <CheckCircle2 size={18} className="text-success" />
               ) : active ? (
-                <Loader2 size={18} className="text-[#D4A237] animate-spin" />
+                <Loader2 size={18} className="text-primary animate-spin" />
               ) : (
-                <span className="w-[18px] h-[18px] rounded-full border border-[#333338]" />
+                <span className="w-[18px] h-[18px] rounded-full border border-subtle" />
               )}
               <span
                 className={`text-sm ${
@@ -463,8 +460,8 @@ function StateCard({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-[#0E0E11] px-6 py-12 text-center">
-      <div className="w-16 h-16 rounded-full bg-[#16161A] flex items-center justify-center mx-auto mb-5">
+    <div className="rounded-xl border border-white/[0.06] bg-surface px-6 py-12 text-center">
+      <div className="w-16 h-16 rounded-full bg-elevated flex items-center justify-center mx-auto mb-5">
         {icon}
       </div>
       <h3 className="text-base font-semibold mb-1">{title}</h3>
@@ -515,15 +512,15 @@ function ServerCard({
   }, [sorted]);
 
   return (
-    <div className="rounded-xl overflow-hidden bg-[#0E0E11] border border-[#222226] hover:border-[#D4A237]/20 transition-all">
+    <div className="rounded-xl overflow-hidden bg-surface border border-subtle hover:border-primary/20 transition-all">
       {/* Accordion header */}
       <button
         onClick={onToggle}
         className="w-full flex items-center justify-between px-4 py-3.5 text-left hover:bg-white/[0.02] transition-colors"
       >
         <span className="flex items-center gap-3 min-w-0 flex-1 mr-3">
-          <span className="w-8 h-8 rounded-lg bg-[#D4A237]/10 flex items-center justify-center shrink-0">
-            <Server size={14} className="text-[#D4A237]" />
+          <span className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <Server size={14} className="text-primary" />
           </span>
           <span className="min-w-0">
             <span className="block text-sm font-semibold truncate">
@@ -655,7 +652,7 @@ function LinkRow({
           {link.mirrorCount > 1 && (
             <span
               title={`${link.mirrorCount} mirrors share this release`}
-              className="text-[11px] text-[#D4A237]/80"
+              className="text-[11px] text-primary/80"
             >
               +{link.mirrorCount - 1} mirror{link.mirrorCount > 2 ? "s" : ""}
             </span>
@@ -669,9 +666,7 @@ function LinkRow({
         >
           {displayName}
           {subtitle && <span className="text-faint/70"> — {subtitle}</span>}
-          {!link.isDirect && (
-            <span className="ml-1.5 text-[#60A5FA]">gateway</span>
-          )}
+          {!link.isDirect && <span className="ml-1.5 text-info">gateway</span>}
         </p>
 
         {isActive && progress > 0 && (
@@ -691,24 +686,24 @@ function LinkRow({
           style={{ color }}
         />
       ) : isDone ? (
-        <CheckCircle2 size={18} className="text-[#3FB950] shrink-0" />
+        <CheckCircle2 size={18} className="text-success shrink-0" />
       ) : !link.isDirect ? (
         <button
           onClick={() => onOpenExternal(link.downloadUrl)}
           aria-label="Open in browser"
           title="Landing page — opens in your browser to finish the download"
-          className="w-8 h-8 rounded-full bg-[#3B82F6]/15 hover:bg-[#3B82F6]/30 flex items-center justify-center shrink-0 transition-colors"
+          className="w-8 h-8 rounded-full bg-info/15 hover:bg-info/30 flex items-center justify-center shrink-0 transition-colors"
         >
-          <ExternalLink size={14} className="text-[#60A5FA]" />
+          <ExternalLink size={14} className="text-info" />
         </button>
       ) : (
         <button
           onClick={onDownload}
           aria-label={`Download ${link.quality || ""}`}
           title="Download"
-          className="w-8 h-8 rounded-full bg-[#D4A237]/15 hover:bg-[#D4A237]/30 flex items-center justify-center shrink-0 transition-colors"
+          className="w-8 h-8 rounded-full bg-primary/15 hover:bg-primary/30 flex items-center justify-center shrink-0 transition-colors"
         >
-          <Download size={15} className="text-[#D4A237]" />
+          <Download size={15} className="text-primary" />
         </button>
       )}
     </div>

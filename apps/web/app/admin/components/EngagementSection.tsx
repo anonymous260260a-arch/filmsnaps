@@ -250,11 +250,11 @@ export function EngagementSection({ cur, openDrill }: EngagementSectionProps) {
                     if (!active || !payload?.length) return null;
                     const item = payload[0].payload;
                     return (
-                      <div className="bg-[#121216] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
+                      <div className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
                         <div className="font-bold text-white">
                           {item.hourLabel} UTC
                         </div>
-                        <div className="text-[#D4A237] mt-0.5">
+                        <div className="text-primary mt-0.5">
                           {fmtInt(item.count)} watch opens
                         </div>
                         {item.isPeak && (
@@ -333,11 +333,11 @@ export function EngagementSection({ cur, openDrill }: EngagementSectionProps) {
                       if (!active || !payload?.length) return null;
                       const item = payload[0].payload;
                       return (
-                        <div className="bg-[#121216] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
+                        <div className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
                           <div className="font-bold text-white">
                             {item.displayDay}
                           </div>
-                          <div className="text-[#D4A237] mt-0.5">
+                          <div className="text-primary mt-0.5">
                             {fmtInt(item.count)} sessions
                           </div>
                         </div>

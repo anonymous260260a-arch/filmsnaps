@@ -86,12 +86,12 @@ export default function DownloadsPage() {
 
   if (!available) {
     return (
-      <div className="min-h-screen bg-[#070708] text-foreground">
+      <div className="min-h-screen bg-background text-foreground">
         <Header />
         <PageShell maxWidth="2xl">
-          <div className="rounded-xl border border-white/[0.06] bg-[#0E0E11] px-6 py-14 text-center">
-            <div className="w-16 h-16 rounded-full bg-[#16161A] flex items-center justify-center mx-auto mb-5">
-              <Download className="h-8 w-8 text-[#D4A237]" />
+          <div className="rounded-xl border border-white/[0.06] bg-surface px-6 py-14 text-center">
+            <div className="w-16 h-16 rounded-full bg-elevated flex items-center justify-center mx-auto mb-5">
+              <Download className="h-8 w-8 text-primary" />
             </div>
             <h1 className="text-2xl font-bold tracking-tight mb-2">
               Downloads
@@ -102,7 +102,7 @@ export default function DownloadsPage() {
             </p>
             <Link
               href="/download"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-background text-sm font-semibold hover:bg-primary-dim transition-all"
             >
               <Monitor size={14} />
               Get FilmSnaps Desktop
@@ -116,14 +116,14 @@ export default function DownloadsPage() {
   const total = tasks.length;
 
   return (
-    <div className="min-h-screen bg-[#070708] text-foreground">
+    <div className="min-h-screen bg-background text-foreground">
       <Header />
       <PageShell maxWidth="5xl">
         {/* Header */}
         <div className="flex items-center justify-between mb-8 flex-wrap gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#D4A237]/10 flex items-center justify-center">
-              <Download size={20} className="text-[#D4A237]" />
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Download size={20} className="text-primary" />
             </div>
             <div>
               <h1
@@ -148,7 +148,7 @@ export default function DownloadsPage() {
                   onClick={() => setSpeed(s.level)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                     speed === s.level
-                      ? "bg-[#D4A237] text-[#070708]"
+                      ? "bg-primary text-background"
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
@@ -160,7 +160,7 @@ export default function DownloadsPage() {
         </div>
 
         {/* Add-by-URL (utility + testing) */}
-        <div className="flex items-center gap-2 mb-8 rounded-xl bg-[#0E0E11] border border-white/[0.06] p-2.5">
+        <div className="flex items-center gap-2 mb-8 rounded-xl bg-surface border border-white/[0.06] p-2.5">
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -170,19 +170,19 @@ export default function DownloadsPage() {
           />
           <button
             onClick={handleAdd}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-primary text-background text-sm font-semibold hover:bg-primary-dim transition-all"
           >
             <Plus size={14} />
             Add
           </button>
         </div>
         {urlError && (
-          <p className="text-xs text-[#E05252] -mt-6 mb-6">{urlError}</p>
+          <p className="text-xs text-destructive -mt-6 mb-6">{urlError}</p>
         )}
 
         {total === 0 ? (
-          <div className="rounded-xl border border-white/[0.06] bg-[#0E0E11] px-6 py-14 text-center">
-            <div className="w-16 h-16 rounded-full bg-[#16161A] flex items-center justify-center mx-auto mb-4">
+          <div className="rounded-xl border border-white/[0.06] bg-surface px-6 py-14 text-center">
+            <div className="w-16 h-16 rounded-full bg-elevated flex items-center justify-center mx-auto mb-4">
               <Download className="h-8 w-8 text-faint" />
             </div>
             <h3 className="text-base font-semibold mb-1">No downloads yet</h3>
@@ -191,7 +191,7 @@ export default function DownloadsPage() {
             </p>
             <Link
               href="/movie"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-background text-sm font-semibold hover:bg-primary-dim transition-all"
             >
               <Film size={14} />
               Browse Movies
@@ -246,16 +246,16 @@ function DownloadRow({ task }: { task: DownloadTask }) {
   const isPaused = task.state === "paused";
   const isCompleted = task.state === "completed";
   const barColor = isCompleted
-    ? "bg-[#3FB950]"
+    ? "bg-success"
     : isPaused
-      ? "bg-[#D4A237]"
-      : "bg-[#5B9CF6]";
+      ? "bg-primary"
+      : "bg-info";
 
   return (
-    <div className="flex items-center gap-4 p-4 rounded-xl bg-[#0E0E11] border border-[#222226] hover:border-[#D4A237]/20 transition-all group">
+    <div className="flex items-center gap-4 p-4 rounded-xl bg-surface border border-subtle hover:border-primary/20 transition-all group">
       {/* Icon */}
-      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#16161A] to-[#0E0E11] flex items-center justify-center shrink-0 ring-1 ring-white/[0.06]">
-        <Download className="w-4 h-4 text-[#D4A237]/70" />
+      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-elevated to-surface flex items-center justify-center shrink-0 ring-1 ring-white/[0.06]">
+        <Download className="w-4 h-4 text-primary/70" />
       </div>
 
       {/* Info */}
@@ -287,7 +287,7 @@ function DownloadRow({ task }: { task: DownloadTask }) {
           {isPaused && <span>Paused</span>}
           {isCompleted && <span>{formatDate(task.updatedAt)}</span>}
           {task.state === "failed" && (
-            <span className="text-[#E05252]">
+            <span className="text-destructive">
               {task.error ? String(task.error) : "Failed"}
             </span>
           )}
@@ -364,7 +364,7 @@ function ActionButton({
       title={label}
       className={`flex items-center justify-center w-8 h-8 rounded-lg border transition-all ${
         danger
-          ? "border-[#E05252]/20 text-[#E05252] hover:bg-[#E05252]/10"
+          ? "border-destructive/20 text-destructive hover:bg-destructive/10"
           : "border-white/[0.08] text-muted-foreground hover:text-foreground hover:bg-white/[0.06]"
       }`}
     >

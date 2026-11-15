@@ -144,7 +144,7 @@ export function EventInventory({
                   if (!active || !payload?.length) return null;
                   const d = payload[0].payload;
                   return (
-                    <div className="bg-[#121216] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
+                    <div className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
                       <p className="font-bold text-white">{itemLabel}</p>
                       <p className="text-white/50 mt-0.5">
                         {fmtInt(d.count)} events

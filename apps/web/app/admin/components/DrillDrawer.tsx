@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import type { DrillState, RawRow } from "./types";
 import { fmtDay } from "./utils";
 import { label, GOLD } from "./constants";
+import { apiUrl } from "@/lib/tmdb";
 
 interface DrillDrawerProps {
   state: NonNullable<DrillState>;
@@ -44,7 +45,9 @@ export function DrillDrawer({
     const aidParam = anonId ? `&anonId=${encodeURIComponent(anonId)}` : "";
 
     fetch(
-      `/api/telemetry/dashboard?mode=raw&event=${encodeURIComponent(state.event)}${fromParam}${toParam}${avParam}${aidParam}&limit=100`,
+      apiUrl(
+        `/api/telemetry/dashboard?mode=raw&event=${encodeURIComponent(state.event)}${fromParam}${toParam}${avParam}${aidParam}&limit=100`,
+      ),
     )
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -78,11 +81,11 @@ export function DrillDrawer({
 
       {/* Drawer Panel */}
       <div
-        className="relative w-full max-w-2xl bg-[#0E0E12] border-l border-white/10 h-full flex flex-col shadow-2xl z-10"
+        className="relative w-full max-w-2xl bg-surface border-l border-white/10 h-full flex flex-col shadow-2xl z-10"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Drawer Header */}
-        <div className="px-6 py-5 border-b border-white/10 flex items-center justify-between shrink-0 bg-[#121216]">
+        <div className="px-6 py-5 border-b border-white/10 flex items-center justify-between shrink-0 bg-surface">
           <div>
             <div className="flex items-center gap-2.5">
               <span
@@ -120,7 +123,7 @@ export function DrillDrawer({
           {loading && (
             <div className="flex flex-col items-center justify-center h-48 text-white/40 gap-3">
               <svg
-                className="w-5 h-5 animate-spin text-[#D4A237]"
+                className="w-5 h-5 animate-spin text-primary"
                 fill="none"
                 viewBox="0 0 24 24"
               >

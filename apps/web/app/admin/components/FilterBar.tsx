@@ -31,7 +31,7 @@ export function FilterBar({
     (appVersion ? 1 : 0) + (anonId ? 1 : 0) + (event ? 1 : 0);
 
   return (
-    <div className="sticky top-14 z-30 bg-[#0B0B0D]/95 backdrop-blur-md border-b border-white/[0.07] px-6 py-3">
+    <div className="sticky top-14 z-30 bg-background/95 backdrop-blur-md border-b border-white/[0.07] px-6 py-3">
       <div className="max-w-[1360px] mx-auto flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <label className="text-[11px] font-semibold text-white/50 uppercase tracking-wider">
@@ -44,7 +44,7 @@ export function FilterBar({
                 appVersion: e.target.value || undefined,
               })
             }
-            className="bg-[#141417] text-white/90 text-xs border border-white/[0.08] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#D4A237]/50 min-w-[80px]"
+            className="bg-elevated text-white/90 text-xs border border-white/[0.08] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary/50 min-w-[80px]"
             style={{ colorScheme: "dark" }}
           >
             <option value="">All versions</option>
@@ -69,7 +69,7 @@ export function FilterBar({
                 anonId: e.target.value || undefined,
               })
             }
-            className="bg-[#141417] text-white/90 text-xs border border-white/[0.08] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#D4A237]/50 font-mono w-[200px]"
+            className="bg-elevated text-white/90 text-xs border border-white/[0.08] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary/50 font-mono w-[200px]"
             style={{ colorScheme: "dark" }}
           />
         </div>
@@ -78,7 +78,7 @@ export function FilterBar({
           <div className="flex items-center gap-2 ml-2 flex-wrap">
             <span className="text-[11px] text-white/40">Active filters:</span>
             {appVersion && (
-              <span className="inline-flex items-center gap-1 text-[11px] font-mono bg-[#D4A237]/10 text-[#D4A237] border border-[#D4A237]/20 px-2 py-0.5 rounded-full">
+              <span className="inline-flex items-center gap-1 text-[11px] font-mono bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full">
                 v{appVersion}
                 <button
                   onClick={() => onFilterChange({ appVersion: undefined })}
