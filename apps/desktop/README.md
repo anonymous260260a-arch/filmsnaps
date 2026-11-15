@@ -48,8 +48,15 @@ scripts/
 ## Run
 
 ```bash
-# Dev (starts web dev server + Electron)
+# Dev (starts web dev server + Electron) — spawns the Next.js dev server on
+# :3000, compiles the desktop TypeScript, then opens Electron pointed at the
+# dev server. Does NOT build the static export (dev mode doesn't use it).
 pnpm dev
+
+# Run the packaged-style shell without an installer (uses the LAST static
+# export in apps/web/out + the API URL baked at that build). Fails loudly
+# with a dialog if no export exists yet.
+pnpm app
 
 # Typecheck
 pnpm typecheck
@@ -58,14 +65,28 @@ pnpm typecheck
 pnpm test
 ```
 
+> A stale `next dev` on :3000 makes `pnpm dev` connect to the wrong server.
+> If the UI looks out of sync, kill the old process (`taskkill /PID <pid> /F`
+> on Windows) and re-run.
+
 ## Build
 
-Two build modes — **production** (live CF Worker) and **dev** (local server):
+One architecture, three targets. The UI is ALWAYS the static Next.js export
+(served via `app://`, no Node.js server); every dynamic request goes to the
+API base URL baked into the build via `NEXT_PUBLIC_API_URL`:
+
+| Target                  | Command                      | API base                                                   |
+| ----------------------- | ---------------------------- | ---------------------------------------------------------- |
+| Production              | `pnpm dist`                  | live CF Worker (`filmsnaps1.anonymous260260a.workers.dev`) |
+| Packaged + local server | `pnpm dist:dev`              | `http://localhost:3000` (needs `pnpm dev:web` running)     |
+| Unpackaged shell        | `pnpm build` then `pnpm app` | whatever `build-web.mjs` baked (default: live Worker)      |
+
+`pnpm build` = `build-web.mjs` (static export; `BUILD_FOR_DESKTOP=true` also
+skips the Cloudflare dev-proxy init, so no wrangler auth is needed) + `tsc` +
+provider preload. CORS for `app://` origins is injected by the shell at the
+session level (main.ts), so the Worker allowlist is not load-bearing.
 
 ### Production build (default)
-
-Uses the live CF Worker API. **Requires** `app://index.html` in the CF Worker's
-CORS allowlist — otherwise the desktop app gets CORS-blocked.
 
 ```bash
 # From desktop dir — builds web export + TypeScript + packages installer
@@ -77,8 +98,8 @@ pnpm dist:desktop
 
 ### Dev build (localhost)
 
-For testing with a local dev server. **Requires** `pnpm dev:web` running in a
-separate terminal.
+For testing a packaged build against a local dev server. **Requires**
+`pnpm dev:web` running in a separate terminal.
 
 ```powershell
 # PowerShell

@@ -34,6 +34,7 @@ yarn-error.log*
 # desktop app builds
 apps/desktop/dist/
 apps/desktop/release/
+apps/desktop/vendor/
 
 # opennext / cloudflare build output
 .open-next/
