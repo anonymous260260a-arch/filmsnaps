@@ -83,8 +83,8 @@ export function HubEpisodesPane({
                 onClick={() => onSeasonChange(s.season_number)}
                 className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-xs font-bold transition-colors ${
                   selected
-                    ? "border-[#D4A237] bg-[#D4A237] text-[#070708]"
-                    : "border-white/[0.06] bg-[#0E0E11] text-zinc-400 hover:border-white/[0.14] hover:text-zinc-200"
+                    ? "border-primary bg-primary text-background"
+                    : "border-white/[0.06] bg-surface text-muted-foreground hover:border-white/[0.14] hover:text-foreground"
                 }`}
               >
                 Season {s.season_number}
@@ -98,13 +98,15 @@ export function HubEpisodesPane({
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
         {!seasonData ? (
           <div className="flex flex-col items-center justify-center gap-2 py-10">
-            <Loader2 size={22} className="animate-spin text-[#D4A237]" />
-            <span className="text-xs text-[#A1A1AA]">Loading episodes…</span>
+            <Loader2 size={22} className="animate-spin text-primary" />
+            <span className="text-xs text-muted-foreground">
+              Loading episodes…
+            </span>
           </div>
         ) : episodes.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-10">
-            <Film size={22} className="text-[#52525B]" />
-            <span className="text-xs text-[#52525B]">No episodes found</span>
+            <Film size={22} className="text-faint" />
+            <span className="text-xs text-faint">No episodes found</span>
           </div>
         ) : (
           episodes.map((ep) => {
@@ -134,12 +136,12 @@ export function HubEpisodesPane({
                 }}
                 className={`mb-2 flex min-h-[76px] w-full items-center rounded-[14px] border p-2 text-left transition-colors ${
                   isActive
-                    ? "border-[#D4A237]/40 bg-[#D4A237]/[0.08]"
-                    : "border-white/[0.06] bg-[#0E0E11] hover:border-white/[0.14] hover:bg-white/[0.03]"
+                    ? "border-primary/40 bg-primary/[0.08]"
+                    : "border-white/[0.06] bg-surface hover:border-white/[0.14] hover:bg-white/[0.03]"
                 }`}
               >
                 {/* 16:9 thumb */}
-                <div className="relative mr-2.5 h-[54px] w-24 shrink-0 overflow-hidden rounded-lg bg-[#222226]">
+                <div className="relative mr-2.5 h-[54px] w-24 shrink-0 overflow-hidden rounded-lg bg-subtle">
                   {imgUrl ? (
                     <img
                       src={imgUrl}
@@ -149,12 +151,12 @@ export function HubEpisodesPane({
                     />
                   ) : null}
                   {isActive && (
-                    <span className="absolute bottom-1 left-1 flex items-center gap-1 rounded bg-[#D4A237] px-1 py-px">
+                    <span className="absolute bottom-1 left-1 flex items-center gap-1 rounded bg-primary px-1 py-px">
                       <Play
                         size={9}
-                        className="fill-[#070708] text-[#070708]"
+                        className="fill-background text-background"
                       />
-                      <span className="text-[8.5px] font-extrabold leading-none text-[#070708]">
+                      <span className="text-[8.5px] font-extrabold leading-none text-background">
                         Playing
                       </span>
                     </span>
@@ -162,7 +164,7 @@ export function HubEpisodesPane({
                   {hasProgress && (
                     <span className="absolute inset-x-0 bottom-0 block h-[3px] bg-white/25">
                       <span
-                        className="block h-full bg-[#D4A237]"
+                        className="block h-full bg-primary"
                         style={{
                           width: `${Math.min(100, prog!.percent * 100)}%`,
                         }}
@@ -174,28 +176,28 @@ export function HubEpisodesPane({
                 {/* Text block */}
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span className="flex items-center gap-1.5">
-                    <span className="shrink-0 text-[11.5px] font-extrabold tabular-nums text-[#D4A237]">
+                    <span className="shrink-0 text-[11.5px] font-extrabold tabular-nums text-primary">
                       E{String(epNum).padStart(2, "0")}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-zinc-100">
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">
                       {ep.name || `Episode ${epNum}`}
                     </span>
                     {isCompleted && (
                       <CheckCircle2
                         size={14}
-                        className="shrink-0 text-[#D4A237]"
+                        className="shrink-0 text-primary"
                       />
                     )}
                   </span>
                   {metaLine && (
-                    <span className="text-[11px] leading-tight text-[#52525B]">
+                    <span className="text-[11px] leading-tight text-faint">
                       {metaLine}
                     </span>
                   )}
                   {hasProgress && (
                     <span className="block h-[3px] overflow-hidden rounded-sm bg-white/[0.12]">
                       <span
-                        className="block h-full rounded-sm bg-[#D4A237]"
+                        className="block h-full rounded-sm bg-primary"
                         style={{
                           width: `${Math.min(100, prog!.percent * 100)}%`,
                         }}

@@ -103,14 +103,14 @@ export function ServerPickerSheet({
           onClick={() => setIsOpen((prev) => !prev)}
           className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border transition-all duration-200 active:scale-95 text-left ${
             isOpen
-              ? "bg-[#D4A237]/15 border-[#D4A237]/40 shadow-sm"
+              ? "bg-primary/15 border-primary/40 shadow-sm"
               : "bg-white/[0.06] border-white/[0.08] hover:border-white/20 hover:bg-white/[0.1]"
           }`}
           aria-label="Select Server"
           title="Switch Source Server"
         >
           <div className="min-w-0">
-            <p className="text-[8px] font-black text-zinc-500 uppercase tracking-wider leading-none">
+            <p className="text-[8px] font-black text-muted-foreground uppercase tracking-wider leading-none">
               Server
             </p>
             <p className="text-xs font-bold text-foreground truncate leading-tight mt-0.5 max-w-[95px] sm:max-w-[120px]">
@@ -119,7 +119,7 @@ export function ServerPickerSheet({
           </div>
           <ChevronDown
             size={13}
-            className={`text-zinc-400 shrink-0 transition-transform duration-200 ${
+            className={`text-muted-foreground shrink-0 transition-transform duration-200 ${
               isOpen ? "rotate-180 text-white" : ""
             }`}
           />
@@ -136,11 +136,11 @@ export function ServerPickerSheet({
             onClick={() => setIsOpen(false)}
           >
             {/* Glassmorphism backdrop */}
-            <div className="absolute inset-0 bg-[#070708]/80 backdrop-blur-md animate-fade-in" />
+            <div className="absolute inset-0 bg-background/80 backdrop-blur-md animate-fade-in" />
 
             {/* Bottom Sheet Card */}
             <div
-              className="relative w-full max-w-lg bg-[#141418] rounded-t-3xl border-t border-white/[0.1] p-5 pb-8 shadow-[0_-16px_60px_rgba(0,0,0,0.95)] max-h-[82vh] flex flex-col z-10 animate-in slide-in-from-bottom-6 duration-200"
+              className="relative w-full max-w-lg bg-elevated rounded-t-3xl border-t border-white/[0.1] p-5 pb-8 shadow-[0_-16px_60px_rgba(0,0,0,0.95)] max-h-[82vh] flex flex-col z-10 animate-in slide-in-from-bottom-6 duration-200"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Drag handle (mobile) */}
@@ -158,14 +158,14 @@ export function ServerPickerSheet({
                   >
                     Select Source Server
                   </h3>
-                  <p className="text-[11px] text-zinc-500 mt-0.5">
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
                     Choose a source for playback
                   </p>
                 </div>
 
                 <button
                   onClick={() => setIsOpen(false)}
-                  className="flex items-center justify-center w-7 h-7 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-zinc-400 hover:text-white transition-colors"
+                  className="flex items-center justify-center w-7 h-7 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-muted-foreground hover:text-white transition-colors"
                   aria-label="Close"
                 >
                   <X size={15} />
@@ -184,15 +184,15 @@ export function ServerPickerSheet({
                       className={`w-full flex items-center gap-3 p-3 rounded-xl
                       transition-all duration-200 text-left border ${
                         isActive
-                          ? "bg-[#D4A237]/10 border-[#D4A237]/40 shadow-sm"
-                          : "bg-[#0E0E11] border-white/[0.04] hover:border-white/15 hover:bg-white/[0.04]"
+                          ? "bg-primary/10 border-primary/40 shadow-sm"
+                          : "bg-surface border-white/[0.04] hover:border-white/15 hover:bg-white/[0.04]"
                       }`}
                     >
                       {/* Name + note */}
                       <span className="flex-1 min-w-0">
                         <span
                           className={`block text-xs font-semibold truncate ${
-                            isActive ? "text-[#D4A237]" : "text-foreground"
+                            isActive ? "text-primary" : "text-foreground"
                           }`}
                         >
                           {p.displayName || p.name}
@@ -200,7 +200,7 @@ export function ServerPickerSheet({
                         {p.note && (
                           <span
                             className="mt-1 inline-flex items-center px-1.5 py-0.5 rounded
-                          bg-white/[0.06] text-[11px] font-medium text-zinc-300
+                          bg-white/[0.06] text-[11px] font-medium text-foreground
                           border border-white/[0.08]"
                           >
                             {p.note}
@@ -210,7 +210,7 @@ export function ServerPickerSheet({
 
                       {/* Active check */}
                       {isActive && (
-                        <Check size={16} className="text-[#D4A237] shrink-0" />
+                        <Check size={16} className="text-primary shrink-0" />
                       )}
                     </button>
                   );

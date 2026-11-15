@@ -54,15 +54,15 @@ export function MetadataPanel({ initialMeta, plat }: MetadataPanelProps) {
           {title}
         </h2>
         <div className="flex items-center gap-2 mt-2">
-          <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#D4A237]">
+          <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-primary">
             {plat === "tv" ? "Series" : "Film"}
           </span>
           <span className="w-1 h-1 rounded-full bg-zinc-700" />
-          <span className="text-xs text-zinc-500">{year}</span>
+          <span className="text-xs text-muted-foreground">{year}</span>
           {rating > 0 && (
             <>
               <span className="w-1 h-1 rounded-full bg-zinc-700" />
-              <span className="text-xs text-[#D4A237]">
+              <span className="text-xs text-primary">
                 ★ {rating.toFixed(1)}
               </span>
             </>
@@ -70,7 +70,7 @@ export function MetadataPanel({ initialMeta, plat }: MetadataPanelProps) {
           {initialMeta?.episode_run_time?.[0] && plat === "tv" && (
             <>
               <span className="w-1 h-1 rounded-full bg-zinc-700" />
-              <span className="text-xs text-zinc-500">
+              <span className="text-xs text-muted-foreground">
                 {initialMeta.episode_run_time[0]}m
               </span>
             </>
@@ -78,7 +78,7 @@ export function MetadataPanel({ initialMeta, plat }: MetadataPanelProps) {
           {initialMeta?.runtime && plat === "movie" && (
             <>
               <span className="w-1 h-1 rounded-full bg-zinc-700" />
-              <span className="text-xs text-zinc-500">
+              <span className="text-xs text-muted-foreground">
                 {Math.floor(initialMeta.runtime / 60)}h{" "}
                 {initialMeta.runtime % 60}m
               </span>
@@ -92,7 +92,7 @@ export function MetadataPanel({ initialMeta, plat }: MetadataPanelProps) {
         <div>
           <p
             ref={synopsisRef}
-            className={`text-sm text-zinc-400 leading-relaxed ${
+            className={`text-sm text-muted-foreground leading-relaxed ${
               expanded ? "" : "line-clamp-3"
             }`}
           >
@@ -101,7 +101,7 @@ export function MetadataPanel({ initialMeta, plat }: MetadataPanelProps) {
           {isOverflowing && (
             <button
               onClick={() => setExpanded(!expanded)}
-              className="text-xs text-[#D4A237] mt-1 hover:underline font-medium"
+              className="text-xs text-primary mt-1 hover:underline font-medium"
             >
               {expanded ? "Show less" : "Read more ↓"}
             </button>
@@ -115,8 +115,8 @@ export function MetadataPanel({ initialMeta, plat }: MetadataPanelProps) {
           {genres.map((g: any) => (
             <span
               key={g.id}
-              className="px-2.5 py-1 rounded-full bg-[#0E0E11] border border-[#222226]
-                text-[11px] text-zinc-400 font-medium"
+              className="px-2.5 py-1 rounded-full bg-surface border border-subtle
+                text-[11px] text-muted-foreground font-medium"
             >
               {g.name}
             </span>
@@ -125,24 +125,21 @@ export function MetadataPanel({ initialMeta, plat }: MetadataPanelProps) {
       )}
 
       {/* Divider */}
-      <div className="h-px bg-[#222226]" />
+      <div className="h-px bg-subtle" />
 
       {/* Cast & Crew */}
       <div className="space-y-3">
         {cast.length > 0 && (
           <div>
-            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-[0.15em] mb-2">
+            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-[0.15em] mb-2">
               Cast
             </h3>
             <div className="flex flex-wrap gap-x-3 gap-y-1">
               {cast.slice(0, 8).map((member: any) => (
-                <span key={member.id} className="text-xs text-zinc-400">
+                <span key={member.id} className="text-xs text-muted-foreground">
                   {member.name}
                   {member.character && (
-                    <span className="text-zinc-600">
-                      {" "}
-                      as {member.character}
-                    </span>
+                    <span className="text-faint"> as {member.character}</span>
                   )}
                 </span>
               ))}
@@ -152,19 +149,21 @@ export function MetadataPanel({ initialMeta, plat }: MetadataPanelProps) {
 
         {director && (
           <div>
-            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-[0.15em] mb-1">
+            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-[0.15em] mb-1">
               Director
             </h3>
-            <span className="text-xs text-zinc-400">{director.name}</span>
+            <span className="text-xs text-muted-foreground">
+              {director.name}
+            </span>
           </div>
         )}
 
         {initialMeta?.created_by?.length > 0 && plat === "tv" && (
           <div>
-            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-[0.15em] mb-1">
+            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-[0.15em] mb-1">
               Created by
             </h3>
-            <span className="text-xs text-zinc-400">
+            <span className="text-xs text-muted-foreground">
               {initialMeta.created_by.map((c: any) => c.name).join(", ")}
             </span>
           </div>

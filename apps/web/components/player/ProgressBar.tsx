@@ -254,7 +254,7 @@ export function ProgressBar({
   return (
     <div
       ref={barRef}
-      className="relative h-2 w-full min-w-0 flex-1 bg-white/20 rounded-full cursor-pointer group hover:h-3 transition-[height] duration-150"
+      className="group relative flex h-6 w-full min-w-0 flex-1 cursor-pointer items-center"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -268,39 +268,58 @@ export function ProgressBar({
       aria-valuetext={`${formatTime(displayTime)} of ${formatTime(duration)}`}
       tabIndex={0}
     >
-      {buffered.map((range, i) => {
-        if (duration <= 0) return null;
-        const startPct = (range.start / duration) * 100;
-        const widthPct = ((range.end - range.start) / duration) * 100;
-        if (startPct + widthPct < lastPctRef.current) return null;
-        return (
+      {/* Visual track — thin at rest, grows on hover/drag. The interactive
+          area is the full-height row around it, so scrubbing never needs
+          pixel precision. fill/thumb are children of the track, whose width
+          equals the hit root's — the % values paint() writes stay correct. */}
+      <div className="relative h-1 w-full rounded-full bg-white/25 transition-[height] duration-150 group-hover:h-1.5">
+        {buffered.map((range, i) => {
+          if (duration <= 0) return null;
+          const startPct = (range.start / duration) * 100;
+          const widthPct = ((range.end - range.start) / duration) * 100;
+          if (startPct + widthPct < lastPctRef.current) return null;
+          return (
+            <div
+              key={i}
+              className="absolute top-0 bottom-0 bg-white/40 rounded-full transition-[width] duration-200 ease-linear"
+              style={{
+                left: `${startPct}%`,
+                width: `${Math.max(0, widthPct)}%`,
+              }}
+            />
+          );
+        })}
+
+        {/* `width` is owned by paint(), not by React */}
+        <div
+          ref={fillRef}
+          className="absolute top-0 bottom-0 bg-primary rounded-full will-change-[width]"
+          aria-hidden="true"
+        />
+
+        {/* Hover position marker — where a click would land */}
+        {hoverTime !== null && hoverX !== null && !isDragging && (
           <div
-            key={i}
-            className="absolute top-0 bottom-0 bg-white/40 rounded-full transition-[width] duration-200 ease-linear"
-            style={{ left: `${startPct}%`, width: `${Math.max(0, widthPct)}%` }}
+            className="absolute top-0 bottom-0 w-0.5 -translate-x-1/2 rounded-full bg-white/80"
+            style={{ left: hoverX }}
+            aria-hidden="true"
           />
-        );
-      })}
+        )}
 
-      {/* `width` is owned by paint(), not by React */}
-      <div
-        ref={fillRef}
-        className="absolute top-0 bottom-0 bg-[#D4A237] rounded-full will-change-[width]"
-        aria-hidden="true"
-      />
-
-      {/* `left` is owned by paint(), not by React */}
-      <div
-        ref={thumbRef}
-        className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-[#D4A237] rounded-full shadow-lg transition-transform duration-150 will-change-[left] ${
-          isDragging || hoverTime !== null ? "scale-125" : "scale-100"
-        }`}
-        aria-hidden="true"
-      />
+        {/* `left` is owned by paint(), not by React — YouTube-style: the
+            thumb exists only while the cursor is on the bar or dragging */}
+        <div
+          ref={thumbRef}
+          className={`absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-primary rounded-full shadow-md transition-transform duration-150 will-change-[left] ${
+            isDragging || hoverTime !== null ? "scale-100" : "scale-0"
+          } group-hover:scale-100`}
+          aria-hidden="true"
+        />
+      </div>
 
       {hoverTime !== null && hoverX !== null && (
         <div
-          className="absolute bottom-full mb-2 px-2 py-1 bg-black/90 text-white text-xs font-mono rounded pointer-events-none whitespace-nowrap border border-white/10 shadow-lg"
+          className="absolute bottom-full mb-2 px-2 py-1 bg-black/90 text-white text-xs font-mono rounded-md pointer-events-none whitespace-nowrap border border-white/10 shadow-lg tabular-nums"
           style={{ left: hoverX, transform: "translateX(-50%)" }}
         >
           {formatTime(hoverTime)}

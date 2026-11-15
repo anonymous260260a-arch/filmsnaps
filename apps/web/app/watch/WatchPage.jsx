@@ -4,6 +4,7 @@ import React, { useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import WatchClient from "./WatchClient";
+import { SkeletonWatch } from "@/components/SkeletonLoader";
 import { tmdbApi } from "@/lib/tmdb";
 import {
   getProvider,
@@ -227,13 +228,7 @@ function TVWatchContent({ contentid, searchParams, isDesktop, animeOrigin }) {
 
 export default function WatchPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
-          <div className="w-8 h-8 border-2 border-[#D4A237] border-t-transparent rounded-full animate-spin" />
-        </div>
-      }
-    >
+    <Suspense fallback={<SkeletonWatch />}>
       <WatchContent />
     </Suspense>
   );

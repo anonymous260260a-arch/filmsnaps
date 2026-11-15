@@ -1,9 +1,13 @@
 /**
  * useIsDesktop — viewport-based desktop detection hook.
  *
- * Returns true when the viewport is ≥1280px wide (Tailwind `xl` breakpoint).
- * Used to branch between the desktop two-zone layout and the mobile
- * single-column layout on the Watch page.
+ * Returns true when the viewport is ≥ `minWidth`px wide (default 1280 = the
+ * Tailwind `xl` breakpoint). Used to branch between desktop and mobile
+ * layouts — the Watch page (≥1280) and the detail pages (≥640 = `sm`, where
+ * the desktop variant takes over) both gate their layout fork on it, so each
+ * branch mounts exactly ONE instance of heavy children (DetailEpisodes,
+ * webviews, …). NEVER use CSS `hidden`/`sm:hidden` to branch heavy children:
+ * both branches mount and run effects simultaneously.
  *
  * NOT to be confused with Electron detection (window.electronAPI?.isDesktop)
  * which is about runtime environment, not viewport size.
@@ -20,23 +24,23 @@
 
 import { useState, useEffect } from "react";
 
-function getInitialValue(): boolean {
+function getInitialValue(minWidth: number): boolean {
   if (typeof window === "undefined") return false;
-  return window.matchMedia("(min-width: 1280px)").matches;
+  return window.matchMedia(`(min-width: ${minWidth}px)`).matches;
 }
 
-export function useIsDesktop(): boolean {
-  const [isDesktop, setIsDesktop] = useState(getInitialValue);
+export function useIsDesktop(minWidth: number = 1280): boolean {
+  const [isDesktop, setIsDesktop] = useState(() => getInitialValue(minWidth));
 
   useEffect(() => {
-    const mq = window.matchMedia("(min-width: 1280px)");
+    const mq = window.matchMedia(`(min-width: ${minWidth}px)`);
 
     // Listen for changes
     const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
     mq.addEventListener("change", handler);
 
     return () => mq.removeEventListener("change", handler);
-  }, []);
+  }, [minWidth]);
 
   return isDesktop;
 }

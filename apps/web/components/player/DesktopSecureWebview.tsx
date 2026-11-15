@@ -234,9 +234,9 @@ export const DesktopSecureWebview = forwardRef<
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-3">
             <div className="relative">
-              <div className="w-12 h-12 rounded-2xl bg-[#D4A237]/10 border border-[#D4A237]/20 flex items-center justify-center">
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
                 <svg
-                  className="w-6 h-6 text-[#D4A237]/80"
+                  className="w-6 h-6 text-primary/80"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -250,7 +250,7 @@ export const DesktopSecureWebview = forwardRef<
                 </svg>
               </div>
               <div
-                className="absolute -inset-2 rounded-2xl border-2 border-transparent border-t-[#D4A237]/30 animate-spin"
+                className="absolute -inset-2 rounded-2xl border-2 border-transparent border-t-primary/30 animate-spin"
                 style={{ animationDuration: "2s" }}
               />
             </div>
@@ -266,10 +266,10 @@ export const DesktopSecureWebview = forwardRef<
 
       {/* Error state */}
       {hasError && (
-        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-[#070708] gap-4 px-6">
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-background gap-4 px-6">
           <div className="w-14 h-14 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center">
             <svg
-              className="w-7 h-7 text-[#E05252]"
+              className="w-7 h-7 text-destructive"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"

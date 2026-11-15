@@ -45,17 +45,17 @@ export function EpisodeSidebar({
   tvId,
 }: EpisodeSidebarProps) {
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden border border-white/[0.08] bg-[#0E0E12] shadow-2xl sm:rounded-2xl">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden border border-white/[0.08] bg-surface shadow-2xl sm:rounded-2xl">
       {/* Slim header — series title + close (theater-mode toggle lives here
           and in the player chrome) */}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2.5">
-        <span className="truncate text-sm font-bold text-zinc-100">
+        <span className="truncate text-sm font-bold text-foreground">
           {title || "Episodes"}
         </span>
         {onClose && (
           <button
             onClick={onClose}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-white/[0.08] hover:text-white active:scale-95"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-white/[0.08] hover:text-white active:scale-95"
             title="Close Episodes (Theater Mode)"
             aria-label="Close Episodes"
           >

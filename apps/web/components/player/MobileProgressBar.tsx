@@ -301,7 +301,7 @@ export function MobileProgressBar({
             return (
               <div
                 key={i}
-                className="absolute top-1/2 -translate-y-1/2 rounded-full bg-[#D4A237]/30"
+                className="absolute top-1/2 -translate-y-1/2 rounded-full bg-primary/30"
                 style={{
                   height: trackHeight,
                   left: `${startPct}%`,
@@ -314,7 +314,7 @@ export function MobileProgressBar({
         {/* Played fill — `width` is owned by `paint()`, not by React */}
         <div
           ref={fillRef}
-          className="absolute left-0 top-1/2 -translate-y-1/2 rounded-full bg-[#D4A237] will-change-[width]"
+          className="absolute left-0 top-1/2 -translate-y-1/2 rounded-full bg-primary will-change-[width]"
           style={{ height: trackHeight }}
           aria-hidden="true"
         />
@@ -340,7 +340,7 @@ export function MobileProgressBar({
             className="pointer-events-none absolute bottom-full mb-1.5 flex w-[88px] items-center justify-center rounded-[10px] bg-black/85 py-1.5"
             style={{ left: bubble.x, transform: "translateX(-50%)" }}
           >
-            <span className="text-xs font-bold tabular-nums text-[#F4F4F5]">
+            <span className="text-xs font-bold tabular-nums text-foreground">
               {bubble.text}
             </span>
           </div>

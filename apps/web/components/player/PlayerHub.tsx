@@ -120,7 +120,7 @@ export function PlayerHub({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-2.5">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[20px] border border-white/[0.06] bg-[#141414]">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[20px] border border-white/[0.06] bg-elevated">
         {/* Segmented pill tabs (mobile: icon + label, gold-tint active) */}
         <div
           role="tablist"
@@ -139,8 +139,8 @@ export function PlayerHub({
                 onClick={() => setTab(t)}
                 className={`flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[13px] font-bold transition-colors ${
                   selected
-                    ? "bg-[#D4A237]/20 text-[#D4A237]"
-                    : "text-[#52525B] hover:bg-white/[0.04] hover:text-zinc-300"
+                    ? "bg-primary/20 text-primary"
+                    : "text-faint hover:bg-white/[0.04] hover:text-foreground"
                 }`}
               >
                 <Icon size={15} className="shrink-0" />
@@ -150,7 +150,7 @@ export function PlayerHub({
           })}
         </div>
 
-        <div className="mt-2 h-px shrink-0 bg-[#27272A]" />
+        <div className="mt-2 h-px shrink-0 bg-subtle" />
 
         <div
           id={`hub-panel-${active}`}
@@ -177,31 +177,31 @@ function StatusBits({ outcome }: { outcome: ProbeOutcome | undefined }) {
   if (!outcome) {
     return (
       <>
-        <Loader2 size={12} className="shrink-0 animate-spin text-[#52525B]" />
-        <span className="text-[11px] text-[#52525B]">Checking…</span>
+        <Loader2 size={12} className="shrink-0 animate-spin text-faint" />
+        <span className="text-[11px] text-faint">Checking…</span>
       </>
     );
   }
   if (outcome === "valid") {
     return (
       <>
-        <CheckCircle2 size={12} className="shrink-0 text-[#D4A237]" />
-        <span className="text-[11px] text-[#52525B]">Verified</span>
+        <CheckCircle2 size={12} className="shrink-0 text-primary" />
+        <span className="text-[11px] text-faint">Verified</span>
       </>
     );
   }
   if (outcome === "dead") {
     return (
       <>
-        <XCircle size={12} className="shrink-0 text-[#ef4444]" />
-        <span className="text-[11px] text-[#52525B]">Failed</span>
+        <XCircle size={12} className="shrink-0 text-destructive" />
+        <span className="text-[11px] text-faint">Failed</span>
       </>
     );
   }
   return (
     <>
-      <HelpCircle size={12} className="shrink-0 text-[#52525B]" />
-      <span className="text-[11px] text-[#52525B]">Unverified</span>
+      <HelpCircle size={12} className="shrink-0 text-faint" />
+      <span className="text-[11px] text-faint">Unverified</span>
     </>
   );
 }
@@ -224,8 +224,10 @@ function SourcesPane({ source }: { source: SourceState }) {
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {rows.length === 0 ? (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 py-10">
-          <Film size={22} className="text-[#52525B]" />
-          <span className="text-xs text-[#A1A1AA]">No sources available</span>
+          <Film size={22} className="text-faint" />
+          <span className="text-xs text-muted-foreground">
+            No sources available
+          </span>
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
@@ -245,19 +247,19 @@ function SourcesPane({ source }: { source: SourceState }) {
                 }}
                 className={`mb-2 flex w-full items-center gap-2.5 rounded-[14px] border p-3 text-left transition-colors ${
                   isActive
-                    ? "border-[#D4A237]/40 bg-[#D4A237]/[0.08]"
-                    : "border-white/[0.06] bg-[#0E0E11] hover:border-white/[0.14] hover:bg-white/[0.03]"
+                    ? "border-primary/40 bg-primary/[0.08]"
+                    : "border-white/[0.06] bg-surface hover:border-white/[0.14] hover:bg-white/[0.03]"
                 }`}
               >
                 {/* Index badge (mobile: circular icon slot) */}
                 <span
                   className={`flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full ${
-                    isActive ? "bg-[#D4A237]/20" : "bg-[#222226]"
+                    isActive ? "bg-primary/20" : "bg-subtle"
                   }`}
                 >
                   <span
                     className={`text-[13px] font-extrabold tabular-nums ${
-                      isActive ? "text-[#D4A237]" : "text-zinc-400"
+                      isActive ? "text-primary" : "text-muted-foreground"
                     }`}
                   >
                     {index + 1}
@@ -268,18 +270,18 @@ function SourcesPane({ source }: { source: SourceState }) {
                   <span className="flex items-center gap-1.5">
                     <span
                       className={`truncate text-sm font-bold ${
-                        isActive ? "text-[#D4A237]" : "text-zinc-100"
+                        isActive ? "text-primary" : "text-foreground"
                       }`}
                     >
                       {link.quality || "Source"}
                     </span>
                     {isRecommended && !isActive && (
-                      <span className="shrink-0 rounded-full bg-[#D4A237]/20 px-2 py-[3px] text-[10px] font-extrabold uppercase tracking-[0.04em] text-[#D4A237]">
+                      <span className="shrink-0 rounded-full bg-primary/20 px-2 py-[3px] text-[10px] font-extrabold uppercase tracking-[0.04em] text-primary">
                         Best
                       </span>
                     )}
                     {isLastUsed && !isActive && !isRecommended && (
-                      <span className="shrink-0 rounded-full bg-[#222226] px-2 py-[3px] text-[10px] font-extrabold uppercase tracking-[0.04em] text-[#52525B]">
+                      <span className="shrink-0 rounded-full bg-subtle px-2 py-[3px] text-[10px] font-extrabold uppercase tracking-[0.04em] text-faint">
                         Last used
                       </span>
                     )}
@@ -289,7 +291,7 @@ function SourcesPane({ source }: { source: SourceState }) {
                     {chips.map((chip) => (
                       <span
                         key={chip}
-                        className="rounded-full bg-[#222226] px-[7px] py-0.5 text-[10px] font-bold text-zinc-400"
+                        className="rounded-full bg-subtle px-[7px] py-0.5 text-[10px] font-bold text-muted-foreground"
                       >
                         {chip}
                       </span>
@@ -298,7 +300,7 @@ function SourcesPane({ source }: { source: SourceState }) {
                 </span>
 
                 {isActive && (
-                  <PlayCircle size={20} className="shrink-0 text-[#D4A237]" />
+                  <PlayCircle size={20} className="shrink-0 text-primary" />
                 )}
               </button>
             );

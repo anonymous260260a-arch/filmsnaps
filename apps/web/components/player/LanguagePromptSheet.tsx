@@ -48,13 +48,13 @@ export function LanguagePromptSheet({ onSelect }: LanguagePromptSheetProps) {
   };
 
   return (
-    <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#070708]/95 p-6">
+    <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/95 p-6">
       <div
-        className="w-full max-w-[400px] bg-[#16161A] rounded-2xl border border-white/[0.08] shadow-2xl p-6 animate-[fadeIn_0.2s_ease-out]"
+        className="w-full max-w-[400px] bg-elevated rounded-2xl border border-white/[0.08] shadow-2xl p-6 animate-[fadeIn_0.2s_ease-out]"
         role="alert"
       >
-        <div className="w-12 h-12 rounded-full bg-[#D4A237]/10 border border-[#D4A237]/30 flex items-center justify-center mb-4">
-          <Languages size={24} className="text-[#D4A237]" />
+        <div className="w-12 h-12 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center mb-4">
+          <Languages size={24} className="text-primary" />
         </div>
 
         <h2 className="text-[17px] font-bold text-white leading-snug">
@@ -74,14 +74,14 @@ export function LanguagePromptSheet({ onSelect }: LanguagePromptSheetProps) {
                 onClick={() => pick(option.value)}
                 className={`flex items-center justify-between gap-3 text-left rounded-xl border px-4 py-3 min-h-[54px] transition-colors ${
                   isSelected
-                    ? "bg-[#D4A237]/10 border-[#D4A237]/50"
+                    ? "bg-primary/10 border-primary/50"
                     : "bg-white/[0.02] border-white/[0.07] hover:bg-white/[0.05] hover:border-white/[0.12]"
                 }`}
               >
                 <span className="flex-1 min-w-0">
                   <span
                     className={`block text-sm font-semibold ${
-                      isSelected ? "text-[#D4A237]" : "text-white"
+                      isSelected ? "text-primary" : "text-white"
                     }`}
                   >
                     {option.label}
@@ -91,7 +91,7 @@ export function LanguagePromptSheet({ onSelect }: LanguagePromptSheetProps) {
                   </span>
                 </span>
                 {isSelected ? (
-                  <Check size={18} className="text-[#D4A237] shrink-0" />
+                  <Check size={18} className="text-primary shrink-0" />
                 ) : null}
               </button>
             );

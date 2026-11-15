@@ -75,8 +75,8 @@ export function SettingsPanel({
     <div
       className={
         inline
-          ? "w-full max-w-[420px] bg-[#1C1C1E] border border-white/[0.08] rounded-lg shadow-xl overflow-hidden"
-          : "absolute bottom-full right-0 mb-2 w-[280px] max-h-[420px] bg-[#1C1C1E] border border-white/[0.08] rounded-lg shadow-xl overflow-hidden z-50"
+          ? "w-full max-w-[420px] bg-elevated border border-white/[0.08] rounded-lg shadow-xl overflow-hidden"
+          : "absolute bottom-full right-0 mb-2 w-[280px] max-h-[420px] bg-elevated border border-white/[0.08] rounded-lg shadow-xl overflow-hidden z-50"
       }
     >
       <div className="flex border-b border-white/[0.08]">
@@ -86,7 +86,7 @@ export function SettingsPanel({
             onClick={() => setActiveTab(tab.id)}
             className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
               activeTab === tab.id
-                ? "bg-[#D4A237]/20 text-[#D4A237] border-b-2 border-[#D4A237]"
+                ? "bg-primary/20 text-primary border-b-2 border-primary"
                 : "text-white/60 hover:text-white hover:bg-white/[0.05]"
             }`}
           >
@@ -115,7 +115,7 @@ export function SettingsPanel({
                   className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
                     isDownloadOnly
                       ? "text-white/30 cursor-not-allowed opacity-60"
-                      : "text-white hover:bg-white/[0.05] hover:text-white focus:outline-none focus:ring-1 focus:ring-[#D4A237]"
+                      : "text-white hover:bg-white/[0.05] hover:text-white focus:outline-none focus:ring-1 focus:ring-primary"
                   }`}
                   disabled={isDownloadOnly}
                   title={
@@ -131,7 +131,7 @@ export function SettingsPanel({
                         {codec && <span>{codec.toUpperCase()}</span>}
                         {sizeBytes && <span>{formatBytes(sizeBytes)}</span>}
                         {isWebReady && (
-                          <span className="text-[#D4A237]">✓ Web-ready</span>
+                          <span className="text-primary">✓ Web-ready</span>
                         )}
                       </div>
                     </div>
@@ -156,7 +156,7 @@ export function SettingsPanel({
                 }}
                 className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
                   track.active
-                    ? "bg-[#D4A237]/20 text-[#D4A237]"
+                    ? "bg-primary/20 text-primary"
                     : "text-white/70 hover:text-white hover:bg-white/[0.05]"
                 }`}
               >
@@ -184,7 +184,7 @@ export function SettingsPanel({
               }}
               className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
                 activeSubtitleId === null
-                  ? "bg-[#D4A237]/20 text-[#D4A237]"
+                  ? "bg-primary/20 text-primary"
                   : "text-white/70 hover:text-white hover:bg-white/[0.05]"
               }`}
             >
@@ -199,7 +199,7 @@ export function SettingsPanel({
                 }}
                 className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
                   track.active
-                    ? "bg-[#D4A237]/20 text-[#D4A237]"
+                    ? "bg-primary/20 text-primary"
                     : "text-white/70 hover:text-white hover:bg-white/[0.05]"
                 }`}
               >
@@ -227,7 +227,7 @@ export function SettingsPanel({
                 }}
                 className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
                   rate === currentRate
-                    ? "bg-[#D4A237]/20 text-[#D4A237]"
+                    ? "bg-primary/20 text-primary"
                     : "text-white/70 hover:text-white hover:bg-white/[0.05]"
                 }`}
               >
