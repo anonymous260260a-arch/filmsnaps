@@ -44,6 +44,11 @@ const config: Config = {
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+          // Gradient/hover tiers for the gold CTAs (from-primary-bright
+          // to-primary, hover:bg-primary-dim) — unmapped, these silently
+          // degrade every primary button.
+          dim: "hsl(var(--primary-dim))",
+          bright: "hsl(var(--primary-bright))",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",
@@ -57,6 +62,15 @@ const config: Config = {
           DEFAULT: "hsl(var(--faint))",
           foreground: "hsl(var(--faint-foreground))",
         },
+        // Surface tiers (pure-black canvas → graphite panels). Referenced as
+        // bg-surface / bg-elevated / bg-subtle across the app — without these
+        // mappings the classes silently generate no CSS (transparent surfaces).
+        surface: "hsl(var(--surface))",
+        elevated: "hsl(var(--elevated))",
+        subtle: "hsl(var(--subtle))",
+        // Download states + info accents (bg-success/12, text-success, bg-info).
+        success: "hsl(var(--success))",
+        info: "hsl(var(--info))",
         accent: {
           DEFAULT: "hsl(var(--accent))",
           foreground: "hsl(var(--accent-foreground))",

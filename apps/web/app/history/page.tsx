@@ -88,7 +88,7 @@ export default function HistoryPage() {
   }, [grouped]);
 
   return (
-    <div className="min-h-screen bg-[#070708] text-foreground">
+    <div className="min-h-screen bg-background text-foreground">
       <Header />
       <PageShell maxWidth="4xl">
         <div className="flex items-center justify-between mb-8">
@@ -106,7 +106,7 @@ export default function HistoryPage() {
           {aggregated.length > 0 && (
             <button
               onClick={clearAll}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#E05252]/10 text-[#E05252] hover:bg-[#E05252]/20 text-sm font-medium transition-all"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-destructive/10 text-destructive hover:bg-destructive/20 text-sm font-medium transition-all"
             >
               <Trash2 size={14} />
               Clear All
@@ -129,7 +129,7 @@ export default function HistoryPage() {
             </p>
             <Link
               href="/"
-              className="inline-flex items-center gap-2 mt-6 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
+              className="inline-flex items-center gap-2 mt-6 px-5 py-2.5 rounded-xl bg-primary text-background text-sm font-semibold hover:bg-primary-dim transition-all"
             >
               Browse Movies
             </Link>
@@ -152,10 +152,10 @@ export default function HistoryPage() {
               return (
                 <div
                   key={`${entry.tmdbId}-${i}`}
-                  className="flex items-center gap-4 p-4 rounded-xl bg-[#0E0E11] border border-[#222226] hover:border-[#D4A237]/20 transition-all group"
+                  className="flex items-center gap-4 p-4 rounded-xl bg-surface border border-subtle hover:border-primary/20 transition-all group"
                 >
                   {/* Poster */}
-                  <div className="w-14 h-20 rounded-lg bg-gradient-to-br from-[#16161A] to-[#0E0E11] flex-shrink-0 overflow-hidden ring-1 ring-white/[0.06]">
+                  <div className="w-14 h-20 rounded-lg bg-gradient-to-br from-elevated to-surface flex-shrink-0 overflow-hidden ring-1 ring-white/[0.06]">
                     {posterSrc ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
@@ -165,7 +165,7 @@ export default function HistoryPage() {
                         loading="lazy"
                       />
                     ) : (
-                      <div className="w-full h-full bg-[#222226]" />
+                      <div className="w-full h-full bg-subtle" />
                     )}
                   </div>
 
@@ -183,9 +183,9 @@ export default function HistoryPage() {
                       {new Date(entry.updatedAt).toLocaleDateString()}
                     </p>
                     {/* Progress bar */}
-                    <div className="mt-1.5 h-[3px] bg-[#222226] rounded-full overflow-hidden">
+                    <div className="mt-1.5 h-[3px] bg-subtle rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-[#5B9CF6] rounded-full"
+                        className="h-full bg-info rounded-full"
                         style={{
                           width: `${Math.min(entry.percent * 100, 100)}%`,
                         }}
@@ -203,7 +203,7 @@ export default function HistoryPage() {
                           ? `/watch?type=tv&id=${entry.tmdbId}&season=${entry.season ?? 1}&episode=${entry.episode ?? 1}`
                           : `/watch?type=movie&id=${entry.tmdbId}`
                       }
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A237]/10 text-[#D4A237] hover:bg-[#D4A237]/20 text-xs font-semibold transition-all"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 text-xs font-semibold transition-all"
                     >
                       <Play size={12} />
                       Resume
@@ -217,7 +217,7 @@ export default function HistoryPage() {
                           entry.episode,
                         )
                       }
-                      className="p-1.5 rounded-lg text-faint hover:text-[#E05252] hover:bg-[#E05252]/10 transition-all"
+                      className="p-1.5 rounded-lg text-faint hover:text-destructive hover:bg-destructive/10 transition-all"
                       aria-label="Remove entry"
                     >
                       <Trash2 size={14} />

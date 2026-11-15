@@ -12,15 +12,15 @@ export const metadata = {
 
 export default function NotFound() {
   return (
-    <div className="min-h-screen bg-[#070708] flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col">
       <div className="flex-1 flex items-center justify-center px-6 py-16">
         <div className="max-w-md w-full text-center">
           <div className="relative mx-auto mb-8 w-24 h-24">
-            <div className="absolute inset-0 rounded-2xl bg-[#D4A237]/10 ring-1 ring-[#D4A237]/20 flex items-center justify-center">
-              <Film className="w-10 h-10 text-[#D4A237]" />
+            <div className="absolute inset-0 rounded-2xl bg-primary/10 ring-1 ring-primary/20 flex items-center justify-center">
+              <Film className="w-10 h-10 text-primary" />
             </div>
-            <div className="absolute -top-2 -right-3 bg-[#070708] rounded-full p-1 ring-1 ring-[#D4A237]/30">
-              <Clapperboard className="w-5 h-5 text-[#D4A237]" />
+            <div className="absolute -top-2 -right-3 bg-background rounded-full p-1 ring-1 ring-primary/30">
+              <Clapperboard className="w-5 h-5 text-primary" />
             </div>
           </div>
 
@@ -39,13 +39,13 @@ export default function NotFound() {
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
             <Link
               href="/movie"
-              className="w-full sm:w-auto bg-[#D4A237] hover:brightness-105 active:scale-[0.98] transition-all rounded-xl py-3 px-6 text-[#070708] font-bold text-sm"
+              className="w-full sm:w-auto bg-primary hover:brightness-105 active:scale-[0.98] transition-all rounded-xl py-3 px-6 text-background font-bold text-sm"
             >
               Browse Movies
             </Link>
             <Link
               href="/"
-              className="w-full sm:w-auto bg-[#16161A] hover:bg-[#1E1E24] active:scale-[0.98] transition-all rounded-xl py-3 px-6 text-foreground font-bold text-sm ring-1 ring-white/10"
+              className="w-full sm:w-auto bg-elevated hover:bg-elevated active:scale-[0.98] transition-all rounded-xl py-3 px-6 text-foreground font-bold text-sm ring-1 ring-white/10"
             >
               Go Home
             </Link>

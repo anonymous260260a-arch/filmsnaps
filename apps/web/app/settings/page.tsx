@@ -176,12 +176,12 @@ export default function SettingsPage() {
   // ═════════════════════════════════════════════════════════════════
   if (!desktop) {
     return (
-      <div className="min-h-screen bg-[#070708] text-foreground">
+      <div className="min-h-screen bg-background text-foreground">
         <Header />
         <PageShell maxWidth="2xl">
-          <div className="rounded-xl border border-white/[0.06] bg-[#0E0E11] px-6 py-14 text-center">
-            <div className="w-16 h-16 rounded-full bg-[#16161A] flex items-center justify-center mx-auto mb-5">
-              <SettingsIcon className="h-8 w-8 text-[#D4A237]" />
+          <div className="rounded-xl border border-white/[0.06] bg-surface px-6 py-14 text-center">
+            <div className="w-16 h-16 rounded-full bg-elevated flex items-center justify-center mx-auto mb-5">
+              <SettingsIcon className="h-8 w-8 text-primary" />
             </div>
             <h1 className="text-2xl font-bold tracking-tight mb-2">Settings</h1>
             <p className="text-sm text-muted-foreground mb-6 max-w-sm mx-auto">
@@ -191,7 +191,7 @@ export default function SettingsPage() {
             </p>
             <Link
               href="/download"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-background text-sm font-semibold hover:bg-primary-dim transition-all"
             >
               <Monitor size={14} />
               Get FilmSnaps Desktop
@@ -205,13 +205,13 @@ export default function SettingsPage() {
   const disabled = (label: string) => busy === label;
 
   return (
-    <div className="min-h-screen bg-[#070708] text-foreground">
+    <div className="min-h-screen bg-background text-foreground">
       <Header />
       <PageShell maxWidth="3xl">
         {/* Page header */}
         <div className="flex items-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-xl bg-[#D4A237]/10 flex items-center justify-center">
-            <SettingsIcon size={20} className="text-[#D4A237]" />
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <SettingsIcon size={20} className="text-primary" />
           </div>
           <div>
             <h1
@@ -229,7 +229,7 @@ export default function SettingsPage() {
         <div className="space-y-6">
           {/* ── Data & Storage ── */}
           <Section
-            icon={<Cloud size={16} className="text-[#D4A237]" />}
+            icon={<Cloud size={16} className="text-primary" />}
             title="Data & Storage"
             sub="Downloads, cache and bandwidth."
           >
@@ -242,7 +242,7 @@ export default function SettingsPage() {
                 <button
                   onClick={handleClearCache}
                   disabled={disabled("clear-cache")}
-                  className="ml-auto text-xs font-medium text-[#E05252] hover:text-[#ff6b6b] disabled:opacity-60"
+                  className="ml-auto text-xs font-medium text-destructive hover:text-destructive disabled:opacity-60"
                 >
                   {disabled("clear-cache") ? "Clearing…" : "Clear"}
                 </button>
@@ -288,7 +288,7 @@ export default function SettingsPage() {
                       onClick={() => handleSpeed(s.level)}
                       className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
                         settings.downloadSpeedLimit === s.level
-                          ? "bg-[#D4A237] text-[#070708]"
+                          ? "bg-primary text-background"
                           : "text-faint hover:text-foreground hover:bg-white/[0.06]"
                       }`}
                     >
@@ -317,7 +317,7 @@ export default function SettingsPage() {
                     <button
                       onClick={handleClearHistory}
                       disabled={disabled("clear-history")}
-                      className="px-2 py-1 rounded-md text-xs font-medium bg-[#E05252] text-white hover:bg-[#ff6b6b] disabled:opacity-60"
+                      className="px-2 py-1 rounded-md text-xs font-medium bg-destructive text-white hover:bg-destructive disabled:opacity-60"
                     >
                       {disabled("clear-history") ? "Clearing…" : "Confirm"}
                     </button>
@@ -325,7 +325,7 @@ export default function SettingsPage() {
                 ) : (
                   <button
                     onClick={() => setConfirmClearHistory(true)}
-                    className="ml-auto text-xs font-medium text-[#E05252] hover:text-[#ff6b6b]"
+                    className="ml-auto text-xs font-medium text-destructive hover:text-destructive"
                   >
                     Clear
                   </button>
@@ -338,7 +338,7 @@ export default function SettingsPage() {
               Direct playback ranks sources and auto-picks audio tracks to
               match this preference. Applies to the next video you open. */}
           <Section
-            icon={<Languages size={16} className="text-[#D4A237]" />}
+            icon={<Languages size={16} className="text-primary" />}
             title="Playback"
             sub="We'll pick sources and audio tracks to match your language."
           >
@@ -349,14 +349,14 @@ export default function SettingsPage() {
                   onClick={() => handleAudioLanguage(l.value)}
                   className={`text-left px-3 py-2.5 rounded-lg border transition-all ${
                     settings.preferredAudioLanguage === l.value
-                      ? "border-[#D4A237]/60 bg-[#D4A237]/10"
+                      ? "border-primary/60 bg-primary/10"
                       : "border-white/[0.08] hover:border-white/20 hover:bg-white/[0.04]"
                   }`}
                 >
                   <span
                     className={`block text-sm font-semibold ${
                       settings.preferredAudioLanguage === l.value
-                        ? "text-[#D4A237]"
+                        ? "text-primary"
                         : "text-foreground"
                     }`}
                   >
@@ -376,7 +376,7 @@ export default function SettingsPage() {
               otherwise override it), so the control would be dead there. */}
           {!desktop && (
             <Section
-              icon={<Monitor size={16} className="text-[#D4A237]" />}
+              icon={<Monitor size={16} className="text-primary" />}
               title="Default Source"
               sub="Preferred streaming source (tried first when available)."
             >
@@ -407,7 +407,7 @@ export default function SettingsPage() {
 
           {/* ── 4. Reset library cache ── */}
           <Section
-            icon={<RefreshCw size={16} className="text-[#D4A237]" />}
+            icon={<RefreshCw size={16} className="text-primary" />}
             title="Library Cache"
             sub="Forces a fresh pull of movie/TV metadata on next launch."
           >
@@ -423,7 +423,7 @@ export default function SettingsPage() {
 
           {/* ── 5. Support ── */}
           <Section
-            icon={<Bug size={16} className="text-[#D4A237]" />}
+            icon={<Bug size={16} className="text-primary" />}
             title="Support"
             sub="Help, feedback and account resources."
           >
@@ -459,7 +459,7 @@ export default function SettingsPage() {
 
           {/* ── 6. Community ── */}
           <Section
-            icon={<Github size={16} className="text-[#D4A237]" />}
+            icon={<Github size={16} className="text-primary" />}
             title="Community"
             sub="Open source & links."
           >
@@ -482,7 +482,7 @@ export default function SettingsPage() {
 
           {/* ── 7. App Info ── */}
           <Section
-            icon={<Package size={16} className="text-[#D4A237]" />}
+            icon={<Package size={16} className="text-primary" />}
             title="App Info"
             sub="Version and build information."
           >
@@ -525,7 +525,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-[#0E0E11] p-4 sm:p-6">
+    <div className="rounded-xl border border-white/[0.06] bg-surface p-4 sm:p-6">
       <div className="flex items-start gap-3 mb-4">
         <div className="mt-0.5 shrink-0">{icon}</div>
         <div className="flex-1">
