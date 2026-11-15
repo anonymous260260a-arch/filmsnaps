@@ -15,32 +15,24 @@ import {
   Youtube,
 } from "lucide-react";
 import { getImageUrl, getTrailerKey } from "@/lib/tmdb";
-import dynamic from "next/dynamic";
 import { MediaCarousel } from "@/components/MediaCarousel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SaveButton } from "@/components/SaveButton";
 import { useResumeTarget } from "@/hooks/useResumeTarget";
+import { useIsDesktop } from "@/hooks/useIsDesktop";
+import { warmMpv } from "@/lib/mpvWarm";
 import { useToast } from "@/hooks/use-toast";
 import { prefetchDirectMedia } from "@/lib/directPrefetch";
 import { pickMoreLikeThis } from "@/lib/moreLikeThis";
 import { useQueryClient } from "@tanstack/react-query";
-import { Suspense } from "react";
-import { SkeletonPlayer } from "@/components/SkeletonLoader";
 import { useRouter, useSearchParams } from "next/navigation";
 import DownloadBadge from "@/components/download/DownloadBadge";
 import DownloadButton from "@/components/download/DownloadButton";
 import { CastCarousel } from "@/components/CastCarousel";
 import { TrailerModal } from "@/components/TrailerModal";
 import { DetailEpisodes } from "@/components/detail/DetailEpisodes";
-
-const VideoPlayer = dynamic(
-  () =>
-    import("@/components/VideoPlayer").then((mod) => ({
-      default: mod.VideoPlayer,
-    })),
-  { ssr: false, loading: () => <SkeletonPlayer /> },
-);
+import { LazyTrailer } from "@/components/LazyTrailer";
 
 export default function TVDetailClient({ show }: { show: any }) {
   const router = useRouter();
@@ -53,6 +45,11 @@ export default function TVDetailClient({ show }: { show: any }) {
   // More Like This: TMDB's /recommendations engine (site-quality) with
   // /similar fallback — same policy as mobile detail pages.
   const moreLikeThis = pickMoreLikeThis(show);
+  // ≥sm (640) matches where the desktop variant takes over visually. The
+  // episodes section mounts exactly ONCE (phone flow below sm, desktop flow
+  // at sm+) — two simultaneous mounts trip the shared watch-history cache
+  // into an infinite update loop (Maximum update depth exceeded).
+  const isSmDesktop = useIsDesktop(640);
   const resume = useResumeTarget(
     String(show.id),
     "tv",
@@ -114,6 +111,7 @@ export default function TVDetailClient({ show }: { show: any }) {
       String(show.id),
       resume.point?.season ?? 1,
       resume.point?.episode ?? 1,
+      Boolean(mid || aid),
     );
   };
 
@@ -131,14 +129,23 @@ export default function TVDetailClient({ show }: { show: any }) {
         String(show.id),
         resume.point?.season ?? 1,
         resume.point?.episode ?? 1,
+        Boolean(mid || aid),
       );
     }, 600);
     return () => clearTimeout(timer);
   }, [show.id, resume.point?.season, resume.point?.episode]);
 
+  // Desktop: warm the mpv pipeline on mount (no resume wait needed — the
+  // warm spawns an idle process; loadfile comes later with whatever episode
+  // the user picks). With the chain prefetch delivering metadata instantly,
+  // the 1-3s mpv spawn is the last cold cost on the play path.
+  useEffect(() => {
+    warmMpv();
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
-      <main className="pt-16">
+      <main className="detail-top pt-16">
         {/* ════════════════════════════════════════════════════════════════
             PHONE HERO  (<sm only) — mobile-app detail parity: short
             backdrop + glass nav, poster/info row, gold CTA + Trailer/
@@ -148,7 +155,7 @@ export default function TVDetailClient({ show }: { show: any }) {
           <div className="relative">
             {/* Backdrop — app parity: min(42vh, 350px), permanent fade
                 into the page background */}
-            <div className="relative w-full h-[42vh] max-h-[350px] overflow-hidden bg-[#222226]">
+            <div className="relative w-full h-[42vh] max-h-[350px] overflow-hidden bg-subtle">
               {(show.backdrop_path || show.poster_path) && (
                 <Image
                   src={getImageUrl(
@@ -163,7 +170,7 @@ export default function TVDetailClient({ show }: { show: any }) {
                   className="object-cover"
                 />
               )}
-              <div className="absolute inset-x-0 bottom-0 h-[70%] bg-gradient-to-t from-[#070708] via-[#070708]/55 to-transparent" />
+              <div className="absolute inset-x-0 bottom-0 h-[70%] bg-gradient-to-t from-background via-background/55 to-transparent" />
 
               {/* Floating glass nav — back / bookmark / share */}
               <div className="absolute inset-x-4 top-4 z-20 flex items-center justify-between">
@@ -171,7 +178,7 @@ export default function TVDetailClient({ show }: { show: any }) {
                   type="button"
                   onClick={handleBack}
                   aria-label="Go back"
-                  className="flex h-[38px] w-[38px] items-center justify-center rounded-full border border-white/[0.15] bg-[#0E0E11]/75 text-foreground backdrop-blur-md transition active:scale-95"
+                  className="flex h-[38px] w-[38px] items-center justify-center rounded-full border border-white/[0.15] bg-surface/75 text-foreground backdrop-blur-md transition active:scale-95"
                 >
                   <ChevronLeft className="h-5 w-5" />
                 </button>
@@ -185,7 +192,7 @@ export default function TVDetailClient({ show }: { show: any }) {
                     type="button"
                     onClick={handleShare}
                     aria-label="Share"
-                    className="flex h-[38px] w-[38px] items-center justify-center rounded-full border border-white/[0.15] bg-[#0E0E11]/75 text-foreground backdrop-blur-md transition active:scale-95"
+                    className="flex h-[38px] w-[38px] items-center justify-center rounded-full border border-white/[0.15] bg-surface/75 text-foreground backdrop-blur-md transition active:scale-95"
                   >
                     <Share2 className="h-[18px] w-[18px]" />
                   </button>
@@ -208,8 +215,8 @@ export default function TVDetailClient({ show }: { show: any }) {
                     />
                   </div>
                 ) : (
-                  <div className="flex h-[156px] w-[104px] shrink-0 items-center justify-center rounded-xl border border-white/[0.06] bg-[#222226]">
-                    <Film className="h-7 w-7 text-zinc-600" />
+                  <div className="flex h-[156px] w-[104px] shrink-0 items-center justify-center rounded-xl border border-white/[0.06] bg-subtle">
+                    <Film className="h-7 w-7 text-faint" />
                   </div>
                 )}
 
@@ -219,18 +226,18 @@ export default function TVDetailClient({ show }: { show: any }) {
                   </h1>
                   <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
                     {show.vote_average > 0 && (
-                      <span className="rounded-md border border-[#D4A237]/30 bg-[#D4A237]/15 px-[7px] py-0.5 text-[11px] font-semibold text-[#D4A237]">
+                      <span className="rounded-md border border-primary/30 bg-primary/15 px-[7px] py-0.5 text-[11px] font-semibold text-primary">
                         ★ {show.vote_average.toFixed(1)}
                       </span>
                     )}
                     {firstAirYear && (
-                      <span className="rounded-md bg-white/[0.08] px-[7px] py-0.5 text-[11px] font-medium text-zinc-400">
+                      <span className="rounded-md bg-white/[0.08] px-[7px] py-0.5 text-[11px] font-medium text-muted-foreground">
                         {firstAirYear}
                       </span>
                     )}
                     {show.number_of_seasons > 0 && (
-                      <span className="inline-flex items-center gap-[3px] rounded-md bg-white/[0.08] px-[7px] py-0.5 text-[11px] font-medium text-zinc-400">
-                        <Tv className="h-3 w-3 text-zinc-600" />
+                      <span className="inline-flex items-center gap-[3px] rounded-md bg-white/[0.08] px-[7px] py-0.5 text-[11px] font-medium text-muted-foreground">
+                        <Tv className="h-3 w-3 text-faint" />
                         {show.number_of_seasons} Season
                         {show.number_of_seasons !== 1 ? "s" : ""}
                       </span>
@@ -241,7 +248,7 @@ export default function TVDetailClient({ show }: { show: any }) {
                       {show.genres.slice(0, 3).map((genre: any) => (
                         <span
                           key={genre.id}
-                          className="rounded-md border border-white/[0.06] bg-[#222226] px-[7px] py-0.5 text-[10px] font-medium text-zinc-400"
+                          className="rounded-md border border-white/[0.06] bg-subtle px-[7px] py-0.5 text-[10px] font-medium text-muted-foreground"
                         >
                           {genre.name}
                         </span>
@@ -257,7 +264,7 @@ export default function TVDetailClient({ show }: { show: any }) {
                   onClick={() => router.push(watchHref)}
                   onMouseEnter={handleWatchPrefetch}
                   onFocus={handleWatchPrefetch}
-                  className="w-full gap-2 h-auto py-3.5 rounded-xl font-semibold text-[15px] text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] active:scale-[0.98] active:brightness-95 transition-all duration-150"
+                  className="w-full gap-2 h-auto py-3.5 rounded-xl font-semibold text-[15px] text-background bg-gradient-to-b from-primary-bright to-primary shadow-[0_8px_24px_rgba(212,162,55,0.35)] active:scale-[0.98] active:brightness-95 transition-all duration-150"
                 >
                   <Play className="h-[18px] w-[18px] fill-current" />
                   {ctaLabel}
@@ -267,16 +274,17 @@ export default function TVDetailClient({ show }: { show: any }) {
                     <button
                       type="button"
                       onClick={() => setTrailerOpen(true)}
-                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/[0.06] bg-[#0E0E11]/80 py-[11px] text-[13px] font-medium text-foreground transition active:scale-[0.98]"
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/[0.06] bg-surface/80 py-[11px] text-[13px] font-medium text-foreground transition active:scale-[0.98]"
                     >
-                      <Youtube size={16} className="text-[#FF0000]" />
+                      <Youtube size={16} className="text-destructive" />
                       Trailer
                     </button>
                   )}
                   <DownloadButton
                     tmdbId={show.id}
                     mediaType="tv"
-                    buttonClassName="flex-1 justify-center rounded-xl border-white/[0.06] bg-[#0E0E11]/80 py-[11px] text-[13px] font-medium"
+                    wrapperClassName="flex-1"
+                    buttonClassName="w-full justify-center rounded-xl border-white/[0.06] bg-surface/80 py-[11px] text-[13px] font-medium"
                   />
                 </div>
                 <div className="mt-3 empty:hidden">
@@ -291,7 +299,7 @@ export default function TVDetailClient({ show }: { show: any }) {
                     Overview
                   </h2>
                   <p
-                    className={`text-sm leading-[21px] text-zinc-400 ${overviewOpen ? "" : "line-clamp-3"}`}
+                    className={`text-sm leading-[21px] text-muted-foreground ${overviewOpen ? "" : "line-clamp-3"}`}
                   >
                     {show.overview}
                   </p>
@@ -300,7 +308,7 @@ export default function TVDetailClient({ show }: { show: any }) {
                       type="button"
                       onClick={() => setOverviewOpen((v) => !v)}
                       aria-expanded={overviewOpen}
-                      className="mt-1 text-xs font-medium text-[#D4A237]"
+                      className="mt-1 text-xs font-medium text-primary"
                     >
                       {overviewOpen ? "Show less" : "Read more"}
                     </button>
@@ -308,13 +316,18 @@ export default function TVDetailClient({ show }: { show: any }) {
                 </div>
               )}
 
-              {/* Episodes — season pills + list (SeasonPicker parity) */}
-              <DetailEpisodes
-                tmdbId={show.id}
-                seasons={show.seasons ?? []}
-                initialSeason={resume.point?.season ?? null}
-                extraQuery={animeQs}
-              />
+              {/* Episodes — season pills + list (SeasonPicker parity).
+                  Mounted only below sm: the desktop variant renders its own
+                  single instance (mounting both trips the shared watch-history
+                  cache into an update loop). */}
+              {!isSmDesktop && (
+                <DetailEpisodes
+                  tmdbId={show.id}
+                  seasons={show.seasons ?? []}
+                  initialSeason={resume.point?.season ?? null}
+                  extraQuery={animeQs}
+                />
+              )}
 
               {/* Cast */}
               {show.credits?.cast?.length > 0 && (
@@ -449,7 +462,7 @@ export default function TVDetailClient({ show }: { show: any }) {
                       onClick={() => router.push(watchHref)}
                       onMouseEnter={handleWatchPrefetch}
                       onFocus={handleWatchPrefetch}
-                      className="group gap-2.5 px-7 py-3.5 h-auto rounded-full font-bold text-sm text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
+                      className="group gap-2.5 px-7 py-3.5 h-auto rounded-full font-bold text-sm text-background bg-gradient-to-b from-primary-bright to-primary shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
                     >
                       <Play className="w-5 h-5 fill-current" />
                       {ctaLabel}
@@ -475,6 +488,21 @@ export default function TVDetailClient({ show }: { show: any }) {
                     </div>
                   )}
 
+                  {/* Episodes — season pills + list (mobile SeasonPicker
+                      parity). Same slot as the mobile app: right after the
+                      overview, before the cast. Mounted only at sm+; the
+                      phone variant renders its own single instance below. */}
+                  {isSmDesktop && (
+                    <div className="pt-4">
+                      <DetailEpisodes
+                        tmdbId={show.id}
+                        seasons={show.seasons ?? []}
+                        initialSeason={resume.point?.season ?? null}
+                        extraQuery={animeQs}
+                      />
+                    </div>
+                  )}
+
                   {show.credits?.cast?.length > 0 && (
                     <div className="pt-4">
                       <CastCarousel cast={show.credits.cast} />
@@ -489,21 +517,14 @@ export default function TVDetailClient({ show }: { show: any }) {
                         </h2>
                         <button
                           onClick={() => setTrailerOpen(true)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A237]/10 text-[#D4A237] hover:bg-[#D4A237]/20 text-xs font-semibold transition-all"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 text-xs font-semibold transition-all"
                           aria-label="Open trailer in modal"
                         >
                           <Youtube size={14} />
                           Fullscreen
                         </button>
                       </div>
-                      <Suspense fallback={<SkeletonPlayer />}>
-                        <div className="rounded-2xl overflow-hidden ring-1 ring-white/[0.06] shadow-xl">
-                          <VideoPlayer
-                            videoKey={trailerKey}
-                            title={show.name}
-                          />
-                        </div>
-                      </Suspense>
+                      <LazyTrailer videoKey={trailerKey} title={show.name} />
                     </div>
                   )}
                 </div>

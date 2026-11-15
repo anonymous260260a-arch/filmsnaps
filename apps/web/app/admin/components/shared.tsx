@@ -47,7 +47,7 @@ export function Card({
   return (
     <div
       className={`
-        bg-[#141417] border border-white/[0.07] rounded-2xl p-4 min-w-0
+        bg-elevated border border-white/[0.07] rounded-2xl p-4 min-w-0
         transition-all duration-200 hover:border-white/[0.12] hover:shadow-lg hover:shadow-black/20
         ${wide ? "col-span-full" : ""}
         ${className ?? ""}

@@ -125,14 +125,14 @@ export default function LibraryPage() {
   const loading = historyLoading || savedLoading;
 
   return (
-    <div className="min-h-screen bg-[#070708] text-foreground">
+    <div className="min-h-screen bg-background text-foreground">
       <Header />
       <PageShell maxWidth="5xl">
         {/* Page header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#D4A237]/10 flex items-center justify-center">
-              <LibraryIcon size={20} className="text-[#D4A237]" />
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <LibraryIcon size={20} className="text-primary" />
             </div>
             <div>
               <h1
@@ -161,12 +161,12 @@ export default function LibraryPage() {
           <div className="space-y-8">
             {[0, 1, 2].map((s) => (
               <div key={s} className="space-y-3">
-                <div className="h-5 w-40 rounded bg-[#16161A] animate-pulse" />
+                <div className="h-5 w-40 rounded bg-elevated animate-pulse" />
                 <div className="flex gap-3 overflow-hidden">
                   {Array.from({ length: 6 }).map((_, i) => (
                     <div
                       key={i}
-                      className="w-28 aspect-[2/3] rounded-xl bg-[#16161A] animate-pulse shrink-0"
+                      className="w-28 aspect-[2/3] rounded-xl bg-elevated animate-pulse shrink-0"
                     />
                   ))}
                 </div>
@@ -181,7 +181,7 @@ export default function LibraryPage() {
             {/* ── Saved ── */}
             <section>
               <SharedSectionHeader
-                icon={<Bookmark size={18} className="text-[#D4A237]" />}
+                icon={<Bookmark size={18} className="text-primary" />}
                 title="Saved"
                 count={savedMovies.length}
                 seeAllHref="/saved"
@@ -212,7 +212,7 @@ export default function LibraryPage() {
             {/* ── Watch History ── */}
             <section>
               <SharedSectionHeader
-                icon={<Clock size={18} className="text-[#D4A237]" />}
+                icon={<Clock size={18} className="text-primary" />}
                 title="Watch History"
                 count={recentHistory.length}
                 seeAllHref="/history"
@@ -237,7 +237,7 @@ export default function LibraryPage() {
             {/* ── Downloads (placeholder until Phase 2) ── */}
             <section>
               <SharedSectionHeader
-                icon={<Download size={18} className="text-[#D4A237]" />}
+                icon={<Download size={18} className="text-primary" />}
                 title="Downloads"
                 count={0}
                 seeAllHref="/downloads"
@@ -273,8 +273,8 @@ function EmptySection({
   ctaLabel: string;
 }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-[#0E0E11] px-6 py-10 text-center">
-      <div className="w-16 h-16 rounded-full bg-[#16161A] flex items-center justify-center mx-auto mb-4">
+    <div className="rounded-xl border border-white/[0.06] bg-surface px-6 py-10 text-center">
+      <div className="w-16 h-16 rounded-full bg-elevated flex items-center justify-center mx-auto mb-4">
         {icon}
       </div>
       <h3 className="text-base font-semibold text-foreground mb-1">{title}</h3>
@@ -283,7 +283,7 @@ function EmptySection({
       </p>
       <Link
         href={ctaHref}
-        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
+        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-background text-sm font-semibold hover:bg-primary-dim transition-all"
       >
         <Film size={14} />
         {ctaLabel}
@@ -310,10 +310,10 @@ function HistoryRow({ entry }: { entry: WatchProgress }) {
             }`
           : `/watch?type=movie&id=${entry.tmdbId}`
       }
-      className="flex items-center gap-4 p-4 rounded-xl bg-[#0E0E11] border border-[#222226] hover:border-[#D4A237]/20 transition-all group"
+      className="flex items-center gap-4 p-4 rounded-xl bg-surface border border-subtle hover:border-primary/20 transition-all group"
     >
-      <div className="w-12 h-[72px] rounded-lg bg-gradient-to-br from-[#16161A] to-[#0E0E11] flex-shrink-0 overflow-hidden ring-1 ring-white/[0.06] flex items-center justify-center">
-        <Play className="w-5 h-5 text-[#D4A237]/40" />
+      <div className="w-12 h-[72px] rounded-lg bg-gradient-to-br from-elevated to-surface flex-shrink-0 overflow-hidden ring-1 ring-white/[0.06] flex items-center justify-center">
+        <Play className="w-5 h-5 text-primary/40" />
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-foreground truncate">{title}</p>
@@ -322,9 +322,9 @@ function HistoryRow({ entry }: { entry: WatchProgress }) {
             ? `${Math.round(pct)}% • ${formatTime(entry.currentTime)} watched`
             : "Not started"}
         </p>
-        <div className="mt-1.5 h-[3px] bg-[#222226] rounded-full overflow-hidden">
+        <div className="mt-1.5 h-[3px] bg-subtle rounded-full overflow-hidden">
           <div
-            className="h-full bg-[#5B9CF6] rounded-full"
+            className="h-full bg-info rounded-full"
             style={{ width: `${pct}%` }}
           />
         </div>

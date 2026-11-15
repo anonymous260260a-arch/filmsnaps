@@ -13,6 +13,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { X, Search, Loader2, Captions, Download } from "lucide-react";
 import { apiUrl } from "@/lib/tmdb";
+import { prettyReleaseName, englishFirst } from "@/lib/subtitleName";
 
 interface SubtitleEntry {
   releaseName: string;
@@ -29,8 +30,14 @@ interface SubtitleSearchSheetProps {
   season?: number;
   episode?: number;
   onClose: () => void;
-  /** Load a subtitle URL. Resolves true when mpv accepted it. */
-  onPick: (url: string, title: string) => Promise<boolean>;
+  /** Load a subtitle URL. Resolves true when the player accepted it. The
+   *  full entry rides along — the web (movi) player needs its format and
+   *  language to key the track; mpv ignores it. */
+  onPick: (
+    url: string,
+    title: string,
+    entry: SubtitleEntry,
+  ) => Promise<boolean>;
 }
 
 export function SubtitleSearchSheet({
@@ -75,7 +82,13 @@ export function SubtitleSearchSheet({
           );
           return;
         }
-        setEntries(((data as any)?.subtitles ?? []) as SubtitleEntry[]);
+        // English (device locale) first — mobile parity.
+        setEntries(
+          englishFirst(
+            ((data as any)?.subtitles ?? []) as SubtitleEntry[],
+            (e) => e.language,
+          ),
+        );
       })
       .catch(() => {
         if (!cancelled)
@@ -92,8 +105,12 @@ export function SubtitleSearchSheet({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return entries;
+    // Match against BOTH the raw release name (exact tags, group names) and
+    // the prettified title the rows display.
     return entries.filter((e) =>
-      `${e.releaseName} ${e.language}`.toLowerCase().includes(q),
+      `${e.releaseName} ${prettyReleaseName(e.releaseName)} ${e.language}`
+        .toLowerCase()
+        .includes(q),
     );
   }, [entries, query]);
 
@@ -102,7 +119,8 @@ export function SubtitleSearchSheet({
     setPickError(null);
     let ok = false;
     try {
-      ok = await onPick(entry.url, entry.releaseName);
+      // The pretty name becomes the track title — what the CC menus show.
+      ok = await onPick(entry.url, prettyReleaseName(entry.releaseName), entry);
     } catch {
       ok = false;
     }
@@ -120,14 +138,14 @@ export function SubtitleSearchSheet({
     >
       <div className="absolute inset-0 bg-black/60" />
       <div
-        className="relative bg-[#16161A] rounded-2xl w-[480px] max-h-[80vh] flex flex-col border border-white/[0.08] shadow-2xl overflow-hidden"
+        className="relative bg-elevated rounded-2xl w-[480px] max-h-[80vh] flex flex-col border border-white/[0.08] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
           <div>
             <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <Captions size={16} className="text-[#D4A237]" />
+              <Captions size={16} className="text-primary" />
               Subtitles
             </h3>
             <p className="text-[11px] text-white/40 mt-0.5">
@@ -159,7 +177,7 @@ export function SubtitleSearchSheet({
         <div className="flex-1 overflow-y-auto min-h-0">
           {loading && (
             <div className="flex flex-col items-center justify-center gap-3 py-12">
-              <Loader2 size={22} className="animate-spin text-[#D4A237]" />
+              <Loader2 size={22} className="animate-spin text-primary" />
               <p className="text-xs text-white/40">
                 Searching subtitle providers…
               </p>
@@ -192,19 +210,31 @@ export function SubtitleSearchSheet({
                 className="w-full text-left flex items-center gap-3 px-5 py-3 hover:bg-white/[0.04] transition-colors disabled:opacity-60"
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-white truncate">
-                    {entry.releaseName}
+                  {/* LANGUAGE is the heading (mobile parity) — the most
+                      important thing on the row; the release name is second. */}
+                  <p className="flex items-center gap-1.5">
+                    <span className="text-[13px] font-bold uppercase tracking-wide text-white">
+                      {entry.language}
+                    </span>
+                    {entry.hi && (
+                      <span className="rounded bg-white/[0.07] border border-white/[0.08] px-1.5 py-px text-[10px] font-semibold text-white/50">
+                        CC
+                      </span>
+                    )}
+                    <span className="text-[10px] font-semibold text-white/35">
+                      {entry.format.toUpperCase()}
+                    </span>
                   </p>
-                  <p className="text-[11px] text-white/40 mt-0.5">
-                    {entry.language}
-                    {entry.hi ? " · hearing impaired" : ""} ·{" "}
-                    {entry.format.toUpperCase()}
+                  {/* Prettified release name — "Resident Evil (2026) · 1080p
+                      AMZN WEB-DL · Hindi, English" instead of the raw string */}
+                  <p className="text-[12px] text-white/50 truncate mt-0.5">
+                    {prettyReleaseName(entry.releaseName)}
                   </p>
                 </div>
                 {loadingPick === entry.url ? (
                   <Loader2
                     size={15}
-                    className="text-[#D4A237] animate-spin shrink-0"
+                    className="text-primary animate-spin shrink-0"
                   />
                 ) : (
                   <Download size={15} className="text-white/30 shrink-0" />

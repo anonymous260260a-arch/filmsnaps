@@ -31,6 +31,7 @@ import { AudioToggle } from "@/components/player/AudioToggle";
 import { getSettings, setSettings } from "@/hooks/useSettings";
 import { LanguagePromptSheet } from "@/components/player/LanguagePromptSheet";
 import type { PreferredLanguage } from "@/lib/streamSelector";
+import type { PlaybackTimeSample } from "@/hooks/usePlaybackRecorder";
 import { isDirectProvider } from "@filmsnaps/shared";
 import type { AnimeChainState } from "./DesktopWatchLayout";
 
@@ -52,6 +53,8 @@ interface VideoZoneProps {
   plat: "movie" | "tv";
   selectedSeason: number;
   activeEpisode: number;
+  /** Watch-progress reporter — forwarded to the in-page direct players. */
+  onProgress?: (sample: PlaybackTimeSample) => void;
   isServerOpen: boolean;
   onServerToggle: () => void;
   onServerClose: () => void;
@@ -77,6 +80,7 @@ export function VideoZone({
   plat,
   selectedSeason,
   activeEpisode,
+  onProgress,
   isServerOpen,
   onServerToggle,
   onServerClose,
@@ -211,17 +215,17 @@ export function VideoZone({
             <button
               onClick={onServerToggle}
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg
-                bg-[#0E0E11] border border-[#222226] hover:border-white/20
+                bg-surface border border-subtle hover:border-white/20
                 transition-all active:scale-[0.97]"
               aria-label="Select source server"
               title="Select server (S)"
             >
-              <span className="text-[12px] font-semibold text-zinc-300">
+              <span className="text-[12px] font-semibold text-foreground">
                 {currentProvider?.displayName ||
                   currentProvider?.name ||
                   "Auto"}
               </span>
-              <ChevronDown size={12} className="text-zinc-500" />
+              <ChevronDown size={12} className="text-muted-foreground" />
             </button>
 
             {/* Dropdown opens downward, floats over the video */}
@@ -258,8 +262,8 @@ export function VideoZone({
                   // box must not hold 16:9 / rounded corners / ring at the
                   // screen edges.
                   "relative w-full h-full bg-black overflow-hidden"
-                : "relative w-full aspect-video max-h-full max-w-full bg-[#0E0E11] rounded-2xl overflow-hidden shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08]"
-              : "relative w-full aspect-video mx-auto bg-[#0E0E11] rounded-xl sm:rounded-2xl overflow-hidden shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08]"
+                : "relative w-full aspect-video max-h-full max-w-full bg-surface rounded-2xl overflow-hidden shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08]"
+              : "relative w-full aspect-video mx-auto bg-surface rounded-xl sm:rounded-2xl overflow-hidden shadow-[0_8px_60px_rgba(0,0,0,0.8)] ring-1 ring-white/[0.08]"
           }
           style={
             fit === "grid"
@@ -273,8 +277,8 @@ export function VideoZone({
         >
           {/* CPU Warning */}
           {cpuWarning && currentProvider && (
-            <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#070708]/80 backdrop-blur-sm">
-              <div className="flex items-center gap-3 text-sm text-[#E05252] bg-red-500/10 px-5 py-4 rounded-xl border border-red-500/20 max-w-md mx-4">
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+              <div className="flex items-center gap-3 text-sm text-destructive bg-red-500/10 px-5 py-4 rounded-xl border border-red-500/20 max-w-md mx-4">
                 <div className="flex-1 text-xs sm:text-sm">
                   This server is using too much CPU — it has been stopped.
                   <span className="block mt-1 text-muted-foreground">
@@ -332,6 +336,7 @@ export function VideoZone({
                 selectedSeason={selectedSeason}
                 activeEpisode={activeEpisode}
                 onLoad={onIframeLoad}
+                onProgress={onProgress}
               />
             )}
 
@@ -351,6 +356,7 @@ export function VideoZone({
                 onLoad={onIframeLoad}
                 onError={onIframeError}
                 onExhausted={handleDirectExhausted}
+                onProgress={onProgress}
                 preferredLanguage={
                   (getSettings().preferredAudioLanguage as PreferredLanguage) ||
                   "auto"
@@ -421,7 +427,7 @@ export function VideoZone({
                 width: o.width,
                 height: o.height,
                 borderRadius: "20px",
-                background: "rgba(14, 14, 17, 0.9)",
+                background: "rgba(20, 20, 20, 0.9)",
               }}
             />
           ))}

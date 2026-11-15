@@ -221,7 +221,7 @@ export function StreamPickerSheet({
       {/* Panel — centred dialog at md+ (desktop), bottom sheet below it so a
           thumb can reach every row on a phone. */}
       <div
-        className="relative bg-[#16161A] rounded-t-2xl md:rounded-2xl w-full md:w-[440px] max-h-[75vh] md:max-h-[80vh] flex flex-col border-x border-t md:border border-white/[0.08] shadow-2xl overflow-hidden"
+        className="relative bg-elevated rounded-t-2xl md:rounded-2xl w-full md:w-[440px] max-h-[75vh] md:max-h-[80vh] flex flex-col border-x border-t md:border border-white/[0.08] shadow-2xl overflow-hidden"
         style={{ paddingBottom: "max(0px, env(safe-area-inset-bottom))" }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -245,7 +245,7 @@ export function StreamPickerSheet({
             {onRetest && (
               <button
                 onClick={onRetest}
-                className="w-8 h-8 flex items-center justify-center rounded-full border border-[#D4A237]/40 text-[#D4A237] hover:bg-[#D4A237]/10 transition-colors"
+                className="w-8 h-8 flex items-center justify-center rounded-full border border-primary/40 text-primary hover:bg-primary/10 transition-colors"
                 title="Retest all sources"
               >
                 <RefreshCw size={15} />
@@ -289,8 +289,8 @@ export function StreamPickerSheet({
 
           {sections.map((section) => (
             <div key={section.label}>
-              <div className="px-5 py-2 bg-[#222226]">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#D4A237]">
+              <div className="px-5 py-2 bg-subtle">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-primary">
                   {section.label}
                 </span>
               </div>
@@ -315,7 +315,7 @@ export function StreamPickerSheet({
           {/* Dead links section */}
           {deadSection.length > 0 && (
             <div>
-              <div className="px-5 py-2 bg-[#222226]">
+              <div className="px-5 py-2 bg-subtle">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-red-400">
                   Failed
                 </span>
@@ -360,7 +360,7 @@ function Chip({
       onClick={onClick}
       className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
         active
-          ? "bg-[#D4A237]/15 border border-[#D4A237]/50 text-[#D4A237]"
+          ? "bg-primary/15 border border-primary/50 text-primary"
           : "border border-white/[0.08] text-white/50 hover:text-white/70 hover:border-white/20"
       }`}
     >
@@ -411,9 +411,9 @@ export function LinkRow({
         isDead
           ? "bg-red-500/[0.06] border-l-red-400 hover:bg-red-500/[0.1]"
           : isActive
-            ? "bg-[#D4A237]/15 border-l-[#D4A237]/60"
+            ? "bg-primary/15 border-l-primary/60"
             : isRecommended
-              ? "border-l-[#D4A237]/40 hover:bg-white/[0.03]"
+              ? "border-l-primary/40 hover:bg-white/[0.03]"
               : "border-l-transparent hover:bg-white/[0.03]"
       }`}
     >
@@ -468,7 +468,7 @@ export function LinkRow({
 
       {/* Active indicator */}
       {isActive && (
-        <CheckCircle size={18} className="text-[#D4A237] shrink-0 mt-0.5" />
+        <CheckCircle size={18} className="text-primary shrink-0 mt-0.5" />
       )}
     </button>
   );
@@ -484,7 +484,7 @@ function Badge({
   color: "gold" | "blue" | "red" | "orange";
 }) {
   const colors = {
-    gold: "bg-[#D4A237]/15 border-[#D4A237]/40 text-[#D4A237]",
+    gold: "bg-primary/15 border-primary/40 text-primary",
     blue: "bg-blue-500/15 border-blue-400/30 text-blue-400",
     red: "bg-red-500/12 border-red-400/30 text-red-400",
     orange: "bg-orange-500/15 border-orange-400/30 text-orange-400",

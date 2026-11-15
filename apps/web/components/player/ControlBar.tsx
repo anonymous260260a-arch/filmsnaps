@@ -39,6 +39,7 @@ import type {
 import { ProgressBar } from "./ProgressBar";
 import { SettingsPanel } from "./SettingsPanel";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
+import { langCode, englishFirst } from "@/lib/subtitleName";
 
 export interface ControlBarProps {
   player: PlayerAdapter;
@@ -124,9 +125,6 @@ export function ControlBar({
   const [trackMenu, setTrackMenu] = useState<"audio" | "subs" | null>(null);
   const trackMenuRef = useRef<HTMLDivElement>(null);
   const [playbackRate, setPlaybackRate] = useState(initialRate);
-  const [hoverTime, setHoverTime] = useState<number | null>(null);
-  const [hoverX, setHoverX] = useState(0);
-  const progressBarRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
 
   const handleRateChange = useCallback(
@@ -252,15 +250,6 @@ export function ControlBar({
     }
   };
 
-  const handleProgressBarHover = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!progressBarRef.current || duration <= 0) return;
-    const rect = progressBarRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-    const time = (x / rect.width) * duration;
-    setHoverTime(time);
-    setHoverX(x);
-  };
-
   const audioTracksCount =
     audioTracks?.length ?? player.getAudioTracks?.().length ?? 0;
   const resolvedAudioTracks = audioTracks ?? player.getAudioTracks?.() ?? [];
@@ -279,30 +268,18 @@ export function ControlBar({
     subtitleTracks?.length ||
     onPlaybackRateChange;
 
-  // ── Strip variant (mpv mode): all controls in flow, min-h-[64px] floor ──
+  // ── Strip variant (mpv mode) — YouTube-style two rows:
+  //    Row 1: seek bar (flex-1) + time readout pinned right.
+  //    Row 2: playback cluster | status | settings cluster.
   if (layout === "strip") {
     return (
       <div
         data-mpv-control-bar
-        className="flex min-h-[64px] w-full select-none flex-col bg-black"
+        className="flex w-full select-none flex-col bg-black"
       >
-        {/* Row 1 — Progress bar. Full-width, in flow. */}
-        <div
-          ref={progressBarRef}
-          className="relative flex h-6 items-center px-2 cursor-pointer"
-          onMouseMove={handleProgressBarHover}
-          onMouseLeave={() => setHoverTime(null)}
-        >
-          {hoverTime !== null && (
-            <div
-              className="absolute bottom-full mb-2 pointer-events-none z-20"
-              style={{ left: `${hoverX}px`, transform: "translateX(-50%)" }}
-            >
-              <div className="bg-[#16161A] border border-white/10 rounded-md px-2 py-1 text-[11px] font-mono text-white tabular-nums">
-                {formatTime(hoverTime)}
-              </div>
-            </div>
-          )}
+        {/* Row 1 — Seek bar + time. The hover tooltip / position marker are
+            ProgressBar's own (full-row hit area). */}
+        <div className="flex h-7 items-center gap-3 px-3">
           <ProgressBar
             player={player}
             onSeek={handleSeek}
@@ -311,58 +288,67 @@ export function ControlBar({
             onFrame={handleFrame}
             active={visible}
           />
+          <span className="shrink-0 whitespace-nowrap text-[13px] tabular-nums font-mono">
+            <span className="font-semibold text-white">
+              {formatTime(displayTime)}
+            </span>
+            <span className="text-white/40 mx-1.5">/</span>
+            <span className="text-white/55">{formatTime(duration)}</span>
+          </span>
         </div>
 
-        {/* Row 2 — Buttons. All in flow. */}
-        <div className="flex items-center gap-1.5 px-2 pb-2 pt-1">
-          {/* Play/Pause */}
+        {/* Row 2 — Buttons */}
+        <div className="flex h-11 items-center gap-1 px-2 pb-1.5">
+          {/* Playback cluster */}
           <button
             onClick={handlePlayPause}
-            className="w-9 h-9 flex items-center justify-center rounded-full text-white hover:text-[#D4A237] hover:bg-white/10 transition-all active:scale-90"
+            className="w-10 h-10 flex items-center justify-center rounded-lg text-white hover:bg-white/10 transition-all active:scale-90"
             aria-label={isPlaying ? "Pause" : "Play"}
+            title={isPlaying ? "Pause (K/Space)" : "Play (K/Space)"}
           >
             {isPlaying ? (
-              <Pause size={22} fill="currentColor" />
+              <Pause size={24} fill="currentColor" />
             ) : (
-              <Play size={22} fill="currentColor" className="ml-0.5" />
+              <Play size={24} fill="currentColor" className="ml-0.5" />
             )}
           </button>
 
-          {/* Skip back 10s */}
           <button
             onClick={() =>
               player.seek(Math.max(0, player.getCurrentTime() - 10))
             }
-            className="w-8 h-8 flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-all active:scale-90"
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-white/75 hover:text-white hover:bg-white/10 transition-all active:scale-90"
             aria-label="Skip back 10 seconds"
+            title="Rewind 10s (J)"
           >
-            <SkipBack size={15} />
+            <SkipBack size={17} />
           </button>
 
-          {/* Skip forward 10s */}
           <button
             onClick={() =>
               player.seek(Math.min(duration, player.getCurrentTime() + 10))
             }
-            className="w-8 h-8 flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-all active:scale-90"
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-white/75 hover:text-white hover:bg-white/10 transition-all active:scale-90"
             aria-label="Skip forward 10 seconds"
+            title="Forward 10s (L)"
           >
-            <SkipForward size={15} />
+            <SkipForward size={17} />
           </button>
 
-          {/* Volume */}
-          <div className="flex items-center gap-1">
+          {/* Volume — icon button + fill-tracking slim slider */}
+          <div className="flex items-center gap-1.5 ml-1">
             <button
               onClick={handleMuteToggle}
-              className="w-8 h-8 flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-all active:scale-90"
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-white/75 hover:text-white hover:bg-white/10 transition-all active:scale-90"
               aria-label={isMuted || volume === 0 ? "Unmute" : "Mute"}
+              title={isMuted || volume === 0 ? "Unmute (M)" : "Mute (M)"}
             >
               {isMuted || volume === 0 ? (
-                <VolumeX size={16} />
+                <VolumeX size={18} />
               ) : volume < 0.5 ? (
-                <Volume1 size={16} />
+                <Volume1 size={18} />
               ) : (
-                <Volume2 size={16} />
+                <Volume2 size={18} />
               )}
             </button>
             <input
@@ -372,47 +358,52 @@ export function ControlBar({
               step={0.02}
               value={isMuted ? 0 : volume}
               onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-              className="w-20 h-1 accent-white cursor-pointer"
+              className="player-vol h-1 w-24 cursor-pointer appearance-none rounded-full [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow [&::-webkit-slider-thumb]:transition-colors hover:[&::-webkit-slider-thumb]:bg-primary"
+              style={{
+                background: `linear-gradient(to right, hsl(var(--primary)) ${Math.round(
+                  (isMuted ? 0 : volume) * 100,
+                )}%, rgba(255,255,255,0.25) ${Math.round((isMuted ? 0 : volume) * 100)}%)`,
+              }}
               aria-label="Volume"
             />
           </div>
 
-          {/* Time display */}
-          <span className="ml-1 whitespace-nowrap text-xs tabular-nums text-white/80 font-mono">
-            {formatTime(displayTime)} / {formatTime(duration)}
-          </span>
-
-          {/* D9 — Status indicators (moved out of video region) */}
+          {/* Status — buffering / source switching (kept out of the video
+              region: the native window covers all HTML above this strip) */}
           {(isBuffering || switchingLabel) && (
-            <Loader2 size={14} className="animate-spin text-[#D4A237] ml-1" />
-          )}
-          {switchingLabel && (
-            <span className="text-xs text-white/60 ml-1 max-w-[120px] truncate">
-              {switchingLabel}
+            <span className="flex items-center gap-1.5 ml-2">
+              <Loader2 size={14} className="animate-spin text-primary" />
+              {switchingLabel && (
+                <span className="text-xs text-white/70 max-w-[150px] truncate">
+                  {switchingLabel}
+                </span>
+              )}
             </span>
           )}
 
-          {/* Playback rate */}
+          <div className="flex-1" />
+
+          {/* Settings cluster */}
           {playbackRate !== 1 && (
             <button
               onClick={() => handleRateChange(1)}
-              className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-[#D4A237]/20 text-[#D4A237] hover:bg-[#D4A237]/30 transition-colors"
+              className="text-[11px] font-bold px-2 py-1 rounded-md bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
+              title="Playback speed — reset to 1x"
             >
               {playbackRate}x
             </button>
           )}
 
-          <div className="flex-1" />
-
-          {/* Source badge — inline, clickable. Always shown when a picker
-              handler exists; label may still be loading. */}
           {onSourcePicker && (
             <button
               onClick={onSourcePicker}
-              className="rounded-md border border-white/15 px-2 py-0.5 text-[10px] font-semibold text-white/70 hover:text-white hover:border-white/30 transition-colors"
+              className="flex items-center gap-1.5 rounded-lg border border-white/15 px-2.5 py-1.5 text-[11px] font-semibold text-white/75 hover:text-white hover:border-white/35 hover:bg-white/[0.06] transition-colors"
               title="Change source — switch if the video doesn't play or buffers"
             >
-              {sourceLabel || "Source"}
+              <Server size={12} className="text-primary shrink-0" />
+              <span className="max-w-[130px] truncate">
+                {sourceLabel || "Source"}
+              </span>
             </button>
           )}
 
@@ -443,15 +434,16 @@ export function ControlBar({
                   setShowSettings((v) => !v);
                   setTrackMenu(null);
                 }}
-                className={`w-8 h-8 flex items-center justify-center rounded-full transition-all active:scale-90 ${
+                className={`w-9 h-9 flex items-center justify-center rounded-lg transition-all active:scale-90 ${
                   showSettings
-                    ? "text-[#D4A237] bg-[#D4A237]/15"
-                    : "text-white/60 hover:text-white hover:bg-white/10"
+                    ? "text-primary bg-primary/15"
+                    : "text-white/75 hover:text-white hover:bg-white/10"
                 }`}
                 aria-label="Settings"
                 aria-expanded={showSettings}
+                title="Quality, speed & tracks"
               >
-                <Settings size={16} />
+                <Settings size={18} />
               </button>
               {showSettings && (
                 <SettingsPanel
@@ -470,13 +462,15 @@ export function ControlBar({
             </div>
           )}
 
-          {/* Fullscreen */}
+          {/* Fullscreen — the bar slides away on idle; move the mouse to
+              bring it back, Esc/F to leave */}
           <button
             onClick={handleFullscreen}
-            className="w-8 h-8 flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-all active:scale-90"
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-white/75 hover:text-white hover:bg-white/10 transition-all active:scale-90"
             aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            title="Fullscreen (F)"
           >
-            {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+            {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
           </button>
         </div>
       </div>
@@ -495,10 +489,10 @@ export function ControlBar({
       {onSourcePicker && badgePosition === "top" && (
         <button
           onClick={onSourcePicker}
-          className="absolute top-3 left-3 z-10 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-black/60 backdrop-blur-sm border border-[#D4A237]/30 hover:bg-black/80 hover:border-[#D4A237]/50 transition-all"
+          className="absolute top-3 left-3 z-10 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-black/60 backdrop-blur-sm border border-primary/30 hover:bg-black/80 hover:border-primary/50 transition-all"
         >
-          <Server size={12} className="text-[#D4A237]" />
-          <span className="text-[11px] font-bold text-[#D4A237] tracking-wide max-w-[180px] truncate">
+          <Server size={12} className="text-primary" />
+          <span className="text-[11px] font-bold text-primary tracking-wide max-w-[180px] truncate">
             {sourceLabel || "Source"}
           </span>
         </button>
@@ -506,24 +500,8 @@ export function ControlBar({
 
       {/* Bottom control bar */}
       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent">
-        {/* Progress bar area */}
-        <div
-          ref={progressBarRef}
-          className="relative mx-4 h-6 flex items-center cursor-pointer group"
-          onMouseMove={handleProgressBarHover}
-          onMouseLeave={() => setHoverTime(null)}
-        >
-          {/* Hover time preview */}
-          {hoverTime !== null && (
-            <div
-              className="absolute bottom-full mb-2 pointer-events-none z-20"
-              style={{ left: `${hoverX}px`, transform: "translateX(-50%)" }}
-            >
-              <div className="bg-[#16161A] border border-white/10 rounded-md px-2 py-1 text-[11px] font-mono text-white tabular-nums">
-                {formatTime(hoverTime)}
-              </div>
-            </div>
-          )}
+        {/* Progress bar + time — hover tooltip + marker live in ProgressBar */}
+        <div className="relative mx-4 h-6 flex items-center gap-3 cursor-pointer">
           <ProgressBar
             player={player}
             onSeek={handleSeek}
@@ -532,6 +510,13 @@ export function ControlBar({
             onFrame={handleFrame}
             active={visible}
           />
+          <span className="shrink-0 whitespace-nowrap text-[13px] tabular-nums font-mono">
+            <span className="font-semibold text-white">
+              {formatTime(displayTime)}
+            </span>
+            <span className="text-white/40 mx-1.5">/</span>
+            <span className="text-white/55">{formatTime(duration)}</span>
+          </span>
         </div>
 
         {/* Controls row */}
@@ -539,7 +524,7 @@ export function ControlBar({
           {/* Left controls */}
           <button
             onClick={handlePlayPause}
-            className="w-10 h-10 flex items-center justify-center rounded-full text-white hover:text-[#D4A237] hover:bg-white/10 transition-all active:scale-90"
+            className="w-10 h-10 flex items-center justify-center rounded-full text-white hover:text-primary hover:bg-white/10 transition-all active:scale-90"
             aria-label={isPlaying ? "Pause" : "Play"}
           >
             {isPlaying ? (
@@ -573,23 +558,16 @@ export function ControlBar({
             <SkipForward size={16} />
           </button>
 
-          {/* Time display */}
-          <div className="text-white/80 text-xs font-mono tabular-nums min-w-[110px] ml-2">
-            <span className="text-white">{formatTime(displayTime)}</span>
-            <span className="text-white/40 mx-1">/</span>
-            <span>{formatTime(duration)}</span>
-          </div>
-
           {/* Source badge (mpv strip mode) — inline, clickable, opens picker.
               Always shown when a picker handler exists; label may be loading. */}
           {onSourcePicker && badgePosition === "row" && (
             <button
               onClick={onSourcePicker}
-              className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#D4A237]/10 border border-[#D4A237]/30 hover:bg-[#D4A237]/20 hover:border-[#D4A237]/50 transition-all ml-1 max-w-[240px]"
+              className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary/10 border border-primary/30 hover:bg-primary/20 hover:border-primary/50 transition-all ml-1 max-w-[240px]"
               title="Change source — switch if the video doesn't play or buffers"
             >
-              <Server size={12} className="text-[#D4A237] shrink-0" />
-              <span className="text-[11px] font-bold text-[#D4A237] tracking-wide truncate">
+              <Server size={12} className="text-primary shrink-0" />
+              <span className="text-[11px] font-bold text-primary tracking-wide truncate">
                 {sourceLabel || "Source"}
               </span>
             </button>
@@ -619,7 +597,12 @@ export function ControlBar({
               step={0.02}
               value={isMuted ? 0 : volume}
               onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-              className="w-0 group-hover/vol:w-20 transition-all duration-200 h-1 accent-[#D4A237] opacity-0 group-hover/vol:opacity-100 cursor-pointer"
+              className="player-vol h-1 w-0 group-hover/vol:w-20 transition-all duration-200 cursor-pointer appearance-none rounded-full [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow [&::-webkit-slider-thumb]:transition-colors hover:[&::-webkit-slider-thumb]:bg-primary opacity-0 group-hover/vol:opacity-100"
+              style={{
+                background: `linear-gradient(to right, hsl(var(--primary)) ${Math.round(
+                  (isMuted ? 0 : volume) * 100,
+                )}%, rgba(255,255,255,0.25) ${Math.round((isMuted ? 0 : volume) * 100)}%)`,
+              }}
               aria-label="Volume"
             />
           </div>
@@ -628,7 +611,7 @@ export function ControlBar({
           {playbackRate !== 1 && (
             <button
               onClick={() => handleRateChange(1)}
-              className="text-[11px] font-bold px-2 py-1 rounded-md bg-[#D4A237]/20 text-[#D4A237] hover:bg-[#D4A237]/30 transition-colors"
+              className="text-[11px] font-bold px-2 py-1 rounded-md bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
             >
               {playbackRate}x
             </button>
@@ -656,7 +639,7 @@ export function ControlBar({
                 onClick={() => setShowSettings((v) => !v)}
                 className={`w-9 h-9 flex items-center justify-center rounded-full transition-all active:scale-90 ${
                   showSettings
-                    ? "text-[#D4A237] bg-[#D4A237]/15"
+                    ? "text-primary bg-primary/15"
                     : "text-white/60 hover:text-white hover:bg-white/10"
                 }`}
                 aria-label="Settings"
@@ -703,6 +686,9 @@ export function ControlBar({
 
 interface TrackMenuItem {
   id: string;
+  /** Language code heading ("EN", "AR", "HI") — the most scannable identifier
+   *  for a track row (mobile SubtitleSheet parity). Null → label is the row. */
+  heading?: string | null;
   label: string;
   active: boolean;
 }
@@ -726,8 +712,14 @@ function TrackButtons({
   containerRef?: React.RefObject<HTMLDivElement | null>;
   /** Strip mode: buttons only; the panel renders in the in-flow panel row. */
   inline?: boolean;
-  audioTracks: { id: string; label: string }[];
-  subtitleTracks: { id: string; label: string }[];
+  audioTracks: (
+    | AudioTrack
+    | { id: string; label: string; language?: string }
+  )[];
+  subtitleTracks: (
+    | SubtitleTrack
+    | { id: string; label: string; language?: string }
+  )[];
   currentAudioTrackId?: string;
   currentSubtitleTrackId?: string;
   onAudioTrackChange?: (trackId: string) => void;
@@ -742,11 +734,54 @@ function TrackButtons({
   const showSubs = subtitleTracks.length > 0 || !!onSubtitlesSearch;
   if (!showAudio && !showSubs) return null;
 
+  // Mobile SubtitleSheet parity: LANGUAGE is the heading of each row (short
+  // code — EN / AR / HI), the track title is the secondary line, and ENGLISH
+  // subtitles sort first.
+  const toItems = (
+    tracks: { id: string; label: string; language?: string }[],
+    /** This list's OWN current id — mpv numbers audio and subtitle tracks
+     *  independently (both start at 1), so matching against the wrong type's
+     *  id ticks two rows. */
+    currentId?: string | null,
+  ): TrackMenuItem[] =>
+    tracks.map((t) => {
+      const heading = langCode(t.language ?? null);
+      // Secondary line = the label minus its language prefix ("Hindi · Src"
+      // → "Src"); hidden when nothing meaningful remains.
+      let secondary = t.label;
+      if (t.language && heading) {
+        const re = new RegExp(
+          `^${t.language.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*·\\s*`,
+        );
+        secondary = t.label.replace(re, "").trim();
+      }
+      return {
+        id: t.id,
+        heading,
+        label: secondary || t.label,
+        active: t.id === currentId,
+      };
+    });
+
+  const audioItems = toItems(audioTracks, currentAudioTrackId);
+  const subItems: TrackMenuItem[] = [
+    {
+      id: "__off__",
+      heading: "Off",
+      label: "Disable subtitles",
+      active: currentSubtitleTrackId == null,
+    },
+    ...toItems(
+      englishFirst(subtitleTracks, (t) => t.language ?? null),
+      currentSubtitleTrackId,
+    ),
+  ];
+
   const btnCls = size === "sm" ? "w-8 h-8" : "w-9 h-9";
   const iconSize = size === "sm" ? 15 : 17;
   const baseCls = `${btnCls} flex items-center justify-center rounded-full transition-all active:scale-90`;
   const idleCls = "text-white/60 hover:text-white hover:bg-white/10";
-  const activeCls = "text-[#D4A237] bg-[#D4A237]/15";
+  const activeCls = "text-primary bg-primary/15";
 
   return (
     <div className="flex items-center gap-0.5" ref={containerRef}>
@@ -765,11 +800,7 @@ function TrackButtons({
             <TrackMenuPopover
               title="Audio track"
               emptyText="No selectable audio tracks — this source has a single track"
-              items={audioTracks.map((t) => ({
-                id: t.id,
-                label: t.label,
-                active: t.id === currentAudioTrackId,
-              }))}
+              items={audioItems}
               onSelect={(id) => {
                 onAudioTrackChange?.(id);
                 setTrackMenu(null);
@@ -798,18 +829,7 @@ function TrackButtons({
             <TrackMenuPopover
               title="Subtitles"
               emptyText="No subtitles in this file"
-              items={[
-                {
-                  id: "__off__",
-                  label: "Off",
-                  active: currentSubtitleTrackId == null,
-                },
-                ...subtitleTracks.map((t) => ({
-                  id: t.id,
-                  label: t.label,
-                  active: t.id === currentSubtitleTrackId,
-                })),
-              ]}
+              items={subItems}
               onSelect={(id) => {
                 onSubtitleChange?.(id === "__off__" ? null : id);
                 setTrackMenu(null);
@@ -853,8 +873,8 @@ function TrackMenuPopover({
     <div
       className={
         inline
-          ? "w-full max-w-[360px] max-h-[260px] overflow-y-auto bg-[#16161A] border border-white/10 rounded-xl shadow-2xl py-1.5"
-          : "absolute bottom-full right-0 mb-2 min-w-[220px] max-h-[300px] overflow-y-auto bg-[#16161A] border border-white/10 rounded-xl shadow-2xl py-1.5 z-30"
+          ? "w-full max-w-[360px] max-h-[260px] overflow-y-auto bg-elevated border border-white/10 rounded-xl shadow-2xl py-1.5"
+          : "absolute bottom-full right-0 mb-2 min-w-[220px] max-h-[300px] overflow-y-auto bg-elevated border border-white/10 rounded-xl shadow-2xl py-1.5 z-30"
       }
     >
       <p className="px-3.5 pt-1.5 pb-1 text-[10px] font-bold uppercase tracking-wider text-white/35">
@@ -869,18 +889,33 @@ function TrackMenuPopover({
           onClick={() => onSelect(item.id)}
           className={`w-full text-left flex items-center justify-between gap-3 px-3.5 py-2 text-xs transition-colors ${
             item.active
-              ? "text-[#D4A237] font-semibold"
+              ? "text-primary font-semibold"
               : "text-white/70 hover:bg-white/[0.05]"
           }`}
         >
-          <span className="truncate">{item.label}</span>
+          <span className="flex-1 min-w-0">
+            {/* Language code is the HEADING (mobile SubtitleSheet parity) —
+                the most scannable part of the row; the track title sits below. */}
+            <span
+              className={`block text-[13px] font-bold uppercase tracking-wide ${
+                item.active ? "text-primary" : "text-white"
+              }`}
+            >
+              {item.heading ?? item.label}
+            </span>
+            {item.heading && item.label !== item.heading && (
+              <span className="mt-0.5 block truncate text-[11px] font-normal text-white/45">
+                {item.label}
+              </span>
+            )}
+          </span>
           {item.active && <Check size={13} className="shrink-0" />}
         </button>
       ))}
       {footer && (
         <button
           onClick={footer.onClick}
-          className="w-full flex items-center gap-2 px-3.5 py-2 mt-1 text-xs font-semibold text-[#D4A237] hover:bg-white/[0.05] border-t border-white/[0.06]"
+          className="w-full flex items-center gap-2 px-3.5 py-2 mt-1 text-xs font-semibold text-primary hover:bg-white/[0.05] border-t border-white/[0.06]"
         >
           <Search size={12} />
           {footer.label}

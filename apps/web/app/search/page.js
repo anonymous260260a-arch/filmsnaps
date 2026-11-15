@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Search, Film, ArrowLeft, Sparkles } from "lucide-react";
 import {
@@ -69,6 +69,7 @@ export default function SearchPage() {
     enabled: debouncedQuery.length > 0,
     staleTime: 5 * 60 * 1000,
     gcTime: 15 * 60 * 1000,
+    placeholderData: keepPreviousData,
   });
 
   const animeQuery = useQuery({
@@ -80,6 +81,7 @@ export default function SearchPage() {
     // Upstream ceiling is ~90 req/min on AniList — no client retry storm
     // when the proxy reports an outage; the next keystroke re-fires anyway.
     retry: false,
+    placeholderData: keepPreviousData,
   });
 
   // Update URL when user types (after debounce)
@@ -146,13 +148,13 @@ export default function SearchPage() {
                 onClick={() => setAnimeMode((v) => !v)}
                 className={`group flex items-center gap-3 h-10 px-4 rounded-full border text-sm font-medium transition-all ${
                   animeMode
-                    ? "border-[#D4A237]/40 bg-[#D4A237]/10 text-[#D4A237]"
+                    ? "border-primary/40 bg-primary/10 text-primary"
                     : "border-white/[0.06] bg-secondary/30 text-muted-foreground hover:text-foreground"
                 }`}
               >
                 <span
                   className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                    animeMode ? "bg-[#D4A237]" : "bg-white/10"
+                    animeMode ? "bg-primary" : "bg-white/10"
                   }`}
                 >
                   <span

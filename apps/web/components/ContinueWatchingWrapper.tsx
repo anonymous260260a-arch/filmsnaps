@@ -9,6 +9,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createLocalStorageAdapter } from "@filmsnaps/shared";
 import { useWatchHistory } from "@filmsnaps/shared";
 import { ContinueWatching } from "@/components/ContinueWatching";
+import { SkeletonRow } from "@/components/SkeletonLoader";
 import { prefetchDirectMedia } from "@/lib/directPrefetch";
 import type { WatchProgress } from "@filmsnaps/shared";
 import { useAppMode } from "@/lib/useAppMode";
@@ -71,7 +72,10 @@ export function ContinueWatchingWrapper() {
     return () => clearTimeout(timer);
   }, [inProgress]);
 
-  if (loading || inProgress.length === 0) return null;
+  // Reserve the rail's space while history loads (no late pop-in / CLS);
+  // truly empty history renders nothing.
+  if (loading) return <SkeletonRow />;
+  if (inProgress.length === 0) return null;
 
   return <ContinueWatching entries={inProgress} />;
 }

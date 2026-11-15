@@ -154,24 +154,66 @@ function computePriority(
   return 40;
 }
 
-// ── Falix fallback ─────────────────────────────────────────────────
+// ── Falix (second direct provider, fetched for every title) ────────
 
+/** Strip the SxxEyy episode token onward from a scene release name
+ *  (mobile parity — season-scoped falix payloads carry no title). */
+function titleFromReleaseName(name?: string): string {
+  const m = name?.match(/^(.*?)\s+S\d{1,2}E\d{1,3}\b/i);
+  return m?.[1]?.trim() ?? "";
+}
+
+/**
+ * Falix lookup — full mobile parity with fetchFalixLinks in
+ * apps/mobile/lib/directStreams.ts:
+ *   - TMDB key first, zero-stripped IMDb numeric as fallback (some movie
+ *     records were historically keyed by the zero-stripped tt number)
+ *   - TV scopes to one season via ?season_number= (a long-running show
+ *     doesn't drag its whole catalog over the wire)
+ *   - 8s timeout; network-level failure stops the id loop (retrying the
+ *     same host with another id won't help)
+ *   - Season-scoped payloads carry no title — derive one from the release
+ *     name of the first file
+ * Never throws; a dead falix host just yields [].
+ */
 async function fetchFalixLinks(
   tmdbId: string,
+  imdbId: string,
   mediaType: "movie" | "tv",
   season?: number,
   episode?: number,
 ): Promise<StreamLink[]> {
-  const res = await fetch(`${FALIX_API_BASE}/api/id/${tmdbId}`, {
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!res.ok) return [];
-  const data = await res.json();
+  const idCandidates = [tmdbId];
+  const imdbNum = imdbId.replace(/^tt0*/, "");
+  if (imdbNum && imdbNum !== idCandidates[0]) idCandidates.push(imdbNum);
+
+  let data: unknown = null;
+  for (const id of idCandidates) {
+    const url =
+      mediaType === "tv" && season != null
+        ? `${FALIX_API_BASE}/api/id/${id}?season_number=${season}`
+        : `${FALIX_API_BASE}/api/id/${id}`;
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.ok) {
+        data = await res.json();
+        break;
+      }
+    } catch {
+      break; // network-level failure — another id on the same host won't help
+    }
+  }
+  if (!data) return [];
 
   const files = extractEpisodeFiles(data, mediaType, season, episode);
   if (files.length === 0) return [];
 
-  const title = (data as { title?: string }).title || "Unknown";
+  const record = data as { title?: string };
+  const title =
+    record.title || titleFromReleaseName(files[0]?.name) || "Unknown";
   return mapFalixFiles(files, title, `${FALIX_API_BASE}/dl`);
 }
 
@@ -285,6 +327,28 @@ export async function GET(request: NextRequest) {
   const userAgent = request.headers.get("user-agent") || "";
   const isWindows = /Windows/.test(userAgent);
 
+  // ── Legacy chain: hdhub primary + falix, in PARALLEL (mobile parity) ──
+  // Mobile's pipeline (apps/mobile/lib/directStreams.ts) starts falix with
+  // the primary — never gated on link count — always merges its links into
+  // the ranked pool, and uses falix as the RESCUE when the primary fails or
+  // comes up empty, erroring only when BOTH providers are empty-and-broken.
+  // `fallback=none` opts out entirely — the /download/hdhub page must only
+  // offer HDHub files, so a falix link surfacing there would be mislabelled.
+  const allowFallback = searchParams.get("fallback") !== "none";
+  const falixPromise: Promise<StreamLink[]> = allowFallback
+    ? fetchFalixLinks(
+        tmdbId,
+        imdbId,
+        isTv ? "tv" : "movie",
+        isTv ? parseInt(season!, 10) : undefined,
+        isTv ? parseInt(episode!, 10) : undefined,
+      ).catch(() => [] as StreamLink[])
+    : Promise.resolve<StreamLink[]>([]);
+
+  let hdhubError: { status: number; message: string } | null = null;
+  let links: StreamLink[] = [];
+  let cacheMaxAge = 300;
+
   try {
     // Same URL the detail/watch page already pulled — reuse it so the
     // download page doesn't pay for a second HDHub round-trip.
@@ -293,43 +357,65 @@ export async function GET(request: NextRequest) {
     if (cached && !fresh) hdhubPayloads.delete(apiUrl);
 
     let streams: RawStream[];
-    let cacheMaxAge: number;
     if (cached && fresh) {
       streams = cached.streams;
       cacheMaxAge = cached.maxAge;
     } else {
-      const response = await fetch(apiUrl, {
-        headers: {
-          Accept: "application/json",
-        },
-        signal: AbortSignal.timeout(15000),
-      });
-
-      if (!response.ok) {
-        return NextResponse.json(
-          {
-            error: `HDHub API returned ${response.status}: ${response.statusText}`,
+      // HDHub has become intermittent — 502/504/timeouts flapping between
+      // healthy reads. One quick retry rescues the transient band; only
+      // genuinely-down stretches still surface as hdhubError (and the
+      // client-side chain then walks the other providers).
+      const fetchHdhub = (timeoutMs: number) =>
+        fetch(apiUrl, {
+          headers: {
+            Accept: "application/json",
           },
-          { status: response.status },
-        );
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+
+      let response: Response;
+      try {
+        response = await fetchHdhub(15000);
+      } catch (firstErr) {
+        // Network error / timeout — one retry before giving up. A second
+        // failure propagates to the outer catch (hdhubError, as before).
+        await new Promise((r) => setTimeout(r, 700));
+        response = await fetchHdhub(10000);
+      }
+      if (!response.ok && response.status >= 500) {
+        await new Promise((r) => setTimeout(r, 700));
+        try {
+          const retried = await fetchHdhub(10000);
+          if (retried.ok || retried.status < 500) response = retried;
+        } catch {
+          /* keep the first failure — handled below */
+        }
       }
 
-      const rawData: { streams?: RawStream[]; cacheMaxAge?: number } =
-        await response.json();
-      streams = rawData.streams ?? [];
-      cacheMaxAge = rawData.cacheMaxAge ?? 300;
+      if (!response.ok) {
+        hdhubError = {
+          status: response.status,
+          message: `HDHub API returned ${response.status}: ${response.statusText}`,
+        };
+        streams = [];
+      } else {
+        const rawData: { streams?: RawStream[]; cacheMaxAge?: number } =
+          await response.json();
+        streams = rawData.streams ?? [];
+        cacheMaxAge = rawData.cacheMaxAge ?? 300;
 
-      if (streams && streams.length > 0) {
-        hdhubPayloads.delete(apiUrl);
-        hdhubPayloads.set(apiUrl, {
-          streams,
-          maxAge: cacheMaxAge,
-          at: Date.now(),
-        });
-        while (hdhubPayloads.size > HDHUB_MAX_ENTRIES) {
-          const oldest = hdhubPayloads.keys().next().value;
-          if (oldest === undefined) break;
-          hdhubPayloads.delete(oldest);
+        if (streams && streams.length > 0) {
+          hdhubPayloads.delete(apiUrl);
+          hdhubPayloads.set(apiUrl, {
+            streams,
+            maxAge: cacheMaxAge,
+            at: Date.now(),
+          });
+          while (hdhubPayloads.size > HDHUB_MAX_ENTRIES) {
+            const oldest = hdhubPayloads.keys().next().value;
+            if (oldest === undefined) break;
+            hdhubPayloads.delete(oldest);
+          }
         }
       }
     }
@@ -352,7 +438,7 @@ export async function GET(request: NextRequest) {
     });
 
     // Map to our internal format
-    const links: StreamLink[] = parsed.map((s, idx) => {
+    links = parsed.map((s, idx) => {
       const desc = s.raw.description || "";
 
       return {
@@ -378,58 +464,50 @@ export async function GET(request: NextRequest) {
         },
       };
     });
-
-    // ── Falix fallback: when HDHub gives ≤3 playable links, supplement from falix ──
-    // `fallback=none` opts out entirely — the /download/hdhub page must only
-    // offer HDHub files, so a falix link surfacing there would be mislabelled.
-    const allowFallback = searchParams.get("fallback") !== "none";
-    const playableCount = links.filter((l) => !l._meta?.isDownloadOnly).length;
-    if (allowFallback && playableCount <= 3) {
-      try {
-        const falixLinks = await fetchFalixLinks(
-          tmdbId,
-          isTv ? "tv" : "movie",
-          isTv ? parseInt(season!, 10) : undefined,
-          isTv ? parseInt(episode!, 10) : undefined,
-        );
-        if (falixLinks.length > 0) {
-          links.push(...falixLinks);
-        }
-      } catch {
-        // Falix failure is non-fatal — HDHub links are still returned
-      }
-    }
-
-    const data = isTv
-      ? {
-          tmdb_id: parseInt(tmdbId, 10),
-          imdb_id: imdbId,
-          media_type: "tv",
-          links,
-        }
-      : {
-          tmdb_id: parseInt(tmdbId, 10),
-          imdb_id: imdbId,
-          media_type: "movie",
-          links,
-        };
-
-    return NextResponse.json(data, {
-      headers: {
-        "Cache-Control": `public, max-age=${cacheMaxAge || 300}, s-maxage=${cacheMaxAge || 300}`,
-      },
-    });
   } catch (error: any) {
-    if (error?.name === "TimeoutError") {
+    hdhubError = {
+      status: error?.name === "TimeoutError" ? 504 : 502,
+      message:
+        error?.name === "TimeoutError"
+          ? "HDHub API timed out. The server may be under load."
+          : "Failed to fetch from HDHub API",
+    };
+  }
+
+  if (links.length > 0) {
+    // Primary has links — merge falix into the pool (always, no gate). The
+    // response waits for both; falix is capped by its own 8s timeout, so the
+    // merge never stretches past the primary's own worst case by much.
+    const falixLinks = await falixPromise;
+    if (falixLinks.length > 0) links.push(...falixLinks);
+  } else {
+    // Primary failed or came up empty — falix IS the rescue (mobile parity).
+    links = await falixPromise;
+    if (links.length === 0 && hdhubError) {
       return NextResponse.json(
-        { error: "HDHub API timed out. The server may be under load." },
-        { status: 504 },
+        { error: hdhubError.message },
+        { status: hdhubError.status },
       );
     }
-
-    return NextResponse.json(
-      { error: "Failed to fetch from HDHub API" },
-      { status: 502 },
-    );
   }
+
+  const data = isTv
+    ? {
+        tmdb_id: parseInt(tmdbId, 10),
+        imdb_id: imdbId,
+        media_type: "tv",
+        links,
+      }
+    : {
+        tmdb_id: parseInt(tmdbId, 10),
+        imdb_id: imdbId,
+        media_type: "movie",
+        links,
+      };
+
+  return NextResponse.json(data, {
+    headers: {
+      "Cache-Control": `public, max-age=${cacheMaxAge || 300}, s-maxage=${cacheMaxAge || 300}`,
+    },
+  });
 }

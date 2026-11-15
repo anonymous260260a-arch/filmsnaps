@@ -26,6 +26,7 @@ import { RelatedPanel } from "./RelatedPanel";
 import { ServerDropdown } from "./ServerDropdown";
 import { AudioToggle } from "@/components/player/AudioToggle";
 import type { ProviderDefinition } from "@filmsnaps/shared";
+import type { PlaybackTimeSample } from "@/hooks/usePlaybackRecorder";
 
 interface DesktopWatchLayoutProps {
   contentid: string;
@@ -43,6 +44,8 @@ interface DesktopWatchLayoutProps {
   isPending: boolean;
   selectedSeason: number;
   activeEpisode: number;
+  /** Watch-progress reporter — forwarded to VideoZone's direct players. */
+  onProgress?: (sample: PlaybackTimeSample) => void;
   onProviderSelect: (provider: ProviderDefinition | null) => void;
   onSeasonChange: (season: number) => void;
   onRetry: () => void;
@@ -79,6 +82,7 @@ export function DesktopWatchLayout({
   isPending,
   selectedSeason,
   activeEpisode,
+  onProgress,
   onProviderSelect,
   onSeasonChange,
   onRetry,
@@ -265,7 +269,7 @@ export function DesktopWatchLayout({
               {isElectron && (
                 <button
                   onClick={() => toggleWatchNavDrawer()}
-                  className="flex items-center justify-center w-8 h-8 rounded-xl bg-white/[0.04] border border-white/[0.08] text-zinc-400 hover:text-white hover:bg-white/[0.08] transition-all active:scale-95 shrink-0"
+                  className="flex items-center justify-center w-8 h-8 rounded-xl bg-white/[0.04] border border-white/[0.08] text-muted-foreground hover:text-white hover:bg-white/[0.08] transition-all active:scale-95 shrink-0"
                   title="Open navigation menu"
                   aria-label="Open menu"
                 >
@@ -279,17 +283,17 @@ export function DesktopWatchLayout({
                   onClick={toggleServer}
                   className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border transition-all active:scale-[0.97] text-left ${
                     isServerOpen
-                      ? "bg-[#D4A237]/15 border-[#D4A237]/40"
+                      ? "bg-primary/15 border-primary/40"
                       : "bg-white/[0.04] border-white/[0.08] hover:border-white/20 hover:bg-white/[0.06]"
                   }`}
                   aria-label="Select source server"
                   title="Select server (S)"
                 >
                   <div className="min-w-0">
-                    <p className="text-[8px] font-black uppercase tracking-wider text-zinc-500 leading-none">
+                    <p className="text-[8px] font-black uppercase tracking-wider text-muted-foreground leading-none">
                       Server
                     </p>
-                    <p className="text-xs font-bold text-zinc-200 truncate leading-tight mt-0.5 max-w-[110px]">
+                    <p className="text-xs font-bold text-foreground truncate leading-tight mt-0.5 max-w-[110px]">
                       {currentProvider?.displayName ||
                         currentProvider?.name ||
                         "Auto"}
@@ -297,7 +301,7 @@ export function DesktopWatchLayout({
                   </div>
                   <ChevronRight
                     size={13}
-                    className={`text-zinc-400 shrink-0 transition-transform ${isServerOpen ? "rotate-90 text-white" : ""}`}
+                    className={`text-muted-foreground shrink-0 transition-transform ${isServerOpen ? "rotate-90 text-white" : ""}`}
                   />
                 </button>
 
@@ -320,8 +324,8 @@ export function DesktopWatchLayout({
                   >
                     {watchTitle}
                   </h1>
-                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mt-0.5">
-                    <span className="text-[#D4A237]">
+                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground mt-0.5">
+                    <span className="text-primary">
                       {plat === "tv" ? "Series" : "Film"}
                     </span>
                     <span className="w-1 h-1 rounded-full bg-zinc-700" />
@@ -329,7 +333,7 @@ export function DesktopWatchLayout({
                     {plat === "tv" && (
                       <>
                         <span className="w-1 h-1 rounded-full bg-zinc-700" />
-                        <span className="text-zinc-400">
+                        <span className="text-muted-foreground">
                           S
                           {selectedSeason < 10
                             ? `0${selectedSeason}`
@@ -350,18 +354,18 @@ export function DesktopWatchLayout({
             <div className="flex items-center gap-2 shrink-0">
               {/* Prev / Next quick controls (theater mode or always for TV) */}
               {plat === "tv" && (
-                <div className="flex items-center gap-1 bg-[#0E0E12] border border-white/[0.08] rounded-xl p-1 shadow-sm">
+                <div className="flex items-center gap-1 bg-surface border border-white/[0.08] rounded-xl p-1 shadow-sm">
                   <button
                     onClick={goToPrevEpisode}
                     disabled={isFirstEpisode}
                     title="Previous Episode (P)"
-                    className="flex items-center justify-center w-7 h-7 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.08] disabled:opacity-30 disabled:pointer-events-none transition-all active:scale-95"
+                    className="flex items-center justify-center w-7 h-7 rounded-lg text-muted-foreground hover:text-white hover:bg-white/[0.08] disabled:opacity-30 disabled:pointer-events-none transition-all active:scale-95"
                   >
                     <ChevronLeft size={15} />
                   </button>
-                  <span className="text-[11px] font-bold text-[#D4A237] px-1 font-mono whitespace-nowrap">
+                  <span className="text-[11px] font-bold text-primary px-1 font-mono whitespace-nowrap">
                     E{activeEpisode < 10 ? `0${activeEpisode}` : activeEpisode}
-                    <span className="text-zinc-600">
+                    <span className="text-faint">
                       {" "}
                       / {totalEpisodes || "?"}
                     </span>
@@ -370,7 +374,7 @@ export function DesktopWatchLayout({
                     onClick={goToNextEpisode}
                     disabled={isLastEpisode}
                     title="Next Episode (N)"
-                    className="flex items-center justify-center w-7 h-7 rounded-lg bg-[#D4A237] text-[#070708] font-bold hover:bg-[#B88B2A] disabled:opacity-30 disabled:pointer-events-none transition-all active:scale-95 shadow-sm shadow-[#D4A237]/20"
+                    className="flex items-center justify-center w-7 h-7 rounded-lg bg-primary text-background font-bold hover:bg-primary-dim disabled:opacity-30 disabled:pointer-events-none transition-all active:scale-95 shadow-sm shadow-primary/20"
                   >
                     <ChevronRight size={15} />
                   </button>
@@ -390,8 +394,8 @@ export function DesktopWatchLayout({
                 onClick={toggleSidebar}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all active:scale-95 ${
                   isSidebarCollapsed
-                    ? "bg-[#D4A237]/10 border-[#D4A237]/40 text-[#D4A237] hover:bg-[#D4A237]/20"
-                    : "bg-white/[0.04] border-white/[0.08] text-zinc-300 hover:bg-white/[0.08] hover:text-white"
+                    ? "bg-primary/10 border-primary/40 text-primary hover:bg-primary/20"
+                    : "bg-white/[0.04] border-white/[0.08] text-foreground hover:bg-white/[0.08] hover:text-white"
                 }`}
                 title={
                   isSidebarCollapsed ? "Show Panel (E)" : "Theater Mode (E)"
@@ -426,6 +430,7 @@ export function DesktopWatchLayout({
               plat={plat}
               selectedSeason={selectedSeason}
               activeEpisode={activeEpisode}
+              onProgress={onProgress}
               isServerOpen={isServerOpen}
               onServerToggle={toggleServer}
               onServerClose={closeServer}
@@ -442,15 +447,15 @@ export function DesktopWatchLayout({
             <div
               onPointerDown={handleResizeStart}
               className={`group/divider relative w-3 shrink-0 flex items-center justify-center cursor-col-resize z-20 select-none transition-colors ${
-                isDragging ? "bg-[#D4A237]/20" : "hover:bg-white/[0.04]"
+                isDragging ? "bg-primary/20" : "hover:bg-white/[0.04]"
               }`}
               title="Drag to resize sidebar"
             >
               <div
                 className={`w-1 h-12 rounded-full transition-colors ${
                   isDragging
-                    ? "bg-[#D4A237]"
-                    : "bg-white/10 group-hover/divider:bg-[#D4A237]/60"
+                    ? "bg-primary"
+                    : "bg-white/10 group-hover/divider:bg-primary/60"
                 }`}
               />
             </div>
@@ -477,7 +482,7 @@ export function DesktopWatchLayout({
               )
             : !isSidebarCollapsed &&
               !isFullscreen && (
-                <div className="w-96 shrink-0 ml-4 flex flex-col h-full min-h-0 overflow-y-auto bg-[#0E0E12] rounded-2xl border border-white/[0.08] p-4 shadow-2xl">
+                <div className="w-96 shrink-0 ml-4 flex flex-col h-full min-h-0 overflow-y-auto bg-surface rounded-2xl border border-white/[0.08] p-4 shadow-2xl">
                   <MetadataPanel initialMeta={initialMeta} plat={plat} />
                   <div className="mt-4 pt-4 border-t border-white/[0.06]">
                     <RelatedPanel

@@ -1,5 +1,7 @@
 "use client";
 
+import { isTrackTitleJunk } from "@/lib/subtitleName";
+
 /**
  * MpvPlayerAdapter — Event-driven mpv adapter for the overlay page.
  *
@@ -79,9 +81,15 @@ function prettyTrackLabel(t: any): string {
     title = "";
   }
 
+  // Release-group / scraper titles ("HDHub4u.Ms", "FSLv2") are menu noise —
+  // the same vocabulary the online-release prettifier drops.
+  if (title && isTrackTitleJunk(title)) title = "";
+
+  // Language FIRST (mobile SubtitleSheet parity — the language is what the
+  // user scans for; a meaningful source title rides as the secondary part).
   const parts: string[] = [];
-  if (title) parts.push(title);
   if (langName) parts.push(langName);
+  if (title) parts.push(title);
   return (
     parts.join(" · ") ||
     (t?.type === "sub" ? `Subtitle ${t?.id ?? ""}` : `Audio ${t?.id ?? ""}`)
@@ -100,8 +108,9 @@ export class MpvPlayerAdapter {
   private _speed = 1;
   private _buffering = false;
 
-  private audioTracks: { id: string; label: string }[] = [];
-  private subtitleTracks: { id: string; label: string }[] = [];
+  private audioTracks: { id: string; label: string; language?: string }[] = [];
+  private subtitleTracks: { id: string; label: string; language?: string }[] =
+    [];
   private _currentAudio: string | null = null;
   private _currentSub: string | null = null;
 
@@ -336,13 +345,20 @@ export class MpvPlayerAdapter {
   }
 
   private parseTracks(list: any) {
-    const audio: { id: string; label: string }[] = [];
-    const subs: { id: string; label: string }[] = [];
+    const audio: { id: string; label: string; language?: string }[] = [];
+    const subs: { id: string; label: string; language?: string }[] = [];
     if (Array.isArray(list)) {
       for (const t of list) {
         const label = prettyTrackLabel(t);
-        if (t.type === "audio") audio.push({ id: String(t.id), label });
-        if (t.type === "sub") subs.push({ id: String(t.id), label });
+        // Raw language (code or full name) — the menus use it for the
+        // language-code heading and English-first sorting.
+        const langName = t?.lang
+          ? (TRACK_LANG_NAMES[String(t.lang).toLowerCase()] ?? String(t.lang))
+          : undefined;
+        if (t.type === "audio")
+          audio.push({ id: String(t.id), label, language: langName });
+        if (t.type === "sub")
+          subs.push({ id: String(t.id), label, language: langName });
       }
     }
     this.audioTracks = audio;

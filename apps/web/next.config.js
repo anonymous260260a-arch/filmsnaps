@@ -2,7 +2,18 @@
 // Local dev: bind Cloudflare resources (D1 TELEMETRY_DB etc.) via the
 // OpenNext platform proxy — required for getCloudflareContext() in dev.
 // No-op in production builds (the Worker provides real bindings).
-require("@opennextjs/cloudflare").initOpenNextCloudflareForDev();
+//
+// Two guards keep every build deterministic (never needs wrangler auth):
+//   - BUILD_FOR_DESKTOP=true (static export) has no Cloudflare context at
+//     runtime — skip the init entirely, or `pnpm dist` dials out and crashes.
+//   - Remote (account-bound) dev bindings are opt-in via
+//     NEXT_DEV_REMOTE_BINDINGS=true. Default is local miniflare simulation,
+//     so builds/dev runs work offline with an expired wrangler token.
+if (process.env.BUILD_FOR_DESKTOP !== "true") {
+  require("@opennextjs/cloudflare").initOpenNextCloudflareForDev({
+    remoteBindings: process.env.NEXT_DEV_REMOTE_BINDINGS === "true",
+  });
+}
 
 const IS_DESKTOP = process.env.BUILD_FOR_DESKTOP === "true";
 
@@ -10,6 +21,13 @@ const nextConfig = {
   // Desktop: static export (no Node.js server, <200ms cold start in Electron).
   // Web/mobile: default server mode (SSR + API routes).
   output: IS_DESKTOP ? "export" : undefined,
+  // Desktop export: drop the "ts" page extension so app/api/**/route.ts
+  // handlers are excluded — API routes are server-only and cannot be
+  // statically exported (force-dynamic breaks the export collector). The
+  // desktop shell calls the deployed Worker for everything dynamic instead.
+  // All pages/layouts/loadings are .tsx, so they are unaffected; a future
+  // .ts PAGE would need renaming to .tsx.
+  pageExtensions: IS_DESKTOP ? ["tsx", "jsx", "js"] : undefined,
   reactStrictMode: true,
   allowedDevOrigins: ["192.168.100.7"],
 

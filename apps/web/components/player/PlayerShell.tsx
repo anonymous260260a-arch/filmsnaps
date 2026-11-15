@@ -56,6 +56,12 @@ export interface PlayerShellProps {
   onBack?: () => void;
   /** "strip" = flex column (mpv native window); "overlay" = absolute (HTML video) */
   layout?: "strip" | "overlay";
+  /** Host (OS window) fullscreen state. In strip mode this switches the
+   *  control bar to auto-hiding immersive behavior: the bar collapses when
+   *  idle so the native video window expands to the TRUE full screen, and
+   *  slides back in on any mouse move (the ResizeObserver bounds tracking
+   *  re-measures the video region on every collapse/expand for free). */
+  fullscreen?: boolean;
   /** Ref forwarded to the video region div (mpv mode — measured for native window bounds) */
   videoRegionRef?: React.Ref<HTMLDivElement>;
   /** Native video surface (mpv): controls sit in a dedicated strip below the
@@ -97,6 +103,7 @@ export function PlayerShell({
   keyboardEnabled = true,
   speedBoostEnabled = true,
   layout = "overlay",
+  fullscreen = false,
   videoRegionRef,
 }: PlayerShellProps) {
   const [isPlaying, setIsPlaying] = useState(
@@ -109,8 +116,15 @@ export function PlayerShell({
   const [seekIndicator, setSeekIndicator] = useState<SeekIndicator>(null);
   const seekKeyRef = useRef(0);
 
+  // Fullscreen strip = immersive: the bar must auto-hide so the video window
+  // can claim the whole screen. `alwaysShowControls` only pins the bar while
+  // NOT fullscreen (windowed strip has no overlay layer to reveal it on move).
+  const hideableStrip = layout === "strip" && fullscreen === true;
   const forceVisible =
-    isSeeking || isSettingsOpen || !isPlaying || alwaysShowControls;
+    isSeeking ||
+    isSettingsOpen ||
+    !isPlaying ||
+    (alwaysShowControls && !hideableStrip);
   const { visible: controlsVisible, show: showControls } = useAutoHideControls(
     3200,
     forceVisible,
@@ -246,7 +260,11 @@ export function PlayerShell({
 
   return (
     <div
-      className={`${layout === "strip" ? "flex h-full flex-col" : "absolute inset-0"} select-none ${className}`}
+      className={`${layout === "strip" ? "flex h-full flex-col" : "absolute inset-0"} select-none ${
+        fullscreen && layout === "strip" && !controlsVisible
+          ? "cursor-none"
+          : ""
+      } ${className}`}
       onMouseMove={showControls}
       onContextMenu={handleContextMenu}
     >
@@ -322,7 +340,7 @@ export function PlayerShell({
           {/* 2x speed-boost indicator */}
           {isBoosted && (
             <div className="absolute top-6 left-1/2 -translate-x-1/2 pointer-events-none">
-              <div className="bg-black/75 border border-[#D4A237]/40 rounded-full px-4 py-1.5 flex items-center gap-1.5 text-[#D4A237] font-bold text-sm animate-[fadeIn_0.15s_ease-out]">
+              <div className="bg-black/75 border border-primary/40 rounded-full px-4 py-1.5 flex items-center gap-1.5 text-primary font-bold text-sm animate-[fadeIn_0.15s_ease-out]">
                 2x ►
               </div>
             </div>
@@ -337,7 +355,7 @@ export function PlayerShell({
             >
               <div className="h-32 w-8 bg-black/60 rounded-full flex flex-col-reverse overflow-hidden border border-white/10">
                 <div
-                  className="w-full bg-[#D4A237] transition-[height] duration-75"
+                  className="w-full bg-primary transition-[height] duration-75"
                   style={{ height: `${gesture.value * 100}%` }}
                 />
               </div>
@@ -353,7 +371,7 @@ export function PlayerShell({
           {isBuffering && !switchingLabel && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="bg-black/50 rounded-full p-4 animate-[fadeIn_0.2s_ease-out]">
-                <Loader2 size={32} className="text-[#D4A237] animate-spin" />
+                <Loader2 size={32} className="text-primary animate-spin" />
               </div>
             </div>
           )}
@@ -362,7 +380,7 @@ export function PlayerShell({
           {switchingLabel && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
               <div className="flex items-center gap-2 bg-black/80 border border-white/10 rounded-full px-4 py-2 animate-[fadeIn_0.15s_ease-out]">
-                <Loader2 size={14} className="text-[#D4A237] animate-spin" />
+                <Loader2 size={14} className="text-primary animate-spin" />
                 <span className="text-xs font-semibold text-white max-w-[80%] truncate">
                   {switchingLabel}
                 </span>
@@ -372,13 +390,31 @@ export function PlayerShell({
         </div>
       </div>
 
-      {/* Control bar — outside video region so it has natural height in strip mode */}
+      {/* Control bar — outside video region so it has natural height in strip mode.
+          YouTube-style fullscreen: the bar SLIDES away (max-height + opacity
+          animation) and the ResizeObserver grows the native video window to
+          the true full screen frame-by-frame during the transition. The bar's
+          black background blends seamlessly with mpv's internal letterbox, so
+          the video window edge is invisible — it reads as overlay controls on
+          a full-screen video. */}
       {player && (
         <div
           data-mpv-control-bar
           className={
             layout === "strip"
-              ? "relative shrink-0 border-t border-white/10 bg-black z-20"
+              ? `relative shrink-0 bg-black z-20 ${
+                  hideableStrip
+                    ? `transition-[max-height,opacity] duration-300 ease-out ${
+                        controlsVisible
+                          ? // NO overflow-hidden while expanded — the settings /
+                            // audio / CC popovers float UP out of this container
+                            // into the video region; clipping them here made
+                            // them vanish behind the video.
+                            "max-h-32 opacity-100"
+                          : "max-h-0 overflow-hidden opacity-0 pointer-events-none"
+                      }`
+                    : "border-t border-white/10"
+                }`
               : `absolute inset-x-0 bottom-0 z-20 transition-opacity duration-300 ${
                   controlsVisible
                     ? "opacity-100"
@@ -401,7 +437,11 @@ export function PlayerShell({
             onSeekingChange={setIsSeeking}
             onSettingsOpenChange={setIsSettingsOpen}
             keyboardEnabled={keyboardEnabled}
-            visible={layout === "strip" || controlsVisible}
+            visible={
+              layout === "strip"
+                ? controlsVisible || !hideableStrip
+                : controlsVisible
+            }
             sourceLabel={sourceLabel}
             onSourcePicker={onSourcePicker}
             badgePosition={alwaysShowControls ? "row" : "top"}

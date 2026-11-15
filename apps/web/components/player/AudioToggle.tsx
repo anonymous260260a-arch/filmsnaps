@@ -27,7 +27,7 @@ export function AudioToggle({
     <div
       role="group"
       aria-label="Audio track"
-      className={`inline-flex items-center rounded-full border border-white/[0.08] bg-[#0E0E11] p-0.5 ${className}`}
+      className={`inline-flex items-center rounded-full border border-white/[0.08] bg-surface p-0.5 ${className}`}
     >
       {OPTS.map((opt) => {
         const active = audio === opt.value;
@@ -39,8 +39,8 @@ export function AudioToggle({
             onClick={() => onAudioChange(opt.value)}
             className={`h-7 rounded-full px-3 text-[11px] font-bold uppercase tracking-wide transition-colors ${
               active
-                ? "bg-[#D4A237] text-[#070708]"
-                : "text-zinc-400 hover:text-zinc-200"
+                ? "bg-primary text-background"
+                : "text-muted-foreground hover:text-foreground"
             }`}
           >
             {opt.label}

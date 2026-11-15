@@ -49,15 +49,15 @@ export function PlayerControlOverlay({
       {/* pointer-events-none so if the iframe loads (visually) before
           onLoad fires, the video is still clickable underneath */}
       {isPending && !loadingExpired && (
-        <div className="absolute inset-0 bg-[#070708] z-50 flex flex-col items-center justify-center gap-5 pointer-events-none">
+        <div className="absolute inset-0 bg-background z-50 flex flex-col items-center justify-center gap-5 pointer-events-none">
           <div className="relative w-14 h-14">
-            <div className="absolute inset-0 rounded-full border-2 border-[#222226]" />
+            <div className="absolute inset-0 rounded-full border-2 border-subtle" />
             <div
-              className="absolute inset-0 rounded-full border-t-2 border-[#D4A237] animate-spin"
+              className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"
               style={{ animationDuration: "1.2s" }}
             />
-            <div className="absolute inset-3 rounded-full border-2 border-[#222226]" />
-            <div className="absolute inset-[18px] rounded-full bg-[#D4A237]/30" />
+            <div className="absolute inset-3 rounded-full border-2 border-subtle" />
+            <div className="absolute inset-[18px] rounded-full bg-primary/30" />
           </div>
           <p className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse">
             Scanning Projection Room
@@ -67,11 +67,11 @@ export function PlayerControlOverlay({
 
       {/* ── CPU Abuse Warning ── */}
       {cpuWarning && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#070708]/85 backdrop-blur-sm">
-          <div className="flex items-start gap-3 text-sm text-[#E05252] bg-red-500/10 px-5 py-4 rounded-xl border border-red-500/20 max-w-md mx-4">
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/85 backdrop-blur-sm">
+          <div className="flex items-start gap-3 text-sm text-destructive bg-red-500/10 px-5 py-4 rounded-xl border border-red-500/20 max-w-md mx-4">
             <AlertCircle
               size={16}
-              className="text-[#E05252] flex-shrink-0 mt-0.5"
+              className="text-destructive flex-shrink-0 mt-0.5"
             />
             <div className="flex-1 text-xs sm:text-sm">
               This server is using too much CPU — it has been stopped.
@@ -81,7 +81,7 @@ export function PlayerControlOverlay({
             </div>
             <button
               onClick={() => setCpuWarning(false)}
-              className="text-zinc-600 hover:text-zinc-300 transition-colors p-1 flex-shrink-0"
+              className="text-faint hover:text-foreground transition-colors p-1 flex-shrink-0"
               aria-label="Dismiss"
             >
               <X size={14} />

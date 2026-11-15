@@ -8,6 +8,9 @@ import { DesktopAppShell } from "@/components/desktop/DesktopAppShell";
 import { DesktopLegalGate } from "@/components/legal/DesktopLegalGate";
 import { JsonLd } from "@/components/JsonLd";
 import { Metadata } from "next";
+// Client-bundle side effect: silences routine console output in production
+// builds (dev is untouched; warn/error always pass).
+import "@/lib/prodConsole";
 
 // ── Site-wide Organization + WebSite structured data ──
 // Rendered once in the root body; gives search engines a stable entity and
@@ -147,11 +150,11 @@ export const metadata: Metadata = {
     apple: "/icon.png",
   },
   other: {
-    "theme-color": "#070708",
+    "theme-color": "#000000",
     "apple-mobile-web-app-capable": "yes",
     "apple-mobile-web-app-status-bar-style": "black-translucent",
     "apple-mobile-web-app-title": "FilmSnaps",
-    "msapplication-TileColor": "#070708",
+    "msapplication-TileColor": "#000000",
   },
 };
 

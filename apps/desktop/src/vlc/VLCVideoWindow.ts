@@ -103,8 +103,17 @@ export class VLCVideoWindow {
    *  click-through so mouse input reaches the main window beneath. */
   applyChildClickThrough(): void {
     if (!this.window || this.window.isDestroyed()) return;
-    const n = makeChildWindowsClickThrough(this.window.getNativeWindowHandle());
-    logVlc.log(`[videoWindow] click-through applied to ${n} child window(s)`);
+    try {
+      const n = makeChildWindowsClickThrough(
+        this.window.getNativeWindowHandle(),
+      );
+      logVlc.log(`[videoWindow] click-through applied to ${n} child window(s)`);
+    } catch (err: any) {
+      // koffi FFI failures must degrade to "no click-through" — callers fire
+      // this from the mpv event fan-out and a throw here used to swallow the
+      // whole event (fwd() side effects ran before the renderer send).
+      logVlc.warn(`[videoWindow] click-through failed: ${err?.message ?? err}`);
+    }
   }
 
   getNativeHandle(): Buffer {

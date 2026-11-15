@@ -105,7 +105,7 @@ export function ReliabilitySection({
                     content={({ active, payload, label: itemLabel }) => {
                       if (!active || !payload?.length) return null;
                       return (
-                        <div className="bg-[#121216] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
+                        <div className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
                           <p className="font-bold text-white">{itemLabel}</p>
                           <p className="text-red-400 mt-0.5">
                             {fmtInt(payload[0].value as number)} occurrences
@@ -171,7 +171,7 @@ export function ReliabilitySection({
                     content={({ active, payload, label: itemLabel }) => {
                       if (!active || !payload?.length) return null;
                       return (
-                        <div className="bg-[#121216] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
+                        <div className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
                           <p className="font-bold text-white">{itemLabel}</p>
                           <p className="text-purple-400 mt-0.5">
                             {fmtInt(payload[0].value as number)} session exits

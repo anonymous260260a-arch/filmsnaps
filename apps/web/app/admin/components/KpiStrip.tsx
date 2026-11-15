@@ -81,7 +81,7 @@ export function KpiStrip({ cur, prev, rangeDays }: KpiStripProps) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3.5 mt-6 animate-fade-in">
       {/* 0. Viewers (distinct anonymous installs) */}
-      <div className="bg-[#141417] border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 flex flex-col justify-between transition-all">
+      <div className="bg-elevated border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 flex flex-col justify-between transition-all">
         <div>
           <div className="flex items-center justify-between gap-2 mb-1.5">
             <span className="text-[11px] font-bold tracking-wider text-white/50 uppercase">
@@ -103,7 +103,7 @@ export function KpiStrip({ cur, prev, rangeDays }: KpiStripProps) {
       </div>
 
       {/* 1. Watch Opens */}
-      <div className="bg-[#141417] border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 flex flex-col justify-between transition-all">
+      <div className="bg-elevated border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 flex flex-col justify-between transition-all">
         <div>
           <div className="flex items-center justify-between gap-2 mb-1.5">
             <span className="text-[11px] font-bold tracking-wider text-white/50 uppercase">
@@ -123,7 +123,7 @@ export function KpiStrip({ cur, prev, rangeDays }: KpiStripProps) {
 
       {/* 2. Playback Success */}
       <div
-        className={`bg-[#141417] border rounded-2xl p-4 flex flex-col justify-between transition-all ${
+        className={`bg-elevated border rounded-2xl p-4 flex flex-col justify-between transition-all ${
           isSuccessLow
             ? "border-red-500/30 bg-red-500/[0.02]"
             : "border-white/[0.07] hover:border-white/[0.14]"
@@ -156,7 +156,7 @@ export function KpiStrip({ cur, prev, rangeDays }: KpiStripProps) {
       </div>
 
       {/* 3. Time to First Frame */}
-      <div className="bg-[#141417] border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 flex flex-col justify-between transition-all">
+      <div className="bg-elevated border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 flex flex-col justify-between transition-all">
         <div>
           <div className="flex items-center justify-between gap-2 mb-1.5">
             <span className="text-[11px] font-bold tracking-wider text-white/50 uppercase">
@@ -175,7 +175,7 @@ export function KpiStrip({ cur, prev, rangeDays }: KpiStripProps) {
       </div>
 
       {/* 4. Watched >= 50% */}
-      <div className="bg-[#141417] border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 flex flex-col justify-between transition-all">
+      <div className="bg-elevated border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 flex flex-col justify-between transition-all">
         <div>
           <div className="flex items-center justify-between gap-2 mb-1.5">
             <span className="text-[11px] font-bold tracking-wider text-white/50 uppercase">
@@ -202,7 +202,7 @@ export function KpiStrip({ cur, prev, rangeDays }: KpiStripProps) {
       </div>
 
       {/* 5. Sessions */}
-      <div className="bg-[#141417] border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 flex flex-col justify-between transition-all">
+      <div className="bg-elevated border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 flex flex-col justify-between transition-all">
         <div>
           <div className="flex items-center justify-between gap-2 mb-1.5">
             <span className="text-[11px] font-bold tracking-wider text-white/50 uppercase">
@@ -221,7 +221,7 @@ export function KpiStrip({ cur, prev, rangeDays }: KpiStripProps) {
 
       {/* 6. Buffering Events */}
       <div
-        className={`bg-[#141417] border rounded-2xl p-4 flex flex-col justify-between transition-all ${
+        className={`bg-elevated border rounded-2xl p-4 flex flex-col justify-between transition-all ${
           stallEvents > 50
             ? "border-amber-500/30"
             : "border-white/[0.07] hover:border-white/[0.14]"

@@ -113,14 +113,14 @@ export function ServerDropdown({
   return (
     <div
       ref={dropdownRef}
-      className="absolute top-full mt-2 left-0 z-50 w-80 bg-[#16161A] border border-[#222226]
+      className="absolute top-full mt-2 left-0 z-50 w-80 bg-elevated border border-subtle
         rounded-xl shadow-[0_8px_40px_rgba(0,0,0,0.6)] overflow-hidden animate-scale-in origin-top-left"
       role="listbox"
       aria-label="Source Server"
     >
       {/* ── Header ── */}
-      <div className="px-3 py-2.5 border-b border-[#222226]">
-        <p className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500">
+      <div className="px-3 py-2.5 border-b border-subtle">
+        <p className="text-[11px] font-black uppercase tracking-[0.2em] text-muted-foreground">
           SOURCE SERVER
         </p>
       </div>
@@ -142,8 +142,8 @@ export function ServerDropdown({
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all border
                 ${
                   isActive
-                    ? "bg-[#D4A237]/10 border-l-2 border-[#D4A237] border-y-0 border-r-0"
-                    : "border border-transparent hover:bg-[#111113]"
+                    ? "bg-primary/10 border-l-2 border-primary border-y-0 border-r-0"
+                    : "border border-transparent hover:bg-surface"
                 }`}
               role="option"
               aria-selected={isActive}
@@ -151,14 +151,14 @@ export function ServerDropdown({
               {/* Provider info */}
               <div className="flex-1 min-w-0">
                 <p
-                  className={`text-sm font-semibold truncate ${isActive ? "text-[#D4A237]" : "text-foreground"}`}
+                  className={`text-sm font-semibold truncate ${isActive ? "text-primary" : "text-foreground"}`}
                 >
                   {p.displayName || p.name}
                 </p>
                 {p.note && (
                   <span
                     className="mt-1 inline-flex items-center px-1.5 py-0.5 rounded
-                    bg-white/[0.06] text-[11px] font-medium text-zinc-300
+                    bg-white/[0.06] text-[11px] font-medium text-foreground
                     border border-white/[0.08]"
                   >
                     {p.note}

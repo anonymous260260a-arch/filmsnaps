@@ -111,24 +111,43 @@ function fwd(ev: any): void {
   // MpvManager emits two shapes: synthesized {type:"pause"}-style events and
   // a broadcast {type, raw} carrying mpv's IPC event. raw.event is most
   // specific; ev.type covers the synthesized form.
-  const type = ev?.raw?.event ?? ev?.type ?? ev?.event;
+  const rawEvent = ev?.raw?.event;
+  const type = rawEvent ?? ev?.type ?? ev?.event;
 
-  // Apply WS_EX_TRANSPARENT on file-loaded / playback-restart (idempotent)
-  if (type === "file-loaded" || type === "playback-restart") {
-    videoWindow?.applyChildClickThrough();
+  // Event-chain diagnostics — real mpv events only (the synthesized
+  // time-pos/duration stream would flood the terminal).
+  if (rawEvent && rawEvent !== "property-change") {
+    logMpv.log(`[mpv:fwd] → renderer: ${rawEvent}`);
   }
 
-  // VO/AO diagnostics — once per file load and once 5s into playback
-  if (type === "file-loaded") {
-    logOutputState("file-loaded").catch(() => {});
-    logMpvLogSummary("file-loaded");
-  } else if (type === "playback-restart") {
-    setTimeout(() => logOutputState("playback+5s").catch(() => {}), 5000);
-  }
-
-  // Events go to the MAIN window only — the video window has no page.
+  // Deliver to the renderer FIRST. Side effects below used to run BEFORE the
+  // send; a throw inside applyChildClickThrough propagated into MpvManager's
+  // IPC line-handler catch (silently swallowed) and the event NEVER reached
+  // the renderer — file-loaded / playback-restart were being eaten on every
+  // load, which is why the poster-gate/loader state never progressed.
   if (mainWin && !mainWin.isDestroyed()) {
     mainWin.webContents.send("mpv:event", ev);
+  }
+
+  // Apply WS_EX_TRANSPARENT on file-loaded / playback-restart (idempotent).
+  // Contained: a failure here must degrade to "no click-through", never to
+  // "playback events disappear".
+  try {
+    if (type === "file-loaded" || type === "playback-restart") {
+      videoWindow?.applyChildClickThrough();
+    }
+
+    // VO/AO diagnostics — once per file load and once 5s into playback
+    if (type === "file-loaded") {
+      logOutputState("file-loaded").catch(() => {});
+      logMpvLogSummary("file-loaded");
+    } else if (type === "playback-restart") {
+      setTimeout(() => logOutputState("playback+5s").catch(() => {}), 5000);
+    }
+  } catch (err: any) {
+    logMpv.warn(
+      `[mpv:fwd] post-send side effect failed (${type}): ${err?.message ?? err}`,
+    );
   }
 }
 
@@ -212,10 +231,20 @@ export function registerMpvIPC(mainWindow: BrowserWindow): void {
         }
 
         // The window carries no web contents, so ready-to-show never fires —
-        // settle for it being created (it is shown later, by showVideo).
+        // poll for a usable native handle (Windows hands it out as soon as
+        // the BrowserWindow exists, usually <50ms) instead of a blind 500ms
+        // sleep. Cap at 500ms so a pathological platform still proceeds.
         await new Promise<void>((resolve) => {
-          if (childWin.isVisible()) resolve();
-          else setTimeout(resolve, 500);
+          if (childWin.isVisible()) return resolve();
+          const started = Date.now();
+          const poll = () => {
+            if (childWin.isDestroyed()) return resolve();
+            const handle = videoWindow!.getNativeHandle();
+            if (handle && handle.length > 0) return resolve();
+            if (Date.now() - started >= 500) return resolve();
+            setTimeout(poll, 25);
+          };
+          poll();
         });
 
         const hwnd = videoWindow.getNativeHandle();

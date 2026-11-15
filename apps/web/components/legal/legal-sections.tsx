@@ -17,9 +17,9 @@ export const LEGAL_GATE_SECTIONS: LegalSection[] = [
     key: "content",
     title: "Content Notice",
     body: (
-      <p className="text-sm leading-6 text-zinc-300">
+      <p className="text-sm leading-6 text-foreground">
         FilmSnaps does{" "}
-        <strong className="font-semibold text-zinc-100">not</strong> host,
+        <strong className="font-semibold text-foreground">not</strong> host,
         store, upload, or manage any video content, files, or media. All content
         accessed through this application is hosted by third-party services that
         are not affiliated with us.
@@ -30,7 +30,7 @@ export const LEGAL_GATE_SECTIONS: LegalSection[] = [
     key: "affiliation",
     title: "No Affiliation",
     body: (
-      <p className="text-sm leading-6 text-zinc-300">
+      <p className="text-sm leading-6 text-foreground">
         We do not own, operate, or have any access to the servers that host the
         content you stream or download through this app. We do not control what
         content is available, how it is stored, or who has access to it. Any
@@ -43,7 +43,7 @@ export const LEGAL_GATE_SECTIONS: LegalSection[] = [
     key: "about",
     title: "About This Project",
     body: (
-      <p className="text-sm leading-6 text-zinc-300">
+      <p className="text-sm leading-6 text-foreground">
         FilmSnaps is an independent project and is not a commercial streaming
         service. It demonstrates open-source software development and modern
         mobile application architecture.
@@ -55,7 +55,7 @@ export const LEGAL_GATE_SECTIONS: LegalSection[] = [
     title: "User Responsibility",
     body: (
       <div>
-        <p className="text-sm leading-6 text-zinc-300">
+        <p className="text-sm leading-6 text-foreground">
           As a user of this application, you are responsible for:
         </p>
         <ul className="mt-2 space-y-2">
@@ -65,10 +65,10 @@ export const LEGAL_GATE_SECTIONS: LegalSection[] = [
             "Not redistributing downloaded content or using it for commercial purposes",
           ].map((item) => (
             <li key={item} className="flex items-start gap-2.5">
-              <span className="mt-1.5 text-[11px] leading-none text-[#D4A237]">
+              <span className="mt-1.5 text-[11px] leading-none text-primary">
                 ■
               </span>
-              <span className="text-sm leading-5 text-zinc-300">{item}</span>
+              <span className="text-sm leading-5 text-foreground">{item}</span>
             </li>
           ))}
         </ul>
@@ -79,7 +79,7 @@ export const LEGAL_GATE_SECTIONS: LegalSection[] = [
     key: "warranty",
     title: "No Warranty",
     body: (
-      <p className="text-sm leading-6 text-zinc-300">
+      <p className="text-sm leading-6 text-foreground">
         This software is provided &quot;as is&quot; without warranty of any
         kind. The developers and contributors are not responsible for any
         damages or legal issues that may arise from the use of this application.

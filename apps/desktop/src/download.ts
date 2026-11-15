@@ -27,6 +27,7 @@ import {
   session,
   ipcMain,
   shell,
+  Notification,
   type BrowserWindow,
   type DownloadItem,
 } from "electron";
@@ -195,6 +196,27 @@ class DownloadManager {
     const win = this.getWindow();
     if (win && !win.isDestroyed()) {
       win.webContents.send("download:progress", this.allTasks());
+      // Native taskbar progress (Windows): aggregated fraction of active
+      // downloads, indeterminate while sizes are unknown, paused-aware,
+      // cleared when nothing is running. (-1 removes the overlay.)
+      const active = this.allTasks().filter(
+        (t) => t.state === "active" || t.state === "paused",
+      );
+      if (active.length === 0) {
+        win.setProgressBar(-1);
+      } else {
+        const known = active.every((t) => t.totalBytes > 0);
+        const received = active.reduce((s, t) => s + t.receivedBytes, 0);
+        const total = active.reduce((s, t) => s + t.totalBytes, 0);
+        const paused = active.every((t) => t.state === "paused");
+        if (known && total > 0) {
+          win.setProgressBar(Math.min(1, received / total), {
+            mode: paused ? "paused" : "normal",
+          });
+        } else {
+          win.setProgressBar(2, { mode: paused ? "paused" : "normal" }); // indeterminate
+        }
+      }
     }
     this.schedulePersist();
   }
@@ -265,6 +287,15 @@ class DownloadManager {
         task.state = "completed";
         task.receivedBytes = item.getReceivedBytes();
         task.totalBytes = item.getTotalBytes();
+        // Native OS notification — the app may be minimised or focused on
+        // something else when a long download finishes.
+        if (Notification.isSupported() && !this.getWindow()?.isFocused()) {
+          new Notification({
+            title: "Download complete",
+            body: task.title,
+            icon: join(process.resourcesPath ?? "", "resources", "icon.png"),
+          }).show();
+        }
       } else {
         task.state = "failed";
         task.error = state;

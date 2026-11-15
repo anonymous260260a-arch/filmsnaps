@@ -52,6 +52,11 @@ import { MobilePlayerZone } from "@/components/watch/MobilePlayerZone";
 import { useHeldProviderSession } from "@/hooks/useHeldProviderSession";
 import { useMegaPlayChain } from "@/hooks/useMegaPlayChain";
 import { buildEmbedUrl } from "@/lib/watch/embedUrl";
+import {
+  buildDirectProviderChain,
+  invalidateDirectChain,
+} from "@/lib/streamPrefetch";
+import { SkeletonWatch } from "@/components/SkeletonLoader";
 import type { ProviderDefinition } from "@filmsnaps/shared";
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -263,11 +268,12 @@ function WatchClientContent({
   }, [setSelectedProvider]);
 
   // ── Watch-history writes ──
-  // The provider embed's playback position (relayed from the desktop session
-  // preload over player:progress) is persisted every ~10s + on leave, so
-  // Continue Watching / resume points work. No-op on web (cross-origin embeds
-  // are opaque) and while no samples arrive.
-  usePlaybackRecorder({
+  // Playback position is persisted every ~10s + on leave so Continue Watching
+  // and resume points work. Two feeds: the desktop embed relay
+  // (player:progress IPC) and — via the onProgress handle below — the in-page
+  // direct players (browser movi, desktop mpv, Falix video.js). Embeds on web
+  // stay untracked (cross-origin iframes are opaque).
+  const playbackRecorder = usePlaybackRecorder({
     tmdbId: contentid,
     mediaType: plat,
     season: selectedSeason,
@@ -413,12 +419,43 @@ function WatchClientContent({
     [setSelectedProvider],
   );
 
-  // ── Direct exhausted all links → hand off to the next embed provider ──
-  // Mirrors VideoZone's auto-fallback: "all direct links dead" lands the user
-  // in a working embed instead of a dead-end card.
+  // ── Direct exhausted all links → walk the direct chain, then embeds ──
+  // Mobile parity: when every link of one direct provider is dead, the chain
+  // moves to the NEXT DIRECT provider first (registry order); only when no
+  // direct provider remains does an embed take over (VideoZone's auto-fallback
+  // — a working embed instead of a dead-end card). The chain's cached winner
+  // is invalidated so the stale (just-died) pool can't be handed back.
+  //
+  // directTriedRef: providers already exhausted for this title/session. Without
+  // it the walk ping-pongs — A exhausts → switch B → B exhausts → the chain
+  // lookup picks A again → infinite A↔B. Reset when the content/episode
+  // changes so a fresh episode can re-try providers.
+  const directTriedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    directTriedRef.current = new Set();
+  }, [plat, contentid, selectedSeason, activeEpisode]);
+
   const handleDirectExhausted = useCallback(() => {
     if (!currentProvider) return;
     if (!isDirectProvider(currentProvider)) return;
+    directTriedRef.current.add(currentProvider.id);
+
+    invalidateDirectChain(plat, contentid, selectedSeason, activeEpisode);
+
+    const chain = buildDirectProviderChain(currentProvider.id);
+    const directNextId = chain.find(
+      (id) => id !== currentProvider.id && !directTriedRef.current.has(id),
+    );
+    const directNext = directNextId ? getProvider(directNextId) : undefined;
+    if (directNext) {
+      console.log(`[WatchClient] direct exhausted → chain to ${directNext.id}`);
+      setTimeout(() => {
+        handleProviderSelect(directNext);
+        setIframeLoadError(false);
+      }, 600);
+      return;
+    }
+
     const next = providers.find(
       (p) =>
         p.id !== currentProvider.id && !isDirectProvider(p) && !p.animeOnly,
@@ -429,7 +466,16 @@ function WatchClientContent({
       handleProviderSelect(next);
       setIframeLoadError(false);
     }, 600);
-  }, [currentProvider, providers, handleProviderSelect, setIframeLoadError]);
+  }, [
+    currentProvider,
+    providers,
+    handleProviderSelect,
+    setIframeLoadError,
+    plat,
+    contentid,
+    selectedSeason,
+    activeEpisode,
+  ]);
 
   const displayTitle = initialMeta?.name || initialMeta?.title || "";
   const year = (
@@ -449,9 +495,11 @@ function WatchClientContent({
   // sees desktop layout (≥1280px), React discards the server tree, and a
   // fresh remount creates duplicate webview sessions causing "double connect".
   if (!hydrated) {
-    // Skeleton placeholder — no player, no session, no provider init.
-    // Matches what SSR produces so hydration behaves itself.
-    return <div className="min-h-screen bg-[#0a0a0f]" />;
+    // Full watch-shaped skeleton — server and hydration pass render this
+    // identically, then the real layout mounts. Same shape as the route's
+    // loading.tsx / Suspense fallback, so the shell never changes silhouette
+    // between "loading" and "hydrated".
+    return <SkeletonWatch />;
   }
 
   if (isDesktopVp) {
@@ -471,6 +519,7 @@ function WatchClientContent({
         isPending={isPending}
         selectedSeason={selectedSeason}
         activeEpisode={activeEpisode}
+        onProgress={playbackRecorder.pushSample}
         onProviderSelect={handleProviderSelect}
         onSeasonChange={handleSeasonChange}
         onRetry={showAnimeExhausted ? handleAnimeRetry : handleRetry}
@@ -500,7 +549,7 @@ function WatchClientContent({
   //   Tablet portrait:     video top + episode card below (vertical list).
   //
   return (
-    <div className="flex flex-col h-[100dvh] w-full overflow-hidden bg-[#070708] text-muted-foreground select-none">
+    <div className="flex flex-col h-[100dvh] w-full overflow-hidden bg-background text-muted-foreground select-none">
       {/* Film grain — fullscreen:hidden keeps it off the video while watching.
           The overlay sits above the player surface, so while fullscreen the
           browser would re-composite this full-viewport noise texture + blend
@@ -510,7 +559,7 @@ function WatchClientContent({
 
       {/* ── Top bar: back + server (Compact & Clean on Mobile) ── */}
       {!minimal && (
-        <header className="shrink-0 flex items-center justify-between gap-2.5 px-3 py-2 bg-[#0A0A0D]/95 backdrop-blur-md border-b border-white/[0.06] z-30">
+        <header className="shrink-0 flex items-center justify-between gap-2.5 px-3 py-2 bg-background/95 backdrop-blur-md border-b border-white/[0.06] z-30">
           <div className="flex items-center gap-2 min-w-0">
             <button
               onClick={() => router.back()}
@@ -526,8 +575,8 @@ function WatchClientContent({
               >
                 {displayTitle}
               </h1>
-              <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500 leading-tight mt-0.5">
-                <span className="text-[#D4A237]">
+              <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground leading-tight mt-0.5">
+                <span className="text-primary">
                   {plat === "tv" ? "Series" : "Film"}
                 </span>
                 <span className="w-1 h-1 rounded-full bg-zinc-700" />
@@ -573,6 +622,7 @@ function WatchClientContent({
               sessionReady={sessionReady}
               isElectron={isElectronEnv}
               isPending={isPending}
+              onProgress={playbackRecorder.pushSample}
               langAnswered={langAnswered}
               onLanguageSelect={handleLanguageSelect}
               onRetry={showAnimeExhausted ? handleAnimeRetry : handleRetry}

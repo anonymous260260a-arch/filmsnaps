@@ -25,11 +25,11 @@ import React, {
 import videojs from "video.js";
 import "video.js/dist/video-js.css";
 import { Clapperboard, RefreshCw } from "lucide-react";
-import { WebCodecsPlayer } from "./WebCodecsPlayer";
+import { WebCodecsPlayer, type WebCodecsPlayerHandle } from "./WebCodecsPlayer";
 import { checkHevcSupport } from "@/lib/streamingMkvParser";
 import { apiUrl } from "@/lib/tmdb";
-import { createLocalStorageAdapter } from "@filmsnaps/shared";
-import type { WatchProgress } from "@filmsnaps/shared";
+import { createLocalStorageAdapter, useWatchHistory } from "@filmsnaps/shared";
+import type { PlaybackTimeSample } from "@/hooks/usePlaybackRecorder";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -72,6 +72,12 @@ interface FalixPlayerProps {
   onLoad?: () => void;
   /** Called on error */
   onError?: () => void;
+  /**
+   * Playback-time reporter for watch-history persistence — same contract as
+   * DirectVideoPlayer's onProgress. usePlaybackRecorder (WatchClient) owns
+   * the save cadence.
+   */
+  onProgress?: (sample: PlaybackTimeSample) => void;
 }
 
 // ── Language mapping (from filename patterns like "HIN-TAM-TEL") ──
@@ -140,6 +146,7 @@ export function FalixPlayer({
   activeEpisode = 1,
   onLoad,
   onError,
+  onProgress,
 }: FalixPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerRef = useRef<ReturnType<typeof videojs> | null>(null);
@@ -302,6 +309,90 @@ export function FalixPlayer({
     return url;
   }, [currentEntry]);
 
+  // ── Resume target + watch-progress reporting (watch-history parity with
+  // DirectVideoPlayer) ── Read the last saved position for THIS title/episode
+  // from the shared store once per source; the seek fires on the first
+  // timeupdate that reports a duration. Sentinel: null = read pending,
+  // -1 = nothing to resume.
+  const historyStorage = useMemo(() => createLocalStorageAdapter(), []);
+  const { getProgress } = useWatchHistory(historyStorage);
+  const getProgressRef = useRef(getProgress);
+  useEffect(() => {
+    getProgressRef.current = getProgress;
+  }, [getProgress]);
+  const onProgressRef = useRef(onProgress);
+  useEffect(() => {
+    onProgressRef.current = onProgress;
+  }, [onProgress]);
+  const resumeTargetRef = useRef<number | null>(null);
+  const resumeDoneRef = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    resumeTargetRef.current = null;
+    resumeDoneRef.current = false;
+    void getProgressRef
+      .current(tmdbId, mediaType, selectedSeason, activeEpisode)
+      .then((p) => {
+        if (cancelled) return;
+        resumeTargetRef.current =
+          p && !p.completed && p.currentTime > 5
+            ? Math.floor(p.currentTime)
+            : -1;
+      })
+      .catch(() => {
+        if (!cancelled) resumeTargetRef.current = -1;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tmdbId, mediaType, selectedSeason, activeEpisode, videoUrl]);
+
+  // ── WebCodecs (HEVC) surface: no video.js player exists to fire
+  // timeupdate, so poll the exposed player handle instead — same sample
+  // shape, same one-shot resume seek. Inactive while an H.264 entry plays
+  // through video.js (its timeupdate path above owns reporting then).
+  const webcodecsActive =
+    !!currentEntry &&
+    !isH264Encoding(currentEntry.name || "") &&
+    hevcSupported === true;
+  const webcodecsHandleRef = useRef<WebCodecsPlayerHandle | null>(null);
+  const handleWebcodecsReady = useCallback((h: WebCodecsPlayerHandle) => {
+    webcodecsHandleRef.current = h;
+  }, []);
+  useEffect(() => {
+    if (!webcodecsActive) return;
+    const tick = () => {
+      const h = webcodecsHandleRef.current;
+      if (!h) return;
+      const duration = h.getDuration();
+      const currentTime = h.getCurrentTime();
+      // Consume the one-shot only once a real duration exists — the handle
+      // reports 0 until the demuxer parses metadata, and seeking on 0 would
+      // burn it with no effect.
+      if (
+        !resumeDoneRef.current &&
+        resumeTargetRef.current !== null &&
+        duration > 0
+      ) {
+        resumeDoneRef.current = true;
+        const target = resumeTargetRef.current;
+        // Skip targets in the final stretch — seeking there would instantly
+        // re-complete the title; start fresh instead.
+        if (target > 5 && target < duration - 15) {
+          h.seek(target);
+        }
+      }
+      if (!(duration > 0) || !(currentTime > 0)) return;
+      onProgressRef.current?.({
+        currentTime,
+        duration,
+        paused: h.isPaused(),
+      });
+    };
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [webcodecsActive]);
+
   // ── 3. Initialize video.js lazily — called when we have a video element and need a player ──
   const initPlayer = useCallback(() => {
     if (playerRef.current) return playerRef.current;
@@ -452,12 +543,43 @@ export function FalixPlayer({
       console.log(`[Falix] Step 5h: canplay event — enough data to play`);
     };
 
+    // Watch-progress tick: one-shot resume seek (first duration report proves
+    // the file is loaded) + push the sample to usePlaybackRecorder.
+    const onTimeUpdate = () => {
+      // video.js types these as number | undefined (NaN before metadata) —
+      // coerce so the guards below behave.
+      const duration = player.duration() ?? 0;
+      const currentTime = player.currentTime() ?? 0;
+      // One-shot resume: consumed only once a real duration exists (NaN → 0
+      // before loadedmetadata would otherwise burn it with no effect).
+      if (
+        !resumeDoneRef.current &&
+        resumeTargetRef.current !== null &&
+        duration > 0
+      ) {
+        resumeDoneRef.current = true;
+        const target = resumeTargetRef.current;
+        // Skip targets in the final stretch — seeking there would instantly
+        // re-complete the title; start fresh instead.
+        if (target > 5 && target < duration - 15) {
+          player.currentTime(target);
+        }
+      }
+      if (!(duration > 0) || !(currentTime > 0)) return;
+      onProgressRef.current?.({
+        currentTime,
+        duration,
+        paused: player.paused(),
+      });
+    };
+
     player.one("loadedmetadata", onMeta);
     player.one("error", onError);
     player.one("play", onPlay);
     player.on("stalled", onStalled);
     player.on("waiting", onWaiting);
     player.one("canplay", onCanPlay);
+    player.on("timeupdate", onTimeUpdate);
 
     player.src({ src: videoUrl, type: "video/x-matroska" });
 
@@ -478,6 +600,7 @@ export function FalixPlayer({
       player.off("stalled", onStalled);
       player.off("waiting", onWaiting);
       player.off("canplay", onCanPlay);
+      player.off("timeupdate", onTimeUpdate);
     };
   }, [videoUrl, onLoad, discoverAudioTracks, currentEntry, initPlayer]);
 
@@ -547,15 +670,15 @@ export function FalixPlayer({
   // ── Loading state ──
   if (loading) {
     return (
-      <div className="absolute inset-0 bg-[#070708] z-30 flex flex-col items-center justify-center gap-5">
+      <div className="absolute inset-0 bg-background z-30 flex flex-col items-center justify-center gap-5">
         <div className="relative w-14 h-14">
-          <div className="absolute inset-0 rounded-full border-2 border-[#222226]" />
+          <div className="absolute inset-0 rounded-full border-2 border-subtle" />
           <div
-            className="absolute inset-0 rounded-full border-t-2 border-[#D4A237] animate-spin"
+            className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"
             style={{ animationDuration: "1.2s" }}
           />
-          <div className="absolute inset-3 rounded-full border-2 border-[#222226]" />
-          <div className="absolute inset-[18px] rounded-full bg-[#D4A237]/30" />
+          <div className="absolute inset-3 rounded-full border-2 border-subtle" />
+          <div className="absolute inset-[18px] rounded-full bg-primary/30" />
         </div>
         <p
           className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse"
@@ -570,8 +693,8 @@ export function FalixPlayer({
   // ── Error state ──
   if (error) {
     return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070708] z-40 gap-4 px-6">
-        <Clapperboard className="text-[#D4A237]" size={48} strokeWidth={1.5} />
+      <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-40 gap-4 px-6">
+        <Clapperboard className="text-primary" size={48} strokeWidth={1.5} />
         <p
           className="text-xl text-foreground font-bold text-center"
           style={{ fontFamily: "var(--font-display)" }}
@@ -583,7 +706,7 @@ export function FalixPlayer({
         </p>
         <button
           onClick={handleRetry}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#D4A237] text-[#070708] text-sm font-bold hover:bg-[#B88B2A] transition-colors active:scale-95"
+          className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-background text-sm font-bold hover:bg-primary-dim transition-colors active:scale-95"
         >
           <RefreshCw size={14} />
           Retry
@@ -595,7 +718,7 @@ export function FalixPlayer({
   // ── No data state ──
   if (!currentEntry) {
     return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0E0E11] z-30 gap-3">
+      <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface z-30 gap-3">
         <p className="text-sm text-faint">
           No media available for this selection.
         </p>
@@ -614,6 +737,7 @@ export function FalixPlayer({
         audioLanguages={audioLabels}
         onLoad={onLoad}
         onError={onError}
+        onRefReady={handleWebcodecsReady}
       />
     );
   }
@@ -621,7 +745,7 @@ export function FalixPlayer({
   // HEVC not supported → show unsupported message with bypass option
   if (entryIsHevc && hevcSupported === false) {
     return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070708] z-40 gap-4 px-6">
+      <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-40 gap-4 px-6">
         <p
           className="text-xl text-foreground font-bold text-center"
           style={{ fontFamily: "var(--font-display)" }}
@@ -641,7 +765,7 @@ export function FalixPlayer({
             localStorage.setItem("falix_force_hevc", "true");
             setHevcSupported(true);
           }}
-          className="px-5 py-2.5 rounded-full border border-[#D4A237]/40 text-[#D4A237] text-xs font-bold hover:bg-[#D4A237]/10 transition-colors active:scale-95"
+          className="px-5 py-2.5 rounded-full border border-primary/40 text-primary text-xs font-bold hover:bg-primary/10 transition-colors active:scale-95"
         >
           Try Anyway
         </button>
@@ -652,15 +776,15 @@ export function FalixPlayer({
   // HEVC file but still checking support → show loading spinner
   if (entryIsHevc && hevcSupported === null) {
     return (
-      <div className="absolute inset-0 bg-[#070708] z-30 flex flex-col items-center justify-center gap-5">
+      <div className="absolute inset-0 bg-background z-30 flex flex-col items-center justify-center gap-5">
         <div className="relative w-14 h-14">
-          <div className="absolute inset-0 rounded-full border-2 border-[#222226]" />
+          <div className="absolute inset-0 rounded-full border-2 border-subtle" />
           <div
-            className="absolute inset-0 rounded-full border-t-2 border-[#D4A237] animate-spin"
+            className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"
             style={{ animationDuration: "1.2s" }}
           />
-          <div className="absolute inset-3 rounded-full border-2 border-[#222226]" />
-          <div className="absolute inset-[18px] rounded-full bg-[#D4A237]/30" />
+          <div className="absolute inset-3 rounded-full border-2 border-subtle" />
+          <div className="absolute inset-[18px] rounded-full bg-primary/30" />
         </div>
         <p
           className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse"
@@ -709,7 +833,7 @@ export function FalixPlayer({
                 onClick={() => handleQualityChange(idx)}
                 className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all active:scale-95 ${
                   selectedQualityIdx === idx
-                    ? "bg-[#D4A237] text-[#070708]"
+                    ? "bg-primary text-background"
                     : "text-white/70 hover:text-white hover:bg-white/10"
                 }`}
               >
@@ -731,7 +855,7 @@ export function FalixPlayer({
                 onClick={() => handleAudioChange(idx)}
                 className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all active:scale-95 ${
                   activeAudioIdx === idx
-                    ? "bg-[#D4A237] text-[#070708]"
+                    ? "bg-primary text-background"
                     : "text-white/70 hover:text-white hover:bg-white/10"
                 }`}
               >

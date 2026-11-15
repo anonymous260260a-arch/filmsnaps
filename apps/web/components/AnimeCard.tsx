@@ -101,7 +101,7 @@ export function AnimeCard({ item, className = "" }: AnimeCardProps) {
           {title}
         </h3>
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground/70">
-          <Sparkles className="h-3 w-3 text-[#D4A237]" />
+          <Sparkles className="h-3 w-3 text-primary" />
           Anime
           {item.year ? <span>· {item.year}</span> : null}
           {item.episodes != null ? <span>· {item.episodes} ep</span> : null}

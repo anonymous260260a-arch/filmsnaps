@@ -123,7 +123,7 @@ export function EventTrend({ daily, onPick }: EventTrendProps) {
                   0,
                 );
                 return (
-                  <div className="bg-[#121216] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white/90 shadow-2xl min-w-[160px]">
+                  <div className="bg-surface border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white/90 shadow-2xl min-w-[160px]">
                     <p className="font-bold text-white mb-1.5 pb-1 border-b border-white/[0.08]">
                       {label}
                     </p>

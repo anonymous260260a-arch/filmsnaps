@@ -1,13 +1,16 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, keepPreviousData } from "@tanstack/react-query";
 import { useInView } from "react-intersection-observer";
 import { Header } from "@/components/Header";
 import { MediaGrid } from "@/components/MediaGrid";
+import { SkeletonGrid } from "@/components/SkeletonLoader";
 import { ChevronUp } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { GlassButton } from "@/components/ui/glass-button";
 import { MediaFilter } from "@/components/MediaFilter";
+import { apiUrl } from "@/lib/tmdb";
 
 interface TVResponse {
   page: number;
@@ -70,39 +73,40 @@ export default function TVClient({
     [selectedGenres, sortBy, yearRange, ratingRange, language],
   );
 
-  const { data, fetchNextPage, hasNextPage, isFetchingNextPage, refetch } =
-    useInfiniteQuery<TVResponse>({
-      queryKey: [
-        "tv",
-        selectedGenres,
-        sortBy,
-        yearRange,
-        ratingRange,
-        language,
-      ],
-      queryFn: async ({ pageParam }): Promise<TVResponse> => {
-        const params = new URLSearchParams();
-        params.set("page", (pageParam as number).toString());
-        params.set("sortBy", sortBy);
-        params.set("yearStart", yearRange[0].toString());
-        params.set("yearEnd", yearRange[1].toString());
-        params.set("minRating", ratingRange[0].toString());
-        params.set("maxRating", ratingRange[1].toString());
-        if (selectedGenres.length)
-          params.set("genres", selectedGenres.join(","));
-        if (language) params.set("language", language);
+  const {
+    data,
+    isPending,
+    isError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    refetch,
+  } = useInfiniteQuery<TVResponse>({
+    queryKey: ["tv", selectedGenres, sortBy, yearRange, ratingRange, language],
+    queryFn: async ({ pageParam }): Promise<TVResponse> => {
+      const params = new URLSearchParams();
+      params.set("page", (pageParam as number).toString());
+      params.set("sortBy", sortBy);
+      params.set("yearStart", yearRange[0].toString());
+      params.set("yearEnd", yearRange[1].toString());
+      params.set("minRating", ratingRange[0].toString());
+      params.set("maxRating", ratingRange[1].toString());
+      if (selectedGenres.length) params.set("genres", selectedGenres.join(","));
+      if (language) params.set("language", language);
 
-        const res = await fetch(`/api/tv?${params.toString()}`);
-        if (!res.ok) throw new Error("Failed to fetch TV shows");
-        return res.json();
-      },
-      getNextPageParam: (lastPage: TVResponse) => {
-        const next = lastPage.page + 1;
-        return next <= lastPage.total_pages ? next : undefined;
-      },
-      initialPageParam: 1,
-      staleTime: 10 * 60 * 1000,
-    });
+      const res = await fetch(apiUrl(`/api/tv?${params.toString()}`));
+      if (!res.ok) throw new Error("Failed to fetch TV shows");
+      return res.json();
+    },
+    getNextPageParam: (lastPage: TVResponse) => {
+      const next = lastPage.page + 1;
+      return next <= lastPage.total_pages ? next : undefined;
+    },
+    initialPageParam: 1,
+    staleTime: 10 * 60 * 1000,
+    // Stale-while-revalidate: keep the grid visible while filters load.
+    placeholderData: keepPreviousData,
+  });
 
   const tvShows = useMemo(
     () => data?.pages.flatMap((p) => p.results) ?? [],
@@ -197,7 +201,28 @@ export default function TVClient({
           />
         </div>
 
-        <MediaGrid items={tvShows} mediaType="tv" />
+        {/* TV Grid — skeleton while loading, error state on failure */}
+        {isPending ? (
+          <SkeletonGrid count={12} />
+        ) : isError ? (
+          <div className="py-24 text-center">
+            <p className="text-foreground font-semibold">
+              TV shows couldn&rsquo;t load
+            </p>
+            <p className="text-muted-foreground mt-1 mb-6">
+              The source didn&rsquo;t respond. Check your connection and try
+              again.
+            </p>
+            <GlassButton
+              onClick={() => refetch()}
+              className="px-5 py-2.5 h-auto"
+            >
+              Try again
+            </GlassButton>
+          </div>
+        ) : (
+          <MediaGrid items={tvShows} mediaType="tv" />
+        )}
 
         <div ref={ref} className="flex justify-center py-12">
           {isFetchingNextPage && (

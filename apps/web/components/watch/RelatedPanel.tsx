@@ -46,8 +46,8 @@ export function RelatedPanel({ contentid, initialMeta }: RelatedPanelProps) {
               className="group block"
             >
               <div
-                className="aspect-[2/3] rounded-lg overflow-hidden bg-[#0E0E11] border border-[#222226]
-                group-hover:border-[#D4A237]/30 transition-all duration-300"
+                className="aspect-[2/3] rounded-lg overflow-hidden bg-surface border border-subtle
+                group-hover:border-primary/30 transition-all duration-300"
               >
                 {posterUrl ? (
                   <img
@@ -58,11 +58,11 @@ export function RelatedPanel({ contentid, initialMeta }: RelatedPanelProps) {
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
-                    <Film size={20} className="text-zinc-700" />
+                    <Film size={20} className="text-faint" />
                   </div>
                 )}
               </div>
-              <p className="text-[11px] text-zinc-400 mt-1.5 truncate group-hover:text-foreground transition-colors">
+              <p className="text-[11px] text-muted-foreground mt-1.5 truncate group-hover:text-foreground transition-colors">
                 {movie.title}
               </p>
             </Link>

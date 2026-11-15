@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import MovieClient from "./MovieClient";
 import { useMovieDetails } from "@/hooks/useMovieDetails";
+import { SkeletonDetail } from "@/components/SkeletonLoader";
 import { Header } from "@/components/Header";
 
 function MovieDetailContent() {
@@ -42,13 +43,7 @@ function MovieDetailInner({ id }: { id: string }) {
 
 export default function MoviePage() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-[#070708] flex items-center justify-center">
-          <div className="w-8 h-8 border-2 border-[#D4A237] border-t-transparent rounded-full animate-spin" />
-        </div>
-      }
-    >
+    <Suspense fallback={<SkeletonDetail />}>
       <MovieDetailContent />
     </Suspense>
   );

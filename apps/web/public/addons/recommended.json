@@ -1,0 +1,114 @@
+{
+  "format": "filmsnaps-pack/1",
+  "name": "Filmsnaps popular",
+  "addons": [
+    {
+      "format": "filmsnaps-addon/1",
+      "id": "com.stremio.HdHub",
+      "name": "HDHub",
+      "protocol": "stremio",
+      "contentScope": "movie_tv",
+      "usage": "both",
+      "description": "4k · Fast · Multi-lang"
+    },
+    {
+      "format": "filmsnaps-addon/1",
+      "id": "com.penguplay",
+      "name": "MovieBox",
+      "protocol": "stremio",
+      "contentScope": "both",
+      "usage": "both",
+      "description": "Beta · Multi-lang"
+    },
+    {
+      "format": "filmsnaps-addon/1",
+      "id": "falix",
+      "name": "Falix",
+      "protocol": "registry",
+      "contentScope": "movie_tv",
+      "usage": "download",
+      "description": "HEVC downloads"
+    },
+    {
+      "format": "filmsnaps-addon/1",
+      "id": "spacedom",
+      "name": "SpaceDom",
+      "protocol": "registry",
+      "contentScope": "movie_tv",
+      "usage": "streaming",
+      "description": "Beta · Experimental"
+    },
+    {
+      "format": "filmsnaps-addon/1",
+      "id": "way2movies",
+      "name": "NetMirror",
+      "protocol": "registry",
+      "contentScope": "movie_tv",
+      "usage": "streaming",
+      "description": "Beta · Experimental"
+    },
+    {
+      "format": "filmsnaps-addon/1",
+      "id": "justanime",
+      "name": "JustAnime",
+      "protocol": "registry",
+      "contentScope": "anime",
+      "usage": "streaming",
+      "description": "Anime · 3 servers"
+    },
+    {
+      "format": "filmsnaps-addon/1",
+      "id": "nxsha",
+      "name": "Source 1",
+      "protocol": "registry",
+      "contentScope": "both",
+      "usage": "streaming",
+      "description": "Multi-lang · Fast · Sometimes gets down"
+    },
+    {
+      "format": "filmsnaps-addon/1",
+      "id": "peachify",
+      "name": "Source 2",
+      "protocol": "registry",
+      "contentScope": "movie_tv",
+      "usage": "streaming",
+      "description": "Multi-lang"
+    },
+    {
+      "format": "filmsnaps-addon/1",
+      "id": "screenscape",
+      "name": "Source 3",
+      "protocol": "registry",
+      "contentScope": "both",
+      "usage": "streaming",
+      "description": "Reliable · Multi-lang · Always-Work"
+    },
+    {
+      "format": "filmsnaps-addon/1",
+      "id": "cinemaos",
+      "name": "Source 6",
+      "protocol": "registry",
+      "contentScope": "movie_tv",
+      "usage": "streaming",
+      "description": "Multi-lang · Sometimes works best"
+    },
+    {
+      "format": "filmsnaps-addon/1",
+      "id": "vidnest",
+      "name": "Source 14",
+      "protocol": "registry",
+      "contentScope": "movie_tv",
+      "usage": "streaming",
+      "description": "Very Fast · Limited-Multi-lang · Best for Original lang"
+    },
+    {
+      "format": "filmsnaps-addon/1",
+      "id": "megaplay",
+      "name": "MegaPlay",
+      "protocol": "registry",
+      "contentScope": "anime",
+      "usage": "streaming",
+      "description": "Anime · Sub & Dub"
+    }
+  ]
+}

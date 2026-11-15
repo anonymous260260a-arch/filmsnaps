@@ -531,11 +531,11 @@ export default function FalixDownloadPage() {
     return (
       <Shell>
         <StateCard
-          icon={<AlertCircle className="h-8 w-8 text-[#E05252]" />}
+          icon={<AlertCircle className="h-8 w-8 text-destructive" />}
           title="Download unavailable"
           body="This falix link is malformed."
           action={
-            <Link href="/" className="text-sm text-[#D4A237] hover:underline">
+            <Link href="/" className="text-sm text-primary hover:underline">
               Go home
             </Link>
           }
@@ -550,7 +550,7 @@ export default function FalixDownloadPage() {
         <div className="py-24 text-center">
           <Loader2
             size={32}
-            className="animate-spin text-[#D4A237] mx-auto mb-4"
+            className="animate-spin text-primary mx-auto mb-4"
           />
           <p className="text-sm text-muted-foreground">
             Loading download info…
@@ -564,13 +564,13 @@ export default function FalixDownloadPage() {
     return (
       <Shell>
         <StateCard
-          icon={<AlertCircle className="h-8 w-8 text-[#E05252]" />}
+          icon={<AlertCircle className="h-8 w-8 text-destructive" />}
           title="Failed to load"
           body={error}
           action={
             <button
               onClick={() => window.location.reload()}
-              className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
+              className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-background text-sm font-semibold hover:bg-primary-dim transition-all"
             >
               Retry
             </button>
@@ -588,7 +588,7 @@ export default function FalixDownloadPage() {
           title="No data available"
           body="Falix has no entry for this title."
           action={
-            <Link href="/" className="text-sm text-[#D4A237] hover:underline">
+            <Link href="/" className="text-sm text-primary hover:underline">
               Go home
             </Link>
           }
@@ -598,7 +598,7 @@ export default function FalixDownloadPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#070708] text-foreground relative">
+    <div className="min-h-screen bg-background text-foreground relative">
       {/* Backdrop hero */}
       {data.backdrop && (
         <div className="absolute inset-x-0 top-0 h-[420px] overflow-hidden pointer-events-none">
@@ -608,7 +608,7 @@ export default function FalixDownloadPage() {
             alt=""
             className="w-full h-full object-cover blur-2xl scale-110 opacity-40"
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-[#070708]/60 via-[#070708]/80 to-[#070708]" />
+          <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/80 to-background" />
         </div>
       )}
 
@@ -634,7 +634,7 @@ export default function FalixDownloadPage() {
             </h1>
 
             <div className="flex items-center gap-2 mt-3 flex-wrap text-xs">
-              <span className="inline-flex items-center gap-1 rounded-full bg-white/[0.04] px-2.5 py-1 font-bold text-[#D4A237]">
+              <span className="inline-flex items-center gap-1 rounded-full bg-white/[0.04] px-2.5 py-1 font-bold text-primary">
                 <Star size={11} fill="currentColor" />
                 {data.rating ? data.rating.toFixed(1) : "—"}
               </span>
@@ -680,7 +680,7 @@ export default function FalixDownloadPage() {
                 onClick={() =>
                   downloadFile([...data.telegram].sort(sortByQuality)[0])
                 }
-                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#D4A237] px-4 py-2.5 text-[13px] font-semibold text-[#070708] hover:bg-[#B88B2A] transition-all"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-[13px] font-semibold text-background hover:bg-primary-dim transition-all"
               >
                 <Download size={15} />
                 Best Quality
@@ -709,7 +709,7 @@ export default function FalixDownloadPage() {
             {(descOverflows || showFullDesc) && (
               <button
                 onClick={() => setShowFullDesc((v) => !v)}
-                className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#D4A237] hover:text-[#B88B2A] transition-colors"
+                className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-primary hover:text-primary-dim transition-colors"
                 aria-expanded={showFullDesc}
               >
                 {showFullDesc ? (
@@ -762,7 +762,7 @@ export default function FalixDownloadPage() {
                   }}
                   className={`shrink-0 rounded-full px-4 py-2 text-[13px] font-bold transition-all ${
                     selectedSeason === s.season_number
-                      ? "bg-[#D4A237] text-[#070708]"
+                      ? "bg-primary text-background"
                       : "bg-white/[0.04] text-foreground/90 border border-white/[0.06] hover:bg-white/[0.07]"
                   }`}
                 >
@@ -853,7 +853,7 @@ export default function FalixDownloadPage() {
           </section>
         )}
 
-        <div className="flex items-center justify-between rounded-xl bg-[#0E0E11] border border-white/[0.06] px-4 py-3">
+        <div className="flex items-center justify-between rounded-xl bg-surface border border-white/[0.06] px-4 py-3">
           <p className="text-xs text-muted-foreground">
             {available
               ? "Queued downloads appear in the manager with live progress."
@@ -861,7 +861,7 @@ export default function FalixDownloadPage() {
           </p>
           <Link
             href="/downloads"
-            className="shrink-0 ml-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[#D4A237] hover:underline"
+            className="shrink-0 ml-4 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
           >
             <Download size={13} />
             View Downloads
@@ -876,7 +876,7 @@ export default function FalixDownloadPage() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-[#070708] text-foreground">
+    <div className="min-h-screen bg-background text-foreground">
       <Header />
       <PageShell maxWidth="3xl">{children}</PageShell>
     </div>
@@ -895,8 +895,8 @@ function StateCard({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-[#0E0E11] px-6 py-12 text-center">
-      <div className="w-16 h-16 rounded-full bg-[#16161A] flex items-center justify-center mx-auto mb-5">
+    <div className="rounded-xl border border-white/[0.06] bg-surface px-6 py-12 text-center">
+      <div className="w-16 h-16 rounded-full bg-elevated flex items-center justify-center mx-auto mb-5">
         {icon}
       </div>
       <h3 className="text-base font-semibold mb-1">{title}</h3>
@@ -939,15 +939,15 @@ function BulkPanel({
 }) {
   const disabled = !info || info.validCount === 0;
   return (
-    <div className="rounded-2xl bg-[#0E0E11] border border-[#D4A237]/25 overflow-hidden mb-2">
+    <div className="rounded-2xl bg-surface border border-primary/25 overflow-hidden mb-2">
       {/* Header */}
       <button
         onClick={onToggle}
         className="w-full flex items-center justify-between p-4 text-left hover:bg-white/[0.02] transition-colors"
       >
         <span className="flex items-center gap-3">
-          <span className="w-9 h-9 rounded-lg bg-[#D4A237]/15 flex items-center justify-center">
-            <Layers size={17} className="text-[#D4A237]" />
+          <span className="w-9 h-9 rounded-lg bg-primary/15 flex items-center justify-center">
+            <Layers size={17} className="text-primary" />
           </span>
           <span>
             <span className="block text-[15px] font-bold">
@@ -981,16 +981,16 @@ function BulkPanel({
                   onClick={() => onTier(t)}
                   className={`rounded-xl px-2 py-3 flex flex-col items-center gap-1 border-[1.5px] transition-all ${
                     active
-                      ? "bg-[#D4A237]/15 border-[#D4A237]"
+                      ? "bg-primary/15 border-primary"
                       : "bg-white/[0.02] border-white/[0.08] hover:bg-white/[0.05]"
                   }`}
                 >
-                  <span className={active ? "text-[#D4A237]" : "text-faint"}>
+                  <span className={active ? "text-primary" : "text-faint"}>
                     {meta.icon}
                   </span>
                   <span
                     className={`text-[13px] font-bold ${
-                      active ? "text-[#D4A237]" : "text-foreground/90"
+                      active ? "text-primary" : "text-foreground/90"
                     }`}
                   >
                     {meta.label}
@@ -1016,7 +1016,7 @@ function BulkPanel({
                 <p className="text-[11px] text-muted-foreground mb-0.5">
                   Episodes
                 </p>
-                <p className="text-base font-bold text-[#D4A237]">
+                <p className="text-base font-bold text-primary">
                   {info.validCount}/{info.totalEpisodes}
                 </p>
               </div>
@@ -1054,10 +1054,10 @@ function BulkPanel({
             disabled={disabled}
             className={`w-full flex items-center justify-center gap-2 rounded-xl py-3.5 text-[15px] font-extrabold transition-all ${
               disabled
-                ? "bg-[#D4A237]/40 text-[#070708]/60 cursor-not-allowed"
+                ? "bg-primary/40 text-background/60 cursor-not-allowed"
                 : confirm
-                  ? "bg-[#3FB950] text-[#070708]"
-                  : "bg-[#D4A237] text-[#070708] hover:bg-[#B88B2A]"
+                  ? "bg-success text-background"
+                  : "bg-primary text-background hover:bg-primary-dim"
             }`}
           >
             <Download size={17} />
@@ -1092,7 +1092,7 @@ function EpisodeCard({
   );
 
   return (
-    <div className="rounded-xl bg-[#0E0E11] border border-[#222226] overflow-hidden hover:border-[#D4A237]/20 transition-all">
+    <div className="rounded-xl bg-surface border border-subtle overflow-hidden hover:border-primary/20 transition-all">
       {/* Episode header */}
       <button
         onClick={onToggle}
@@ -1181,7 +1181,7 @@ function FalixFileRow({
 
         {/* Metadata line — quality + audio languages + size */}
         <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-          <span className="rounded bg-[#D4A237]/15 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-[#D4A237]">
+          <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-primary">
             {(file.quality || "?").toUpperCase()}
           </span>
           {langs.map((lang) => (
@@ -1200,7 +1200,7 @@ function FalixFileRow({
         {isActive && progress > 0 && (
           <div className="mt-1.5 h-1 w-28 rounded-full bg-white/[0.07] overflow-hidden">
             <div
-              className="h-full rounded-full bg-[#D4A237] transition-all"
+              className="h-full rounded-full bg-primary transition-all"
               style={{ width: `${progress * 100}%` }}
             />
           </div>
@@ -1208,9 +1208,9 @@ function FalixFileRow({
       </div>
 
       {isActive ? (
-        <Loader2 size={18} className="animate-spin text-[#D4A237] shrink-0" />
+        <Loader2 size={18} className="animate-spin text-primary shrink-0" />
       ) : task?.state === "completed" ? (
-        <CheckCircle2 size={18} className="text-[#3FB950] shrink-0" />
+        <CheckCircle2 size={18} className="text-success shrink-0" />
       ) : (
         <div className="flex items-center gap-1.5 shrink-0">
           <button
@@ -1225,9 +1225,9 @@ function FalixFileRow({
             onClick={onDownload}
             aria-label="Download"
             title="Download"
-            className="w-9 h-9 rounded-full bg-[#D4A237] hover:bg-[#B88B2A] flex items-center justify-center transition-colors"
+            className="w-9 h-9 rounded-full bg-primary hover:bg-primary-dim flex items-center justify-center transition-colors"
           >
-            <Download size={14} className="text-[#070708]" />
+            <Download size={14} className="text-background" />
           </button>
         </div>
       )}

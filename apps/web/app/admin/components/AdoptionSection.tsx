@@ -142,7 +142,7 @@ export function AdoptionSection({
                       if (!active || !payload?.length) return null;
                       const d = payload[0].payload;
                       return (
-                        <div className="bg-[#121216] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
+                        <div className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
                           <p className="font-bold text-white">{itemLabel}</p>
                           <p className="text-emerald-400 mt-0.5">
                             {fmtInt(d.users)} of {fmtInt(totalUsers)} users
@@ -216,7 +216,7 @@ export function AdoptionSection({
                     content={({ active, payload, label: itemLabel }) => {
                       if (!active || !payload?.length) return null;
                       return (
-                        <div className="bg-[#121216] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
+                        <div className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
                           <p className="font-bold text-white">{itemLabel}</p>
                           <p className="text-sky-400 mt-0.5">
                             {fmtInt(payload[0].value as number)} visits

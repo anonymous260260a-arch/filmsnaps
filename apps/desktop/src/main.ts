@@ -177,7 +177,7 @@ function createMainWindow(): void {
     minHeight: 600,
     title: "FilmSnaps",
     frame: false,
-    backgroundColor: "#0a0a0f",
+    backgroundColor: "#000000",
     show: false,
     icon: resourcePath("resources", "icon.png"),
     webPreferences: {
@@ -453,12 +453,36 @@ function createMainWindow(): void {
   };
   mainWindow.webContents.on("did-navigate", sendNavState);
   mainWindow.webContents.on("did-navigate-in-page", sendNavState);
-  mainWindow.webContents.on("did-start-loading", () => {
-    mainWindow?.webContents.send("window:loading", true);
-  });
-  mainWindow.webContents.on("did-stop-loading", () => {
-    mainWindow?.webContents.send("window:loading", false);
-  });
+
+  // Branded error page when the app's own content fails to load (dead dev
+  // server, failed app:// fetch). Retry re-attempts the same URL.
+  mainWindow.webContents.on(
+    "did-fail-load",
+    (_event, code, desc, url, isMainFrame) => {
+      if (!isMainFrame || code === -3 /* ABORTED — normal nav races */) return;
+      nav.error("main-frame load failed", { code, desc, url });
+      mainWindow?.webContents
+        .loadURL(
+          "data:text/html;charset=utf-8," +
+            encodeURIComponent(
+              `<!doctype html><html><head><meta charset="utf-8">
+<title>FilmSnaps</title><style>
+html,body{height:100%;margin:0;background:#000;color:#f5f5f5;
+font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+display:flex;align-items:center;justify-content:center;text-align:center}
+button{margin-top:20px;background:#d4a237;color:#000;border:0;border-radius:8px;
+padding:10px 24px;font-size:14px;font-weight:600;cursor:pointer}
+button:hover{background:#b88b2a}
+p{color:#a3a3a3;font-size:13px;margin:6px 0 0}
+h2{font-size:18px;font-weight:600;margin:0}
+</style></head><body><div><h2>FilmSnaps couldn&rsquo;t load</h2>
+<p>The app content didn&rsquo;t respond. It may come back on its own.</p>
+<button onclick="location.reload()">Try again</button></div></body></html>`,
+            ),
+        )
+        .catch(() => {});
+    },
+  );
 
   // Open external links in the default browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -1500,6 +1524,21 @@ if (!gotTheLock) {
       const webDir = app.isPackaged
         ? join(process.resourcesPath, "web")
         : join(__dirname, "../../web/out");
+
+      // Fail loudly instead of booting a blank window when the static export
+      // is missing (stale repo checkout, or `pnpm app` before any build).
+      if (!existsSync(join(webDir, "index.html"))) {
+        dialog.showErrorBox(
+          "Static web build missing",
+          `No static web export found at:\n${webDir}\n\n` +
+            "Build it first, then relaunch:\n" +
+            "  • apps/desktop → pnpm build   (UI shell + static export)\n" +
+            "  • apps/desktop → pnpm app     (run unpackaged)\n\n" +
+            "For live-reload development use: pnpm dev",
+        );
+        app.quit();
+        return;
+      }
 
       protocol.handle("app", (request) => {
         const { pathname } = new URL(request.url);

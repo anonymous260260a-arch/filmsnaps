@@ -9,8 +9,12 @@
  * `fallback=none` so the route's falix supplement stays out — this page
  * promises HDHub files only.
  *
- * Movies list all qualities at once. TV picks season/episode up front (same
- * NumSelect pattern as the Nxsha page) and refetches on change.
+ * Movies list all qualities at once. TV picks season (pill tabs, same
+ * language as the Falix page) + episode up front and refetches on change.
+ *
+ * Presentation mirrors the Falix page's hero system (blurred backdrop,
+ * poster + meta chips, gold best-match CTA, display-font section headers)
+ * so all three download routes read as one product.
  *
  * Route: /download/hdhub?type=movie&id={tmdbId}
  *        /download/hdhub?type=tv&id={tmdbId}&season={s}&episode={e}
@@ -23,11 +27,14 @@ import Link from "next/link";
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
   Download,
   ExternalLink,
   FileVideo,
   Loader2,
   RefreshCw,
+  Star,
+  X,
 } from "lucide-react";
 import { Header } from "@/components/Header";
 import { PageShell } from "@/components/PageShell";
@@ -37,7 +44,7 @@ import {
   useDownloadList,
 } from "@/lib/downloadStore";
 import { isGatewayUrl } from "@/lib/nxshaLinks";
-import { tmdbApi, apiUrl } from "@/lib/tmdb";
+import { tmdbApi, apiUrl, getImageUrl } from "@/lib/tmdb";
 import { useSettings } from "@/hooks/useSettings";
 import {
   buildDownloadFileName,
@@ -76,12 +83,12 @@ const LANGUAGE_OPTIONS: { label: string; value: string }[] = [
 
 /** Class per meta segment — gold quality, sky language, amber warnings. */
 const META_TONE_CLASS: Record<MetaTone, string> = {
-  quality: "text-[#D4A237] font-semibold",
+  quality: "text-primary font-semibold",
   size: "font-mono tabular-nums text-faint font-semibold",
   language: "text-sky-300",
   info: "text-faint",
-  cam: "text-[#F87171] font-semibold",
-  warn: "text-[#F59E0B] font-semibold",
+  cam: "text-destructive font-semibold",
+  warn: "text-primary font-semibold",
 };
 
 interface HdHubRow {
@@ -91,6 +98,17 @@ interface HdHubRow {
 }
 
 type RowState = "completed" | "active" | "idle";
+
+/** Title context for the hero — everything TMDB details gives us in one shot. */
+interface TitleMeta {
+  title: string;
+  year: string;
+  runtime: number | null;
+  rating: number | null;
+  genres: string[];
+  posterPath: string | null;
+  backdropPath: string | null;
+}
 
 export default function HdHubDownloadPage() {
   const searchParams = useSearchParams();
@@ -110,7 +128,9 @@ export default function HdHubDownloadPage() {
   const downloads = useDownloadList();
   const { settings } = useSettings();
 
-  const [title, setTitle] = useState("");
+  /** Hero context — null until the TMDB details call resolves. */
+  const [meta, setMeta] = useState<TitleMeta | null>(null);
+  const title = meta?.title ?? "";
   /** Real season bound from TMDB — 0 until the details call resolves. */
   const [seasonCount, setSeasonCount] = useState(0);
   /** Real episode count for `effectiveSeason` — 0 until that season loads. */
@@ -146,8 +166,8 @@ export default function HdHubDownloadPage() {
     }
   }, [qualityFilter, sizeFilter, languageFilter]);
 
-  // ── Title (for the header + generated filenames) — also the source of
-  // the season picker's real bound. ──
+  // ── Hero meta (poster/backdrop/year/genres) — also the source of the
+  // season picker's real bound. ──
   useEffect(() => {
     if (!id) return;
     let alive = true;
@@ -159,11 +179,29 @@ export default function HdHubDownloadPage() {
         (d: {
           title?: string;
           name?: string;
+          release_date?: string;
+          first_air_date?: string;
+          runtime?: number;
+          vote_average?: number;
+          genres?: { name?: string }[];
+          poster_path?: string | null;
+          backdrop_path?: string | null;
           number_of_seasons?: number;
           seasons?: { season_number?: number }[];
         }) => {
           if (!alive) return;
-          setTitle(d?.title || d?.name || "");
+          setMeta({
+            title: d?.title || d?.name || "",
+            year: (d?.release_date || d?.first_air_date || "").slice(0, 4),
+            runtime: d?.runtime ?? null,
+            rating:
+              typeof d?.vote_average === "number" && d.vote_average > 0
+                ? d.vote_average
+                : null,
+            genres: (d?.genres ?? []).map((g) => g.name ?? "").filter(Boolean),
+            posterPath: d?.poster_path ?? null,
+            backdropPath: d?.backdrop_path ?? null,
+          });
           if (!isTV) return;
           // Prefer the highest season TMDB actually lists (survives gaps
           // in numbering); fall back to number_of_seasons.
@@ -180,7 +218,8 @@ export default function HdHubDownloadPage() {
         },
       )
       .catch(() => {
-        // Filename falls back to a generic scheme below — not fatal.
+        // Hero falls back to a generic header, filenames to a generic
+        // scheme below — not fatal.
       });
     return () => {
       alive = false;
@@ -353,15 +392,22 @@ export default function HdHubDownloadPage() {
     setLanguageFilter("");
   };
 
+  const runtimeLabel =
+    meta?.runtime != null && meta.runtime > 0
+      ? meta.runtime >= 60
+        ? `${Math.floor(meta.runtime / 60)}h ${meta.runtime % 60}m`
+        : `${meta.runtime}m`
+      : null;
+
   // ── Missing id ──
   if (!id) {
     return (
-      <div className="min-h-screen bg-[#070708] text-foreground">
+      <div className="min-h-screen bg-background text-foreground">
         <Header />
         <PageShell maxWidth="2xl" className="text-center">
-          <AlertCircle className="h-10 w-10 text-[#E05252] mx-auto mb-4" />
+          <AlertCircle className="h-10 w-10 text-destructive mx-auto mb-4" />
           <h1 className="text-xl font-semibold mb-2">Download unavailable</h1>
-          <Link href="/" className="text-sm text-[#D4A237] hover:underline">
+          <Link href="/" className="text-sm text-primary hover:underline">
             Go home
           </Link>
         </PageShell>
@@ -370,84 +416,142 @@ export default function HdHubDownloadPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#070708] text-foreground">
-      <Header />
-      <PageShell maxWidth="3xl">
-        {/* Title row */}
-        <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#D4A237]/10 flex items-center justify-center shrink-0">
-              <FileVideo size={20} className="text-[#D4A237]" />
-            </div>
-            <div>
-              <h1
-                className="text-2xl sm:text-3xl font-bold tracking-tight"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                Download via HDHub
-              </h1>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                {title ? `${title} · ` : ""}
-                {isTV
-                  ? `Season ${effectiveSeason} · Episode ${effectiveEpisode}`
-                  : "Direct CDN files"}
-              </p>
-            </div>
-          </div>
+    <div className="min-h-screen bg-background text-foreground relative">
+      {/* Blurred backdrop hero — same treatment as the Falix page */}
+      {meta?.backdropPath && (
+        <div className="absolute inset-x-0 top-0 h-[420px] overflow-hidden pointer-events-none">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={getImageUrl(meta.backdropPath, "w1280") ?? ""}
+            alt=""
+            className="w-full h-full object-cover blur-2xl scale-110 opacity-40"
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/80 to-background" />
+        </div>
+      )}
 
-          {/* TV season / episode picker — bounds come from TMDB, not the
-              old hardcoded 50/300; fallbacks hold until those resolve. */}
-          {isTV && (
-            <div className="flex items-center gap-2">
-              <NumSelect
-                label="S"
-                value={pickedSeason}
-                max={seasonCount || 50}
-                onChange={setPickedSeason}
-              />
-              <NumSelect
-                label="E"
-                value={pickedEpisode}
-                max={episodeCount || 300}
-                onChange={setPickedEpisode}
-              />
-              <button
-                onClick={retry}
-                title="Reload links"
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-white/[0.08] text-xs text-muted-foreground hover:text-foreground hover:bg-white/[0.06] transition-all"
-              >
-                <RefreshCw size={13} />
-                Load
-              </button>
-            </div>
+      <Header />
+
+      <PageShell variant="hero" maxWidth="3xl" className="relative">
+        {/* ═══ Hero: poster + title + meta chips (+ TV pickers) ═══ */}
+        <div className="flex items-start gap-5 mb-8 flex-wrap">
+          {meta?.posterPath ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={getImageUrl(meta.posterPath, "w342") ?? ""}
+              alt={meta.title}
+              className="w-[115px] h-[172px] rounded-xl object-cover ring-1 ring-white/10 shadow-xl shadow-black/40 shrink-0"
+            />
+          ) : (
+            <div className="w-[115px] h-[172px] rounded-xl skeleton shrink-0" />
           )}
 
-          {/* Filters */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <FilterSelect
-              label="Quality"
-              options={QUALITY_OPTIONS}
-              value={qualityFilter}
-              onChange={(v) => setQualityFilter(v ?? "")}
-            />
-            <FilterSelect
-              label="Size"
-              options={SIZE_OPTIONS}
-              value={sizeFilter}
-              onChange={(v) => setSizeFilter(v ?? "")}
-            />
-            <FilterSelect
-              label="Language"
-              options={LANGUAGE_OPTIONS}
-              value={languageFilter}
-              onChange={(v) => setLanguageFilter(v ?? "")}
-            />
+          <div className="flex-1 min-w-[240px] pt-1">
+            {meta ? (
+              <>
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 border border-primary/25 px-2.5 py-1 text-[11px] font-bold text-primary">
+                    <FileVideo size={11} />
+                    HDHub
+                  </span>
+                  <span className="text-[11px] text-faint">
+                    {isTV
+                      ? `Season ${effectiveSeason} · Episode ${effectiveEpisode}`
+                      : "Direct CDN files"}
+                  </span>
+                </div>
+
+                <h1
+                  className="text-2xl sm:text-3xl font-bold leading-tight tracking-tight"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  {meta.title || "Download via HDHub"}
+                </h1>
+
+                <div className="flex items-center gap-2 mt-3 flex-wrap text-xs">
+                  {meta.rating != null && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-white/[0.04] px-2.5 py-1 font-bold text-primary">
+                      <Star size={11} fill="currentColor" />
+                      {meta.rating.toFixed(1)}
+                    </span>
+                  )}
+                  {meta.year && <span className="text-faint">{meta.year}</span>}
+                  {runtimeLabel && (
+                    <>
+                      <span className="text-faint">·</span>
+                      <span className="text-faint">{runtimeLabel}</span>
+                    </>
+                  )}
+                </div>
+
+                {meta.genres.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-3">
+                    {meta.genres.slice(0, 4).map((g) => (
+                      <span
+                        key={g}
+                        className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[11px] font-medium text-foreground/90"
+                      >
+                        {g}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {isTV && (
+                  <div className="mt-4">
+                    {/* Season pills — same tab language as the Falix page */}
+                    <div className="flex gap-2 overflow-x-auto pb-1 mb-3 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      {(seasonCount > 0
+                        ? Array.from({ length: seasonCount }, (_, i) => i + 1)
+                        : [effectiveSeason]
+                      ).map((n) => (
+                        <button
+                          key={n}
+                          onClick={() => setPickedSeason(n)}
+                          className={`shrink-0 rounded-full px-4 py-2 text-[13px] font-bold transition-all ${
+                            pickedSeason === n
+                              ? "bg-primary text-background"
+                              : "bg-white/[0.04] text-foreground/90 border border-white/[0.06] hover:bg-white/[0.07]"
+                          }`}
+                        >
+                          Season {n}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <EpisodeSelect
+                        value={pickedEpisode}
+                        max={episodeCount || Math.max(pickedEpisode, 1)}
+                        onChange={setPickedEpisode}
+                      />
+                      <button
+                        onClick={retry}
+                        title="Reload links"
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-white/[0.10] bg-white/[0.04] text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-white/[0.08] transition-all"
+                      >
+                        <RefreshCw size={13} />
+                        Reload
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="pt-1 space-y-3">
+                <div className="skeleton h-6 w-28 rounded-full" />
+                <div className="skeleton h-8 w-64 rounded" />
+                <div className="skeleton h-4 w-44 rounded" />
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Filter bar (visible whenever we have a loaded list, even if empty) */}
-        {!loading && (
-          <div className="flex items-center gap-2 flex-wrap mb-3">
+        {/* ═══ Filter toolbar — the ONE filter row (quality/size/language) ═══ */}
+        {!loading && !error && rows.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap mb-6 pb-5 border-b border-white/[0.06]">
+            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-faint mr-1">
+              Filters
+            </span>
             <FilterSelect
               label="Quality"
               options={QUALITY_OPTIONS}
@@ -469,40 +573,49 @@ export default function HdHubDownloadPage() {
             {activeFilterCount > 0 && (
               <button
                 onClick={clearFilters}
-                className="text-[11px] text-[#D4A237] hover:underline ml-auto"
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline"
               >
-                Clear filters
+                <X size={11} />
+                Clear
               </button>
             )}
+            <span className="ml-auto text-[11px] text-faint tabular-nums">
+              {filteredRows.length} of {rows.length} files
+            </span>
           </div>
         )}
 
-        {/* Loading */}
+        {/* Loading — skeleton rows in the shape of the list */}
         {loading && (
-          <div className="rounded-xl border border-white/[0.06] bg-[#0E0E11] px-6 py-10 text-center">
-            <Loader2
-              size={22}
-              className="text-[#D4A237] animate-spin mx-auto mb-4"
-            />
-            <p className="text-sm text-muted-foreground">
-              Resolving HDHub links…
+          <div>
+            <p className="flex items-center gap-2 text-xs text-faint mb-3">
+              <Loader2 size={12} className="animate-spin" />
+              Resolving HDHub links — TMDB id → IMDB id → HDHub API
             </p>
-            <p className="text-[11px] text-faint mt-2">
-              TMDB id → IMDB id → HDHub API
-            </p>
+            <div className="space-y-2.5">
+              {[0, 1, 2].map((i) => (
+                <div
+                  key={i}
+                  className="rounded-xl border border-white/[0.06] bg-surface px-4 py-4"
+                >
+                  <div className="skeleton h-4 w-3/4 rounded mb-2.5" />
+                  <div className="skeleton h-3 w-1/2 rounded" />
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
         {/* Error */}
         {!loading && error && (
           <StateCard
-            icon={<AlertCircle className="h-8 w-8 text-[#E05252]" />}
+            icon={<AlertCircle className="h-8 w-8 text-destructive" />}
             title="Failed to load"
             body={error}
             action={
               <button
                 onClick={retry}
-                className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
+                className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-background text-sm font-semibold hover:bg-primary-dim transition-all"
               >
                 <RefreshCw size={14} />
                 Retry
@@ -518,13 +631,13 @@ export default function HdHubDownloadPage() {
           rows.length > 0 &&
           activeFilterCount > 0 && (
             <StateCard
-              icon={<AlertCircle className="h-8 w-8 text-[#D4A237]" />}
+              icon={<AlertCircle className="h-8 w-8 text-primary" />}
               title="No files match your filters"
               body={`None of the ${rows.length} files match the selected quality, size and language. Clear the filters to see everything.`}
               action={
                 <button
                   onClick={clearFilters}
-                  className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A237] text-[#070708] text-sm font-semibold hover:bg-[#B88B2A] transition-all"
+                  className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-background text-sm font-semibold hover:bg-primary-dim transition-all"
                 >
                   Clear filters
                 </button>
@@ -534,11 +647,18 @@ export default function HdHubDownloadPage() {
 
         {/* Direct files */}
         {!loading && !error && directRows.length > 0 && (
-          <>
-            <p className="text-xs uppercase tracking-[0.12em] text-faint mb-3">
-              {directRows.length} download
-              {directRows.length === 1 ? "" : "s"} · HDHub
-            </p>
+          <section className="mb-8">
+            <div className="flex items-baseline justify-between gap-3 mb-3">
+              <h2
+                className="text-base font-bold"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                Direct Downloads
+              </h2>
+              <span className="text-xs text-faint tabular-nums shrink-0">
+                {directRows.length} file{directRows.length === 1 ? "" : "s"}
+              </span>
+            </div>
             <div className="space-y-2.5">
               {directRows.map((row, idx) => {
                 const state = getRowState(row.link);
@@ -558,8 +678,8 @@ export default function HdHubDownloadPage() {
                         disabled={state === "active"}
                         className={`shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-all disabled:opacity-60 ${
                           state === "completed"
-                            ? "bg-[#3FB950]/12 text-[#3FB950]"
-                            : "bg-[#D4A237] text-[#070708] hover:bg-[#B88B2A]"
+                            ? "bg-success/15 text-success"
+                            : "bg-primary text-background hover:bg-primary-dim"
                         }`}
                       >
                         {state === "completed" ? (
@@ -580,19 +700,26 @@ export default function HdHubDownloadPage() {
                 );
               })}
             </div>
-          </>
+          </section>
         )}
 
         {/* Gateway / landing pages — only openable externally */}
         {!loading && !error && externalRows.length > 0 && (
-          <div className="mt-6">
-            <p className="text-xs uppercase tracking-[0.12em] text-faint mb-3">
-              Open in browser · {externalRows.length} link
-              {externalRows.length === 1 ? "" : "s"}
-            </p>
+          <section className="mb-8">
+            <div className="flex items-baseline justify-between gap-3 mb-1.5">
+              <h2
+                className="text-base font-bold"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                Open in Browser
+              </h2>
+              <span className="text-xs text-faint tabular-nums shrink-0">
+                {externalRows.length} link{externalRows.length === 1 ? "" : "s"}
+              </span>
+            </div>
             <p className="text-[12px] text-muted-foreground mb-3">
               These hosts serve a web page instead of a direct file, so they
-              can't be downloaded in-app.
+              can&apos;t be downloaded in-app.
             </p>
             <div className="space-y-2.5">
               {externalRows.map((row, idx) => (
@@ -602,7 +729,7 @@ export default function HdHubDownloadPage() {
                   action={
                     <button
                       onClick={() => openInBrowser(row.link.url)}
-                      className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-[#D4A237]/40 bg-[#D4A237]/[0.08] px-3 py-2 text-xs font-bold text-[#D4A237] hover:bg-[#D4A237]/15 transition-all"
+                      className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/[0.08] px-3 py-2 text-xs font-bold text-primary hover:bg-primary/15 transition-all"
                     >
                       <ExternalLink size={14} />
                       Open
@@ -611,11 +738,11 @@ export default function HdHubDownloadPage() {
                 />
               ))}
             </div>
-          </div>
+          </section>
         )}
 
         {directRows.length > 0 && (
-          <div className="mt-6 flex items-center justify-between rounded-xl bg-[#0E0E11] border border-white/[0.06] px-4 py-3">
+          <div className="flex items-center justify-between rounded-xl bg-surface border border-white/[0.06] px-4 py-3">
             <p className="text-xs text-muted-foreground">
               {available
                 ? "Queued downloads appear in the manager with live progress."
@@ -623,7 +750,7 @@ export default function HdHubDownloadPage() {
             </p>
             <Link
               href="/downloads"
-              className="shrink-0 ml-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[#D4A237] hover:underline"
+              className="shrink-0 ml-4 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
             >
               <Download size={13} />
               View Downloads
@@ -656,7 +783,7 @@ function FileRowView({
   const segments = downloadMetaSegments(row.details);
 
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-[#0E0E11] px-4 py-3">
+    <div className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-surface px-4 py-3.5 hover:border-white/[0.14] transition-colors">
       <div className="min-w-0 flex-1">
         <p
           title={row.details.name}
@@ -665,7 +792,7 @@ function FileRowView({
           {row.details.name}
         </p>
 
-        <p className="mt-1 text-[11px] leading-relaxed break-words">
+        <p className="mt-1.5 text-[11px] leading-relaxed break-words">
           {segments.map((seg, i) => (
             <span key={`${seg.tone}-${seg.label}`}>
               {i > 0 && <span className="text-faint">{" · "}</span>}
@@ -677,7 +804,7 @@ function FileRowView({
         {progress !== undefined && (
           <div className="mt-2 h-1 rounded-full bg-white/[0.06] overflow-hidden">
             <div
-              className="h-full bg-[#D4A237] transition-all"
+              className="h-full bg-primary transition-all"
               style={{ width: `${Math.round(progress * 100)}%` }}
             />
           </div>
@@ -689,13 +816,11 @@ function FileRowView({
   );
 }
 
-function NumSelect({
-  label,
+function EpisodeSelect({
   value,
   max,
   onChange,
 }: {
-  label: string;
   value: number;
   max: number;
   onChange: (n: number) => void;
@@ -704,19 +829,25 @@ function NumSelect({
   // clamp effect lands) — clamp for display so <select> always has a match.
   const clamped = Math.min(Math.max(value || 1, 1), Math.max(max, 1));
   return (
-    <label className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2 py-1.5">
-      <span className="text-[11px] font-bold text-faint">{label}</span>
+    <label className="relative inline-flex items-center rounded-xl border border-white/[0.10] bg-white/[0.04] hover:bg-white/[0.07] transition-colors">
+      <span className="pl-3 text-[11px] font-bold text-faint shrink-0">
+        Episode
+      </span>
       <select
         value={clamped}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="bg-transparent text-sm text-foreground outline-none [&>option]:bg-[#16161A]"
+        className="appearance-none bg-transparent py-2 pl-2 pr-8 text-[13px] font-semibold text-foreground outline-none [&>option]:bg-elevated"
       >
-        {Array.from({ length: max }, (_, i) => i + 1).map((n) => (
+        {Array.from({ length: Math.max(max, 1) }, (_, i) => i + 1).map((n) => (
           <option key={n} value={n}>
             {n}
           </option>
         ))}
       </select>
+      <ChevronDown
+        size={13}
+        className="pointer-events-none absolute right-2.5 text-muted-foreground"
+      />
     </label>
   );
 }
@@ -734,12 +865,18 @@ function FilterSelect({
 }) {
   const active = value;
   return (
-    <label className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2 py-1.5 hover:bg-white/[0.06] transition-colors">
+    <label
+      className={`flex items-center gap-1.5 rounded-xl border px-2.5 py-2 transition-colors ${
+        active
+          ? "border-primary/40 bg-primary/[0.08]"
+          : "border-white/[0.10] bg-white/[0.04] hover:bg-white/[0.07]"
+      }`}
+    >
       <span className="text-[11px] font-bold text-faint shrink-0">{label}</span>
       <select
         value={active}
         onChange={(e) => onChange(e.target.value || undefined)}
-        className="bg-transparent text-sm text-foreground outline-none [&>option]:bg-[#16161A]"
+        className="bg-transparent text-[13px] font-semibold text-foreground outline-none [&>option]:bg-elevated"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -755,7 +892,7 @@ function FilterSelect({
             e.stopPropagation();
             onChange("");
           }}
-          className="shrink-0 text-[10px] leading-none text-faint hover:text-foreground transition-colors"
+          className="shrink-0 text-[11px] leading-none text-faint hover:text-foreground transition-colors"
           title={`Clear ${label} filter`}
         >
           ×
@@ -777,8 +914,8 @@ function StateCard({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-[#0E0E11] px-6 py-12 text-center">
-      <div className="w-16 h-16 rounded-full bg-[#16161A] flex items-center justify-center mx-auto mb-5">
+    <div className="rounded-xl border border-white/[0.06] bg-surface px-6 py-12 text-center">
+      <div className="w-16 h-16 rounded-full bg-elevated flex items-center justify-center mx-auto mb-5">
         {icon}
       </div>
       <h3 className="text-base font-semibold mb-1">{title}</h3>

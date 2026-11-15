@@ -119,7 +119,7 @@ export function PlaybackFunnel({
               if (!active || !payload?.length) return null;
               const p = payload[0].payload;
               return (
-                <div className="bg-[#121216] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
+                <div className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-xs text-white/90 shadow-2xl">
                   <p className="font-bold mb-1 text-white">{p.name}</p>
                   <p style={{ color: p.fill }} className="font-semibold">
                     {fmtInt(p.value)} events

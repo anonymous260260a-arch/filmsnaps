@@ -52,12 +52,12 @@ function Rail({ label, items }: { label: string; items: AniListHomeItem[] }) {
                     loading="lazy"
                   />
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center text-[11px] text-zinc-600">
+                  <div className="flex h-full w-full items-center justify-center text-[11px] text-faint">
                     {item.title}
                   </div>
                 )}
               </div>
-              <p className="mt-2 line-clamp-2 text-xs text-zinc-300 group-hover:text-white">
+              <p className="mt-2 line-clamp-2 text-xs text-foreground group-hover:text-white">
                 {item.title}
               </p>
             </Link>

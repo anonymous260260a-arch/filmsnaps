@@ -59,9 +59,9 @@ export function SeasonSelector({
     <div className="relative" ref={seasonsRef}>
       <button
         onClick={() => setShowSeasons(!showSeasons)}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#0E0E11] border border-white/[0.08] hover:border-white/20 rounded-xl text-xs font-bold text-foreground active:scale-[0.98] transition-all whitespace-nowrap"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface border border-white/[0.08] hover:border-white/20 rounded-xl text-xs font-bold text-foreground active:scale-[0.98] transition-all whitespace-nowrap"
       >
-        <span className="text-[10px] font-black uppercase tracking-wider text-zinc-500">
+        <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">
           Season
         </span>
         <span className="text-xs">
@@ -69,14 +69,14 @@ export function SeasonSelector({
         </span>
         <ChevronRight
           size={13}
-          className={`text-zinc-400 transition-transform duration-200 ${
+          className={`text-muted-foreground transition-transform duration-200 ${
             showSeasons ? "rotate-90 text-white" : ""
           }`}
         />
       </button>
 
       {showSeasons && (
-        <div className="absolute top-full mt-2 left-0 right-0 sm:right-auto z-50 sm:w-44 max-h-72 overflow-y-auto bg-[#16161A] border border-[#222226] rounded-xl p-1.5 shadow-xl animate-scale-in origin-top">
+        <div className="absolute top-full mt-2 left-0 right-0 sm:right-auto z-50 sm:w-44 max-h-72 overflow-y-auto bg-elevated border border-subtle rounded-xl p-1.5 shadow-xl animate-scale-in origin-top">
           {filteredSeasons.map((s) => {
             const isActive = s.season_number === selectedSeason;
             return (
@@ -85,8 +85,8 @@ export function SeasonSelector({
                 onClick={() => handleSeasonSelect(s.season_number)}
                 className={`w-full flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg text-sm transition-colors ${
                   isActive
-                    ? "bg-[#D4A237]/10 text-[#D4A237]"
-                    : "text-zinc-400 hover:bg-white/5 hover:text-zinc-300"
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
                 }`}
               >
                 <span className="flex-1 text-left">
@@ -95,7 +95,7 @@ export function SeasonSelector({
                     ? `0${s.season_number}`
                     : s.season_number}
                 </span>
-                {isActive && <Check size={14} className="text-[#D4A237]" />}
+                {isActive && <Check size={14} className="text-primary" />}
               </button>
             );
           })}
@@ -144,8 +144,8 @@ export function EpisodeJumpStrip({
             onClick={() => onSelect(ep.episode_number)}
             className={`flex-shrink-0 min-w-[2.5rem] h-10 px-2 rounded-lg text-xs font-bold transition-all active:scale-95 ${
               isActive
-                ? "bg-[#D4A237] text-[#070708] shadow-[0_2px_10px_rgba(212,162,55,0.35)]"
-                : "bg-[#0E0E11] border border-white/[0.08] text-zinc-400"
+                ? "bg-primary text-background shadow-[0_2px_10px_rgba(212,162,55,0.35)]"
+                : "bg-surface border border-white/[0.08] text-muted-foreground"
             }`}
             aria-current={isActive ? "true" : undefined}
             aria-label={`Episode ${ep.episode_number}`}
@@ -173,17 +173,17 @@ export function NowWatchingBar({
   return (
     <div className="flex items-center gap-3 pt-1.5">
       <span className="relative flex h-2 w-2">
-        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D4A237] opacity-75" />
-        <span className="relative inline-flex rounded-full h-2 w-2 bg-[#D4A237]" />
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
       </span>
-      <p className="text-[11px] font-black uppercase text-zinc-500 tracking-[0.2em]">
+      <p className="text-[11px] font-black uppercase text-muted-foreground tracking-[0.2em]">
         Now Watching
       </p>
       <h3 className="text-sm font-bold text-foreground">
         S{s} : E{e}
       </h3>
       {episodeName && (
-        <p className="hidden lg:block text-sm text-zinc-400 italic truncate max-w-md">
+        <p className="hidden lg:block text-sm text-muted-foreground italic truncate max-w-md">
           — {episodeName}
         </p>
       )}
@@ -241,7 +241,7 @@ export function EpisodeRail({
         <div className="relative">
           <button
             onClick={() => scroll("left")}
-            className="hidden md:flex absolute -left-4 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-[#0E0E11] border border-[#222226] items-center justify-center text-zinc-500 hover:text-white hover:border-white/20 transition-all shadow-lg"
+            className="hidden md:flex absolute -left-4 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-surface border border-subtle items-center justify-center text-muted-foreground hover:text-white hover:border-white/20 transition-all shadow-lg"
           >
             <ChevronLeft size={18} />
           </button>
@@ -257,13 +257,13 @@ export function EpisodeRail({
                 <div
                   key={ep.id}
                   onClick={() => setActiveEpisode(ep.episode_number)}
-                  className={`snap-start flex-shrink-0 w-[78vw] sm:w-[260px] md:w-[220px] lg:w-[250px] cursor-pointer group rounded-xl overflow-hidden border transition-all duration-300 bg-[#0E0E11] ${
+                  className={`snap-start flex-shrink-0 w-[78vw] sm:w-[260px] md:w-[220px] lg:w-[250px] cursor-pointer group rounded-xl overflow-hidden border transition-all duration-300 bg-surface ${
                     isActive
-                      ? "border-[#D4A237]/50 shadow-[0_4px_20px_rgba(212,162,55,0.15)]"
-                      : "border-transparent hover:border-white/10 hover:bg-[#16161A]"
+                      ? "border-primary/50 shadow-[0_4px_20px_rgba(212,162,55,0.15)]"
+                      : "border-transparent hover:border-white/10 hover:bg-elevated"
                   }`}
                 >
-                  <div className="relative aspect-video bg-[#070708] overflow-hidden">
+                  <div className="relative aspect-video bg-background overflow-hidden">
                     {imgUrl ? (
                       <img
                         src={`https://image.tmdb.org/t/p/w300${imgUrl}`}
@@ -273,7 +273,7 @@ export function EpisodeRail({
                       />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
-                        <Film size={20} className="text-zinc-700" />
+                        <Film size={20} className="text-faint" />
                       </div>
                     )}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
@@ -281,7 +281,7 @@ export function EpisodeRail({
                       <div
                         className={`w-1.5 h-1.5 rounded-full ${
                           isActive
-                            ? "bg-[#D4A237] animate-pulse shadow-[0_0_6px_rgba(212,162,55,0.6)]"
+                            ? "bg-primary animate-pulse shadow-[0_0_6px_rgba(212,162,55,0.6)]"
                             : "bg-white/40"
                         }`}
                       />
@@ -296,12 +296,12 @@ export function EpisodeRail({
                   <div className="px-2.5 py-2">
                     <p
                       className={`text-sm font-semibold truncate ${
-                        isActive ? "text-[#D4A237]" : "text-zinc-300"
+                        isActive ? "text-primary" : "text-foreground"
                       }`}
                     >
                       {ep.name || `Episode ${ep.episode_number}`}
                     </p>
-                    <p className="text-[11px] text-zinc-600 mt-0.5">
+                    <p className="text-[11px] text-faint mt-0.5">
                       Episode {ep.episode_number}
                       {ep.runtime ? ` · ${ep.runtime}m` : ""}
                     </p>
@@ -313,7 +313,7 @@ export function EpisodeRail({
 
           <button
             onClick={() => scroll("right")}
-            className="hidden md:flex absolute -right-4 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-[#0E0E11] border border-[#222226] items-center justify-center text-zinc-500 hover:text-white hover:border-white/20 transition-all shadow-lg"
+            className="hidden md:flex absolute -right-4 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-surface border border-subtle items-center justify-center text-muted-foreground hover:text-white hover:border-white/20 transition-all shadow-lg"
           >
             <ChevronRight size={18} />
           </button>
@@ -331,7 +331,7 @@ export function EpisodeRail({
           title="Previous Episode"
           disabled={activeEpisode <= 1}
           onClick={goToPrevEpisode}
-          className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 h-12 sm:h-11 px-4 rounded-xl bg-[#0E0E11] border border-white/5 text-zinc-500 hover:text-foreground hover:border-white/20 disabled:opacity-30 disabled:cursor-not-allowed transition-all active:scale-95"
+          className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 h-12 sm:h-11 px-4 rounded-xl bg-surface border border-white/5 text-muted-foreground hover:text-foreground hover:border-white/20 disabled:opacity-30 disabled:cursor-not-allowed transition-all active:scale-95"
         >
           <ChevronLeft size={16} />
           <span className="text-xs font-semibold">Prev</span>
@@ -340,7 +340,7 @@ export function EpisodeRail({
           title="Next Episode"
           disabled={activeEpisode >= maxEpisode}
           onClick={goToNextEpisode}
-          className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 h-12 sm:h-11 px-4 rounded-xl bg-[#D4A237] text-[#070708] font-bold hover:bg-[#B88B2A] disabled:opacity-30 disabled:cursor-not-allowed transition-all active:scale-95 shadow-lg shadow-[#D4A237]/5"
+          className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 h-12 sm:h-11 px-4 rounded-xl bg-primary text-background font-bold hover:bg-primary-dim disabled:opacity-30 disabled:cursor-not-allowed transition-all active:scale-95 shadow-lg shadow-primary/5"
         >
           <span className="text-xs">Next</span>
           <ChevronRight size={16} />

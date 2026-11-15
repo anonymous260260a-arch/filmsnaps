@@ -117,8 +117,8 @@ const PLATFORM_NOTES: Partial<
       body: (
         <>
           Not available on Google Play. You may need to enable{" "}
-          <span className="text-zinc-300">Install from unknown sources</span> in
-          your device settings.
+          <span className="text-foreground">Install from unknown sources</span>{" "}
+          in your device settings.
         </>
       ),
     },
@@ -163,7 +163,7 @@ export default function DownloadPage() {
             </Link>
             <Link
               href="/"
-              className="text-zinc-400 hover:text-white text-sm transition-colors"
+              className="text-muted-foreground hover:text-white text-sm transition-colors"
             >
               ← Back to Home
             </Link>
@@ -177,7 +177,7 @@ export default function DownloadPage() {
       <div className="max-w-2xl mx-auto px-4 text-center pb-24">
         <Link
           href="/versions"
-          className="inline-flex items-center gap-2 text-zinc-500 hover:text-amber-400 text-sm transition-colors"
+          className="inline-flex items-center gap-2 text-muted-foreground hover:text-amber-400 text-sm transition-colors"
         >
           <Clock className="w-4 h-4" />
           View all versions & release notes
@@ -201,7 +201,7 @@ function PlatformDownloadSection() {
         <h1 className="text-3xl font-bold text-white mb-2">
           Download FilmSnaps
         </h1>
-        <p className="text-zinc-400 text-sm">
+        <p className="text-muted-foreground text-sm">
           Choose your platform — same great experience everywhere
         </p>
       </div>
@@ -221,33 +221,31 @@ function PlatformDownloadSection() {
             >
               {/* Header */}
               <div className="flex items-center gap-3 mb-3">
-                <span className="text-zinc-400 group-hover:text-white transition-colors">
+                <span className="text-muted-foreground group-hover:text-white transition-colors">
                   {platform.icon}
                 </span>
                 <div>
                   <h2 className="text-white font-bold">{platform.label}</h2>
-                  <p className="text-zinc-500 text-xs">
+                  <p className="text-muted-foreground text-xs">
                     {platform.requirements}
                   </p>
                 </div>
               </div>
 
-              <p className="text-zinc-400 text-xs mb-4 leading-relaxed">
+              <p className="text-muted-foreground text-xs mb-4 leading-relaxed">
                 {platform.description}
               </p>
 
               {/* Version badge */}
               <div className="flex items-center gap-2 mb-4">
-                <span className="text-zinc-600 text-[11px] uppercase tracking-wider">
+                <span className="text-faint text-[11px] uppercase tracking-wider">
                   Latest
                 </span>
                 <span className="text-white text-sm font-mono font-bold">
                   v{version}
                 </span>
                 {fileSize && (
-                  <span className="text-zinc-600 text-xs ml-auto">
-                    {fileSize}
-                  </span>
+                  <span className="text-faint text-xs ml-auto">{fileSize}</span>
                 )}
               </div>
 
@@ -258,7 +256,7 @@ function PlatformDownloadSection() {
                 className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all ${
                   hasDownload
                     ? "bg-amber-500 text-black hover:bg-amber-400 active:scale-[0.98]"
-                    : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
+                    : "bg-zinc-800 text-muted-foreground cursor-not-allowed"
                 }`}
               >
                 <Download className="w-4 h-4" />
@@ -290,7 +288,7 @@ function PlatformDownloadSection() {
                     <h4 className="text-white text-sm font-semibold mb-0.5">
                       {note.title}
                     </h4>
-                    <p className="text-zinc-500 text-xs leading-relaxed">
+                    <p className="text-muted-foreground text-xs leading-relaxed">
                       {note.body}
                     </p>
                   </div>

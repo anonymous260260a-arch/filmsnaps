@@ -90,7 +90,7 @@ export function Header() {
             href="/"
             className="flex items-center gap-2 group flex-shrink-0"
           >
-            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-[#D4A237]/10 group-hover:bg-[#D4A237]/20 transition-all duration-300 overflow-hidden">
+            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-primary/10 group-hover:bg-primary/20 transition-all duration-300 overflow-hidden">
               <img
                 src="/logo.png"
                 alt="FilmSnaps"

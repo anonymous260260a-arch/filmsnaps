@@ -839,15 +839,15 @@ export function WebCodecsPlayer({
   // ---- Loading State ----
   if (status === "loading") {
     return (
-      <div className="absolute inset-0 bg-[#070708] z-30 flex flex-col items-center justify-center gap-5 pointer-events-none">
+      <div className="absolute inset-0 bg-background z-30 flex flex-col items-center justify-center gap-5 pointer-events-none">
         <div className="relative w-14 h-14">
-          <div className="absolute inset-0 rounded-full border-2 border-[#222226]" />
+          <div className="absolute inset-0 rounded-full border-2 border-subtle" />
           <div
-            className="absolute inset-0 rounded-full border-t-2 border-[#D4A237] animate-spin"
+            className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"
             style={{ animationDuration: "1.2s" }}
           />
-          <div className="absolute inset-3 rounded-full border-2 border-[#222226]" />
-          <div className="absolute inset-[18px] rounded-full bg-[#D4A237]/30" />
+          <div className="absolute inset-3 rounded-full border-2 border-subtle" />
+          <div className="absolute inset-[18px] rounded-full bg-primary/30" />
         </div>
         <p
           className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse"
@@ -862,8 +862,8 @@ export function WebCodecsPlayer({
   // ---- Error State ----
   if (status === "error") {
     return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070708] z-40 gap-4 px-6">
-        <div className="text-[#D4A237] text-4xl">⚠</div>
+      <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-40 gap-4 px-6">
+        <div className="text-primary text-4xl">⚠</div>
         <p
           className="text-xl text-foreground font-bold text-center"
           style={{ fontFamily: "var(--font-display)" }}
@@ -904,10 +904,10 @@ export function WebCodecsPlayer({
           className="absolute inset-0 flex items-center justify-center cursor-pointer z-20"
           onClick={togglePlay}
         >
-          <div className="w-16 h-16 rounded-full bg-[#D4A237]/90 flex items-center justify-center transition-transform hover:scale-110 active:scale-95">
+          <div className="w-16 h-16 rounded-full bg-primary/90 flex items-center justify-center transition-transform hover:scale-110 active:scale-95">
             <Play
               size={30}
-              className="text-[#070708] ml-1"
+              className="text-background ml-1"
               fill="currentColor"
             />
           </div>
@@ -928,7 +928,7 @@ export function WebCodecsPlayer({
           {/* Play/Pause */}
           <button
             onClick={togglePlay}
-            className="text-white hover:text-[#D4A237] transition-colors flex-shrink-0"
+            className="text-white hover:text-primary transition-colors flex-shrink-0"
             aria-label={status === "playing" ? "Pause" : "Play"}
           >
             {status === "playing" ? (
@@ -951,9 +951,9 @@ export function WebCodecsPlayer({
             step={0.1}
             value={Math.min(currentTimeRef.current, duration || 100)}
             onChange={(e) => seek(Number(e.target.value))}
-            className="flex-1 h-1 accent-[#D4A237] bg-white/20 rounded-full appearance-none cursor-pointer
+            className="flex-1 h-1 accent-primary bg-white/20 rounded-full appearance-none cursor-pointer
               [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3
-              [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#D4A237]"
+              [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary"
             aria-label="Seek"
           />
 
@@ -988,9 +988,9 @@ export function WebCodecsPlayer({
                   step={0.05}
                   value={volume}
                   onChange={(e) => handleVolumeChange(Number(e.target.value))}
-                  className="w-20 h-1 accent-[#D4A237] bg-white/20 rounded-full appearance-none cursor-pointer
+                  className="w-20 h-1 accent-primary bg-white/20 rounded-full appearance-none cursor-pointer
                     [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5
-                    [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#D4A237]"
+                    [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary"
                   aria-label="Volume"
                 />
               </div>
@@ -1008,14 +1008,14 @@ export function WebCodecsPlayer({
                 <Languages size={18} />
               </button>
               {showLangPicker && (
-                <div className="absolute bottom-full right-0 mb-2 bg-[#1C1C1E] border border-white/[0.08] rounded-lg overflow-hidden shadow-xl min-w-[120px]">
+                <div className="absolute bottom-full right-0 mb-2 bg-elevated border border-white/[0.08] rounded-lg overflow-hidden shadow-xl min-w-[120px]">
                   {audioTracks.map((track, idx) => (
                     <button
                       key={track.trackNumber}
                       onClick={() => handleAudioTrackChange(idx)}
                       className={`w-full px-3 py-1.5 text-xs text-left transition-colors ${
                         selectedAudioTrack === idx
-                          ? "bg-[#D4A237]/20 text-[#D4A237]"
+                          ? "bg-primary/20 text-primary"
                           : "text-white/70 hover:bg-white/10"
                       }`}
                     >

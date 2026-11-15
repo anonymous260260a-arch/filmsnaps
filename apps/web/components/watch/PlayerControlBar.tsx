@@ -40,8 +40,8 @@ export function PlayerControlBar({
       <div className="flex items-center gap-3">
         {isPending && !isPlayerReady && (
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full border-2 border-[#D4A237] border-t-transparent animate-spin" />
-            <span className="text-[11px] text-zinc-500 font-medium tracking-wide">
+            <div className="w-3 h-3 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+            <span className="text-[11px] text-muted-foreground font-medium tracking-wide">
               Buffering...
             </span>
           </div>
@@ -51,7 +51,7 @@ export function PlayerControlBar({
           <button
             onClick={handlePiP}
             className="flex items-center justify-center w-8 h-8 rounded-lg
-              text-zinc-500 hover:text-zinc-300 hover:bg-[#0E0E11] transition-all"
+              text-muted-foreground hover:text-foreground hover:bg-surface transition-all"
             aria-label="Picture in Picture"
             title="Picture in Picture"
           >

@@ -215,7 +215,6 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
   const renderRow = (item: NavItem, idx: number) => {
     const Icon = item.icon;
     const active = item.href === activeHref;
-    const delay = { animationDelay: `${50 + idx * 22}ms` };
 
     return (
       <Link
@@ -235,21 +234,20 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
         onMouseLeave={hideTip}
         onBlur={hideTip}
         className={`group relative z-[1] flex items-center gap-3 rounded-lg outline-none
-          transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#D4A237]/50
+          transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-primary/50
           ${sidebarCollapsed ? "justify-center px-2 py-2" : "px-2.5 py-2"}
-          ${active ? "text-zinc-100" : "text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-200"}`}
+          ${active ? "text-foreground" : "text-muted-foreground hover:bg-white/[0.04] hover:text-foreground"}`}
       >
         <Icon
           size={18}
           strokeWidth={active ? 2.2 : 1.8}
-          className={`shrink-0 transition-[color,transform] duration-150 group-hover:scale-110
-            ${active ? "text-[#D4A237]" : "text-zinc-500 group-hover:text-zinc-200"}`}
+          className={`shrink-0 transition-colors duration-150
+            ${active ? "text-primary" : "text-muted-foreground group-hover:text-foreground"}`}
         />
         {!sidebarCollapsed && (
           <>
             <span
               className={`sb-fade flex-1 truncate text-[13px] ${active ? "font-semibold" : "font-medium"}`}
-              style={delay}
             >
               {item.label}
             </span>
@@ -258,13 +256,13 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
                 key={item.count}
                 suppressHydrationWarning
                 className="sb-pop inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full
-                  bg-[#D4A237]/15 px-1 text-[11px] font-bold tabular-nums text-[#D4A237]
-                  ring-1 ring-[#D4A237]/25"
+                  bg-primary/15 px-1 text-[11px] font-semibold tabular-nums text-primary
+                  ring-1 ring-primary/25"
               >
                 {item.count > 99 ? "99+" : item.count}
               </span>
             ) : (
-              <kbd className="sb-fade text-[11px] font-medium text-zinc-700 opacity-0 transition-opacity group-hover:opacity-100">
+              <kbd className="sb-fade text-[11px] font-medium text-faint opacity-0 transition-opacity group-hover:opacity-100">
                 {mod}
                 {idx + 1}
               </kbd>
@@ -273,7 +271,7 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
         )}
         {/* pulse dot when a download is live and labels are hidden */}
         {sidebarCollapsed && item.href === "/downloads" && download && (
-          <span className="sb-pulse absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[#D4A237]" />
+          <span className="sb-pulse absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
         )}
       </Link>
     );
@@ -283,16 +281,10 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
     <aside
       data-sidebar
       className={`relative flex h-full shrink-0 select-none flex-col overflow-hidden
-        border-r border-white/[0.06] bg-gradient-to-b from-[#0d0d13] to-[#09090e]
+        border-r border-white/[0.07] bg-surface
         transition-[width] duration-200 ease-out motion-reduce:transition-none
         ${sidebarCollapsed ? "w-16" : "w-52"}`}
     >
-      {/* ambient gold wash — keeps the rail from reading as a dead slab */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(140%_45%_at_0%_0%,rgba(212,162,55,0.055),transparent_55%)]"
-      />
-
       {/* macOS: keep the signal lights clear, give the window a drag strip */}
       {isMac && (
         <div
@@ -304,7 +296,7 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
 
       {/* ── Collapse toggle + brand (also a drag region) ── */}
       <header
-        className="relative flex h-14 shrink-0 items-center gap-2.5 border-b border-white/[0.06] px-2.5"
+        className="relative flex h-14 shrink-0 items-center gap-2.5 border-b border-white/[0.07] px-2.5"
         style={DRAG}
       >
         <button
@@ -312,8 +304,8 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
           style={NO_DRAG}
           aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-keyshortcuts={`${mod}B`}
-          className="flex h-9 w-9 items-center justify-center rounded-xl text-zinc-500
-            transition-all hover:bg-white/[0.06] hover:text-zinc-200 active:scale-95"
+          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground
+            transition-colors hover:bg-white/[0.06] hover:text-foreground active:scale-95"
         >
           {sidebarCollapsed ? (
             <PanelLeftOpen size={16} />
@@ -327,10 +319,10 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
               src="/logo.png"
               alt="FilmSnaps"
               draggable={false}
-              className="h-6 w-6 shrink-0 rounded-[7px] object-cover shadow-[0_2px_12px_rgba(212,162,55,0.25)]"
+              className="h-6 w-6 shrink-0 rounded-[7px] object-cover"
             />
             <span
-              className="truncate text-[15px] font-bold tracking-tight text-foreground"
+              className="truncate text-[15px] font-semibold tracking-tight text-foreground"
               style={{ fontFamily: "var(--font-display)" }}
             >
               FilmSnaps
@@ -348,7 +340,7 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
         <span
           aria-hidden
           className={`pointer-events-none absolute left-2 right-2 z-0 rounded-lg
-            bg-[#D4A237]/[0.09] shadow-[0_1px_6px_rgba(0,0,0,0.35)] ring-1 ring-inset ring-[#D4A237]/[0.12]
+            bg-primary/[0.09] ring-1 ring-inset ring-primary/[0.12]
             transition-[top,height,opacity] duration-300 ease-[cubic-bezier(.3,.9,.3,1)]
             ${indicator ? "opacity-100" : "opacity-0"}`}
           style={
@@ -357,7 +349,7 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
               : undefined
           }
         >
-          <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-[#D4A237] shadow-[0_0_10px_rgba(212,162,55,0.7)]" />
+          <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary" />
         </span>
 
         {/* Search — ⌘K, the desktop command-palette anchor */}
@@ -369,21 +361,17 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
           onBlur={hideTip}
           aria-keyshortcuts={`${mod}K`}
           className={`group relative z-[1] mb-1 flex w-full items-center gap-3 rounded-lg outline-none
-            text-zinc-500 transition-colors hover:bg-white/[0.04] hover:text-zinc-200
-            focus-visible:ring-2 focus-visible:ring-[#D4A237]/50
+            text-muted-foreground transition-colors hover:bg-white/[0.04] hover:text-foreground
+            focus-visible:ring-2 focus-visible:ring-primary/50
             ${sidebarCollapsed ? "justify-center px-2 py-2" : "px-2.5 py-2"}`}
         >
-          <Search
-            size={18}
-            strokeWidth={1.8}
-            className="shrink-0 transition-transform duration-150 group-hover:scale-110"
-          />
+          <Search size={18} strokeWidth={1.8} className="shrink-0" />
           {!sidebarCollapsed && (
             <>
               <span className="sb-fade flex-1 truncate text-left text-[13px] font-medium">
                 Search
               </span>
-              <kbd className="rounded border border-white/[0.08] bg-white/[0.04] px-1.5 py-px text-[11px] font-medium text-zinc-500">
+              <kbd className="rounded border border-white/[0.08] bg-white/[0.04] px-1.5 py-px text-[11px] font-medium text-muted-foreground">
                 {mod}K
               </kbd>
             </>
@@ -393,9 +381,9 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
         {groups.map((group, gi) => (
           <div key={group.label}>
             {sidebarCollapsed ? (
-              gi > 0 && <div className="mx-2.5 my-2 h-px bg-white/[0.06]" />
+              gi > 0 && <div className="mx-2.5 my-2 h-px bg-white/[0.07]" />
             ) : (
-              <p className="px-2.5 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-600">
+              <p className="px-2.5 pb-1 pt-4 text-[11px] font-medium text-muted-foreground">
                 {group.label}
               </p>
             )}
@@ -413,24 +401,24 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
 
       {/* ── Live download meter (fed via IPC from the main process) ── */}
       {download && !sidebarCollapsed && (
-        <div className="sb-fade relative mx-2 mb-2 rounded-lg border border-white/[0.06] bg-white/[0.03] p-2.5">
+        <div className="sb-fade relative mx-2 mb-2 rounded-lg border border-white/[0.07] bg-white/[0.03] p-2.5">
           <div className="flex items-center gap-2">
-            <Download size={13} className="sb-pulse shrink-0 text-[#D4A237]" />
-            <p className="min-w-0 flex-1 truncate text-[11px] font-medium text-zinc-300">
+            <Download size={13} className="sb-pulse shrink-0 text-primary" />
+            <p className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground">
               {download.label}
             </p>
-            <span className="text-[11px] tabular-nums text-zinc-500">
+            <span className="text-[11px] tabular-nums text-muted-foreground">
               {pct}%
             </span>
           </div>
           <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.07]">
             <div
-              className="sb-stripes h-full rounded-full bg-[#D4A237] transition-[width] duration-300"
+              className="sb-stripes h-full rounded-full bg-primary transition-[width] duration-300"
               style={{ width: `${pct}%` }}
             />
           </div>
           {download.speed && (
-            <p className="mt-1 text-[11px] tabular-nums text-zinc-600">
+            <p className="mt-1 text-[11px] tabular-nums text-faint">
               {download.speed}
             </p>
           )}
@@ -439,7 +427,7 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
       {download && sidebarCollapsed && (
         <div className="relative mx-3 mb-2 h-[3px] overflow-hidden rounded-full bg-white/[0.07]">
           <div
-            className="h-full bg-[#D4A237] transition-[width] duration-300"
+            className="h-full bg-primary transition-[width] duration-300"
             style={{ width: `${pct}%` }}
           />
         </div>
@@ -447,24 +435,24 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
 
       {/* ── Footer: legal links ── */}
       {!sidebarCollapsed && (
-        <div className="relative border-t border-white/[0.06] px-2.5 py-2">
+        <div className="relative border-t border-white/[0.07] px-2.5 py-2">
           <Link
             href="/legal"
-            className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-zinc-600 transition-colors hover:bg-white/[0.04] hover:text-zinc-300"
+            className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-faint transition-colors hover:bg-white/[0.04] hover:text-foreground"
           >
             <ScrollText size={14} className="shrink-0" />
             Legal & DMCA
           </Link>
           <Link
             href="/privacy"
-            className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-zinc-600 transition-colors hover:bg-white/[0.04] hover:text-zinc-300"
+            className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-faint transition-colors hover:bg-white/[0.04] hover:text-foreground"
           >
             <ScrollText size={14} className="shrink-0" />
             Privacy Policy
           </Link>
           <Link
             href="/transparency"
-            className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-zinc-600 transition-colors hover:bg-white/[0.04] hover:text-zinc-300"
+            className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-faint transition-colors hover:bg-white/[0.04] hover:text-foreground"
           >
             <ScrollText size={14} className="shrink-0" />
             Transparency & Security
@@ -477,12 +465,14 @@ export function Sidebar({ onOpenSearch, download = null }: SidebarProps) {
         <div
           role="tooltip"
           className="sb-fade pointer-events-none fixed z-50 flex -translate-y-1/2 items-center gap-1.5
-            rounded-md border border-white/10 bg-[#16161d] px-2 py-1 shadow-[0_4px_16px_rgba(0,0,0,0.5)]"
+            rounded-md border border-white/[0.1] bg-elevated px-2 py-1 shadow-[0_4px_16px_rgba(0,0,0,0.5)]"
           style={{ top: tip.top, left: "calc(4rem + 10px)" }}
         >
-          <span className="text-xs font-medium text-zinc-200">{tip.label}</span>
+          <span className="text-xs font-medium text-foreground">
+            {tip.label}
+          </span>
           {tip.hint && (
-            <kbd className="text-[11px] text-zinc-500">{tip.hint}</kbd>
+            <kbd className="text-[11px] text-muted-foreground">{tip.hint}</kbd>
           )}
         </div>
       )}

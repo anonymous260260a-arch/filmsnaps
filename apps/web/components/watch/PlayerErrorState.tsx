@@ -54,8 +54,8 @@ export function PlayerErrorState({
   const quickSwitches = animeExhausted ? [] : alternatives.slice(0, 3);
 
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070708]/90 backdrop-blur-sm z-40 gap-4 px-6">
-      <Clapperboard className="text-[#D4A237]" size={48} strokeWidth={1.5} />
+    <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/90 backdrop-blur-sm z-40 gap-4 px-6">
+      <Clapperboard className="text-primary" size={48} strokeWidth={1.5} />
 
       <p
         className="text-xl text-foreground font-bold text-center"
@@ -80,7 +80,7 @@ export function PlayerErrorState({
 
       {/* Debug line — what the fallback chain actually tried */}
       {tried && tried.length > 0 && (
-        <p className="font-mono text-[11px] text-zinc-600 tracking-tight">
+        <p className="font-mono text-[11px] text-faint tracking-tight">
           Tried: {tried.join(", ")}
         </p>
       )}
@@ -92,8 +92,8 @@ export function PlayerErrorState({
             key={p.id}
             onClick={() => onSelectProvider(p)}
             className="flex items-center gap-1.5 px-4 py-2 rounded-full
-              bg-[#D4A237]/10 border border-[#D4A237]/30 text-[#D4A237]
-              text-xs font-bold hover:bg-[#D4A237]/20 transition-all active:scale-95"
+              bg-primary/10 border border-primary/30 text-primary
+              text-xs font-bold hover:bg-primary/20 transition-all active:scale-95"
           >
             Try {p.displayName || p.name}
           </button>
@@ -102,8 +102,8 @@ export function PlayerErrorState({
         <button
           onClick={onRetry}
           className="flex items-center gap-1.5 px-4 py-2 rounded-full
-            bg-[#D4A237] text-[#070708] text-xs font-bold
-            hover:bg-[#B88B2A] transition-all active:scale-95"
+            bg-primary text-background text-xs font-bold
+            hover:bg-primary-dim transition-all active:scale-95"
         >
           <RefreshCw size={12} />
           Retry
