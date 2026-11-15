@@ -14,7 +14,6 @@ import {
   Youtube,
 } from "lucide-react";
 import { getImageUrl, getTrailerKey } from "@/lib/tmdb";
-import dynamic from "next/dynamic";
 import { MediaCarousel } from "@/components/MediaCarousel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,23 +22,13 @@ import { useResumeTarget } from "@/hooks/useResumeTarget";
 import { useToast } from "@/hooks/use-toast";
 import { pickMoreLikeThis } from "@/lib/moreLikeThis";
 import { prefetchDirectMedia } from "@/lib/directPrefetch";
+import { warmMpv } from "@/lib/mpvWarm";
 import { useQueryClient } from "@tanstack/react-query";
-import { Suspense } from "react";
-import { SkeletonPlayer } from "@/components/SkeletonLoader";
 import { useRouter, useSearchParams } from "next/navigation";
-
-const VideoPlayer = dynamic(
-  () => import("@/components/VideoPlayer").then((m) => m.VideoPlayer),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="w-full aspect-video bg-black/20 rounded-2xl animate-pulse" />
-    ),
-  },
-);
 
 import { CastCarousel } from "@/components/CastCarousel";
 import { TrailerModal } from "@/components/TrailerModal";
+import { LazyTrailer } from "@/components/LazyTrailer";
 import DownloadBadge from "@/components/download/DownloadBadge";
 import DownloadButton from "@/components/download/DownloadButton";
 
@@ -77,7 +66,13 @@ export default function MovieClient({ movie }: { movie: any }) {
         import("@/lib/tmdb").then((m) => m.tmdbApi.getMovieDetails(movie.id)),
       staleTime: 1000 * 60 * 60 * 24 * 7,
     });
-    prefetchDirectMedia("movie", String(movie.id));
+    prefetchDirectMedia(
+      "movie",
+      String(movie.id),
+      undefined,
+      undefined,
+      Boolean(mid || aid),
+    );
   };
 
   // ── Detail-page prefetch (mobile parity) ──
@@ -87,7 +82,16 @@ export default function MovieClient({ movie }: { movie: any }) {
   useEffect(() => {
     if (directPrefetchedRef.current) return;
     directPrefetchedRef.current = true;
-    prefetchDirectMedia("movie", String(movie.id));
+    prefetchDirectMedia(
+      "movie",
+      String(movie.id),
+      undefined,
+      undefined,
+      Boolean(mid || aid),
+    );
+    // Desktop: warm the mpv pipeline too — with the chain delivering metadata
+    // instantly, the 1-3s mpv spawn is the last cold cost on the play path.
+    warmMpv();
   }, [movie.id]);
   const runtime = movie.runtime
     ? `${Math.floor(movie.runtime / 60)}h ${movie.runtime % 60}m`
@@ -129,7 +133,7 @@ export default function MovieClient({ movie }: { movie: any }) {
 
   return (
     <div className="min-h-screen bg-background">
-      <main className="pt-16">
+      <main className="detail-top pt-16">
         {/* ════════════════════════════════════════════════════════════════
             PHONE HERO  (<sm only) — mobile-app detail parity: short
             backdrop + glass nav, poster/info row, gold CTA + Trailer/
@@ -139,7 +143,7 @@ export default function MovieClient({ movie }: { movie: any }) {
           <div className="relative">
             {/* Backdrop — app parity: min(42vh, 350px), permanent fade
                 into the page background */}
-            <div className="relative w-full h-[42vh] max-h-[350px] overflow-hidden bg-[#222226]">
+            <div className="relative w-full h-[42vh] max-h-[350px] overflow-hidden bg-subtle">
               {(movie.backdrop_path || movie.poster_path) && (
                 <Image
                   src={getImageUrl(
@@ -154,7 +158,7 @@ export default function MovieClient({ movie }: { movie: any }) {
                   className="object-cover"
                 />
               )}
-              <div className="absolute inset-x-0 bottom-0 h-[70%] bg-gradient-to-t from-[#070708] via-[#070708]/55 to-transparent" />
+              <div className="absolute inset-x-0 bottom-0 h-[70%] bg-gradient-to-t from-background via-background/55 to-transparent" />
 
               {/* Floating glass nav — back / bookmark / share */}
               <div className="absolute inset-x-4 top-4 z-20 flex items-center justify-between">
@@ -162,7 +166,7 @@ export default function MovieClient({ movie }: { movie: any }) {
                   type="button"
                   onClick={handleBack}
                   aria-label="Go back"
-                  className="flex h-[38px] w-[38px] items-center justify-center rounded-full border border-white/[0.15] bg-[#0E0E11]/75 text-foreground backdrop-blur-md transition active:scale-95"
+                  className="flex h-[38px] w-[38px] items-center justify-center rounded-full border border-white/[0.15] bg-surface/75 text-foreground backdrop-blur-md transition active:scale-95"
                 >
                   <ChevronLeft className="h-5 w-5" />
                 </button>
@@ -176,7 +180,7 @@ export default function MovieClient({ movie }: { movie: any }) {
                     type="button"
                     onClick={handleShare}
                     aria-label="Share"
-                    className="flex h-[38px] w-[38px] items-center justify-center rounded-full border border-white/[0.15] bg-[#0E0E11]/75 text-foreground backdrop-blur-md transition active:scale-95"
+                    className="flex h-[38px] w-[38px] items-center justify-center rounded-full border border-white/[0.15] bg-surface/75 text-foreground backdrop-blur-md transition active:scale-95"
                   >
                     <Share2 className="h-[18px] w-[18px]" />
                   </button>
@@ -199,8 +203,8 @@ export default function MovieClient({ movie }: { movie: any }) {
                     />
                   </div>
                 ) : (
-                  <div className="flex h-[156px] w-[104px] shrink-0 items-center justify-center rounded-xl border border-white/[0.06] bg-[#222226]">
-                    <Film className="h-7 w-7 text-zinc-600" />
+                  <div className="flex h-[156px] w-[104px] shrink-0 items-center justify-center rounded-xl border border-white/[0.06] bg-subtle">
+                    <Film className="h-7 w-7 text-faint" />
                   </div>
                 )}
 
@@ -210,18 +214,18 @@ export default function MovieClient({ movie }: { movie: any }) {
                   </h1>
                   <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
                     {movie.vote_average > 0 && (
-                      <span className="rounded-md border border-[#D4A237]/30 bg-[#D4A237]/15 px-[7px] py-0.5 text-[11px] font-semibold text-[#D4A237]">
+                      <span className="rounded-md border border-primary/30 bg-primary/15 px-[7px] py-0.5 text-[11px] font-semibold text-primary">
                         ★ {movie.vote_average.toFixed(1)}
                       </span>
                     )}
                     {releaseYear && (
-                      <span className="rounded-md bg-white/[0.08] px-[7px] py-0.5 text-[11px] font-medium text-zinc-400">
+                      <span className="rounded-md bg-white/[0.08] px-[7px] py-0.5 text-[11px] font-medium text-muted-foreground">
                         {releaseYear}
                       </span>
                     )}
                     {runtime && (
-                      <span className="inline-flex items-center gap-[3px] rounded-md bg-white/[0.08] px-[7px] py-0.5 text-[11px] font-medium text-zinc-400">
-                        <Clock className="h-3 w-3 text-zinc-600" />
+                      <span className="inline-flex items-center gap-[3px] rounded-md bg-white/[0.08] px-[7px] py-0.5 text-[11px] font-medium text-muted-foreground">
+                        <Clock className="h-3 w-3 text-faint" />
                         {runtime}
                       </span>
                     )}
@@ -231,7 +235,7 @@ export default function MovieClient({ movie }: { movie: any }) {
                       {movie.genres.slice(0, 3).map((genre: any) => (
                         <span
                           key={genre.id}
-                          className="rounded-md border border-white/[0.06] bg-[#222226] px-[7px] py-0.5 text-[10px] font-medium text-zinc-400"
+                          className="rounded-md border border-white/[0.06] bg-subtle px-[7px] py-0.5 text-[10px] font-medium text-muted-foreground"
                         >
                           {genre.name}
                         </span>
@@ -247,7 +251,7 @@ export default function MovieClient({ movie }: { movie: any }) {
                   onClick={() => router.push(watchHref)}
                   onMouseEnter={handleWatchPrefetch}
                   onFocus={handleWatchPrefetch}
-                  className="w-full gap-2 h-auto py-3.5 rounded-xl font-semibold text-[15px] text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] active:scale-[0.98] active:brightness-95 transition-all duration-150"
+                  className="w-full gap-2 h-auto py-3.5 rounded-xl font-semibold text-[15px] text-background bg-gradient-to-b from-primary-bright to-primary shadow-[0_8px_24px_rgba(212,162,55,0.35)] active:scale-[0.98] active:brightness-95 transition-all duration-150"
                 >
                   <Play className="h-[18px] w-[18px] fill-current" />
                   {ctaLabel}
@@ -257,16 +261,17 @@ export default function MovieClient({ movie }: { movie: any }) {
                     <button
                       type="button"
                       onClick={() => setTrailerOpen(true)}
-                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/[0.06] bg-[#0E0E11]/80 py-[11px] text-[13px] font-medium text-foreground transition active:scale-[0.98]"
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/[0.06] bg-surface/80 py-[11px] text-[13px] font-medium text-foreground transition active:scale-[0.98]"
                     >
-                      <Youtube size={16} className="text-[#FF0000]" />
+                      <Youtube size={16} className="text-destructive" />
                       Trailer
                     </button>
                   )}
                   <DownloadButton
                     tmdbId={movie.id}
                     mediaType="movie"
-                    buttonClassName="flex-1 justify-center rounded-xl border-white/[0.06] bg-[#0E0E11]/80 py-[11px] text-[13px] font-medium"
+                    wrapperClassName="flex-1"
+                    buttonClassName="w-full justify-center rounded-xl border-white/[0.06] bg-surface/80 py-[11px] text-[13px] font-medium"
                   />
                 </div>
                 <div className="mt-3 empty:hidden">
@@ -281,7 +286,7 @@ export default function MovieClient({ movie }: { movie: any }) {
                     Overview
                   </h2>
                   <p
-                    className={`text-sm leading-[21px] text-zinc-400 ${overviewOpen ? "" : "line-clamp-3"}`}
+                    className={`text-sm leading-[21px] text-muted-foreground ${overviewOpen ? "" : "line-clamp-3"}`}
                   >
                     {movie.overview}
                   </p>
@@ -290,7 +295,7 @@ export default function MovieClient({ movie }: { movie: any }) {
                       type="button"
                       onClick={() => setOverviewOpen((v) => !v)}
                       aria-expanded={overviewOpen}
-                      className="mt-1 text-xs font-medium text-[#D4A237]"
+                      className="mt-1 text-xs font-medium text-primary"
                     >
                       {overviewOpen ? "Show less" : "Read more"}
                     </button>
@@ -434,7 +439,7 @@ export default function MovieClient({ movie }: { movie: any }) {
                       onClick={() => router.push(watchHref)}
                       onMouseEnter={handleWatchPrefetch}
                       onFocus={handleWatchPrefetch}
-                      className="group gap-2.5 px-7 py-3.5 h-auto rounded-full font-bold text-sm text-[#070708] bg-gradient-to-b from-[#E8BC4F] to-[#D4A237] shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
+                      className="group gap-2.5 px-7 py-3.5 h-auto rounded-full font-bold text-sm text-background bg-gradient-to-b from-primary-bright to-primary shadow-[0_8px_24px_rgba(212,162,55,0.35)] hover:shadow-[0_10px_32px_rgba(212,162,55,0.5)] hover:brightness-[1.05] active:brightness-95 active:scale-[0.98] transition-all duration-200"
                     >
                       <Play className="w-5 h-5 fill-current" />
                       {ctaLabel}
@@ -468,7 +473,7 @@ export default function MovieClient({ movie }: { movie: any }) {
                     </div>
                   )}
 
-                  {/* Trailer */}
+                  {/* Trailer — click-to-play (iframe mounts only on demand) */}
                   {trailerKey && (
                     <div className="pt-4">
                       <div className="flex items-center justify-between mb-4">
@@ -477,21 +482,14 @@ export default function MovieClient({ movie }: { movie: any }) {
                         </h2>
                         <button
                           onClick={() => setTrailerOpen(true)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A237]/10 text-[#D4A237] hover:bg-[#D4A237]/20 text-xs font-semibold transition-all"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 text-xs font-semibold transition-all"
                           aria-label="Open trailer in modal"
                         >
                           <Youtube size={14} />
                           Fullscreen
                         </button>
                       </div>
-                      <Suspense fallback={<SkeletonPlayer />}>
-                        <div className="rounded-2xl overflow-hidden ring-1 ring-white/[0.06] shadow-xl">
-                          <VideoPlayer
-                            videoKey={trailerKey}
-                            title={movie.title}
-                          />
-                        </div>
-                      </Suspense>
+                      <LazyTrailer videoKey={trailerKey} title={movie.title} />
                     </div>
                   )}
                 </div>

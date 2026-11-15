@@ -38,7 +38,7 @@ export default function PersonClient({ person, credits }: PersonClientProps) {
         href={href}
         className="flex-shrink-0 w-24 group"
       >
-        <div className="aspect-[2/3] rounded-lg overflow-hidden bg-[#16161A] mb-1.5 shadow-md ring-1 ring-white/[0.06]">
+        <div className="aspect-[2/3] rounded-lg overflow-hidden bg-elevated mb-1.5 shadow-md ring-1 ring-white/[0.06]">
           {credit.poster_path ? (
             <Image
               src={getImageUrl(credit.poster_path, "w185") ?? ""}
@@ -58,8 +58,8 @@ export default function PersonClient({ person, credits }: PersonClientProps) {
         </p>
         {credit.vote_average != null && (
           <div className="flex items-center gap-0.5 mt-0.5">
-            <Star className="w-2.5 h-2.5 fill-[#D4A237] text-[#D4A237]" />
-            <span className="text-[11px] text-[#D4A237] font-semibold">
+            <Star className="w-2.5 h-2.5 fill-primary text-primary" />
+            <span className="text-[11px] text-primary font-semibold">
               {credit.vote_average.toFixed(1)}
             </span>
           </div>
@@ -69,7 +69,7 @@ export default function PersonClient({ person, credits }: PersonClientProps) {
   }
 
   return (
-    <div className="min-h-screen bg-[#070708]">
+    <div className="min-h-screen bg-background">
       <div className="max-w-4xl mx-auto px-4 py-6">
         {/* Back button */}
         <button
@@ -94,7 +94,7 @@ export default function PersonClient({ person, credits }: PersonClientProps) {
               />
             </div>
           ) : (
-            <div className="w-28 h-28 rounded-full bg-[#16161A] flex items-center justify-center mb-4">
+            <div className="w-28 h-28 rounded-full bg-elevated flex items-center justify-center mb-4">
               <span className="text-faint text-3xl font-bold">
                 {person.name?.charAt(0)}
               </span>

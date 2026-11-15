@@ -18,7 +18,7 @@ export default function TVRoute() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[#070708] px-4 sm:px-6 lg:px-8 pt-24 pb-12">
+        <div className="min-h-screen bg-background px-4 sm:px-6 lg:px-8 pt-24 pb-12">
           <SkeletonGrid count={12} />
         </div>
       }

@@ -3,7 +3,7 @@
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import PersonPage from "./PersonPage";
-import { SkeletonDetail } from "@/components/SkeletonLoader";
+import { SkeletonPerson } from "@/components/SkeletonLoader";
 
 function PersonRouteInner() {
   const searchParams = useSearchParams();
@@ -19,7 +19,7 @@ function PersonRouteInner() {
 
 export default function PersonRoute() {
   return (
-    <Suspense fallback={<SkeletonDetail />}>
+    <Suspense fallback={<SkeletonPerson />}>
       <PersonRouteInner />
     </Suspense>
   );
