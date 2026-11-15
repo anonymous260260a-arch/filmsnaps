@@ -312,7 +312,7 @@ export function SearchPalette({
       {/* Panel — positioned in the upper third, Spotlight-style */}
       <div
         className="sp-panel relative mt-[14vh] mx-3 w-full max-w-[560px] overflow-hidden rounded-2xl sm:mx-0
-        border border-white/[0.08] bg-[#111116]/[0.97] shadow-[0_24px_80px_rgba(0,0,0,0.65),0_0_0_1px_rgba(255,255,255,0.03)_inset]
+        border border-white/[0.08] bg-surface/[0.97] shadow-[0_24px_80px_rgba(0,0,0,0.65),0_0_0_1px_rgba(255,255,255,0.03)_inset]
         backdrop-blur-2xl"
       >
         {/* ── Input row ── */}
@@ -320,7 +320,7 @@ export function SearchPalette({
           <Search
             size={18}
             strokeWidth={2}
-            className="shrink-0 text-zinc-500"
+            className="shrink-0 text-muted-foreground"
           />
           <input
             ref={inputRef}
@@ -331,8 +331,8 @@ export function SearchPalette({
             placeholder={
               animeMode ? "Search MyAnimeList…" : "Search movies & TV shows…"
             }
-            className="h-[52px] w-full bg-transparent text-[15px] text-zinc-100
-              placeholder:text-zinc-600 outline-none"
+            className="h-[52px] w-full bg-transparent text-[15px] text-foreground
+              placeholder:text-faint outline-none"
             aria-label="Search query"
             autoComplete="off"
             spellCheck={false}
@@ -345,8 +345,8 @@ export function SearchPalette({
             className={`flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[11px]
               font-semibold transition-colors ${
                 animeMode
-                  ? "bg-[#D4A237]/15 text-[#D4A237] ring-1 ring-inset ring-[#D4A237]/30"
-                  : "text-zinc-600 hover:bg-white/[0.06] hover:text-zinc-400"
+                  ? "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30"
+                  : "text-faint hover:bg-white/[0.06] hover:text-muted-foreground"
               }`}
           >
             <Sparkles size={13} />
@@ -359,7 +359,7 @@ export function SearchPalette({
                 inputRef.current?.focus();
               }}
               className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md
-                text-zinc-600 transition-colors hover:bg-white/[0.06] hover:text-zinc-300"
+                text-faint transition-colors hover:bg-white/[0.06] hover:text-foreground"
               aria-label="Clear search"
             >
               <X size={14} />
@@ -367,7 +367,7 @@ export function SearchPalette({
           ) : (
             <kbd
               className="shrink-0 rounded border border-white/[0.08] bg-white/[0.04]
-              px-1.5 py-0.5 text-[11px] font-medium text-zinc-600"
+              px-1.5 py-0.5 text-[11px] font-medium text-faint"
             >
               ESC
             </kbd>
@@ -381,7 +381,7 @@ export function SearchPalette({
             <div className="p-2">
               {recents.length > 0 && (
                 <>
-                  <p className="px-3 pb-1.5 pt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
+                  <p className="px-3 pb-1.5 pt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">
                     Recent
                   </p>
                   {recents.map((q) => (
@@ -389,9 +389,9 @@ export function SearchPalette({
                       <button
                         onClick={() => goToFullSearch(q)}
                         className="flex flex-1 items-center gap-3 rounded-lg px-3 py-2 text-left
-                          text-sm text-zinc-300 transition-colors hover:bg-white/[0.05]"
+                          text-sm text-foreground transition-colors hover:bg-white/[0.05]"
                       >
-                        <Clock size={14} className="shrink-0 text-zinc-600" />
+                        <Clock size={14} className="shrink-0 text-faint" />
                         <span className="truncate">{q}</span>
                       </button>
                       <button
@@ -400,7 +400,7 @@ export function SearchPalette({
                           setRecents(loadRecents());
                         }}
                         className="mr-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-md
-                          text-zinc-700 opacity-0 transition-all hover:bg-white/[0.06] hover:text-zinc-400
+                          text-faint opacity-0 transition-all hover:bg-white/[0.06] hover:text-muted-foreground
                           group-hover:opacity-100"
                         aria-label={`Remove "${q}" from recent searches`}
                       >
@@ -412,26 +412,23 @@ export function SearchPalette({
                 </>
               )}
 
-              <p className="px-3 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
+              <p className="px-3 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">
                 Quick Links
               </p>
               <button
                 onClick={() => goToCategory("/movie")}
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left
-                  text-sm text-zinc-300 transition-colors hover:bg-white/[0.05]"
+                  text-sm text-foreground transition-colors hover:bg-white/[0.05]"
               >
-                <Clapperboard
-                  size={14}
-                  className="shrink-0 text-[#D4A237]/70"
-                />
+                <Clapperboard size={14} className="shrink-0 text-primary/70" />
                 Browse Movies
               </button>
               <button
                 onClick={() => goToCategory("/tv")}
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left
-                  text-sm text-zinc-300 transition-colors hover:bg-white/[0.05]"
+                  text-sm text-foreground transition-colors hover:bg-white/[0.05]"
               >
-                <Tv size={14} className="shrink-0 text-[#D4A237]/70" />
+                <Tv size={14} className="shrink-0 text-primary/70" />
                 Browse TV Shows
               </button>
             </div>
@@ -458,7 +455,7 @@ export function SearchPalette({
           {/* Results */}
           {showResults && !isFetching && suggestions.length > 0 && (
             <div className="p-2">
-              <p className="px-3 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
+              <p className="px-3 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">
                 Results
               </p>
               {suggestions.map((item, i) => {
@@ -484,7 +481,7 @@ export function SearchPalette({
                     onClick={() => goToResult(item)}
                     onMouseEnter={() => setActiveIdx(i)}
                     className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left
-                    transition-colors ${i === activeIdx ? "bg-[#D4A237]/[0.08] ring-1 ring-inset ring-[#D4A237]/[0.15]" : "hover:bg-white/[0.04]"}`}
+                    transition-colors ${i === activeIdx ? "bg-primary/[0.08] ring-1 ring-inset ring-primary/[0.15]" : "hover:bg-white/[0.04]"}`}
                   >
                     {/* Poster thumbnail */}
                     <div className="h-12 w-9 shrink-0 overflow-hidden rounded-md bg-white/[0.05]">
@@ -500,20 +497,20 @@ export function SearchPalette({
                     {/* Meta */}
                     <div className="min-w-0 flex-1">
                       <p
-                        className={`truncate text-sm ${i === activeIdx ? "font-semibold text-zinc-100" : "font-medium text-zinc-200"}`}
+                        className={`truncate text-sm ${i === activeIdx ? "font-semibold text-foreground" : "font-medium text-foreground"}`}
                       >
                         {isAnime
                           ? item.titleEnglish || item.title
                           : item.title || item.name}
                       </p>
-                      <p className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-500">
+                      <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                         <span
                           className={`inline-block h-1.5 w-1.5 rounded-full ${
                             isAnime
                               ? "bg-violet-400/70"
                               : item.media_type === "tv"
                                 ? "bg-sky-400/70"
-                                : "bg-[#D4A237]/70"
+                                : "bg-primary/70"
                           }`}
                         />
                         <span>{typeLabel}</span>
@@ -521,7 +518,7 @@ export function SearchPalette({
                           ? item.year != null
                           : !!(item.release_date || item.first_air_date)) && (
                           <>
-                            <span className="text-zinc-700">·</span>
+                            <span className="text-faint">·</span>
                             <span>
                               {isAnime
                                 ? String(item.year)
@@ -536,7 +533,7 @@ export function SearchPalette({
                     {i === activeIdx && (
                       <CornerDownLeft
                         size={13}
-                        className="shrink-0 text-zinc-600"
+                        className="shrink-0 text-faint"
                       />
                     )}
                   </button>
@@ -548,7 +545,7 @@ export function SearchPalette({
                 onClick={() => goToFullSearch()}
                 onMouseEnter={() => setActiveIdx(-1)}
                 className="mt-1 flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2.5
-                  text-xs font-medium text-[#D4A237] transition-colors hover:bg-[#D4A237]/[0.06]"
+                  text-xs font-medium text-primary transition-colors hover:bg-primary/[0.06]"
               >
                 <Search size={13} />
                 See all results for &ldquo;{query.trim()}&rdquo;
@@ -559,14 +556,14 @@ export function SearchPalette({
           {/* No results */}
           {showEmpty && (
             <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
-              <Search size={28} strokeWidth={1.2} className="text-zinc-700" />
-              <p className="text-sm text-zinc-500">
+              <Search size={28} strokeWidth={1.2} className="text-faint" />
+              <p className="text-sm text-muted-foreground">
                 No results for{" "}
-                <span className="font-medium text-zinc-300">
+                <span className="font-medium text-foreground">
                   &ldquo;{query.trim()}&rdquo;
                 </span>
               </p>
-              <p className="text-xs text-zinc-600">
+              <p className="text-xs text-faint">
                 Try a different title, actor, or keyword.
               </p>
             </div>
@@ -574,7 +571,7 @@ export function SearchPalette({
 
           {/* Single character hint */}
           {query.trim().length === 1 && (
-            <div className="px-4 py-8 text-center text-xs text-zinc-600">
+            <div className="px-4 py-8 text-center text-xs text-faint">
               Keep typing to search…
             </div>
           )}
@@ -582,25 +579,25 @@ export function SearchPalette({
 
         {/* ── Keyboard hints footer ── */}
         <div className="flex items-center gap-4 border-t border-white/[0.06] px-4 py-2.5">
-          <span className="flex items-center gap-1.5 text-[11px] text-zinc-600">
+          <span className="flex items-center gap-1.5 text-[11px] text-faint">
             <kbd className="rounded border border-white/[0.08] bg-white/[0.04] px-1 py-px text-[11px]">
               ↑↓
             </kbd>
             navigate
           </span>
-          <span className="flex items-center gap-1.5 text-[11px] text-zinc-600">
+          <span className="flex items-center gap-1.5 text-[11px] text-faint">
             <kbd className="rounded border border-white/[0.08] bg-white/[0.04] px-1 py-px text-[11px]">
               ↵
             </kbd>
             open
           </span>
-          <span className="flex items-center gap-1.5 text-[11px] text-zinc-600">
+          <span className="flex items-center gap-1.5 text-[11px] text-faint">
             <kbd className="rounded border border-white/[0.08] bg-white/[0.04] px-1 py-px text-[11px]">
               esc
             </kbd>
             close
           </span>
-          <span className="ml-auto text-[11px] text-zinc-700">
+          <span className="ml-auto text-[11px] text-faint">
             {showResults && !isFetching
               ? `${suggestions.length} result${suggestions.length !== 1 ? "s" : ""}`
               : ""}

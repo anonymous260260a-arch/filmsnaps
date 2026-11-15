@@ -59,7 +59,7 @@ export function DesktopLegalGate() {
   // colour as the app background, so returning users see no legal-page flash.
   // `pending`: IPC confirmed unaccepted — show the real legal overlay.
   if (gate === "blocking") {
-    return <div className="fixed inset-0 z-[100] bg-[#070708]" />;
+    return <div className="fixed inset-0 z-[100] bg-background" />;
   }
 
   return <LegalGateOverlay open onAccept={handleAccept} onExit={handleExit} />;

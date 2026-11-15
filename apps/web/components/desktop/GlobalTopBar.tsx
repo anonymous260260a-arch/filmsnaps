@@ -88,7 +88,6 @@ export function GlobalTopBar() {
   const [canBack, setCanBack] = useState(false);
   const [canForward, setCanForward] = useState(false);
   const [navStateKnown, setNavStateKnown] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [spinning, setSpinning] = useState(false);
   const spinTimer = useRef<ReturnType<typeof setTimeout>>(null);
 
@@ -136,16 +135,8 @@ export function GlobalTopBar() {
     };
   }, [pathname, refreshNavState]);
 
-  /* ── Loading bar ── */
-
-  useEffect(() => {
-    const off = window.electronAPI?.onLoadingChange?.((isLoading: boolean) => {
-      setLoading(isLoading);
-    });
-    return () => {
-      off?.();
-    };
-  }, []);
+  /* ── Loading bar removed — document-level load events misfire for SPA
+     navigations and could stick the bar on interrupted loads ── */
 
   /* ── Nav handlers ── */
 
@@ -226,21 +217,28 @@ export function GlobalTopBar() {
   const mod = isMac ? "⌘" : "Ctrl+";
 
   const navBtn = (disabled: boolean) =>
-    `flex items-center justify-center w-9 h-9 rounded-xl transition-all
+    `flex items-center justify-center w-9 h-9 rounded-lg transition-colors
      ${
        disabled
-         ? "text-zinc-700 cursor-default"
-         : "text-zinc-400 hover:text-white hover:bg-white/[0.08] active:scale-95 cursor-pointer"
+         ? "text-faint cursor-default"
+         : "text-muted-foreground hover:text-foreground hover:bg-white/[0.06] active:scale-95 cursor-pointer"
      }`;
 
   return (
     <div
       role="toolbar"
       aria-label="Window controls"
-      className={`relative z-50 flex h-12 select-none items-center border-b border-white/[0.04]
-        bg-gradient-to-b from-[#111118] to-[#0a0a0f]
-        transition-[opacity,transform] duration-200 motion-reduce:transition-none
-        ${immersive ? "pointer-events-none -translate-y-full opacity-0" : "translate-y-0 opacity-100"}`}
+      className={`relative z-[100000] flex select-none items-center border-b border-white/[0.07]
+        bg-surface
+        transition-[opacity,height] duration-200 motion-reduce:transition-none
+        ${
+          immersive
+            ? // Fullscreen playback: the bar must give up its LAYOUT SPACE, not
+              // just hide visually (a translate would leave 48px reserved and the
+              // h-screen watch layout would overflow the shell → scrollbar).
+              "h-0 min-h-0 overflow-hidden border-b-transparent opacity-0 pointer-events-none"
+            : "h-12 opacity-100"
+        }`}
       style={DRAG}
     >
       {/* ── Left: navigation cluster ── */}
@@ -268,21 +266,21 @@ export function GlobalTopBar() {
         </button>
         <button
           onClick={handleReload}
-          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl
-            text-zinc-500 transition-all hover:bg-white/[0.06] hover:text-zinc-200 active:scale-95"
+          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg
+            text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground active:scale-95"
           aria-label="Reload"
           title="Reload"
         >
           <RotateCw
             size={15}
             strokeWidth={2}
-            className={spinning || loading ? "tb-spin" : "transition-transform"}
+            className={spinning ? "tb-spin" : undefined}
           />
         </button>
         <button
           onClick={() => router.push("/")}
-          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl
-            text-zinc-500 transition-all hover:bg-white/[0.06] hover:text-zinc-200 active:scale-95"
+          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg
+            text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground active:scale-95"
           aria-label="Home"
           title="Home"
         >
@@ -300,21 +298,17 @@ export function GlobalTopBar() {
       >
         <button
           onClick={() => setSearchOpen(true)}
-          className="group flex cursor-pointer items-center gap-2 rounded-lg border border-white/[0.06]
-            bg-white/[0.03] py-1.5 pl-2.5 pr-2 text-zinc-500 transition-all
-            hover:border-white/[0.12] hover:bg-white/[0.06] hover:text-zinc-300"
+          className="group flex cursor-pointer items-center gap-2 rounded-lg border border-white/[0.07]
+            bg-white/[0.03] py-1.5 pl-2.5 pr-2 text-muted-foreground transition-colors
+            hover:border-white/[0.12] hover:bg-white/[0.06] hover:text-foreground"
           aria-label="Search"
           title={`Search  (${mod}K)`}
         >
-          <Search
-            size={14}
-            strokeWidth={2}
-            className="transition-transform group-hover:scale-110"
-          />
+          <Search size={14} strokeWidth={2} />
           <span className="hidden text-xs font-medium sm:inline">Search</span>
           <kbd
             className="rounded border border-white/[0.08] bg-white/[0.05] px-1.5 py-px
-            text-[11px] font-semibold text-zinc-600 group-hover:text-zinc-400"
+            text-[11px] font-semibold text-faint group-hover:text-muted-foreground"
           >
             {mod}K
           </kbd>
@@ -330,19 +324,19 @@ export function GlobalTopBar() {
           className="relative z-10 flex self-stretch items-stretch"
           style={NO_DRAG}
         >
-          <div className="mx-1.5 h-5 w-px self-center bg-white/[0.06]" />
+          <div className="mx-1.5 h-5 w-px self-center bg-white/[0.07]" />
           <button
             onClick={() => window.electronAPI?.minimize()}
-            className="flex w-12 cursor-pointer items-center justify-center text-zinc-500
-              transition-colors hover:bg-white/[0.06] hover:text-zinc-300"
+            className="flex w-12 cursor-pointer items-center justify-center text-muted-foreground
+              transition-colors hover:bg-white/[0.06] hover:text-foreground"
             aria-label="Minimize"
           >
             <Minus size={14} strokeWidth={1.5} />
           </button>
           <button
             onClick={() => window.electronAPI?.maximize()}
-            className="flex w-12 cursor-pointer items-center justify-center text-zinc-500
-              transition-colors hover:bg-white/[0.06] hover:text-zinc-300"
+            className="flex w-12 cursor-pointer items-center justify-center text-muted-foreground
+              transition-colors hover:bg-white/[0.06] hover:text-foreground"
             aria-label={maximized ? "Restore down" : "Maximize"}
           >
             {maximized ? (
@@ -353,7 +347,7 @@ export function GlobalTopBar() {
           </button>
           <button
             onClick={() => window.electronAPI?.close()}
-            className="flex w-12 cursor-pointer items-center justify-center text-zinc-500
+            className="flex w-12 cursor-pointer items-center justify-center text-muted-foreground
               transition-colors hover:text-white"
             aria-label="Close"
             onMouseEnter={(e) =>
@@ -383,21 +377,21 @@ export function GlobalTopBar() {
             key={titleKey}
             className="tb-fade flex min-w-0 items-center gap-3"
           >
-            <span className="font-sans max-w-[300px] truncate text-sm font-bold text-foreground">
+            <span className="font-sans max-w-[300px] truncate text-sm font-semibold text-foreground">
               {title}
             </span>
             {seasonLabel && (
               <span className="flex shrink-0 items-center gap-2">
-                <span className="h-1 w-1 rounded-full bg-[#D4A237]" />
-                <span className="text-xs font-black tracking-wide text-[#D4A237]">
+                <span className="h-1 w-1 rounded-full bg-primary" />
+                <span className="text-xs font-semibold tracking-wide text-primary">
                   {seasonLabel}
                 </span>
               </span>
             )}
             {!seasonLabel && watchContext?.year && (
               <span className="flex shrink-0 items-center gap-2">
-                <span className="h-1 w-1 rounded-full bg-zinc-600" />
-                <span className="text-xs font-bold text-zinc-400">
+                <span className="h-1 w-1 rounded-full bg-faint" />
+                <span className="text-xs font-semibold text-muted-foreground">
                   {watchContext.year}
                 </span>
               </span>
@@ -409,16 +403,6 @@ export function GlobalTopBar() {
       {/* ── Search palette (pure overlay — no internal trigger) ── */}
       <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
 
-      {/* ── Loading bar ── */}
-      {loading && (
-        <div
-          aria-hidden
-          className="absolute inset-x-0 bottom-0 h-[2px] overflow-hidden"
-        >
-          <div className="tb-loading h-full w-1/3 bg-gradient-to-r from-transparent via-[#D4A237] to-transparent" />
-        </div>
-      )}
-
       <style>{`
         @keyframes tb-fade {
           from { opacity: 0; transform: translateY(4px); }
@@ -428,15 +412,10 @@ export function GlobalTopBar() {
           from { transform: rotate(0deg); }
           to   { transform: rotate(360deg); }
         }
-        @keyframes tb-loading {
-          from { transform: translateX(-120%); }
-          to   { transform: translateX(420%); }
-        }
         .tb-fade    { animation: tb-fade .25s cubic-bezier(.2,.8,.2,1) both; }
         .tb-spin    { animation: tb-spin .6s cubic-bezier(.4,.1,.3,1) both; }
-        .tb-loading { animation: tb-loading 1.1s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce) {
-          .tb-fade, .tb-spin, .tb-loading { animation: none !important; }
+          .tb-fade, .tb-spin { animation: none !important; }
         }
       `}</style>
     </div>
