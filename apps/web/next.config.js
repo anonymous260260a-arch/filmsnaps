@@ -40,29 +40,18 @@ const nextConfig = {
   // Production optimizations
   productionBrowserSourceMaps: false,
 
-  // Optimize images — static export requires unoptimized (images served from CDNs)
-  images: IS_DESKTOP
-    ? { unoptimized: true }
-    : {
-        formats: ["image/avif", "image/webp"],
-        deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
-        imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
-        minimumCacheTTL: 60 * 60 * 24 * 30, // 30 days
-        qualities: [75, 85, 90],
-        remotePatterns: [
-          {
-            protocol: "https",
-            hostname: "image.tmdb.org",
-            pathname: "/t/p/**",
-          },
-          {
-            // AniList cover CDN — anime search results only
-            protocol: "https",
-            hostname: "s4.anilist.co",
-            pathname: "/file/anilistcdn/**",
-          },
-        ],
-      },
+  // Images: no server-side optimizer on ANY target.
+  // Why: the Cloudflare deployment (OpenNext Worker) runs /_next/image
+  // server-side, and image.tmdb.org 403-blocks Worker egress IPs — every
+  // uncached poster/backdrop failed (only previously edge-cached ones
+  // loaded; Netlify works because its runtime fetches from Netlify egress).
+  // With unoptimized, next/image renders the TMDB URL directly and the
+  // BROWSER fetches it — image.tmdb.org serves browsers fine (the desktop
+  // export and mobile app already worked this way). The optimizer's
+  // resizing was redundant anyway: components request pre-sized TMDB paths
+  // (w92/w500/w1280/original). Cost: no avif/webp re-encode, images ship
+  // as jpeg — worth it for images that actually load.
+  images: { unoptimized: true },
 
   // Webpack optimizations
   webpack: (config, { dev, isServer }) => {
