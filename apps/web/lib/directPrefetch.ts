@@ -1,169 +1,39 @@
 /**
- * directPrefetch — speculatively fetch /api/player/direct metadata BEFORE the
- * watch page mounts.
+ * directPrefetch — warm the direct-provider chain BEFORE the watch page
+ * mounts.
  *
- * Triggered on title-card hover (desktop): by the time the user clicks and
- * Next.js finishes the route transition, the metadata request — the first
- * blocking step of Direct playback — is usually already resolved. DirectVideoPlayer
- * consumes the in-flight/resolved promise instead of refetching.
+ * Triggers: detail-page mount (mobile parity — mobile's tv/movie detail
+ * screens call prefetchStreams when details settle) and title-card hover
+ * (desktop). Runs on EVERY platform now: browser web included — the chain
+ * goes through the same /api/player/direct proxy the player would hit, so a
+ * warmed chain makes Watch Now instant instead of a cold 3-4 provider walk.
  *
- * Entries live for 3 minutes and are capped, so hovering a wall of cards
- * cannot pile up requests. Desktop-only: the direct provider is desktop's
- * default, and the browser web build has no use for the extra traffic.
+ * The heavy lifting (provider chain walk, negative caching, in-flight joins,
+ * probe warming) lives in lib/streamPrefetch.ts — this module is the
+ * compatibility shim that keeps the historical call sites working.
  */
 
-import { apiUrl } from "./tmdb";
-import { probeUrls } from "./probeCache";
-import { selectBestStream, type StreamEntry } from "./streamSelector";
-
-const TTL_MS = 3 * 60 * 1000;
-const MAX_ENTRIES = 12;
-/** How many top-ranked candidates to background-probe per prefetched title. */
-const PROBE_TOP_N = 3;
-
-interface CacheEntry {
-  promise: Promise<unknown>;
-  createdAt: number;
-}
-
-const cache = new Map<string, CacheEntry>();
-
-function isDesktop(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    (window as any).electronAPI?.isDesktop === true
-  );
-}
-
-function buildUrl(
-  type: "movie" | "tv",
-  id: string,
-  season?: number,
-  episode?: number,
-): string {
-  const params = new URLSearchParams({ id });
-  if (type === "tv" && season) params.set("season", String(season));
-  if (type === "tv" && episode) params.set("episode", String(episode));
-  return apiUrl(`/api/player/direct?${params.toString()}`);
-}
-
-function key(
-  type: string,
-  id: string,
-  season?: number,
-  episode?: number,
-): string {
-  return `${type}:${id}:${season ?? ""}:${episode ?? ""}`;
-}
+import { peekDirectChain, prefetchDirectChain } from "./streamPrefetch";
 
 /**
- * Resolve the link array for the prefetched title — mirrors the shape logic
- * in DirectVideoPlayer (movies use `links`; TV falls back to per-season/
- * episode buckets when the API didn't pre-resolve).
- */
-function extractLinks(
-  data: unknown,
-  type: "movie" | "tv",
-  season?: number,
-  episode?: number,
-): StreamEntry[] {
-  if (!data || typeof data !== "object") return [];
-  const d = data as any;
-  if (Array.isArray(d.links) && d.links.length > 0)
-    return d.links as StreamEntry[];
-  if (type === "tv" && Array.isArray(d.seasons)) {
-    const s = d.seasons.find((x: any) => x.season_number === (season ?? 1));
-    const ep = s?.episodes?.find(
-      (x: any) => x.episode_number === (episode ?? 1),
-    );
-    return (ep?.links ?? []) as StreamEntry[];
-  }
-  return [];
-}
-
-/**
- * Rank the prefetched links and background-probe the top candidates into the
- * shared verdict cache. The watch page's first probe then reads from cache
- * instead of the network — the last blocking step of direct startup gone.
- * Fire-and-forget: ~3 range requests of 2KB each, never blocks playback.
- */
-function warmProbes(
-  type: "movie" | "tv",
-  data: unknown,
-  season?: number,
-  episode?: number,
-): void {
-  const links = extractLinks(data, type, season, episode);
-  if (links.length === 0) return;
-  const selection = selectBestStream(links, {
-    runtimeMinutes: type === "tv" ? 45 : 120,
-  });
-  const rankedUrls = selection.sortedLinks
-    .map((l) => l.url)
-    .filter(Boolean)
-    .slice(0, PROBE_TOP_N);
-  if (rankedUrls.length === 0) return;
-  probeUrls(rankedUrls, () => {});
-}
-
-/**
- * Kick off (or reuse) a metadata fetch. Fire-and-forget — safe to call on
- * every hover; failures are swallowed (the watch page refetches on mount).
+ * Kick off (or join) the direct-provider chain for a title. Fire-and-forget
+ * — safe to call on every mount/hover; failures land in the chain's negative
+ * cache and are swallowed (the watch page refetches on mount).
  */
 export function prefetchDirectMedia(
   type: "movie" | "tv",
   id: string,
   season?: number,
   episode?: number,
+  anime?: boolean,
 ): void {
-  if (!isDesktop() || !id) return;
-  const k = key(type, id, season, episode);
-
-  const existing = cache.get(k);
-  if (existing && Date.now() - existing.createdAt < TTL_MS) return;
-
-  // Evict expired/oldest entries to bound memory and request volume
-  const now = Date.now();
-  cache.forEach((ce, ck) => {
-    if (now - ce.createdAt > TTL_MS) cache.delete(ck);
-  });
-  while (cache.size >= MAX_ENTRIES) {
-    let oldestKey: string | null = null;
-    let oldestAt = Infinity;
-    cache.forEach((ce, ck) => {
-      if (ce.createdAt < oldestAt) {
-        oldestAt = ce.createdAt;
-        oldestKey = ck;
-      }
-    });
-    if (!oldestKey) break;
-    cache.delete(oldestKey);
-  }
-
-  cache.set(k, {
-    createdAt: Date.now(),
-    promise: fetch(buildUrl(type, id, season, episode))
-      .then((res) =>
-        res.ok ? res.json() : Promise.reject(new Error(String(res.status))),
-      )
-      .then((data) => {
-        try {
-          warmProbes(type, data, season, episode);
-        } catch {
-          /* probing is best-effort */
-        }
-        return data;
-      })
-      .catch(() => {
-        cache.delete(k); // allow a clean retry from the watch page
-        return null;
-      }),
-  });
+  prefetchDirectChain(type, id, season, episode, anime);
 }
 
 /**
- * Returns the prefetched metadata promise if one is fresh, else undefined.
- * The consumer falls back to its own fetch when null/undefined.
+ * Returns a promise resolving to the chain winner's data (or null when the
+ * whole chain is exhausted), if one is warm or already running — else
+ * undefined. The consumer falls back to its own fetch when undefined.
  */
 export function getPrefetchedDirectMedia(
   type: "movie" | "tv",
@@ -172,11 +42,10 @@ export function getPrefetchedDirectMedia(
   episode?: number,
 ): Promise<unknown> | undefined {
   if (typeof window === "undefined") return undefined;
-  const entry = cache.get(key(type, id, season, episode));
-  if (!entry) return undefined;
-  if (Date.now() - entry.createdAt > TTL_MS) {
-    cache.delete(key(type, id, season, episode));
-    return undefined;
+  const peeked = peekDirectChain(type, id, season, episode);
+  if (!peeked) return undefined;
+  if (peeked instanceof Promise) {
+    return peeked.then((w) => w?.data ?? null);
   }
-  return entry.promise;
+  return Promise.resolve(peeked.data);
 }
