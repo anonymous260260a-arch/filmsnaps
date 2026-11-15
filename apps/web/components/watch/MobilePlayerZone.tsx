@@ -27,6 +27,7 @@ import { PlayerControlOverlay } from "@/components/player/PlayerControlOverlay";
 import { buildIframeCSP } from "@/lib/movieProviders/cspBuilder";
 import { getSettings } from "@/hooks/useSettings";
 import type { PreferredLanguage } from "@/lib/streamSelector";
+import type { PlaybackTimeSample } from "@/hooks/usePlaybackRecorder";
 
 interface MobilePlayerZoneProps {
   contentid: string;
@@ -41,6 +42,8 @@ interface MobilePlayerZoneProps {
   sessionReady: boolean;
   isElectron: boolean;
   isPending: boolean;
+  /** Watch-progress reporter — forwarded to the in-page direct players. */
+  onProgress?: (sample: PlaybackTimeSample) => void;
   langAnswered: boolean;
   onLanguageSelect: (value: PreferredLanguage) => void;
   onRetry: () => void;
@@ -65,6 +68,7 @@ export function MobilePlayerZone({
   sessionReady,
   isElectron,
   isPending,
+  onProgress,
   langAnswered,
   onLanguageSelect,
   onRetry,
@@ -78,15 +82,18 @@ export function MobilePlayerZone({
   const { iframeLoadError, cpuWarning, playerReady, refreshKey } = usePlayer();
 
   return (
-    <div className="relative w-full h-[38vh] min-h-[245px] max-h-[46vh] sm:h-auto sm:aspect-video bg-[#070708] sm:bg-[#0E0E11] sm:rounded-2xl overflow-hidden sm:ring-1 sm:ring-white/[0.08] group/player flex items-center justify-center">
+    <div className="relative w-full h-[38vh] min-h-[245px] max-h-[46vh] sm:h-auto sm:aspect-video bg-background sm:bg-surface sm:rounded-2xl overflow-hidden sm:ring-1 sm:ring-white/[0.08] group/player flex items-center justify-center">
       {/* Ambient glow */}
-      <div className="absolute -inset-10 bg-gradient-radial from-[#D4A237]/10 via-transparent to-transparent opacity-40 pointer-events-none z-0 transition-opacity duration-700 group-hover/player:opacity-70" />
+      <div className="absolute -inset-10 bg-gradient-radial from-primary/10 via-transparent to-transparent opacity-40 pointer-events-none z-0 transition-opacity duration-700 group-hover/player:opacity-70" />
 
       {/* CPU Warning */}
       {cpuWarning && currentProvider && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#070708]/85 backdrop-blur-md p-4">
-          <div className="flex items-start gap-3 text-xs sm:text-sm text-[#E05252] bg-red-500/10 p-4 rounded-xl border border-red-500/20 max-w-md shadow-2xl">
-            <AlertCircle size={18} className="text-[#E05252] shrink-0 mt-0.5" />
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/85 backdrop-blur-md p-4">
+          <div className="flex items-start gap-3 text-xs sm:text-sm text-destructive bg-red-500/10 p-4 rounded-xl border border-red-500/20 max-w-md shadow-2xl">
+            <AlertCircle
+              size={18}
+              className="text-destructive shrink-0 mt-0.5"
+            />
             <div className="flex-1">
               <span className="font-bold block text-foreground mb-0.5">
                 Server Overloaded
@@ -127,6 +134,7 @@ export function MobilePlayerZone({
             selectedSeason={selectedSeason}
             activeEpisode={activeEpisode}
             onLoad={onIframeLoad}
+            onProgress={onProgress}
           />
         )}
 
@@ -145,6 +153,7 @@ export function MobilePlayerZone({
             onLoad={onIframeLoad}
             onError={onIframeError}
             onExhausted={onDirectExhausted}
+            onProgress={onProgress}
             preferredLanguage={
               (getSettings().preferredAudioLanguage as PreferredLanguage) ||
               "auto"
@@ -203,7 +212,7 @@ export function MobilePlayerZone({
             width: o.width,
             height: o.height,
             borderRadius: "20px",
-            background: "rgba(14, 14, 17, 0.9)",
+            background: "rgba(20, 20, 20, 0.9)",
           }}
         />
       ))}
@@ -234,8 +243,8 @@ export function InlineErrorState({
 }) {
   const animeExhausted = variant === "anime-exhausted";
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070708] z-40 gap-4 px-6">
-      <Clapperboard className="text-[#D4A237]" size={48} strokeWidth={1.5} />
+    <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-40 gap-4 px-6">
+      <Clapperboard className="text-primary" size={48} strokeWidth={1.5} />
       <p
         className="text-xl text-foreground font-bold text-center"
         style={{ fontFamily: "var(--font-display)" }}
@@ -253,13 +262,13 @@ export function InlineErrorState({
         )}
       </p>
       {tried && tried.length > 0 && (
-        <p className="font-mono text-[11px] text-zinc-600 tracking-tight">
+        <p className="font-mono text-[11px] text-faint tracking-tight">
           Tried: {tried.join(", ")}
         </p>
       )}
       <button
         onClick={onRetry}
-        className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#D4A237] text-[#070708] text-sm font-bold hover:bg-[#B88B2A] transition-colors active:scale-95"
+        className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-background text-sm font-bold hover:bg-primary-dim transition-colors active:scale-95"
       >
         <RefreshCw size={14} />
         {animeExhausted ? "Try Again" : "Reload Source"}

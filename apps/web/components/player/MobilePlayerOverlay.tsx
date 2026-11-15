@@ -20,7 +20,13 @@
 
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import {
   Play,
   Pause,
@@ -38,12 +44,14 @@ import {
   Zap,
   X,
   Check,
+  Search,
 } from "lucide-react";
 import type {
   PlayerAdapter,
   AudioTrack,
   SubtitleTrack,
 } from "./player-adapters";
+import { langCode, englishFirst } from "@/lib/subtitleName";
 import { MobileProgressBar } from "./MobileProgressBar";
 import { useAutoHideControls } from "./useAutoHideControls";
 import { useDoubleTapZones } from "./useDoubleTapZones";
@@ -82,6 +90,8 @@ export interface MobilePlayerOverlayProps {
   currentSubtitleTrackId?: string;
   onAudioTrackChange?: (trackId: string) => void;
   onSubtitleChange?: (trackId: string | null) => void;
+  /** Opens the online subtitle search sheet (mpv/mobile parity). */
+  onSubtitlesSearch?: () => void;
   onSourcePicker?: () => void;
   /** Non-null while switching sources — centred pill. */
   switchingLabel?: string | null;
@@ -143,7 +153,7 @@ function TimeDisplay({
   }, [build]);
 
   return (
-    <span className="text-[12px] font-semibold tabular-nums text-[#F4F4F5]">
+    <span className="text-[12px] font-semibold tabular-nums text-foreground">
       {text}
     </span>
   );
@@ -169,7 +179,7 @@ function BottomSheet({
     >
       <div className="absolute inset-0 bg-black/60" />
       <div
-        className="relative flex max-h-[72%] w-full flex-col overflow-hidden rounded-t-2xl border-x border-t border-white/[0.08] bg-[#16161A] shadow-2xl"
+        className="relative flex max-h-[72%] w-full flex-col overflow-hidden rounded-t-2xl border-x border-t border-white/[0.08] bg-elevated shadow-2xl"
         style={{
           animation: "fsSheetUp 0.22s ease-out",
           paddingBottom: "max(8px, env(safe-area-inset-bottom))",
@@ -194,8 +204,8 @@ function BottomSheet({
 
 function SheetSection({ label }: { label: string }) {
   return (
-    <div className="bg-[#222226] px-5 py-2">
-      <span className="text-[11px] font-bold uppercase tracking-wider text-[#D4A237]">
+    <div className="bg-subtle px-5 py-2">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-primary">
         {label}
       </span>
     </div>
@@ -204,13 +214,19 @@ function SheetSection({ label }: { label: string }) {
 
 function SheetRow({
   label,
+  heading,
   hint,
   active,
+  icon,
   onClick,
 }: {
   label: string;
+  /** Language-code style (mobile parity): bold "EN" heading with the release
+   *  name as the secondary line. Null keeps the plain single-line row. */
+  heading?: string | null;
   hint?: string;
   active?: boolean;
+  icon?: React.ReactNode;
   onClick: () => void;
 }) {
   return (
@@ -218,19 +234,40 @@ function SheetRow({
       onClick={onClick}
       className={`flex w-full items-center gap-3 border-l-[3px] px-5 py-3.5 text-left transition-colors ${
         active
-          ? "border-l-[#D4A237]/60 bg-[#D4A237]/15"
+          ? "border-l-primary/60 bg-primary/15"
           : "border-l-transparent hover:bg-white/[0.03]"
       }`}
     >
       <div className="min-w-0 flex-1">
-        <div
-          className={`truncate text-sm font-semibold ${active ? "text-[#D4A237]" : "text-white"}`}
-        >
-          {label}
-        </div>
-        {hint && <div className="mt-0.5 text-xs text-white/40">{hint}</div>}
+        {heading ? (
+          <>
+            <div
+              className={`truncate text-[13px] font-bold uppercase tracking-wide ${active ? "text-primary" : "text-white"}`}
+            >
+              {heading}
+            </div>
+            {label && (
+              <div
+                className={`truncate text-[12px] mt-0.5 ${active ? "text-primary/80" : "text-white/50"}`}
+              >
+                {label}
+              </div>
+            )}
+            {hint && <div className="mt-0.5 text-xs text-white/40">{hint}</div>}
+          </>
+        ) : (
+          <>
+            <div
+              className={`truncate text-sm font-semibold ${active ? "text-primary" : "text-white"}`}
+            >
+              {label}
+            </div>
+            {hint && <div className="mt-0.5 text-xs text-white/40">{hint}</div>}
+          </>
+        )}
       </div>
-      {active && <Check size={16} className="shrink-0 text-[#D4A237]" />}
+      {icon}
+      {active && <Check size={16} className="shrink-0 text-primary" />}
     </button>
   );
 }
@@ -246,6 +283,7 @@ export function MobilePlayerOverlay({
   currentSubtitleTrackId,
   onAudioTrackChange,
   onSubtitleChange,
+  onSubtitlesSearch,
   onSourcePicker,
   switchingLabel,
   isStreamLoading = false,
@@ -525,6 +563,23 @@ export function MobilePlayerOverlay({
     : null;
   const subtitlesOn = subId != null;
 
+  // Mobile-parity subtitle rows: the language code ("EN", "AR") is the heading
+  // — what the eye scans for — with the release name below, English first.
+  const sortedSubs = useMemo(
+    () => englishFirst(subtitleTracks, (t) => t.language ?? null),
+    [subtitleTracks],
+  );
+  const subRowMeta = (track: SubtitleTrack) => {
+    const code = langCode(track.language);
+    if (!code) return { heading: null, label: track.label };
+    const langName = (track.language ?? "").trim().split(/\s/)[0] ?? "";
+    const secondary =
+      langName && track.label.toLowerCase().startsWith(langName.toLowerCase())
+        ? track.label.slice(langName.length).replace(/^[\s·]+/, "")
+        : track.label;
+    return { heading: code, label: secondary || "" };
+  };
+
   return (
     <>
       {/* ── Gesture surface (always live, under the chrome) ── */}
@@ -539,7 +594,7 @@ export function MobilePlayerOverlay({
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-4">
             <Loader2
               size={40}
-              className="animate-spin text-[#D4A237]"
+              className="animate-spin text-primary"
               style={{ animationDuration: "1.2s" }}
             />
             <p className="text-xs font-black uppercase tracking-[0.3em] text-white/45">
@@ -554,9 +609,9 @@ export function MobilePlayerOverlay({
             <div className="flex max-w-[86%] items-center gap-2 rounded-full bg-black/75 px-4 py-2">
               <Loader2
                 size={14}
-                className="shrink-0 animate-spin text-[#D4A237]"
+                className="shrink-0 animate-spin text-primary"
               />
-              <span className="truncate text-[13px] font-semibold text-[#F4F4F5]">
+              <span className="truncate text-[13px] font-semibold text-foreground">
                 {switchingLabel}
               </span>
             </div>
@@ -566,8 +621,8 @@ export function MobilePlayerOverlay({
         {/* 2× speed hold indicator */}
         {isBoosted && (
           <div className="pointer-events-none absolute left-1/2 top-16 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-black/75 px-3 py-1.5">
-            <Zap size={12} className="text-[#D4A237]" />
-            <span className="text-xs font-bold text-[#D4A237]">2× speed</span>
+            <Zap size={12} className="text-primary" />
+            <span className="text-xs font-bold text-primary">2× speed</span>
           </div>
         )}
 
@@ -589,12 +644,12 @@ export function MobilePlayerOverlay({
             />
             <div className="relative flex flex-col items-center gap-1.5">
               {ripple.side === "left" ? (
-                <RotateCcw size={36} className="text-[#F4F4F5]" />
+                <RotateCcw size={36} className="text-foreground" />
               ) : (
-                <RotateCw size={36} className="text-[#F4F4F5]" />
+                <RotateCw size={36} className="text-foreground" />
               )}
               <span
-                className="text-[13px] font-bold tracking-wide text-[#F4F4F5]"
+                className="text-[13px] font-bold tracking-wide text-foreground"
                 style={{ textShadow: "0 1px 3px rgba(0,0,0,0.75)" }}
               >
                 {ripple.amount} seconds
@@ -620,7 +675,7 @@ export function MobilePlayerOverlay({
               {audioTracks.length > 1 && (
                 <button
                   onClick={openAudio}
-                  className={`relative flex h-10 w-10 items-center justify-center rounded-full text-[#F4F4F5] transition-colors active:bg-white/10 ${interactive}`}
+                  className={`relative flex h-10 w-10 items-center justify-center rounded-full text-foreground transition-colors active:bg-white/10 ${interactive}`}
                   aria-label={
                     audioBadge
                       ? `Audio tracks, currently ${audioBadge}`
@@ -629,7 +684,7 @@ export function MobilePlayerOverlay({
                 >
                   <Music size={21} />
                   {audioBadge && (
-                    <span className="absolute bottom-0.5 right-0.5 rounded bg-[rgba(212,162,55,0.2)] px-1 text-[9px] font-extrabold leading-tight text-[#D4A237]">
+                    <span className="absolute bottom-0.5 right-0.5 rounded bg-[rgba(212,162,55,0.2)] px-1 text-[9px] font-extrabold leading-tight text-primary">
                       {audioBadge}
                     </span>
                   )}
@@ -645,8 +700,8 @@ export function MobilePlayerOverlay({
                   className={`flex h-[30px] items-center gap-1.5 rounded-full bg-white/10 px-2.5 transition-colors active:bg-white/20 ${interactive}`}
                   aria-label="Choose source"
                 >
-                  <Layers size={14} className="shrink-0 text-[#D4A237]" />
-                  <span className="max-w-[110px] truncate text-[11.5px] font-bold text-[#D4A237]">
+                  <Layers size={14} className="shrink-0 text-primary" />
+                  <span className="max-w-[110px] truncate text-[11.5px] font-bold text-primary">
                     {sourceLabel}
                   </span>
                 </button>
@@ -654,7 +709,7 @@ export function MobilePlayerOverlay({
 
               <button
                 onClick={openSettings}
-                className={`flex h-10 w-10 items-center justify-center rounded-full text-[#F4F4F5] transition-colors active:bg-white/10 ${interactive}`}
+                className={`flex h-10 w-10 items-center justify-center rounded-full text-foreground transition-colors active:bg-white/10 ${interactive}`}
                 aria-label="More playback options"
               >
                 <MoreVertical size={20} />
@@ -666,7 +721,7 @@ export function MobilePlayerOverlay({
                     setLocked(true);
                     setManuallyHidden(true);
                   }}
-                  className={`flex h-10 w-10 items-center justify-center rounded-full text-[#F4F4F5] transition-colors active:bg-white/10 ${interactive}`}
+                  className={`flex h-10 w-10 items-center justify-center rounded-full text-foreground transition-colors active:bg-white/10 ${interactive}`}
                   aria-label="Lock controls"
                 >
                   <Lock size={20} />
@@ -686,8 +741,8 @@ export function MobilePlayerOverlay({
                 aria-label="Rewind 10 seconds"
               >
                 <span className="relative flex items-center justify-center">
-                  <RotateCcw size={34} className="text-[#F4F4F5]" />
-                  <span className="absolute text-[11px] font-black text-[#F4F4F5]">
+                  <RotateCcw size={34} className="text-foreground" />
+                  <span className="absolute text-[11px] font-black text-foreground">
                     10
                   </span>
                 </span>
@@ -695,25 +750,25 @@ export function MobilePlayerOverlay({
 
               <button
                 onClick={togglePlayPause}
-                className={`flex h-16 w-16 items-center justify-center rounded-full bg-[#D4A237] shadow-[0_4px_16px_rgba(212,162,55,0.45)] transition-transform active:scale-95 ${interactive}`}
+                className={`flex h-16 w-16 items-center justify-center rounded-full bg-primary shadow-[0_4px_16px_rgba(212,162,55,0.45)] transition-transform active:scale-95 ${interactive}`}
                 aria-label={paused ? "Play" : "Pause"}
               >
                 {buffering ? (
                   <Loader2
                     size={26}
-                    className="animate-spin text-[#0B0B0E]"
+                    className="animate-spin text-background"
                     style={{ animationDuration: "0.9s" }}
                   />
                 ) : paused ? (
                   <Play
                     size={32}
-                    className="ml-1 text-[#0B0B0E]"
+                    className="ml-1 text-background"
                     fill="currentColor"
                   />
                 ) : (
                   <Pause
                     size={30}
-                    className="text-[#0B0B0E]"
+                    className="text-background"
                     fill="currentColor"
                   />
                 )}
@@ -725,8 +780,8 @@ export function MobilePlayerOverlay({
                 aria-label="Forward 10 seconds"
               >
                 <span className="relative flex items-center justify-center">
-                  <RotateCw size={34} className="text-[#F4F4F5]" />
-                  <span className="absolute text-[11px] font-black text-[#F4F4F5]">
+                  <RotateCw size={34} className="text-foreground" />
+                  <span className="absolute text-[11px] font-black text-foreground">
                     10
                   </span>
                 </span>
@@ -750,7 +805,10 @@ export function MobilePlayerOverlay({
             </button>
 
             <div className="flex items-center gap-1">
-              {subtitleTracks.length > 0 && (
+              {/* Direct sources ship no embedded tracks — the sheet is still
+                  the way in for online subtitles, so the CC button shows
+                  whenever there is anything to offer (tracks or search). */}
+              {(subtitleTracks.length > 0 || onSubtitlesSearch) && (
                 <button
                   onClick={openSubtitles}
                   className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors active:bg-white/10 ${interactive}`}
@@ -758,15 +816,13 @@ export function MobilePlayerOverlay({
                 >
                   <Captions
                     size={22}
-                    className={
-                      subtitlesOn ? "text-[#D4A237]" : "text-[#F4F4F5]"
-                    }
+                    className={subtitlesOn ? "text-primary" : "text-foreground"}
                   />
                 </button>
               )}
               <button
                 onClick={toggleFullscreen}
-                className={`flex h-10 w-10 items-center justify-center rounded-full text-[#F4F4F5] transition-colors active:bg-white/10 ${interactive}`}
+                className={`flex h-10 w-10 items-center justify-center rounded-full text-foreground transition-colors active:bg-white/10 ${interactive}`}
                 aria-label={
                   isFullscreen ? "Exit fullscreen" : "Enter fullscreen"
                 }
@@ -798,7 +854,7 @@ export function MobilePlayerOverlay({
             setLocked(false);
             reveal();
           }}
-          className="absolute right-3 top-14 z-40 flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-[#D4A237]"
+          className="absolute right-3 top-14 z-40 flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-primary"
           aria-label="Unlock controls"
         >
           <LockOpen size={19} />
@@ -832,15 +888,30 @@ export function MobilePlayerOverlay({
           active={subId == null}
           onClick={() => pickSubtitle(null)}
         />
-        {subtitleTracks.map((track) => (
+        {sortedSubs.map((track) => {
+          const meta = subRowMeta(track);
+          return (
+            <SheetRow
+              key={track.id}
+              heading={meta.heading}
+              label={meta.label}
+              active={track.id === subId}
+              onClick={() => pickSubtitle(track.id)}
+            />
+          );
+        })}
+        {onSubtitlesSearch && (
           <SheetRow
-            key={track.id}
-            label={track.label}
-            hint={track.language}
-            active={track.id === subId}
-            onClick={() => pickSubtitle(track.id)}
+            label="Search online subtitles"
+            hint="Loads straight into the player"
+            icon={<Search size={16} className="shrink-0 text-white/40" />}
+            onClick={() => {
+              setSheet(null);
+              reveal();
+              onSubtitlesSearch();
+            }}
           />
-        ))}
+        )}
       </BottomSheet>
 
       <BottomSheet

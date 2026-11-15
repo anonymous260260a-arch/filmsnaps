@@ -60,6 +60,7 @@ import { MobilePlayerOverlay } from "./MobilePlayerOverlay";
 import { useIsMobilePlayer } from "./useIsMobilePlayer";
 import { enableMoviLogs, isQoeEnabled, startMoviQoeProbe } from "@/lib/moviLog";
 import { SubtitleSearchSheet } from "./SubtitleSearchSheet";
+import { langCode } from "@/lib/subtitleName";
 import { humanizeError, type ProbeOutcome } from "@/lib/probeStream";
 import {
   selectBestStream,
@@ -85,13 +86,23 @@ import {
   getPrefetchedDirectMedia,
   prefetchDirectMedia,
 } from "@/lib/directPrefetch";
+import { runDirectChain } from "@/lib/streamPrefetch";
 import { probeUrl, probeUrls, invalidateProbe } from "@/lib/probeCache";
+import { usePlayer } from "./PlayerProvider";
+import { useChromeStore } from "@/components/desktop/chrome-store";
+import { createLocalStorageAdapter, useWatchHistory } from "@filmsnaps/shared";
+import type { PlaybackTimeSample } from "@/hooks/usePlaybackRecorder";
 
 // Bumped by every mount of the mpv lifecycle effect (effect 4b). The unmount
 // cleanup defers its destroy briefly and skips it if a newer mount followed —
 // that's how Fast Refresh / StrictMode re-runs are told apart from a real
 // navigation (the old import.meta.hot sniffing never detected Turbopack).
 let mpvLifecycleGeneration = 0;
+
+// lucide "captions" markup — movi's addControl takes host SVG strings for the
+// bar button icon (the label only renders when no icon is given).
+const CC_ICON_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="14" x="3" y="5" rx="2" ry="2"/><path d="M7 15h4m4 0h2M7 11h2m2 0h6"/></svg>';
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -154,6 +165,12 @@ interface DirectVideoPlayerProps {
   onExhausted?: () => void;
   /** Language preference for auto-play */
   preferredLanguage?: PreferredLanguage;
+  /**
+   * Playback-time reporter for watch-history persistence. Fired on every
+   * adapter time tick while a direct source plays (movi on web, mpv on
+   * desktop). usePlaybackRecorder (WatchClient) owns the save cadence.
+   */
+  onProgress?: (sample: PlaybackTimeSample) => void;
 }
 
 /**
@@ -194,7 +211,7 @@ function PlayerToast({
       <div
         className={`flex items-center gap-2 rounded-full px-4 py-1.5 border shadow-lg backdrop-blur-md animate-[fadeIn_0.15s_ease-out] ${
           toast.tone === "gold"
-            ? "bg-black/70 border-[#D4A237]/45 text-[#E8C46A]"
+            ? "bg-black/70 border-primary/45 text-primary-bright"
             : "bg-black/70 border-amber-400/45 text-amber-300"
         }`}
       >
@@ -223,6 +240,7 @@ export function DirectVideoPlayer({
   onError,
   onExhausted,
   preferredLanguage = "auto",
+  onProgress,
 }: DirectVideoPlayerProps) {
   const loadingRef = useRef(false);
 
@@ -236,6 +254,20 @@ export function DirectVideoPlayer({
     audio: [],
     sub: [],
   });
+  // paused-for-cache persistence — drives the HTML buffering pill while mpv
+  // has the file loaded but the network can't keep the readahead fed.
+  const [mpvBuffering, setMpvBuffering] = useState(false);
+
+  // ── Native-surface overlay coordination ──
+  // The mpv video window is an OS-level surface that paints ABOVE all HTML —
+  // any HTML overlay (server dropdown, watch-nav drawer, sheets) would sit
+  // BEHIND it. overlayActive is the PlayerProvider flag the embed webview
+  // already reconciles against (VideoZone syncs the server dropdown + error
+  // states into it; ServerPickerSheet sets it on mobile); the watch-nav
+  // drawer comes from chrome-store the same way DesktopSecureWebview reads it.
+  // isFullscreen drives PlayerShell's immersive auto-hiding control strip.
+  const { overlayActive, isFullscreen } = usePlayer();
+  const { watchNavDrawerOpen } = useChromeStore();
 
   // ── movi-player (web engine — every format) ──
   const moviElRef = useRef<any>(null);
@@ -273,6 +305,13 @@ export function DirectVideoPlayer({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeLinkIdx, setActiveLinkIdx] = useState(0);
+  // Mirror for event-callback reads (mpv end-file arrives outside React's
+  // render cycle and must fail over from the CURRENT source, not a captured
+  // stale one) and for the stale-trigger guard in fallbackToNextLink.
+  const activeLinkIdxRef = useRef(0);
+  useEffect(() => {
+    activeLinkIdxRef.current = activeLinkIdx;
+  }, [activeLinkIdx]);
   const [detectedFormat, setDetectedFormat] = useState<DetectedFormat | null>(
     null,
   );
@@ -345,6 +384,18 @@ export function DirectVideoPlayer({
   const [probeNonce, setProbeNonce] = useState(0);
   // Poster gating: show poster until mpv has video output
   const [mpvVideoActive, setMpvVideoActive] = useState(false);
+  // Last hide/show decision — dedupes the visibility-effect diagnostic log.
+  const mpvVisibilityRef = useRef<boolean | null>(null);
+  // Live card-state mirrors — the mpv end-file handler (subscribed once per
+  // decoder) must not auto-hop sources underneath an error/exhausted card.
+  const errorRef = useRef<string | null>(null);
+  const exhaustedRef = useRef(false);
+  useEffect(() => {
+    errorRef.current = error;
+  }, [error]);
+  useEffect(() => {
+    exhaustedRef.current = exhausted;
+  }, [exhausted]);
 
   // Stabilize callbacks — prevent effect re-runs on parent re-render
   const onLoadRef = useRef(onLoad);
@@ -359,6 +410,30 @@ export function DirectVideoPlayer({
   useEffect(() => {
     onExhaustedRef.current = onExhausted;
   }, [onExhausted]);
+  const onProgressRef = useRef(onProgress);
+  useEffect(() => {
+    onProgressRef.current = onProgress;
+  }, [onProgress]);
+
+  // ── Resume target: last saved position for THIS title/episode ──
+  // Read once per source from the shared watch-history store — the same one
+  // Continue Watching links are built from, and the one usePlaybackRecorder
+  // writes. Per-source (not per-mount) so an episode switch or a manual
+  // source pick re-reads; TV auto-advance to the next episode correctly
+  // starts it fresh instead of replaying the URL's stale ?t=. The seek
+  // itself fires in the progress-reporting effect below, the first time the
+  // decoder reports a duration (the one honest "file loaded" signal shared
+  // by mpv and movi). Sentinel: null = read pending, -1 = nothing to resume.
+  // (The read effect itself lives below the `currentEntry` declaration —
+  // its dependency on the source URL cannot be evaluated earlier.)
+  const historyStorage = useMemo(() => createLocalStorageAdapter(), []);
+  const { getProgress } = useWatchHistory(historyStorage);
+  const getProgressRef = useRef(getProgress);
+  useEffect(() => {
+    getProgressRef.current = getProgress;
+  }, [getProgress]);
+  const resumeTargetRef = useRef<number | null>(null);
+  const resumeDoneRef = useRef(false);
 
   // True once REAL frames rendered (mpv playback-restart / loadeddata) —
   // drives the stall watchdog and the source-memory loop. mpv.play() merely
@@ -398,6 +473,13 @@ export function DirectVideoPlayer({
     hasPlayedRef.current = false;
     setPlaybackStarted(false);
     userAudioTouchedRef.current = false;
+    // Once-per-POOL guards: the exhaustion handoff swaps providerId on this
+    // same mounted instance, so every guard below must reset with the new
+    // provider's pool or its picks/memory silently never apply.
+    smartSelectionAppliedRef.current = false;
+    hasPlayedOnceRef.current = false;
+    noLinksReportedRef.current = false;
+    provenOrderRef.current = [];
     if (switchTimeoutRef.current) {
       clearTimeout(switchTimeoutRef.current);
       switchTimeoutRef.current = null;
@@ -422,11 +504,11 @@ export function DirectVideoPlayer({
         return res.json() as Promise<DirectApiData>;
       });
 
-    // Reuse a hover-prefetched request when one is fresh — the metadata fetch
-    // is the first blocking step of startup, and on desktop it usually
-    // resolved while the user was still hovering the title card.
-    // Hover-prefetch results are keyed without the provider — only reuse
-    // them for the legacy "direct" pipeline.
+    // Reuse a warm chain result when one is fresh — the metadata fetch is
+    // the first blocking step of startup, and a chain warmed by the detail
+    // page (or a card hover) usually resolved before the player mounts.
+    // Chain results are keyed without the provider — only reuse them for the
+    // legacy "direct" pipeline (registry providers must render their own pool).
     const prefetched =
       providerId && providerId !== "direct"
         ? undefined
@@ -435,27 +517,95 @@ export function DirectVideoPlayer({
             String(tmdbId),
             mediaType === "tv" ? selectedSeason : undefined,
             mediaType === "tv" ? activeEpisode : undefined,
-          ) as Promise<DirectApiData> | undefined);
+          ) as Promise<DirectApiData | null> | undefined);
+
+    // ── Direct-provider chain (mobile parity) ──
+    // When the preferred provider fails or yields zero links, walk the
+    // remaining direct providers (registry order) before surfacing an error.
+    // The chain module caches the winner so later mounts join it instead of
+    // re-walking, and negative-caches a fully exhausted chain.
+    const chainFallback = (): Promise<DirectApiData | null> =>
+      runDirectChain(
+        mediaType === "tv" ? "tv" : "movie",
+        String(tmdbId),
+        mediaType === "tv" ? selectedSeason : undefined,
+        mediaType === "tv" ? activeEpisode : undefined,
+        providerId || "direct",
+      ).then((w) => (w?.data ?? null) as DirectApiData | null);
+
+    const applyData = (data: DirectApiData | null) => {
+      if (cancelled) return;
+      if (data) setApiData(data);
+      setLoading(false);
+      loadingRef.current = false;
+    };
+
+    const failWith = (message: string) => {
+      if (cancelled) return;
+      setError(message);
+      setLoading(false);
+      loadingRef.current = false;
+      onErrorRef.current?.();
+    };
 
     (prefetched ?? fetchMeta())
       .then((data) => {
         if (cancelled) return;
         console.log(`[Direct] API data received`, {
-          tmdb_id: data.tmdb_id,
-          has_links: !!data.links,
-          has_seasons: !!data.seasons,
+          tmdb_id: data?.tmdb_id,
+          has_links: !!data?.links,
+          has_seasons: !!data?.seasons,
         });
-        setApiData(data);
-        setLoading(false);
-        loadingRef.current = false;
+        const hasLinks =
+          (Array.isArray(data?.links) && data.links.length > 0) ||
+          (mediaType === "tv" && Array.isArray(data?.seasons));
+        if (!hasLinks) {
+          // Preferred provider came up empty — walk the chain.
+          return chainFallback()
+            .then((data) => {
+              if (data) {
+                applyData(data);
+                return;
+              }
+              // Chain exhausted: every direct provider came up empty (or the
+              // negative cache says it did). applyData(null) would leave the
+              // player SILENTLY blank — no error card, no embed handoff, the
+              // no-links effect bails on a null apiData. Surface it: hand off
+              // to the parent (next direct provider, then embed) AND show the
+              // card, so the handoff target is visible while it loads.
+              console.log(
+                "[Direct] chain exhausted — no direct provider had this title",
+              );
+              onExhaustedRef.current?.();
+              failWith("No stream sources available for this title right now");
+            })
+            .catch(() =>
+              failWith("No stream sources available for this title right now"),
+            );
+        }
+        applyData(data);
       })
       .catch((err: Error) => {
         if (cancelled) return;
         console.error(`[Direct] API fetch failed —`, err.message);
-        setError(err.message);
-        setLoading(false);
-        loadingRef.current = false;
-        onErrorRef.current?.();
+        // Preferred provider failed — walk the chain before surfacing the error.
+        chainFallback()
+          .then((data) => {
+            if (data) {
+              applyData(data);
+              return;
+            }
+            // Chain exhausted too — same treatment as the zero-links path:
+            // hand off (next direct provider, then embed) + visible card.
+            console.log(
+              "[Direct] chain exhausted after fetch failure — no direct provider had this title",
+            );
+            onExhaustedRef.current?.();
+            failWith("No stream sources available for this title right now");
+          })
+          .catch(() =>
+            failWith("No stream sources available for this title right now"),
+          );
       });
 
     return () => {
@@ -677,6 +827,32 @@ export function DirectVideoPlayer({
       ? videoEntries[Math.min(activeLinkIdx, videoEntries.length - 1)]
       : null;
 
+  // ── Per-source resume read (see the resume-target block above) ──
+  // getProgressRef is read through a ref so a parent re-render that rebuilt
+  // the hook's callbacks can never re-arm the seek mid-playback.
+  useEffect(() => {
+    let cancelled = false;
+    resumeTargetRef.current = null;
+    resumeDoneRef.current = false;
+    void getProgressRef
+      .current(tmdbId, mediaType, selectedSeason, activeEpisode)
+      .then((p) => {
+        if (cancelled) return;
+        // Seed only a meaningful, unfinished position — the store
+        // auto-completes at 95% and completed titles restart from 0.
+        resumeTargetRef.current =
+          p && !p.completed && p.currentTime > 5
+            ? Math.floor(p.currentTime)
+            : -1;
+      })
+      .catch(() => {
+        if (!cancelled) resumeTargetRef.current = -1;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tmdbId, mediaType, selectedSeason, activeEpisode, currentEntry?.url]);
+
   // [debug] full URL of whatever the player is about to load — fires on every
   // source switch/failover (movi-player src + mpv path both flow through here).
   useEffect(() => {
@@ -791,6 +967,15 @@ export function DirectVideoPlayer({
 
   const fallbackToNextLink = useCallback(
     (failedIndex: number, reason: string, opts?: { infra?: boolean }) => {
+      // Stale-trigger guard: armed timers and queued events can outlive the
+      // source they were created for (a manual pick or a faster failover
+      // already replaced it). Only the CURRENTLY active source may hop.
+      if (failedIndex !== activeLinkIdxRef.current) {
+        console.log(
+          `[Direct] ignoring stale fallback (idx=${failedIndex}, active=${activeLinkIdxRef.current})`,
+        );
+        return;
+      }
       console.log(
         `[Direct] fallbackToNextLink: idx=${failedIndex} reason=${reason}`,
       );
@@ -1054,6 +1239,24 @@ export function DirectVideoPlayer({
       console.warn("[Direct] could not add the source control:", err);
     }
 
+    // Subtitles button — for direct sources this is the ONLY CC entry point:
+    // no embedded tracks means movi's own CC button never renders, so its
+    // menu is unreachable. Opens the online search sheet; the adapter rebuilds
+    // movi's CC menu after each load (loaded tracks become selectable there).
+    try {
+      el.addControl?.({
+        id: "direct-subs",
+        icon: CC_ICON_SVG,
+        label: "Subtitles",
+        title: "Subtitles — search online",
+        side: "right",
+        before: ["cc", "quality", "settings"],
+        onSelect: () => setShowSubSearch(true),
+      });
+    } catch (err) {
+      console.warn("[Direct] could not add the subtitle control:", err);
+    }
+
     // Shadow-DOM styling pass. Two fixes, both scoped to OUR elements:
     // 1. The quality chip: movi sizes every .movi-btn as a fixed SQUARE icon
     //    box (--movi-btn-size) with 2px text padding — "720p" crammed into it
@@ -1152,6 +1355,9 @@ export function DirectVideoPlayer({
         el.removeControl?.("direct-sources");
       } catch {}
       try {
+        el.removeControl?.("direct-subs");
+      } catch {}
+      try {
         el.shadowRoot?.querySelector("style[data-fs-quality-chip]")?.remove();
       } catch {}
       (window as any).__fsMoviKeysActive = false;
@@ -1171,6 +1377,92 @@ export function DirectVideoPlayer({
       el.updateControl?.("direct-sources", { label: sourcesBtnLabel });
     } catch {}
   }, [decoder, moviElAttached, sourcesBtnLabel]);
+
+  // ── Online subtitle → movi (web engine) ──
+  // The player parses subtitle files in the page, but the provider hosts send
+  // no CORS headers — the bytes come through /api/subtitles/download and are
+  // handed to the adapter as text (it blobs them itself per engine). `langKey`
+  // must be unique per track: external subs are keyed by language, so a
+  // duplicate key would tick two rows at once.
+  const refreshMoviTracks = useCallback(() => {
+    const adapter = moviAdapterRef.current;
+    if (!adapter) return;
+    setMoviTracks({
+      audio: adapter.getAudioTracks(),
+      sub: adapter.getSubtitleTracks(),
+    });
+  }, []);
+
+  const handleMoviSubtitlePick = useCallback(
+    async (
+      url: string,
+      title: string,
+      entry: {
+        url: string;
+        releaseName: string;
+        language: string;
+        format: string;
+        hi: boolean;
+      },
+    ) => {
+      const adapter = moviAdapterRef.current;
+      if (!adapter) return false;
+      try {
+        const res = await fetch(
+          apiUrl(
+            `/api/subtitles/download?url=${encodeURIComponent(url)}&format=${encodeURIComponent(entry.format || "")}`,
+          ),
+        );
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.content) {
+          console.error(
+            "[Direct] subtitle download failed:",
+            res.status,
+            data?.error,
+          );
+          return false;
+        }
+        const base =
+          (
+            langCode(entry.language) ??
+            entry.language.slice(0, 2) ??
+            "sub"
+          ).toLowerCase() || "sub";
+        const used = new Set(
+          adapter
+            .getSubtitleTracks()
+            .filter((t) => t.id.startsWith("ext:"))
+            .map((t) => t.id.slice(4)),
+        );
+        let langKey = base;
+        let n = 2;
+        while (used.has(langKey)) langKey = `${base}-${n++}`;
+        const ok = await adapter.loadExternalSubtitle(
+          String(data.content),
+          String(data.format || "srt"),
+          langKey,
+          title,
+          entry.language,
+        );
+        if (ok) refreshMoviTracks();
+        return ok;
+      } catch (err) {
+        console.error("[Direct] subtitle load failed:", err);
+        return false;
+      }
+    },
+    [refreshMoviTracks],
+  );
+
+  // Online-loaded subtitles are engine state — a source switch rebuilds the
+  // player (and the HLS/DASH wrappers keep the media element), so they must be
+  // dropped explicitly or a stale track would ride across the next video.
+  useEffect(() => {
+    if (decoder !== "movi") return;
+    moviAdapterRef.current?.clearExternalSubtitles();
+    setMoviTracks({ audio: [], sub: [] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decoder, currentEntry?.url]);
 
   // ── 4m-5b. Keyboard shortcuts (web/movi): Space/K play-pause, ←/→ ±5s ──
   // movi's own hotkeys only fire while the element holds focus (click the
@@ -1514,27 +1806,105 @@ export function DirectVideoPlayer({
     return () => {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
+      // Kill the armed switch timeout of the source this run belonged to —
+      // it must never fire against the NEXT source (or after unmount, where
+      // it would still trigger provider switches from a dead component).
+      if (switchTimeoutRef.current) {
+        clearTimeout(switchTimeoutRef.current);
+        switchTimeoutRef.current = null;
+      }
       if (posPollRef.current) clearInterval(posPollRef.current);
       posPollRef.current = null;
     };
   }, [decoder, currentEntry?.url, activeLinkIdx, error, exhausted]);
 
   // ── 4f. mpv native window visibility ──
-  // The OS-level video window always draws above app HTML. When an HTML
-  // overlay is open (source picker, settings panel, quick audio/CC menus,
-  // subtitle search, error/exhausted card), hide it so the overlay is visible
-  // and interactive; restore when it closes. mpv keeps playing audio
-  // underneath — same behavior as mobile's picker sheet.
+  // The OS-level video window always draws above app HTML — nothing can layer
+  // over it, so it must hide whenever ANYTHING else must be seen:
+  //   • HTML overlays (source picker, settings panel, audio/CC menus, subtitle
+  //     search, error/exhausted card) — mpv keeps playing audio underneath,
+  //     same behavior as mobile's picker sheet;
+  //   • the server dropdown / watch-nav drawer (overlayActive + chrome-store
+  //     flag — the same reconciliation the embed webview already does);
+  //   • no file loaded (`!mpvVideoActive`) — idle, metadata loading, format
+  //     detection, source switches and failovers show the HTML loader instead
+  //     of a black empty surface. This also removes the show-at-(0,0) flash
+  //     that covered the GlobalTopBar before the first bounds measurement.
   useEffect(() => {
     if (decoder !== "mpv") return;
     const mpv = (window as any).electronAPI?.mpv;
     if (!mpv?.hideVideo) return;
-    if (showPicker || mpvOverlayOpen || error || exhausted || showSubSearch) {
+    const shouldHide = !!(
+      showPicker ||
+      mpvOverlayOpen ||
+      error ||
+      exhausted ||
+      showSubSearch ||
+      overlayActive ||
+      watchNavDrawerOpen ||
+      !mpvVideoActive
+    );
+    // Decision-change log — shows exactly WHY the window is hidden/shown at
+    // each transition (and whether the loader's `!mpvVideoActive` matches).
+    if (mpvVisibilityRef.current !== shouldHide) {
+      mpvVisibilityRef.current = shouldHide;
+      console.log(
+        `[Direct] mpv window ${shouldHide ? "hide" : "show"} — ${JSON.stringify(
+          {
+            showPicker,
+            mpvOverlayOpen,
+            error: !!error,
+            exhausted,
+            showSubSearch,
+            overlayActive,
+            watchNavDrawerOpen,
+            mpvVideoActive,
+          },
+        )}`,
+      );
+    }
+    if (shouldHide) {
       mpv.hideVideo();
     } else {
       mpv.showVideo();
     }
-  }, [decoder, showPicker, mpvOverlayOpen, error, exhausted, showSubSearch]);
+  }, [
+    decoder,
+    showPicker,
+    mpvOverlayOpen,
+    error,
+    exhausted,
+    showSubSearch,
+    overlayActive,
+    watchNavDrawerOpen,
+    mpvVideoActive,
+  ]);
+
+  // ── 4f-1. mpv buffering indicator (HTML pill) ──
+  // mpv's own surface has no spinner (`osc=no`); while the readahead starves
+  // (paused-for-cache) the frozen frame gives zero feedback. The adapter
+  // surfaces waiting/playing transitions — debounce 700ms so brief demuxer
+  // stalls after file-loaded don't flash the pill.
+  useEffect(() => {
+    if (decoder !== "mpv" || !mpvAdapter) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const offWaiting = mpvAdapter.onWaiting(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => setMpvBuffering(true), 700);
+    });
+    const offPlaying = mpvAdapter.onPlaying(() => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      setMpvBuffering(false);
+    });
+    return () => {
+      offWaiting();
+      offPlaying();
+      if (timer) clearTimeout(timer);
+    };
+  }, [decoder, mpvAdapter]);
 
   // ── 4f-2. Source label (for the picker button in the control strip) ──
   useEffect(() => {
@@ -1764,12 +2134,52 @@ export function DirectVideoPlayer({
   useEffect(() => {
     if (decoder !== "mpv") return;
     const mpv = (window as any).electronAPI?.mpv;
-    if (!mpv?.onEvent) return;
+    if (!mpv?.onEvent) {
+      console.log("[Direct] poster-gate: mpv.onEvent MISSING — no bridge");
+      return;
+    }
     setMpvVideoActive(false);
+    console.log(
+      `[Direct] poster-gate: event subscription active (decoder=mpv)`,
+    );
     return mpv.onEvent((ev: any) => {
-      const t = ev?.raw?.event ?? ev?.event;
-      if (t === "file-loaded") setMpvVideoActive(true);
-      if (t === "end-file") setMpvVideoActive(false);
+      const raw = ev?.raw ?? ev;
+      const t = raw?.event ?? ev?.event;
+      // Event-chain diagnostics: what the renderer actually parsed out of
+      // each IPC event. Real mpv events only — the synthesized time-pos /
+      // duration stream (no `raw`) would flood the terminal. If main logs
+      // "[mpv:fwd] → renderer: file-loaded" but this line never shows it,
+      // the payload shape is the break; if neither shows it, mpv itself
+      // never emitted it.
+      if (raw?.event && raw.event !== "property-change") {
+        console.log(
+          `[Direct] mpv event received: ${String(raw.event)}${raw?.reason ? ` reason=${raw.reason}` : ""}`,
+        );
+      }
+      if (t === "file-loaded") {
+        setMpvVideoActive(true);
+      }
+      if (t === "end-file") {
+        setMpvVideoActive(false);
+        // mpv's authoritative "the stream died" signal: the demuxer's read
+        // failed mid-file (upstream gone, signed URL expired, connection
+        // reset). A normal source switch replaces the file with reason
+        // "stop"/"redirect", so only "error" is a real playback death —
+        // fail over exactly like a playback failure. This is the only path
+        // that catches a source which STARTED (file-loaded marked it played)
+        // and then died; the probe resolver deliberately does not override
+        // playback ground truth, and the switch timeout is already cleared.
+        if ((raw?.reason ?? ev?.reason) === "error") {
+          if (errorRef.current || exhaustedRef.current) return;
+          console.log(
+            "[Direct] mpv end-file (error) — stream died mid-playback, failing over",
+          );
+          fallbackRef.current(
+            activeLinkIdxRef.current,
+            "stream error (mpv end-file)",
+          );
+        }
+      }
     });
   }, [decoder]);
 
@@ -1820,6 +2230,59 @@ export function DirectVideoPlayer({
       clearInterval(checkInterval);
     };
   }, [decoder, playbackStarted, mpvAdapter, moviAdapter, showToast]);
+
+  // ── 4i. Watch-progress reporting + resume seek (all decoders) ──
+  // usePlaybackRecorder (WatchClient) used to be fed solely by the desktop
+  // embed-IPC relay, so in-page players — browser movi, desktop mpv (the
+  // ONLY direct decoder there), Falix video.js — never recorded anything and
+  // Continue Watching stayed empty. Push every adapter time tick upward; the
+  // recorder owns cadence, identity, and the final save. The first tick that
+  // reports a duration is also the honest "file loaded" moment, so the
+  // resume seek fires right here (once — the seek's own tick is ignored).
+  useEffect(() => {
+    if (!playbackStarted) return;
+    const adapter = mpvAdapter || moviAdapter;
+    if (!adapter) return;
+
+    const push = () => {
+      const duration = adapter.getDuration();
+      const currentTime = adapter.getCurrentTime();
+      // Consume the one-shot only once a real duration exists — mpv can
+      // deliver time-pos ticks before its duration property is observed,
+      // and seeking on those would burn the one-shot with no effect.
+      if (
+        !resumeDoneRef.current &&
+        resumeTargetRef.current !== null &&
+        duration > 0
+      ) {
+        resumeDoneRef.current = true;
+        const target = resumeTargetRef.current;
+        // Skip targets sitting in the final stretch — seeking there would
+        // instantly re-complete the title; start fresh instead.
+        if (target > 5 && target < duration - 15) {
+          adapter.seek(target);
+        }
+      }
+      if (!(duration > 0) || !(currentTime > 0)) return;
+      onProgressRef.current?.({
+        currentTime,
+        duration,
+        paused: adapter.isPaused(),
+      });
+    };
+
+    // MpvPlayerAdapter exposes onTime; the PlayerAdapter contract (movi)
+    // calls it onTimeUpdate — same tick either way, subscribe to whichever
+    // the live adapter implements.
+    const offTime =
+      (adapter as any).onTime?.(push) ??
+      (adapter as any).onTimeUpdate?.(push) ??
+      (() => {});
+
+    return () => {
+      offTime();
+    };
+  }, [playbackStarted, mpvAdapter, moviAdapter]);
 
   // ── 5. Render ──
 
@@ -1915,15 +2378,15 @@ export function DirectVideoPlayer({
 
   if (loading) {
     return (
-      <div className="absolute inset-0 bg-[#070708] z-30 flex flex-col items-center justify-center gap-5">
+      <div className="absolute inset-0 bg-background z-30 flex flex-col items-center justify-center gap-5">
         <div className="relative w-14 h-14">
-          <div className="absolute inset-0 rounded-full border-2 border-[#222226]" />
+          <div className="absolute inset-0 rounded-full border-2 border-subtle" />
           <div
-            className="absolute inset-0 rounded-full border-t-2 border-[#D4A237] animate-spin"
+            className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"
             style={{ animationDuration: "1.2s" }}
           />
-          <div className="absolute inset-3 rounded-full border-2 border-[#222226]" />
-          <div className="absolute inset-[18px] rounded-full bg-[#D4A237]/30" />
+          <div className="absolute inset-3 rounded-full border-2 border-subtle" />
+          <div className="absolute inset-[18px] rounded-full bg-primary/30" />
         </div>
         <p
           className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse"
@@ -1938,8 +2401,8 @@ export function DirectVideoPlayer({
   if (error) {
     return (
       <>
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070708]/90 backdrop-blur-sm z-40 gap-4 px-6">
-          <div className="bg-[#16161A] rounded-2xl p-6 max-w-sm w-full flex flex-col items-center gap-3 border border-red-500/20">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/90 backdrop-blur-sm z-40 gap-4 px-6">
+          <div className="bg-elevated rounded-2xl p-6 max-w-sm w-full flex flex-col items-center gap-3 border border-red-500/20">
             <Clapperboard
               className="text-red-400"
               size={32}
@@ -1979,7 +2442,7 @@ export function DirectVideoPlayer({
                 }
                 setReloadNonce((n) => n + 1);
               }}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#D4A237] text-[#070708] text-sm font-bold hover:bg-[#B88B2A] transition-colors active:scale-95"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-background text-sm font-bold hover:bg-primary-dim transition-colors active:scale-95"
             >
               <RefreshCw size={14} />
               Retry
@@ -2020,7 +2483,7 @@ export function DirectVideoPlayer({
 
   if (!currentEntry) {
     return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0E0E11] z-30 gap-3">
+      <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface z-30 gap-3">
         <p className="text-sm text-faint">
           No direct sources for this selection — switching player…
         </p>
@@ -2033,8 +2496,8 @@ export function DirectVideoPlayer({
   if (exhausted) {
     return (
       <>
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070708]/90 backdrop-blur-sm z-40 gap-4 px-6">
-          <div className="bg-[#16161A] rounded-2xl p-6 max-w-sm w-full flex flex-col items-center gap-3 border border-red-500/20">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/90 backdrop-blur-sm z-40 gap-4 px-6">
+          <div className="bg-elevated rounded-2xl p-6 max-w-sm w-full flex flex-col items-center gap-3 border border-red-500/20">
             <Clapperboard
               className="text-red-400"
               size={32}
@@ -2068,7 +2531,7 @@ export function DirectVideoPlayer({
                   setReloadNonce((n) => n + 1);
                   setProbeNonce((n) => n + 1);
                 }}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#D4A237] text-[#070708] text-sm font-bold hover:bg-[#B88B2A] transition-colors active:scale-95 w-full justify-center"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-background text-sm font-bold hover:bg-primary-dim transition-colors active:scale-95 w-full justify-center"
               >
                 <RefreshCw size={14} />
                 Re-check all sources
@@ -2121,15 +2584,15 @@ export function DirectVideoPlayer({
   // While format is being detected, show a brief sub-loading state
   if (!detectedFormat || decoder === null) {
     return (
-      <div className="absolute inset-0 bg-[#070708] z-30 flex flex-col items-center justify-center gap-5">
+      <div className="absolute inset-0 bg-background z-30 flex flex-col items-center justify-center gap-5">
         <div className="relative w-14 h-14">
-          <div className="absolute inset-0 rounded-full border-2 border-[#222226]" />
+          <div className="absolute inset-0 rounded-full border-2 border-subtle" />
           <div
-            className="absolute inset-0 rounded-full border-t-2 border-[#D4A237] animate-spin"
+            className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"
             style={{ animationDuration: "1.2s" }}
           />
-          <div className="absolute inset-3 rounded-full border-2 border-[#222226]" />
-          <div className="absolute inset-[18px] rounded-full bg-[#D4A237]/30" />
+          <div className="absolute inset-3 rounded-full border-2 border-subtle" />
+          <div className="absolute inset-[18px] rounded-full bg-primary/30" />
         </div>
         <p
           className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse"
@@ -2155,6 +2618,7 @@ export function DirectVideoPlayer({
       <div className="h-full w-full" data-mpv-player>
         <PlayerShell
           layout="strip"
+          fullscreen={isFullscreen}
           alwaysShowControls
           player={mpvAdapter}
           // useMpvDesktopShortcuts owns K/J/L/arrows/M/F for mpv — ControlBar's
@@ -2182,11 +2646,42 @@ export function DirectVideoPlayer({
           onOverlayChange={(open) => setMpvOverlayOpen(open)}
           className="h-full"
         >
-          {/* mpv output region — the native video window tracks this rect */}
+          {/* mpv output region — the native video window tracks this rect.
+              While mpv has no file loaded (idle / metadata / format detect /
+              source switch / failover) the window is HIDDEN and this HTML
+              layer shows the loading feedback the black surface never did. */}
           <div
             ref={attachMpvContainer}
             className="relative h-full w-full bg-black"
-          />
+          >
+            {!mpvVideoActive && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-5 bg-background">
+                <div className="relative w-14 h-14">
+                  <div className="absolute inset-0 rounded-full border-2 border-subtle" />
+                  <div
+                    className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"
+                    style={{ animationDuration: "1.2s" }}
+                  />
+                  <div className="absolute inset-3 rounded-full border-2 border-subtle" />
+                  <div className="absolute inset-[18px] rounded-full bg-primary/30" />
+                </div>
+                <p
+                  className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  Preparing Stream
+                </p>
+              </div>
+            )}
+            {mpvVideoActive && mpvBuffering && (
+              <div className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/[0.08] bg-black/70 px-4 py-2 backdrop-blur-sm">
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-subtle border-t-primary" />
+                <span className="text-xs font-semibold text-foreground/80">
+                  Buffering…
+                </span>
+              </div>
+            )}
+          </div>
           {/* Player toast (top-center): source confirmations and gentle hints.
              Never blocks interaction — failover happens without error cards. */}
           {playerToast && <PlayerToast toast={playerToast} />}
@@ -2251,15 +2746,15 @@ export function DirectVideoPlayer({
   if (decoder === "movi") {
     if (!moviElementReady) {
       return (
-        <div className="absolute inset-0 bg-[#070708] z-30 flex flex-col items-center justify-center gap-5">
+        <div className="absolute inset-0 bg-background z-30 flex flex-col items-center justify-center gap-5">
           <div className="relative w-14 h-14">
-            <div className="absolute inset-0 rounded-full border-2 border-[#222226]" />
+            <div className="absolute inset-0 rounded-full border-2 border-subtle" />
             <div
-              className="absolute inset-0 rounded-full border-t-2 border-[#D4A237] animate-spin"
+              className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"
               style={{ animationDuration: "1.2s" }}
             />
-            <div className="absolute inset-3 rounded-full border-2 border-[#222226]" />
-            <div className="absolute inset-[18px] rounded-full bg-[#D4A237]/30" />
+            <div className="absolute inset-3 rounded-full border-2 border-subtle" />
+            <div className="absolute inset-[18px] rounded-full bg-primary/30" />
           </div>
           <p
             className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse"
@@ -2396,6 +2891,12 @@ export function DirectVideoPlayer({
               "--movi-shadow-glow": "0 0 14px rgba(212,162,55,0.45)",
               "--movi-radius-surface": "12px",
               "--movi-radius-panel": "12px",
+              // Caption offset off the bottom edge (movi's host knob). The
+              // stylesheet default is 12% — visibly high. On the WASM path
+              // the renderer pins the overlay with inline styles, so this
+              // only governs the unmanaged paints: online subtitles on the
+              // HLS/native engines and MP4 sidecar rendering.
+              "--movi-sub-bottom": "5%",
             } as React.CSSProperties
           }
         />
@@ -2421,6 +2922,7 @@ export function DirectVideoPlayer({
             }
             onAudioTrackChange={(id) => moviAdapter.setAudioTrack(id)}
             onSubtitleChange={(id) => moviAdapter.setSubtitleTrack(id)}
+            onSubtitlesSearch={() => setShowSubSearch(true)}
             onSourcePicker={() => setShowPicker(true)}
             switchingLabel={switchingLabel}
             isStreamLoading={!playbackStarted}
@@ -2455,6 +2957,15 @@ export function DirectVideoPlayer({
           }}
           onClose={() => setShowPicker(false)}
         />
+        <SubtitleSearchSheet
+          open={showSubSearch}
+          tmdbId={tmdbId}
+          mediaType={mediaType}
+          season={mediaType === "tv" ? selectedSeason : undefined}
+          episode={mediaType === "tv" ? activeEpisode : undefined}
+          onClose={() => setShowSubSearch(false)}
+          onPick={handleMoviSubtitlePick}
+        />
       </div>
     );
   }
@@ -2462,15 +2973,15 @@ export function DirectVideoPlayer({
   // Unreachable with the current selector (mpv | movi) — kept so any future
   // decoder value degrades to a loading state, never to a blank box.
   return (
-    <div className="absolute inset-0 bg-[#070708] z-30 flex flex-col items-center justify-center gap-5">
+    <div className="absolute inset-0 bg-background z-30 flex flex-col items-center justify-center gap-5">
       <div className="relative w-14 h-14">
-        <div className="absolute inset-0 rounded-full border-2 border-[#222226]" />
+        <div className="absolute inset-0 rounded-full border-2 border-subtle" />
         <div
-          className="absolute inset-0 rounded-full border-t-2 border-[#D4A237] animate-spin"
+          className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"
           style={{ animationDuration: "1.2s" }}
         />
-        <div className="absolute inset-3 rounded-full border-2 border-[#222226]" />
-        <div className="absolute inset-[18px] rounded-full bg-[#D4A237]/30" />
+        <div className="absolute inset-3 rounded-full border-2 border-subtle" />
+        <div className="absolute inset-[18px] rounded-full bg-primary/30" />
       </div>
       <p
         className="text-xs font-black text-faint uppercase tracking-[0.3em] animate-pulse"
