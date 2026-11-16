@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "2.3.1",
+      "date": "2026-11-16",
+      "releaseNotes": "v2.3.1 — Fixes:\n Fixed the endless skeleton screen when clicking 'Watch Now' for the first time or opening a Continue Watching card — pages inside the app could wait forever for content that never arrived. Navigation now completes reliably, so re-opening the app after the bug hit is no longer needed\n Simplified Settings layout — the page is calmer and easier to scan, with the same controls",
+      "platforms": {
+        "win": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v2.3.1-desktop/FilmSnaps-Setup-2.3.1.exe",
+          "size": "~159 MB"
+        }
+      }
+    },
+    {
       "version": "2.3.0",
       "date": "2026-11-15",
       "releaseNotes": "v2.3.0 — Subtitles everywhere + watch history that works\n\n Online subtitle search built into the player — search by title, pick a release, and it loads straight into playback (desktop mpv and the browser player, streaming sources included)\n Watch progress now saves on desktop direct playback — Continue Watching and History finally record in the desktop app, and the web player saves progress too\n Smart resume: per-episode resume points for TV, the correct position across source and episode switches, and a fresh start when auto-advancing to the next episode\n Faster playback start: mpv pre-warms from the detail page, and direct sources fail over in ~200 ms through a two-provider pipeline with chain prefetch\n New home feed with lazy-loaded trailers, phone-parity movie/TV detail pages, unified search palette (Ctrl+K), and a rebuilt watch page with a tabbed Episodes/Sources hub\n Downloads hub: HDHub download pages, title-based file names, metadata badges, TV episode grouping\n New providers: JustAnime (anime), Way2Movies, MovieBox and Bing with per-platform availability flags; Falix migrated to its new host and files API\n\nFixes:\n Fixed the stuck \"Preparing Stream\" loader — mpv events now reach the player before overlay side effects run\n mpv is auto-downloaded and SHA-256 verified at build time, so an installer can no longer ship without the playback engine\n Branded error page with retry when the app's own content fails to load, instead of a blank window\n Subtitles no longer sit too high over the video\n\nUnder the hood:\n- Routine debug console output silenced in production builds\n- Path-form deep links (/movie/{id}) redirect correctly on web; the desktop static export excludes server API routes by design\n- Theme tokens recalibrated (OKLCH) for consistent contrast across pages",

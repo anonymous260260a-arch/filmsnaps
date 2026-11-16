@@ -41,7 +41,8 @@ export function getApiBaseUrl(): string {
 import { createTmdbApi, ApiError } from "@filmsnaps/shared";
 // Ensure payload-bytes bridge registers before any TMDB fetch (FIX 6).
 import "./detailMetrics";
+import { getClientHeaders } from "./clientHeaders";
 
 export { ApiError };
 
-export const tmdbApi = createTmdbApi(getApiBaseUrl());
+export const tmdbApi = createTmdbApi(getApiBaseUrl(), getClientHeaders);

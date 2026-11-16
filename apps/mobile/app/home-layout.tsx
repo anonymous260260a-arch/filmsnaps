@@ -114,8 +114,8 @@ const Row = memo(function Row({
       {/* Label + subtitle */}
       <View className="flex-1">
         <Text
-          className="text-sm font-semibold"
-          style={{ color: colors.textPrimary, fontFamily: "Inter_600SemiBold" }}
+          className="text-sm"
+          style={{ color: colors.textPrimary, fontFamily: "Inter_500Medium" }}
         >
           {meta.label}
         </Text>
@@ -160,7 +160,7 @@ const Row = memo(function Row({
           style={{ backgroundColor: colors.bgTop }}
           accessibilityLabel={`Hide ${meta.label} from home`}
         >
-          <Ionicons name="eye-off" size={16} color={colors.error} />
+          <Ionicons name="eye-off" size={16} color={colors.zinc500} />
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
@@ -280,20 +280,15 @@ export default function HomeLayoutScreen() {
             color: colors.textPrimary,
           }}
         >
-          Home Layout
+          Home layout
         </Text>
       </View>
-
-      <View
-        className="w-16 h-0.5 mb-2 ml-5"
-        style={{ backgroundColor: colors.gold }}
-      />
 
       <Text
         className="text-xs px-5 mb-4"
         style={{ color: colors.textTertiary }}
       >
-        Long-press and drag to reorder, or use the up/down arrows
+        Drag to reorder, or use the arrows
       </Text>
 
       <DraggableFlatList
@@ -317,13 +312,13 @@ export default function HomeLayoutScreen() {
       {hiddenSections.length > 0 && (
         <View className="mt-6 px-5">
           <Text
-            className="text-xs font-semibold mb-2"
+            className="text-xs mb-2"
             style={{
               color: colors.textTertiary,
-              fontFamily: "Inter_600SemiBold",
+              fontFamily: "Inter_500Medium",
             }}
           >
-            HIDDEN SECTIONS
+            Hidden sections
           </Text>
           <View
             style={{
@@ -348,17 +343,20 @@ export default function HomeLayoutScreen() {
                   }}
                 >
                   <View
-                    className="w-9 h-9 rounded-full items-center justify-center mr-3"
-                    style={{ backgroundColor: colors.zincBg }}
+                    style={{ width: 20, marginRight: 12, alignItems: "center" }}
                   >
-                    <Ionicons name={meta.icon} size={16} color={colors.gold} />
+                    <Ionicons
+                      name={meta.icon}
+                      size={18}
+                      color={colors.zinc500}
+                    />
                   </View>
                   <View className="flex-1">
                     <Text
-                      className="text-sm font-semibold"
+                      className="text-sm"
                       style={{
                         color: colors.textPrimary,
-                        fontFamily: "Inter_600SemiBold",
+                        fontFamily: "Inter_500Medium",
                       }}
                     >
                       {meta.label}
@@ -373,21 +371,14 @@ export default function HomeLayoutScreen() {
                   <TouchableOpacity
                     onPress={() => showSection(id)}
                     activeOpacity={0.6}
-                    className="flex-row items-center px-3 h-8 rounded-full"
-                    style={{ backgroundColor: colors.bgTop }}
+                    className="px-3 py-1.5"
                     accessibilityLabel={`Show ${meta.label} on home`}
                   >
-                    <Ionicons
-                      name="eye"
-                      size={14}
-                      color={colors.gold}
-                      style={{ marginRight: 4 }}
-                    />
                     <Text
-                      className="text-xs font-semibold"
                       style={{
                         color: colors.gold,
-                        fontFamily: "Inter_600SemiBold",
+                        fontSize: 13,
+                        fontFamily: "Inter_500Medium",
                       }}
                     >
                       Show

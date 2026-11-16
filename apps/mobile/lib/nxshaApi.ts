@@ -7,6 +7,7 @@
  */
 
 import { getApiBaseUrl } from "./api";
+import { getClientHeaders } from "./clientHeaders";
 import type { NxshaServer } from "./nxshaLinks";
 
 export interface NxshaApiResult {
@@ -33,7 +34,7 @@ export async function fetchNxshaSources(params: {
   try {
     const res = await fetch(`${base}/api/player/nxsha?${qs.toString()}`, {
       cache: "no-store",
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ...getClientHeaders() },
     });
     if (!res.ok) return null;
     const json = (await res.json()) as NxshaApiResult;

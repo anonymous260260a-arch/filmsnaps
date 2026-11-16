@@ -342,9 +342,14 @@ export default function HomeScreen() {
   }, [refetchMovies, refetchTV, refetchPopular]);
 
   // ── Remove a single Continue Watching item (mutates the shared store) ──
+  // `isAnime` must be forwarded: the store keys anime and movie/TV records
+  // separately, so dropping the flag leaves the anime entry in memory and on
+  // disk (the card reappears on the next refresh).
   const handleRemoveHistoryItem = useCallback(
-    (tmdbId: string, mediaType: "movie" | "tv") => {
-      watchHistoryStore.removeItem(tmdbId, mediaType).catch(() => {});
+    (tmdbId: string, mediaType: "movie" | "tv", isAnime?: boolean) => {
+      watchHistoryStore
+        .removeItem(tmdbId, mediaType, isAnime === true)
+        .catch(() => {});
     },
     [],
   );
@@ -1053,7 +1058,11 @@ interface ContinueWatchingSectionProps {
   nav: ReturnType<typeof useSafeNavigation>;
   SCREEN_WIDTH: number;
   providerLabelMap: Record<string, string>;
-  onRemoveItem: (tmdbId: string, mediaType: "movie" | "tv") => void;
+  onRemoveItem: (
+    tmdbId: string,
+    mediaType: "movie" | "tv",
+    isAnime?: boolean,
+  ) => void;
 }
 
 const CW_CARD_WIDTH = 210;
@@ -1236,7 +1245,7 @@ function ContinueWatchingSection({
                 <TouchableOpacity
                   onPress={(e) => {
                     e.stopPropagation();
-                    onRemoveItem(p.tmdbId, p.mediaType);
+                    onRemoveItem(p.tmdbId, p.mediaType, p.isAnime === true);
                   }}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   activeOpacity={0.7}

@@ -15,6 +15,7 @@
 
 import { File, Directory, Paths } from "expo-file-system";
 import { getApiBaseUrl } from "./api";
+import { getClientHeaders } from "./clientHeaders";
 
 const API_URL = "https://api.subdl.com/api/v1/subtitles";
 const DL_BASE = "https://dl.subdl.com";
@@ -170,7 +171,12 @@ async function searchViaProxy(
   q: URLSearchParams,
 ): Promise<OnlineSubtitle[] | null> {
   try {
-    const res = await fetch(`${getApiBaseUrl()}/api/subtitles?${q.toString()}`);
+    const res = await fetch(
+      `${getApiBaseUrl()}/api/subtitles?${q.toString()}`,
+      {
+        headers: getClientHeaders(),
+      },
+    );
     if (res.status === 404 || res.status === 410) return null;
     if (res.status === 429) return []; // both providers rate-limited → "not found"
     if (!res.ok) {

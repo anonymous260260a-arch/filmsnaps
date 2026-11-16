@@ -6,7 +6,7 @@
  *  2. Downloading and playing back your downloads.
  *  3. Switching audio tracks in downloaded videos (via VLC).
  *
- * Reachable from Settings → "How to Use", and deep-linked from the player's
+ * Reachable from Settings → "User guide", and deep-linked from the player's
  * source picker (`?section=sources`). Section anchors are stable so in-app
  * links keep scrolling to the right help.
  */
@@ -22,6 +22,8 @@ import { useSafeNavigation } from "@/lib/navigation";
 import { colors } from "../theme/colors";
 
 type SectionId = "sources" | "downloads" | "play-downloads" | "audio";
+
+const CONTENT_INDENT = 18 + 12; // step number column + gap
 
 export default function GuideScreen() {
   const nav = useSafeNavigation();
@@ -49,15 +51,30 @@ export default function GuideScreen() {
 
   return (
     <View
-      className="flex-1"
-      style={{ backgroundColor: colors.bg, paddingTop: insets.top }}
+      style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}
     >
       {/* Header */}
-      <View className="px-5 pt-4 pb-2 flex-row items-center">
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          paddingHorizontal: 20,
+          paddingTop: 16,
+          paddingBottom: 20,
+        }}
+      >
         <TouchableOpacity
           onPress={() => nav.goBack({ fallback: "/(tabs)" })}
-          className="w-9 h-9 rounded-full bg-zinc-800/60 items-center justify-center mr-3"
           activeOpacity={0.7}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            backgroundColor: colors.zincBg,
+            alignItems: "center",
+            justifyContent: "center",
+            marginRight: 12,
+          }}
         >
           <BackIcon width={20} height={20} color={colors.textPrimary} />
         </TouchableOpacity>
@@ -65,60 +82,48 @@ export default function GuideScreen() {
           style={{
             fontFamily: "PlayfairDisplay_700Bold",
             fontSize: 22,
+            lineHeight: 26,
             color: colors.textPrimary,
           }}
         >
-          How to Use
+          How to use
         </Text>
       </View>
 
       <ScrollView
         ref={scrollRef}
-        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 60 }}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 48 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Gold accent */}
-        <View
-          className="w-16 h-0.5 mb-6"
-          style={{ backgroundColor: colors.gold }}
-        />
-
         {/* ── Playback sources ── */}
         <GuideSection
           icon="server-outline"
-          title="Choosing & Switching Sources"
+          title="Choosing and switching sources"
           sectionId="sources"
           onLayout={handleSectionLayout}
         >
           <GuideParagraph>
-            FilmSnaps can stream from several providers. When you open a movie
-            or show, the source listed at the bottom of the player ("source
-            pill") is the one being used right now.
+            FilmSnaps can stream from more than one provider. The pill at the
+            bottom of the player shows the one in use right now.
           </GuideParagraph>
 
           <GuideStep
             number={1}
-            text={
-              "While playing, tap the source pill at the bottom of the player" +
-              " — or swipe up on it — to open the source list."
-            }
+            text="Tap the source pill at the bottom of the player, or swipe up on it, to open the source list."
           />
           <GuideStep
             number={2}
-            text="The checkmark shows your currently active source. Tap any other source to switch."
+            text="The checkmark marks the active source. Tap another source to switch."
           />
           <GuideStep
             number={3}
-            text="Switching sources restarts playback from the last position you reached on that source."
+            text="Playback resumes from the last position you reached on that source."
           />
           <GuideStep
             number={4}
-            text={
-              "Can't connect to a source? While loading, the 'Source not responding'" +
-              " message shows a 'Choose a source' button — tap it to pick another."
-            }
+            text="If a source does not respond, the loading screen offers Choose a source."
           />
-          <GuideNote text="You can set a preferred source in Settings → Default Source. If it isn't available, the next best source is used automatically." />
+          <GuideNote text="Set a preferred source in Settings → Streaming source. When it is unavailable, the next best source is used." />
         </GuideSection>
 
         {/* ── Downloading ── */}
@@ -130,77 +135,72 @@ export default function GuideScreen() {
         >
           <GuideStep
             number={1}
-            text="On a title's details page, tap the download button on a supported source."
+            text="On a title's page, tap the download button on a supported source."
           />
           <GuideStep
             number={2}
-            text="Higher quality means a larger file. Keep Screen On while downloading."
+            text="Higher quality means a larger file. Keep the screen on while downloading."
           />
           <GuideStep
             number={3}
-            text="Watch progress on the gold download indicator at the bottom of the tab bar, or open Library → Downloads."
+            text="Progress appears on the gold indicator at the bottom of the tab bar. The file list is under Library → Downloads."
           />
           <GuideStep
             number={4}
-            text="When a download finishes, it's saved to your device's Downloads folder and appears in the Downloads list with a green check."
+            text="Finished downloads are saved to your device's Downloads folder and show a green check."
           />
-          <GuideNote text="Download over Wi-Fi where possible. Your 'Download Speed Limit' setting in Settings controls how fast downloads run." />
+          <GuideNote text="Download over Wi-Fi where possible. The speed limit is in Settings → Speed limit." />
         </GuideSection>
 
         {/* ── Playing downloads ── */}
         <GuideSection
           icon="play-outline"
-          title="Playing Your Downloads"
+          title="Playing your downloads"
           sectionId="play-downloads"
           onLayout={handleSectionLayout}
         >
           <GuideStep
             number={1}
-            text="Open Library → Downloads and tap any completed download to play it in-app."
+            text="Open Library → Downloads and tap a finished download to play it in-app."
           />
           <GuideStep
             number={2}
-            text="Files stored as MKV play in-app, but for full codec support and audio/subtitle track control, open them in VLC (see the VLC button on each download)."
+            text="MKV files play in-app, but VLC gives full codec and audio-track support. Use the VLC button on the download."
           />
           <GuideStep
             number={3}
-            text="Downloads stay on your device after closing the app — they play offline anytime."
+            text="Downloads stay on the device after the app closes and play offline."
           />
-          <GuideNote text="You can share or delete a download from its row in the Downloads list." />
+          <GuideNote text="Share or delete a download from its row in the Downloads list." />
         </GuideSection>
 
         {/* ── Audio tracks ── */}
         <GuideSection
           icon="volume-high-outline"
-          title="Changing Audio Tracks"
+          title="Changing audio tracks"
           sectionId="audio"
           onLayout={handleSectionLayout}
         >
           <GuideParagraph>
-            Filmsnaps plays downloads in-app, but the in-app player doesn't
-            expose per-track audio selection. For videos with multiple audio
-            tracks (different languages, commentary, or surround), open the file
-            in VLC instead, which gives full audio-track control.
+            The in-app player does not expose per-track audio selection. For
+            files with several audio tracks, open them in VLC instead.
           </GuideParagraph>
 
           <GuideStep
             number={1}
-            text="On a completed download in Library → Downloads, tap the VLC button."
+            text="On a finished download in Library → Downloads, tap the VLC button."
           />
           <GuideStep
             number={2}
-            text={
-              "During playback in VLC, tap the screen to show the controls, then" +
-              " tap the speaker / audio icon."
-            }
+            text="In VLC, tap the screen to show the controls, then tap the speaker icon."
           />
           <GuideStep
             number={3}
-            text="Select your preferred track from the list. VLC remembers your choice for that file."
+            text="Pick a track from the list. VLC remembers the choice for that file."
           />
-          <GuideNote text="If the VLC button isn't shown, the download plays in-app only — it has a single audio track or isn't an MKV." />
+          <GuideNote text="No VLC button means the file plays in-app only: it has a single audio track or is not an MKV." />
           <GuideLink
-            text="Get VLC for Mobile"
+            text="Get VLC for mobile"
             url={
               Platform.select({
                 android:
@@ -234,11 +234,15 @@ function GuideSection({
   return (
     <View
       nativeID={sectionId}
-      className="mb-6"
       style={{
         backgroundColor: colors.bgSurface,
+        borderRadius: 14,
         borderWidth: 0.5,
-        borderColor: colors.border,
+        borderColor: colors.borderSubtle,
+        paddingHorizontal: 16,
+        paddingTop: 16,
+        paddingBottom: 16,
+        marginBottom: 16,
       }}
       onLayout={
         sectionId && onLayout
@@ -246,42 +250,58 @@ function GuideSection({
           : undefined
       }
     >
-      {/* Section header */}
-      <View className="flex-row items-center px-4 pt-4 pb-3">
-        <View
-          className="w-8 h-8 rounded-lg items-center justify-center mr-2.5"
-          style={{ backgroundColor: colors.goldButtonText }}
-        >
-          <Ionicons name={icon} size={16} color={colors.gold} />
-        </View>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 10,
+          marginBottom: 14,
+        }}
+      >
+        <Ionicons name={icon} size={18} color={colors.zinc500} />
         <Text
-          className="text-sm font-bold"
-          style={{ color: colors.textPrimary }}
+          style={{
+            fontSize: 15,
+            lineHeight: 20,
+            fontFamily: "Inter_500Medium",
+            color: colors.textPrimary,
+            flex: 1,
+          }}
         >
           {title}
         </Text>
       </View>
 
-      {/* Content */}
-      <View className="px-4 pb-4">{children}</View>
+      {children}
     </View>
   );
 }
 
 function GuideStep({ number, text }: { number: number; text: string }) {
   return (
-    <View className="flex-row items-start mb-2">
-      <View
-        className="w-5 h-5 rounded-full items-center justify-center mr-2.5 mt-0.5"
-        style={{ backgroundColor: colors.gold }}
-      >
-        <Text className="text-[10px] font-bold" style={{ color: colors.bg }}>
-          {number}
-        </Text>
-      </View>
+    <View style={{ flexDirection: "row", marginBottom: 10 }}>
       <Text
-        className="text-sm leading-5 flex-1"
-        style={{ color: colors.textSecondary }}
+        style={{
+          width: 18,
+          marginRight: 12,
+          marginTop: 1,
+          fontSize: 12,
+          lineHeight: 20,
+          fontFamily: "Inter_500Medium",
+          color: colors.textTertiary,
+          fontVariant: ["tabular-nums"],
+        }}
+      >
+        {number}
+      </Text>
+      <Text
+        style={{
+          flex: 1,
+          fontSize: 14,
+          lineHeight: 21,
+          fontFamily: "Inter_400Regular",
+          color: colors.textSecondary,
+        }}
       >
         {text}
       </Text>
@@ -292,8 +312,13 @@ function GuideStep({ number, text }: { number: number; text: string }) {
 function GuideParagraph({ children }: { children: React.ReactNode }) {
   return (
     <Text
-      className="text-sm leading-5 mb-3"
-      style={{ color: colors.textSecondary }}
+      style={{
+        fontSize: 14,
+        lineHeight: 21,
+        fontFamily: "Inter_400Regular",
+        color: colors.textSecondary,
+        marginBottom: 14,
+      }}
     >
       {children}
     </Text>
@@ -309,13 +334,20 @@ function GuideLink({ text, url }: { text: string; url?: string }) {
   return (
     <TouchableOpacity
       onPress={handlePress}
-      className="self-start mt-1"
       activeOpacity={0.7}
       accessibilityRole="link"
+      style={{
+        alignSelf: "flex-start",
+        marginTop: 12,
+        marginLeft: CONTENT_INDENT,
+      }}
     >
       <Text
-        className="text-sm"
-        style={{ color: colors.gold, textDecorationLine: "underline" }}
+        style={{
+          fontSize: 14,
+          fontFamily: "Inter_500Medium",
+          color: colors.gold,
+        }}
       >
         {text}
       </Text>
@@ -325,7 +357,13 @@ function GuideLink({ text, url }: { text: string; url?: string }) {
 
 function GuideNote({ text }: { text: string }) {
   return (
-    <View className="flex-row items-start mt-1 pl-7">
+    <View
+      style={{
+        flexDirection: "row",
+        marginTop: 4,
+        marginLeft: CONTENT_INDENT,
+      }}
+    >
       <Ionicons
         name="information-circle-outline"
         size={14}
@@ -333,8 +371,13 @@ function GuideNote({ text }: { text: string }) {
         style={{ marginRight: 6, marginTop: 2 }}
       />
       <Text
-        className="text-xs leading-4 flex-1"
-        style={{ color: colors.textTertiary }}
+        style={{
+          flex: 1,
+          fontSize: 12,
+          lineHeight: 18,
+          fontFamily: "Inter_400Regular",
+          color: colors.textTertiary,
+        }}
       >
         {text}
       </Text>

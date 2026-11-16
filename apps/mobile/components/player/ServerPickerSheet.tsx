@@ -283,7 +283,7 @@ export function ServerPickerSheet({
                         }}
                       >
                         <Text
-                          className="text-[9px] font-bold"
+                          className="text-[11px] font-medium"
                           style={{ color: colors.gold }}
                         >
                           {p.note}

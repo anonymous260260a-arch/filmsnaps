@@ -560,11 +560,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgSubtle,
   },
   sectionHeaderText: {
-    color: colors.gold,
+    color: colors.textTertiary,
     fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
+    fontWeight: "500",
+    letterSpacing: 0.2,
   },
   badgeCam: {
     backgroundColor: "rgba(239,68,68,0.12)",

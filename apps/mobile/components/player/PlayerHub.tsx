@@ -1150,10 +1150,9 @@ const styles = StyleSheet.create({
   },
   serverTagText: {
     color: colors.textTertiary,
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0.4,
-    textTransform: "uppercase",
+    fontSize: 11,
+    fontWeight: "500",
+    letterSpacing: 0,
   },
   serverTagTextDirect: {
     color: colors.gold,

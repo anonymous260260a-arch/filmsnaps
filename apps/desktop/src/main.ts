@@ -27,7 +27,7 @@ import {
   screen,
   protocol,
 } from "electron";
-import { join } from "path";
+import { extname, join } from "path";
 import { pathToFileURL } from "url";
 import { existsSync, statSync } from "fs";
 import {
@@ -36,6 +36,7 @@ import {
   saveWindowState,
 } from "./lib/window-state";
 import { getLegalAccepted, setLegalAccepted } from "./lib/legal-accept";
+import { stampApiClientHeaders } from "./lib/api-client-headers";
 import { initUpdater, quitAndInstall, checkForUpdates } from "./updater";
 import {
   createProviderSession,
@@ -1418,6 +1419,57 @@ function preSeedTrustForProviderSessions(): { cdnDomains: Set<string> } {
   }
 }
 
+// ── Static export serving (app://) ───────────────────────────────────────
+// `net.fetch("file://…")` guesses a content type from the extension, and two
+// of Next's export artifacts must not be guessed:
+//   • `*.txt` holds the App Router's RSC/flight payloads. Next's client checks
+//     the response for `text/x-component`; as `text/plain` the payload is
+//     rejected and the destination route never resolves.
+//   • `*.html` must stay a document for real navigations.
+const EXPORT_MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".txt": "text/x-component; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".avif": "image/avif",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".wasm": "application/wasm",
+};
+
+/** Read a file from the static export with the content type Next expects. */
+async function serveExportFile(filePath: string): Promise<Response> {
+  const electronNet = require("electron").net as typeof import("electron").net;
+  const res = await electronNet.fetch(pathToFileURL(filePath).toString());
+  const headers = new Headers(res.headers);
+  const mime = EXPORT_MIME[extname(filePath).toLowerCase()];
+  if (mime) headers.set("content-type", mime);
+  // `_next/static/**` is content-hashed; route documents and flight payloads
+  // must stay fresh so an update never serves a stale tree.
+  headers.set(
+    "cache-control",
+    /[\\/]_next[\\/]static[\\/]/.test(filePath)
+      ? "public, max-age=31536000, immutable"
+      : "no-cache",
+  );
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers,
+  });
+}
+
 // ── App Lifecycle ──
 
 // ── Custom protocol for static export ─────────────────────────────────────
@@ -1473,6 +1525,9 @@ if (!gotTheLock) {
     session.defaultSession.webRequest.onBeforeSendHeaders(
       (details, callback) => {
         const headers = details.requestHeaders as Record<string, string>;
+        // Version/client identification for the Filmsnaps API only
+        // (third-party requests are left untouched — see the module doc).
+        stampApiClientHeaders(details.url, headers);
         const originKey =
           Object.keys(headers).find((k) => k.toLowerCase() === "origin") ?? "";
         const origin = originKey ? headers[originKey] : "";
@@ -1510,8 +1565,17 @@ if (!gotTheLock) {
         }
         if (!details.responseHeaders["access-control-allow-headers"]) {
           details.responseHeaders["access-control-allow-headers"] = [
-            "Content-Type,Authorization",
+            "Content-Type,Authorization,X-Client,X-App-Version,X-Anon-Id",
           ];
+        } else {
+          const existing =
+            details.responseHeaders["access-control-allow-headers"][0] ?? "";
+          for (const h of ["X-Client", "X-App-Version", "X-Anon-Id"]) {
+            if (!existing.toLowerCase().includes(h.toLowerCase())) {
+              details.responseHeaders["access-control-allow-headers"][0] =
+                `${existing}, ${h}`;
+            }
+          }
         }
       }
       callback({ responseHeaders: details.responseHeaders });
@@ -1541,7 +1605,24 @@ if (!gotTheLock) {
       }
 
       protocol.handle("app", (request) => {
-        const { pathname } = new URL(request.url);
+        const { pathname: rawPathname, searchParams } = new URL(request.url);
+        let pathname = rawPathname;
+        try {
+          pathname = decodeURIComponent(rawPathname);
+        } catch {
+          // malformed escape — serve the raw path
+        }
+        const route = pathname.replace(/\/+$/, "") || "/";
+        const isRoot = route === "/";
+
+        // Next's App Router navigates by fetching an RSC ("flight") payload,
+        // not the destination document: `?_rsc=<hash>` with an RSC header, or a
+        // sibling `*.txt` file. Answering one of those with the route's HTML
+        // makes the flight parse fail, so the router never commits the route
+        // and its Suspense fallback stays up — that is the watch skeleton that
+        // loads for ever, reached from Watch Now and from Continue Watching.
+        const isRscRequest =
+          searchParams.has("_rsc") || request.headers.get("rsc") === "1";
 
         // Static export files: / → index.html, /saved → saved.html,
         // /download/falix → download/falix/index.html
@@ -1549,27 +1630,35 @@ if (!gotTheLock) {
         // BOTH `movie.html` and a `movie/` directory for every route, and
         // net.fetch of a directory fails with ERR_FILE_NOT_FOUND (which used
         // to spam the log and break RSC prefetches / client navigation).
-        const candidates = [
-          join(webDir, pathname === "/" ? "index.html" : pathname),
-          join(webDir, pathname === "/" ? "index.html" : pathname + ".html"),
-          join(webDir, pathname, "index.html"),
-        ];
+        const candidates = isRscRequest
+          ? [
+              join(webDir, isRoot ? "index.txt" : `${route}.txt`),
+              join(webDir, isRoot ? "" : route, "index.txt"),
+            ]
+          : [
+              join(webDir, isRoot ? "index.html" : route),
+              join(webDir, isRoot ? "index.html" : `${route}.html`),
+              join(webDir, isRoot ? "" : route, "index.html"),
+            ];
+
         for (const candidate of candidates) {
           try {
             if (statSync(candidate).isFile()) {
-              return require("electron").net.fetch(
-                pathToFileURL(candidate).toString(),
-              );
+              return serveExportFile(candidate);
             }
           } catch {
             // stat failed — try the next candidate
           }
         }
 
+        // A missing flight payload must 404 so the router falls back to a
+        // document navigation; HTML here is what strands the skeleton.
+        if (isRscRequest) {
+          return new Response("Not found", { status: 404 });
+        }
+
         // Fallback to root index.html
-        return require("electron").net.fetch(
-          pathToFileURL(join(webDir, "index.html")).toString(),
-        );
+        return serveExportFile(join(webDir, "index.html"));
       });
     }
 

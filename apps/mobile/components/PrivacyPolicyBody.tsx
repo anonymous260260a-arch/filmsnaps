@@ -30,20 +30,16 @@ export default function PrivacyPolicyBody({
       }}
       showsVerticalScrollIndicator={false}
     >
-      <View
-        className="w-16 h-0.5 mb-5"
-        style={{ backgroundColor: colors.gold }}
-      />{" "}
-      <PBody>Last updated: September 28, 2026</PBody>
+      <PBody>Last updated September 28, 2026</PBody>
       <PDivider />
-      <PSection num={++sectionIndex} title="The Short Version">
+      <PSection num={++sectionIndex} title="The short version">
         <PBullet text="FilmSnaps has no accounts — we don't know who you are." />
         <PBullet text="Your watch history, bookmarks, progress, and settings never leave your device." />
         <PBullet text="The Android app can send anonymous usage statistics and crash reports — on by default, off anytime in Settings." />
         <PBullet text="We never collect anything that can identify you: no identifiers, no IP addresses, no search text, no titles by name." />
       </PSection>
       <PDivider />
-      <PSection num={++sectionIndex} title="What Stays on Your Device">
+      <PSection num={++sectionIndex} title="What stays on your device">
         <PBody>
           Watch history and progress, bookmarks, your download list, all
           settings, and downloaded files are stored only on your device and are
@@ -55,7 +51,7 @@ export default function PrivacyPolicyBody({
       <PDivider />
       <PSection
         num={++sectionIndex}
-        title="Anonymous Usage Statistics (Optional)"
+        title="Anonymous usage statistics (optional)"
       >
         <PBody>
           To know which streaming sources actually work and what to fix, the app
@@ -83,7 +79,7 @@ export default function PrivacyPolicyBody({
       <PDivider />
       <PSection
         num={++sectionIndex}
-        title="Crash Reports (Optional — Same Toggle)"
+        title="Crash reports (optional — same toggle)"
       >
         <PBody>
           When the app crashes, a report — the error type and stack trace, with
@@ -93,7 +89,7 @@ export default function PrivacyPolicyBody({
         </PBody>
       </PSection>
       <PDivider />
-      <PSection num={++sectionIndex} title="What We Never Collect">
+      <PSection num={++sectionIndex} title="What we never collect">
         <PBody>
           No names, emails, or accounts (there are none) · no device,
           advertising, or contact identifiers · no IP addresses (we never read
@@ -104,14 +100,14 @@ export default function PrivacyPolicyBody({
         </PBody>
       </PSection>
       <PDivider />
-      <PSection num={++sectionIndex} title="Who FilmSnaps Connects To">
+      <PSection num={++sectionIndex} title="Who FilmSnaps connects to">
         <PBullet text="Our servers (Cloudflare): movie/TV metadata lookups (this keeps the TMDB API key off your device), app configuration (source list, announcements, player settings), ad-block filter updates, app update checks, and — if enabled — the anonymous statistics above." />
         <PBullet text="Cloudflare's public speed-test endpoint: only when the app needs to measure your connection (about 4 MB; results cached for a day)." />
         <PBullet text="The streaming source you choose: when you play or download, that provider sees your IP address — exactly as if you opened their site in a browser. We don't control this; a VPN hides it." />
         <PBullet text="Anime metadata (AniList, Kitsu, Shikimori) and subtitle services, when you use those features." />
       </PSection>
       <PDivider />
-      <PSection num={++sectionIndex} title="How Long We Keep It">
+      <PSection num={++sectionIndex} title="How long we keep it">
         <PBody>
           Anonymous statistics are kept for up to 12 months, then deleted
           automatically. Crash reports follow Sentry's standard retention. The
@@ -120,7 +116,7 @@ export default function PrivacyPolicyBody({
         </PBody>
       </PSection>
       <PDivider />
-      <PSection num={++sectionIndex} title="Your Control">
+      <PSection num={++sectionIndex} title="Your control">
         <PBody>
           Everything personal to you is already in your hands — history,
           bookmarks, and settings live on your device, and clearing app data
@@ -130,7 +126,7 @@ export default function PrivacyPolicyBody({
         </PBody>
       </PSection>
       <PDivider />
-      <PSection num={++sectionIndex} title="Your Rights (GDPR / CCPA)">
+      <PSection num={++sectionIndex} title="Your rights (GDPR / CCPA)">
         <PBody>
           These laws protect personal data. Our statistics contain no device or
           advertising identifiers, no IP addresses, and no free text — the only
@@ -141,7 +137,7 @@ export default function PrivacyPolicyBody({
         </PBody>
       </PSection>
       <PDivider />
-      <PSection num={++sectionIndex} title="Children's Privacy">
+      <PSection num={++sectionIndex} title="Children's privacy">
         <PBody>
           FilmSnaps is not directed at children under 13. We do not knowingly
           collect any information from anyone, let alone children. If you
@@ -149,7 +145,7 @@ export default function PrivacyPolicyBody({
         </PBody>
       </PSection>
       <PDivider />
-      <PSection num={++sectionIndex} title="Security Research">
+      <PSection num={++sectionIndex} title="Security research">
         <PBody>
           We welcome responsible disclosure of security vulnerabilities. If you
           discover a weakness in FilmSnaps, please open a security issue or pull
@@ -160,7 +156,7 @@ export default function PrivacyPolicyBody({
         </PBody>
       </PSection>
       <PDivider />
-      <PSection num={++sectionIndex} title="Changes to This Policy">
+      <PSection num={++sectionIndex} title="Changes to this policy">
         <PBody>
           We may update this policy from time to time. When we do, we will
           update the "Last updated" date above and note the change in our public
@@ -220,16 +216,20 @@ function PSection({
 }) {
   return (
     <View className="mb-6 mt-2">
-      <View className="flex-row items-center mb-3">
+      <View className="flex-row items-baseline mb-2">
         <Text
           className="text-xs mr-2.5"
-          style={{ color: colors.textTertiary, fontFamily: "Inter_500Medium" }}
+          style={{
+            color: colors.textTertiary,
+            fontFamily: "Inter_500Medium",
+            fontVariant: ["tabular-nums"],
+          }}
         >
           {String(num).padStart(2, "0")}
         </Text>
         <Text
-          className="text-base uppercase tracking-wider"
-          style={{ color: colors.gold, fontFamily: "Inter_600SemiBold" }}
+          className="text-base flex-1"
+          style={{ color: colors.gold, fontFamily: "Inter_500Medium" }}
         >
           {title}
         </Text>
@@ -248,8 +248,13 @@ function PBody({
 }) {
   return (
     <Text
-      className={`text-sm leading-7 ${extraMargin ? "mt-3" : ""}`}
-      style={{ color: colors.textSecondary }}
+      className={`text-sm ${extraMargin ? "mt-3" : ""}`}
+      style={{
+        color: colors.textSecondary,
+        fontSize: 14,
+        lineHeight: 22,
+        fontFamily: "Inter_400Regular",
+      }}
     >
       {children}
     </Text>
@@ -269,8 +274,8 @@ function PBold({ children }: { children: React.ReactNode }) {
 function PBullet({ text }: { text: string }) {
   return (
     <View className="flex-row items-start mt-2.5">
-      <Text className="text-[8px] mt-1.5 mr-3" style={{ color: colors.gold }}>
-        ●
+      <Text className="text-xs mt-0.5 mr-3" style={{ color: colors.goldDim }}>
+        •
       </Text>
       <Text
         className="text-sm leading-6 flex-1"

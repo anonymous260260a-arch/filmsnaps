@@ -64,16 +64,11 @@ export default function LegalScreen() {
         }}
         showsVerticalScrollIndicator={false}
       >
-        <View
-          className="w-16 h-0.5 mb-5"
-          style={{ backgroundColor: colors.gold }}
-        />
-
         <Text
-          className="text-sm font-medium mb-6"
-          style={{ color: colors.textTertiary }}
+          className="text-xs mb-6"
+          style={{ color: colors.textTertiary, fontFamily: "Inter_400Regular" }}
         >
-          Last updated: September 2026
+          Last updated September 2026
         </Text>
 
         <Text
@@ -94,7 +89,7 @@ export default function LegalScreen() {
           .
         </Text>
 
-        <Section num={++sectionIndex} title="What FilmSnaps Is">
+        <Section num={++sectionIndex} title="What FilmSnaps is">
           <Body>
             FilmSnaps is an <Bold>open-source</Bold> app that helps you browse
             movie and TV information (from TMDB) and watch content from
@@ -112,7 +107,7 @@ export default function LegalScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="We Don't Host Content">
+        <Section num={++sectionIndex} title="We don't host content">
           <Body>
             All videos you watch are hosted on third-party servers we don't own
             or control. FilmSnaps <Bold>never</Bold> uploads, stores, or
@@ -147,7 +142,7 @@ export default function LegalScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="Your Responsibility">
+        <Section num={++sectionIndex} title="Your responsibility">
           <Body>
             By using FilmSnaps, <Bold>you accept full responsibility</Bold> for
             how you use the app. You agree to:
@@ -174,7 +169,7 @@ export default function LegalScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="No Warranties">
+        <Section num={++sectionIndex} title="No warranties">
           <Body>
             FilmSnaps is provided on an <Bold>"as is" and "as available"</Bold>{" "}
             basis with no warranties of any kind — express or implied —
@@ -191,7 +186,7 @@ export default function LegalScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="Liability Limits">
+        <Section num={++sectionIndex} title="Liability limits">
           <Body>
             To the maximum extent permitted by law,{" "}
             <Bold>
@@ -207,7 +202,7 @@ export default function LegalScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="Open-Source License (GPL-3.0)">
+        <Section num={++sectionIndex} title="Open-source license (GPL-3.0)">
           <Body>
             FilmSnaps is released under the{" "}
             <Bold>GNU General Public License v3.0 (GPL-3.0)</Bold> — a free,
@@ -224,7 +219,7 @@ export default function LegalScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="Abuse Reports">
+        <Section num={++sectionIndex} title="Abuse reports">
           <Body>
             While we cannot remove content from third-party servers, if you
             discover that a specific third-party provider integrated into our
@@ -242,7 +237,7 @@ export default function LegalScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="Your Local Laws Apply">
+        <Section num={++sectionIndex} title="Your local laws apply">
           <Body>
             FilmSnaps makes no representation that the application is
             appropriate or lawful in every country or territory.{" "}
@@ -257,7 +252,7 @@ export default function LegalScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="Changes to These Terms">
+        <Section num={++sectionIndex} title="Changes to these terms">
           <Body>
             We may update these terms from time to time. When we do, we will
             update the "Last updated" date above and note the change in our
@@ -292,16 +287,20 @@ function Section({
 }) {
   return (
     <View className="mb-6 mt-2">
-      <View className="flex-row items-center mb-3">
+      <View className="flex-row items-baseline mb-2">
         <Text
           className="text-xs mr-2.5"
-          style={{ color: colors.textTertiary, fontFamily: "Inter_500Medium" }}
+          style={{
+            color: colors.textTertiary,
+            fontFamily: "Inter_500Medium",
+            fontVariant: ["tabular-nums"],
+          }}
         >
           {String(num).padStart(2, "0")}
         </Text>
         <Text
-          className="text-base uppercase tracking-wider"
-          style={{ color: colors.gold, fontFamily: "Inter_600SemiBold" }}
+          className="text-base flex-1"
+          style={{ color: colors.gold, fontFamily: "Inter_500Medium" }}
         >
           {title}
         </Text>
@@ -341,8 +340,13 @@ function Body({
 }) {
   return (
     <Text
-      className={`text-sm leading-7 ${extraMargin ? "mt-3" : ""}`}
-      style={{ color: colors.textSecondary }}
+      className={`text-sm ${extraMargin ? "mt-3" : ""}`}
+      style={{
+        color: colors.textSecondary,
+        fontSize: 14,
+        lineHeight: 22,
+        fontFamily: "Inter_400Regular",
+      }}
     >
       {children}
     </Text>
@@ -362,8 +366,8 @@ function Bold({ children }: { children: React.ReactNode }) {
 function Bullet({ text }: { text: string }) {
   return (
     <View className="flex-row items-start mt-2.5">
-      <Text className="text-[8px] mt-1.5 mr-3" style={{ color: colors.gold }}>
-        ●
+      <Text className="text-xs mt-0.5 mr-3" style={{ color: colors.goldDim }}>
+        •
       </Text>
       <Text
         className="text-sm leading-6 flex-1"

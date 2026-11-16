@@ -525,7 +525,8 @@ export default function HistoryScreen() {
                 {/* Info */}
                 <View className="flex-1 px-3 py-2.5 justify-center">
                   <Text
-                    className="text-text-primary text-sm font-bold leading-tight"
+                    className="text-text-primary text-sm leading-tight"
+                    style={{ fontFamily: "Inter_500Medium" }}
                     numberOfLines={1}
                   >
                     {title}
@@ -541,14 +542,6 @@ export default function HistoryScreen() {
                           ` +${item.episodeCount - 1} more`}
                       </Text>
                     )}
-
-                  {isFullyWatched ? (
-                    <View className="bg-green-900/40 rounded-sm px-1.5 py-0.5 self-start">
-                      <Text className="text-green-400 text-[9px] font-bold">
-                        COMPLETED
-                      </Text>
-                    </View>
-                  ) : null}
 
                   {/* Progress bar */}
                   <View
@@ -585,12 +578,12 @@ export default function HistoryScreen() {
                         <Ionicons name="play" size={10} color={colors.gold} />
                       )}
                       <Text
-                        className={`text-xs font-semibold ${isFullyWatched ? "text-green-500" : "text-primary"}`}
+                        className={`text-xs font-medium ${isFullyWatched ? "text-green-500" : "text-primary"}`}
                       >
                         {isFullyWatched ? "Complete" : label}
                       </Text>
                     </View>
-                    <Text className="text-text-tertiary text-[10px]">
+                    <Text className="text-text-tertiary text-[11px]">
                       {formatDate(p.updatedAt)}
                     </Text>
                   </View>

@@ -66,28 +66,28 @@ export default function TransparencyScreen() {
         }}
         showsVerticalScrollIndicator={false}
       >
-        <View
-          className="w-16 h-0.5 mb-5"
-          style={{ backgroundColor: colors.gold }}
-        />
-
         <Text
-          className="text-sm leading-7 mb-6"
-          style={{ color: colors.textSecondary }}
+          className="text-xs mb-6"
+          style={{ color: colors.textTertiary, fontFamily: "Inter_400Regular" }}
         >
-          Last updated: September 28, 2026
+          Last updated September 28, 2026
         </Text>
 
         <Text
-          className="text-base leading-7 mb-6"
-          style={{ color: colors.textSecondary }}
+          className="mb-6"
+          style={{
+            fontSize: 15,
+            lineHeight: 24,
+            fontFamily: "Inter_400Regular",
+            color: colors.textSecondary,
+          }}
         >
           FilmSnaps is a privacy-first streaming interface. We don't host
           content, we don't profile you, and we block the dangerous ads that
           free streaming sites throw at you.
         </Text>
 
-        <Section num={++sectionIndex} title="The Problem We Solve">
+        <Section num={++sectionIndex} title="The problem we solve">
           <Body>
             Free streaming sites don't just show annoying ads — they run active
             threats: fake download buttons that install spyware, crypto-mining
@@ -103,7 +103,7 @@ export default function TransparencyScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="How FilmSnaps Protects You">
+        <Section num={++sectionIndex} title="How FilmSnaps protects you">
           <Body>
             Protection is layered. If one layer misses a threat, the next
             catches it — like a corporate firewall, but running entirely on your
@@ -170,7 +170,7 @@ export default function TransparencyScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="What We Don't Do">
+        <Section num={++sectionIndex} title="What we don't do">
           <Body>To be completely transparent:</Body>
           <Bullet text="We don't host, store, or distribute any video content." />
           <Bullet text="The website sends nothing; the app's optional statistics are anonymous, disclosed at first launch, and switchable off." />
@@ -186,7 +186,7 @@ export default function TransparencyScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="Open Source Verification">
+        <Section num={++sectionIndex} title="Open source verification">
           <Body>
             FilmSnaps is open source. We encourage you to audit our code, verify
             our privacy claims, and contribute improvements. Our ad-blocking
@@ -203,7 +203,7 @@ export default function TransparencyScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="Known Limitations">
+        <Section num={++sectionIndex} title="Known limitations">
           <Bullet text="Our WebView sandbox is strong but not theoretically impenetrable. Zero-day exploits in browser engines are rare but possible — keep your OS updated." />
           <Bullet text="Ad-blocking is a cat-and-mouse game. Some sophisticated ads may temporarily bypass our filters until we update our rules." />
           <Bullet text="Large, high-bitrate files (some MKV releases exceed 5 GB) can need a few extra seconds of buffering at the very start on slower connections — the beginning of such files is often encoded at several times the average bitrate of the rest." />
@@ -213,7 +213,7 @@ export default function TransparencyScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="Frequently Asked Questions">
+        <Section num={++sectionIndex} title="Frequently asked questions">
           <Body>
             Common questions about privacy, security, and the technology behind
             the scenes.
@@ -329,7 +329,7 @@ export default function TransparencyScreen() {
 
         <Divider />
 
-        <Section num={++sectionIndex} title="Related Pages">
+        <Section num={++sectionIndex} title="Related pages">
           <Body>
             Read the Privacy Policy for what stays on your device, and the Legal
             & DMCA page for our open-source license and content disclaimer.
@@ -362,16 +362,20 @@ function Section({
 }) {
   return (
     <View className="mb-6 mt-2">
-      <View className="flex-row items-center mb-3">
+      <View className="flex-row items-baseline mb-2">
         <Text
           className="text-xs mr-2.5"
-          style={{ color: colors.textTertiary, fontFamily: "Inter_500Medium" }}
+          style={{
+            color: colors.textTertiary,
+            fontFamily: "Inter_500Medium",
+            fontVariant: ["tabular-nums"],
+          }}
         >
           {String(num).padStart(2, "0")}
         </Text>
         <Text
-          className="text-base uppercase tracking-wider"
-          style={{ color: colors.gold, fontFamily: "Inter_600SemiBold" }}
+          className="text-base flex-1"
+          style={{ color: colors.gold, fontFamily: "Inter_500Medium" }}
         >
           {title}
         </Text>
@@ -391,8 +395,8 @@ function SubSection({
   return (
     <View className="mb-4 mt-4">
       <Text
-        className="text-sm font-semibold mb-2"
-        style={{ color: colors.gold, fontFamily: "Inter_600SemiBold" }}
+        className="text-sm mb-2"
+        style={{ color: colors.gold, fontFamily: "Inter_500Medium" }}
       >
         {title}
       </Text>
@@ -410,8 +414,13 @@ function Body({
 }) {
   return (
     <Text
-      className={`text-sm leading-7 ${extraMargin ? "mt-3" : ""}`}
-      style={{ color: colors.textSecondary }}
+      className={`text-sm ${extraMargin ? "mt-3" : ""}`}
+      style={{
+        fontSize: 14,
+        lineHeight: 22,
+        fontFamily: "Inter_400Regular",
+        color: colors.textSecondary,
+      }}
     >
       {children}
     </Text>
@@ -431,8 +440,8 @@ function Bold({ children }: { children: React.ReactNode }) {
 function Bullet({ text }: { text: string }) {
   return (
     <View className="flex-row items-start mt-2.5">
-      <Text className="text-[8px] mt-1.5 mr-3" style={{ color: colors.gold }}>
-        ●
+      <Text className="text-xs mt-0.5 mr-3" style={{ color: colors.goldDim }}>
+        •
       </Text>
       <Text
         className="text-sm leading-6 flex-1"
@@ -496,9 +505,9 @@ function FaqItem({
           {question}
         </Text>
         <Ionicons
-          name={open ? "remove-circle-outline" : "add-circle-outline"}
-          size={18}
-          color={colors.gold}
+          name={open ? "chevron-up" : "chevron-down"}
+          size={16}
+          color={colors.textTertiary}
         />
       </TouchableOpacity>
       {open && (

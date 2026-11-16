@@ -166,80 +166,56 @@ export default function AnnouncementDetailScreen() {
             className="bg-zinc-800 rounded-xl py-3 px-6"
             activeOpacity={0.7}
           >
-            <Text className="text-zinc-300 font-bold text-sm">Go Back</Text>
+            <Text className="text-zinc-300 font-medium text-sm">Go back</Text>
           </TouchableOpacity>
         </View>
       ) : (
         <ScrollView
-          contentContainerStyle={{ paddingBottom: 40 }}
+          contentContainerStyle={{ paddingTop: 8, paddingBottom: 40 }}
           showsVerticalScrollIndicator={false}
         >
-          {/* Hero banner */}
-          {typeMeta && (
-            <View
-              className="mx-5 rounded-2xl overflow-hidden mb-5"
-              style={{
-                backgroundColor: typeMeta.bg,
-                borderWidth: 1,
-                borderColor: `${typeMeta.accent}30`,
-              }}
-            >
-              {/* Accent top bar */}
-              <View style={{ height: 3, backgroundColor: typeMeta.accent }} />
-
-              <View className="px-5 py-5">
-                {/* Type badge */}
-                <View
-                  className="flex-row items-center self-start rounded-full px-3 py-1 mb-3"
-                  style={{
-                    backgroundColor: `${typeMeta.accent}18`,
-                    borderWidth: 0.5,
-                    borderColor: `${typeMeta.accent}30`,
-                  }}
-                >
-                  <Ionicons
-                    name={typeMeta.icon}
-                    size={12}
-                    color={typeMeta.accent}
-                  />
-                  <Text
-                    className="text-[10px] font-semibold ml-1.5"
-                    style={{ color: typeMeta.accent }}
-                  >
-                    {typeMeta.label}
-                  </Text>
-                </View>
-
-                {/* Title */}
-                <Text
-                  className="text-xl font-bold mb-1"
-                  style={{
-                    color: colors.textPrimary,
-                    fontFamily: "PlayfairDisplay_700Bold",
-                  }}
-                >
-                  {announcement.title}
-                </Text>
-
-                {/* Date */}
-                {announcement.date && (
-                  <Text
-                    className="text-[10px] mt-1"
-                    style={{ color: colors.textTertiary }}
-                  >
-                    {announcement.date}
-                  </Text>
-                )}
-              </View>
-            </View>
-          )}
-
           {/* Content */}
           <View className="px-5">
+            {/* Type + date */}
+            <View className="flex-row items-center mb-2" style={{ gap: 6 }}>
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontFamily: "Inter_500Medium",
+                  color: colors.textTertiary,
+                }}
+              >
+                {typeMeta?.label}
+              </Text>
+              {announcement.date ? (
+                <Text style={{ fontSize: 11, color: colors.textTertiary }}>
+                  · {announcement.date}
+                </Text>
+              ) : null}
+            </View>
+
+            {/* Title */}
+            <Text
+              style={{
+                fontFamily: "PlayfairDisplay_700Bold",
+                fontSize: 26,
+                lineHeight: 32,
+                color: colors.textPrimary,
+                marginBottom: 12,
+              }}
+            >
+              {announcement.title}
+            </Text>
+
             {/* Subtitle as lead paragraph */}
             <Text
-              className="text-sm leading-6 mb-5"
-              style={{ color: colors.textSecondary }}
+              className="mb-5"
+              style={{
+                fontSize: 15,
+                lineHeight: 23,
+                fontFamily: "Inter_400Regular",
+                color: colors.textSecondary,
+              }}
             >
               {announcement.subtitle}
             </Text>
@@ -250,8 +226,13 @@ export default function AnnouncementDetailScreen() {
                 {announcement.body.map((paragraph, i) => (
                   <Text
                     key={i}
-                    className="text-sm leading-6 mb-4"
-                    style={{ color: colors.textSecondary }}
+                    className="mb-4"
+                    style={{
+                      fontSize: 14,
+                      lineHeight: 22,
+                      fontFamily: "Inter_400Regular",
+                      color: colors.textSecondary,
+                    }}
                   >
                     {paragraph}
                   </Text>
@@ -264,18 +245,16 @@ export default function AnnouncementDetailScreen() {
               <TouchableOpacity
                 onPress={handleAction}
                 activeOpacity={0.8}
-                className="rounded-xl py-3.5 items-center mb-6"
-                style={{
-                  backgroundColor: typeMeta?.accent ?? colors.gold,
-                }}
+                className="rounded-[10px] py-3.5 items-center mb-6"
+                style={{ backgroundColor: colors.gold }}
                 accessibilityRole="button"
-                accessibilityLabel={announcement.actionLabel || "Learn More"}
+                accessibilityLabel={announcement.actionLabel || "Learn more"}
               >
                 <Text
-                  className="text-sm font-bold"
-                  style={{ color: colors.voidBlack }}
+                  className="text-sm"
+                  style={{ color: colors.bg, fontFamily: "Inter_500Medium" }}
                 >
-                  {announcement.actionLabel || "Learn More"}
+                  {announcement.actionLabel || "Learn more"}
                 </Text>
               </TouchableOpacity>
             )}

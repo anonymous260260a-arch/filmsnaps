@@ -18,11 +18,7 @@ import { tmdbApi } from "../lib/api";
 import { MediaCard } from "../components/MediaCard";
 import { EmptyState } from "../components/EmptyState";
 import { getAllBookmarks, clearAllBookmarks } from "../lib/bookmarks";
-import {
-  openDetail,
-  prepareDetail,
-  toDetailNavItem,
-} from "../lib/openDetail";
+import { openDetail, prepareDetail, toDetailNavItem } from "../lib/openDetail";
 import type { Bookmark } from "../lib/bookmarks";
 import { colors } from "../theme/colors";
 
@@ -218,7 +214,7 @@ export default function SavedScreen() {
                   [
                     { text: "Cancel", style: "cancel" },
                     {
-                      text: "Clear All",
+                      text: "Clear all",
                       style: "destructive",
                       onPress: handleClearAll,
                     },
@@ -230,7 +226,9 @@ export default function SavedScreen() {
             >
               <View className="flex-row items-center">
                 <Ionicons name="trash-outline" size={14} color={colors.error} />
-                <Text className="text-red-400 text-xs ml-1.5">Clear All</Text>
+                <Text className="text-red-400 text-[13px] ml-1.5">
+                  Clear all
+                </Text>
               </View>
             </TouchableOpacity>
           }

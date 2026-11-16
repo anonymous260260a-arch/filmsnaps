@@ -18,6 +18,8 @@ export interface FetchJsonOptions {
   signal?: AbortSignal | null;
   /** Hard timeout; aborts the request. Default 10000ms. */
   timeoutMs?: number;
+  /** Per-request headers. Only sent to the URL passed here. */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -43,7 +45,10 @@ export async function fetchJson<T = any>(
   }
 
   try {
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: options.headers,
+    });
     if (!res.ok) {
       throw new ApiError(res.status, res.statusText, url);
     }
@@ -93,12 +98,20 @@ export async function fetchJson<T = any>(
  *   React Native dev: 'http://localhost:3000' or 'http://10.0.2.2:3000'
  *   React Native prod: 'https://filmsnaps.app'
  */
-export function createTmdbApi(apiBase: string) {
+export function createTmdbApi(
+  apiBase: string,
+  getDefaultHeaders?: () => Record<string, string>,
+) {
   const fetchTmdb = (
     path: string,
     signal?: AbortSignal | null,
     timeoutMs?: number,
-  ) => fetchJson(`${apiBase}/api/tmdb${path}`, { signal, timeoutMs });
+  ) =>
+    fetchJson(`${apiBase}/api/tmdb${path}`, {
+      signal,
+      timeoutMs,
+      headers: getDefaultHeaders ? getDefaultHeaders() : undefined,
+    });
 
   return {
     getTrendingMovies: (page = 1, signal?: AbortSignal | null) =>

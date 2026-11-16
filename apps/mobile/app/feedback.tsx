@@ -69,12 +69,12 @@ export default function FeedbackScreen() {
               style={{
                 color: colors.textPrimary,
                 fontSize: 16,
-                fontFamily: "Inter_600SemiBold",
+                fontFamily: "Inter_500Medium",
               }}
             >
               {error === "offline"
-                ? "No Internet Connection"
-                : "Failed to Load"}
+                ? "No internet connection"
+                : "Failed to load"}
             </Text>
             <Text
               className="text-center mb-6 leading-5"
@@ -91,10 +91,10 @@ export default function FeedbackScreen() {
               activeOpacity={0.7}
             >
               <Text
-                className="font-semibold"
+                className="font-medium"
                 style={{
-                  color: "#070708",
-                  fontFamily: "Inter_600SemiBold",
+                  color: colors.bg,
+                  fontFamily: "Inter_500Medium",
                 }}
               >
                 Retry

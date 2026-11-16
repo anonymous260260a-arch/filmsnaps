@@ -8,14 +8,7 @@
  */
 
 import React from "react";
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  Modal,
-  StyleSheet,
-  ScrollView,
-} from "react-native";
+import { View, Text, TouchableOpacity, Modal, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
 import type { PreferredLanguage } from "../../lib/streamSelector";
@@ -24,19 +17,15 @@ const OPTIONS: { value: PreferredLanguage; label: string; hint: string }[] = [
   {
     value: "auto",
     label: "Auto",
-    hint: "App decides — Multi audio, then Hindi, then English",
+    hint: "Multi audio, then Hindi, then English",
   },
   {
     value: "multi",
     label: "Multi audio",
-    hint: "Titles with multiple audio tracks preferred",
+    hint: "Titles with several audio tracks",
   },
-  { value: "hindi", label: "Hindi", hint: "Prefer sources with Hindi audio" },
-  {
-    value: "english",
-    label: "English",
-    hint: "Prefer sources with English audio",
-  },
+  { value: "hindi", label: "Hindi", hint: "Sources with Hindi audio" },
+  { value: "english", label: "English", hint: "Sources with English audio" },
 ];
 
 interface LanguagePromptSheetProps {
@@ -56,8 +45,8 @@ export function LanguagePromptSheet({
   visible = true,
   onClose,
   currentValue,
-  title = "What audio language do you prefer?",
-  subtitle = "We'll rank sources to match. You can change this anytime in the player settings.",
+  title = "Audio language",
+  subtitle = "New sources are ranked to match this. You can change it anytime in player settings.",
 }: LanguagePromptSheetProps) {
   return (
     <Modal
@@ -72,55 +61,38 @@ export function LanguagePromptSheet({
           accessibilityRole="alert"
           accessibilityLiveRegion="polite"
         >
-          <View style={styles.iconWrap}>
-            <Ionicons name="language-outline" size={30} color={colors.gold} />
-          </View>
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.subtitle}>{subtitle}</Text>
 
-          <ScrollView
-            style={styles.optionList}
-            contentContainerStyle={styles.optionListContent}
-          >
-            {OPTIONS.map((option) => {
+          <View style={styles.optionList}>
+            {OPTIONS.map((option, index) => {
               const isSelected = currentValue === option.value;
               return (
-                <TouchableOpacity
-                  key={option.value}
-                  style={[styles.option, isSelected && styles.optionSelected]}
-                  onPress={() => onSelect(option.value)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Preferred audio language: ${option.label}${isSelected ? ", currently selected" : ""}`}
-                >
-                  <View style={styles.optionTextWrap}>
-                    <Text
-                      style={[
-                        styles.optionLabel,
-                        isSelected && styles.optionLabelSelected,
-                      ]}
-                    >
-                      {option.label}
-                    </Text>
-                    <Text style={styles.optionHint}>{option.hint}</Text>
-                  </View>
-                  {isSelected ? (
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={20}
-                      color={colors.gold}
-                    />
-                  ) : (
-                    <Ionicons
-                      name="chevron-forward"
-                      size={18}
-                      color={colors.textTertiary}
-                    />
-                  )}
-                </TouchableOpacity>
+                <View key={option.value}>
+                  {index > 0 && <View style={styles.divider} />}
+                  <TouchableOpacity
+                    style={styles.option}
+                    onPress={() => onSelect(option.value)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Preferred audio language: ${option.label}${isSelected ? ", currently selected" : ""}`}
+                  >
+                    <View style={styles.optionTextWrap}>
+                      <Text style={styles.optionLabel}>{option.label}</Text>
+                      <Text style={styles.optionHint}>{option.hint}</Text>
+                    </View>
+                    {isSelected ? (
+                      <Ionicons
+                        name="checkmark"
+                        size={18}
+                        color={colors.gold}
+                      />
+                    ) : null}
+                  </TouchableOpacity>
+                </View>
               );
             })}
-          </ScrollView>
+          </View>
         </View>
       </View>
     </Modal>
@@ -137,62 +109,40 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: colors.bgElevated,
-    borderRadius: 20,
-    padding: 24,
+    borderRadius: 16,
+    padding: 20,
     width: "100%",
     maxWidth: 380,
-    borderWidth: 1,
+    borderWidth: 0.5,
     borderColor: colors.borderSubtle,
-  },
-  iconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "rgba(212,162,55,0.12)",
-    borderWidth: 1,
-    borderColor: "rgba(212,162,55,0.3)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 16,
-    alignSelf: "flex-start",
   },
   title: {
     color: colors.textPrimary,
-    fontSize: 19,
-    fontWeight: "700",
-    lineHeight: 26,
+    fontSize: 18,
+    fontWeight: "500",
+    lineHeight: 24,
   },
   subtitle: {
     color: colors.textSecondary,
     fontSize: 13,
     lineHeight: 19,
     marginTop: 6,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   optionList: {
-    flexGrow: 0,
+    marginHorizontal: -4,
   },
-  optionListContent: {
-    gap: 4,
+  divider: {
+    height: 0.5,
+    backgroundColor: colors.borderSubtle,
   },
   option: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: colors.bgCard,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.borderSubtle,
-    paddingHorizontal: 16,
+    paddingHorizontal: 4,
     paddingVertical: 12,
-    minHeight: 56,
-  },
-  optionSelected: {
-    backgroundColor: colors.goldBadge,
-    borderColor: "rgba(212,162,55,0.5)",
-  },
-  optionLabelSelected: {
-    color: colors.gold,
+    minHeight: 52,
   },
   optionTextWrap: {
     flex: 1,
@@ -201,7 +151,7 @@ const styles = StyleSheet.create({
   optionLabel: {
     color: colors.textPrimary,
     fontSize: 15,
-    fontWeight: "600",
+    fontWeight: "500",
   },
   optionHint: {
     color: colors.textTertiary,

@@ -172,39 +172,30 @@ function TaskRow({ taskId }: { taskId: string }) {
         <View className="flex-row items-start justify-between">
           <View className="flex-1 mr-3">
             <Text
-              className="text-zinc-200 text-sm font-bold leading-tight"
+              className="text-zinc-200 text-sm leading-tight"
+              style={{ fontFamily: "Inter_500Medium" }}
               numberOfLines={2}
             >
               {title || fileName}
             </Text>
-            <View className="flex-row flex-wrap items-center gap-1.5 mt-1">
-              <View className="bg-zinc-800 rounded-sm px-1.5 py-0.5">
-                <Text className="text-zinc-400 text-[9px] font-semibold">
-                  {serverLabel(server)}
-                </Text>
-              </View>
-              {(task.badges ?? []).slice(0, 4).map((badge) => (
-                <View
-                  key={badge}
-                  className="bg-zinc-800/70 rounded-sm px-1.5 py-0.5"
-                >
-                  <Text
-                    className="text-zinc-400 text-[9px] font-semibold"
-                    numberOfLines={1}
-                  >
-                    {badge}
-                  </Text>
-                </View>
-              ))}
-              {!task.badges?.length && quality && (
-                <Text className="text-zinc-500 text-[10px]">{quality}</Text>
-              )}
-              {fileName !== title && (
-                <Text className="text-zinc-600 text-[9px]" numberOfLines={1}>
-                  {fileName}
-                </Text>
-              )}
-            </View>
+            <Text className="text-zinc-500 text-[11px] mt-1" numberOfLines={1}>
+              {[
+                serverLabel(server),
+                ...(task.badges?.length
+                  ? task.badges.slice(0, 3)
+                  : quality
+                    ? [quality]
+                    : []),
+              ].join(" · ")}
+            </Text>
+            {fileName !== title && (
+              <Text
+                className="text-zinc-600 text-[11px] mt-0.5"
+                numberOfLines={1}
+              >
+                {fileName}
+              </Text>
+            )}
           </View>
         </View>
 
@@ -216,12 +207,12 @@ function TaskRow({ taskId }: { taskId: string }) {
               color={status === "pending" ? colors.textTertiary : colors.gold}
             />
             <View className="flex-row justify-between mt-1">
-              <Text className="text-zinc-500 text-[10px]">
+              <Text className="text-zinc-500 text-[11px]">
                 {status === "pending"
                   ? "Starting..."
                   : `${formatBytes(receivedBytes)} / ${formatBytes(totalBytes || 1)}`}
               </Text>
-              <Text className="text-zinc-500 text-[10px]">{pct}%</Text>
+              <Text className="text-zinc-500 text-[11px]">{pct}%</Text>
             </View>
             {/* Speed + ETA row */}
             {status === "downloading" && (speedLabel || etaLabel) && (
@@ -233,7 +224,7 @@ function TaskRow({ taskId }: { taskId: string }) {
                       size={10}
                       color={colors.textTertiary}
                     />
-                    <Text className="text-zinc-500 text-[10px] ml-1">
+                    <Text className="text-zinc-500 text-[11px] ml-1">
                       {speedLabel}
                     </Text>
                   </View>
@@ -245,7 +236,7 @@ function TaskRow({ taskId }: { taskId: string }) {
                       size={10}
                       color={colors.textTertiary}
                     />
-                    <Text className="text-zinc-500 text-[10px] ml-1">
+                    <Text className="text-zinc-500 text-[11px] ml-1">
                       {etaLabel}
                     </Text>
                   </View>
@@ -260,11 +251,11 @@ function TaskRow({ taskId }: { taskId: string }) {
           <View className="mt-2">
             <ProgressBar fraction={progress} color={colors.textTertiary} />
             <View className="flex-row justify-between mt-1">
-              <Text className="text-zinc-500 text-[10px]">
+              <Text className="text-zinc-500 text-[11px]">
                 Paused · {formatBytes(receivedBytes)} /{" "}
                 {formatBytes(totalBytes || 1)}
               </Text>
-              <Text className="text-amber-400 text-[10px] font-semibold">
+              <Text className="text-amber-400 text-[11px] font-semibold">
                 {pct}%
               </Text>
             </View>
@@ -279,7 +270,7 @@ function TaskRow({ taskId }: { taskId: string }) {
               size={12}
               color={colors.successGreen}
             />
-            <Text className="text-green-500 text-[10px] font-semibold">
+            <Text className="text-green-500 text-[11px] font-semibold">
               Saved · {fileUri ? formatBytes(totalBytes) : "Unknown size"}
             </Text>
           </View>
@@ -289,7 +280,7 @@ function TaskRow({ taskId }: { taskId: string }) {
         {status === "failed" && (
           <View className="mt-1 flex-row items-center gap-1">
             <Ionicons name="alert-circle" size={12} color={colors.error} />
-            <Text className="text-red-400 text-[10px] flex-1" numberOfLines={2}>
+            <Text className="text-red-400 text-[11px] flex-1" numberOfLines={2}>
               {error || "Download failed"}
             </Text>
           </View>
@@ -303,7 +294,7 @@ function TaskRow({ taskId }: { taskId: string }) {
               size={12}
               color={colors.textSecondary}
             />
-            <Text className="text-zinc-400 text-[10px]">Cancelled</Text>
+            <Text className="text-zinc-400 text-[11px]">Cancelled</Text>
           </View>
         )}
 
@@ -312,7 +303,7 @@ function TaskRow({ taskId }: { taskId: string }) {
           <View className="mt-1 flex-row items-center gap-1">
             <Ionicons name="refresh" size={12} color={colors.amber} />
             <Text
-              className="text-amber-400 text-[10px] flex-1"
+              className="text-amber-400 text-[11px] flex-1"
               numberOfLines={2}
             >
               {error ? `Retrying — ${error}` : "Waiting to retry…"}
@@ -321,7 +312,7 @@ function TaskRow({ taskId }: { taskId: string }) {
         )}
 
         {/* Date */}
-        <Text className="text-zinc-600 text-[9px] mt-1">
+        <Text className="text-zinc-600 text-[11px] mt-1">
           {formatDate(createdAt)}
         </Text>
       </View>
@@ -340,7 +331,7 @@ function TaskRow({ taskId }: { taskId: string }) {
             <TaskAction
               icon="pause-circle-outline"
               label="Pause"
-              color={colors.gold}
+              color={colors.textSecondary}
               onPress={pause}
             />
             <TaskAction
@@ -390,7 +381,7 @@ function TaskRow({ taskId }: { taskId: string }) {
             <TaskAction
               icon="share-outline"
               label="Share"
-              color={colors.info}
+              color={colors.textSecondary}
               onPress={() => handleShare(fileUri, fileName, task.extension)}
             />
             <TaskAction
@@ -546,31 +537,18 @@ function ShowGroupRow({
         <View className="flex-row items-start">
           <View className="flex-1 mr-2">
             <Text
-              className="text-zinc-100 text-sm font-bold leading-tight"
+              className="text-zinc-100 text-sm leading-tight"
+              style={{ fontFamily: "Inter_500Medium" }}
               numberOfLines={2}
             >
               {title}
             </Text>
-            <View className="flex-row flex-wrap items-center gap-1.5 mt-1">
-              <View className="bg-zinc-800 rounded-sm px-1.5 py-0.5">
-                <Text className="text-zinc-400 text-[9px] font-semibold">
-                  {completedCount}/{episodes.length} episodes
-                </Text>
-              </View>
-              {badges.map((badge) => (
-                <View
-                  key={badge}
-                  className="bg-zinc-800/70 rounded-sm px-1.5 py-0.5"
-                >
-                  <Text
-                    className="text-zinc-400 text-[9px] font-semibold"
-                    numberOfLines={1}
-                  >
-                    {badge}
-                  </Text>
-                </View>
-              ))}
-            </View>
+            <Text className="text-zinc-500 text-[11px] mt-1" numberOfLines={1}>
+              {[
+                `${completedCount}/${episodes.length} episodes`,
+                ...badges,
+              ].join(" · ")}
+            </Text>
           </View>
           <Ionicons
             name={expanded ? "chevron-up" : "chevron-down"}
@@ -585,7 +563,7 @@ function ShowGroupRow({
             fraction={fraction}
             color={activeCount > 0 ? colors.gold : colors.textTertiary}
           />
-          <Text className="text-zinc-500 text-[10px] mt-1">
+          <Text className="text-zinc-500 text-[11px] mt-1">
             {statusBits.length > 0
               ? statusBits.join(" · ")
               : completedCount === episodes.length
@@ -630,7 +608,7 @@ function TaskAction({
       style={{ backgroundColor: "rgba(255,255,255,0.04)" }}
     >
       <Ionicons name={icon} size={14} color={color} />
-      <Text className="text-xs font-semibold ml-1.5" style={{ color }}>
+      <Text className="text-[12px] font-medium ml-1.5" style={{ color }}>
         {label}
       </Text>
     </TouchableOpacity>
@@ -656,15 +634,8 @@ function SectionRow({
   return (
     <View className="mt-4 mb-2 flex-row items-center justify-between">
       <View className="flex-row items-center gap-2">
-        <Text className="text-zinc-400 text-xs font-semibold uppercase tracking-wider">
-          {title}
-        </Text>
-        <View
-          className="rounded-full px-2 py-0.5"
-          style={{ backgroundColor: "rgba(255,255,255,0.05)" }}
-        >
-          <Text className="text-zinc-500 text-[10px] font-bold">{count}</Text>
-        </View>
+        <Text className="text-zinc-400 text-[12px] font-medium">{title}</Text>
+        <Text className="text-zinc-500 text-[11px]">{count}</Text>
       </View>
       {action && actionLabel && (
         <TouchableOpacity
@@ -915,7 +886,7 @@ export default function DownloadsScreen() {
       {storageInfo && storageInfo.total > 0 && (
         <View className="mx-5 mb-2">
           <View className="flex-row items-center justify-between mb-1">
-            <Text className="text-zinc-500 text-[10px]">
+            <Text className="text-zinc-500 text-[11px]">
               {formatBytes(storageInfo.free)} free of{" "}
               {formatBytes(storageInfo.total)}
             </Text>
@@ -997,7 +968,7 @@ export default function DownloadsScreen() {
                     title="Downloading"
                     count={count}
                     action={() => control("pause", { status: "downloading" })}
-                    actionLabel="Pause All"
+                    actionLabel="Pause all"
                     actionColor={colors.gold}
                   />
                 );
@@ -1008,7 +979,7 @@ export default function DownloadsScreen() {
                     title="Paused"
                     count={count}
                     action={() => control("resume", { status: "paused" })}
-                    actionLabel="Resume All"
+                    actionLabel="Resume all"
                     actionColor={colors.successGreen}
                   />
                 );
@@ -1019,7 +990,7 @@ export default function DownloadsScreen() {
                     title="Completed"
                     count={count}
                     action={() => control("remove", { status: "completed" })}
-                    actionLabel="Clear All"
+                    actionLabel="Clear all"
                     actionColor={colors.error}
                   />
                 );
@@ -1030,7 +1001,7 @@ export default function DownloadsScreen() {
                     title="Failed"
                     count={count}
                     action={() => control("retry", { status: "failed" })}
-                    actionLabel="Retry All"
+                    actionLabel="Retry all"
                     actionColor={colors.gold}
                   />
                 );
@@ -1041,7 +1012,7 @@ export default function DownloadsScreen() {
                     title="Cancelled"
                     count={count}
                     action={() => control("remove", { status: "cancelled" })}
-                    actionLabel="Clear All"
+                    actionLabel="Clear all"
                     actionColor={colors.error}
                   />
                 );
@@ -1052,7 +1023,7 @@ export default function DownloadsScreen() {
                     title="Retrying"
                     count={count}
                     action={() => control("cancel", { status: "retrying" })}
-                    actionLabel="Cancel All"
+                    actionLabel="Cancel all"
                     actionColor={colors.error}
                   />
                 );

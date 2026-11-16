@@ -34,7 +34,7 @@ const TYPE_META: Record<
   }
 > = {
   feature: {
-    label: "New Feature",
+    label: "New feature",
     accent: colors.gold,
     bg: "rgba(212,162,55,0.08)",
     icon: "megaphone-outline",
@@ -70,75 +70,92 @@ function AnnouncementCard({
 }) {
   const meta = TYPE_META[announcement.type] ?? TYPE_META.info;
 
+  const isUrgent =
+    announcement.type === "alert" || announcement.type === "critical";
+
   return (
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.7}
-      className="mx-5 mb-3 rounded-xl overflow-hidden"
       style={{
         backgroundColor: colors.bgSurface,
         borderWidth: 0.5,
-        borderColor: colors.bgTop,
+        borderColor: colors.borderSubtle,
+        borderRadius: 14,
+        padding: 16,
+        marginHorizontal: 20,
+        marginBottom: 12,
       }}
       accessibilityRole="button"
       accessibilityLabel={`${meta.label}: ${announcement.title}`}
     >
-      {/* Left accent strip */}
-      <View className="flex-row">
-        <View style={{ width: 3, backgroundColor: meta.accent }} />
-        <View className="flex-1 px-4 py-3.5">
-          {/* Type badge */}
+      {/* Type + date */}
+      <View className="flex-row items-center mb-1.5" style={{ gap: 6 }}>
+        {isUrgent ? (
           <View
-            className="flex-row items-center self-start rounded-full px-2.5 py-0.5 mb-2"
-            style={{ backgroundColor: `${meta.accent}18` }}
-          >
-            <Ionicons name={meta.icon} size={10} color={meta.accent} />
-            <Text
-              className="text-[9px] font-semibold ml-1"
-              style={{ color: meta.accent }}
-            >
-              {meta.label}
-            </Text>
-          </View>
-
-          {/* Title */}
-          <Text
-            className="text-sm font-bold mb-1"
-            style={{ color: colors.textPrimary }}
-          >
-            {announcement.title}
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 3,
+              backgroundColor: meta.accent,
+            }}
+          />
+        ) : null}
+        <Text
+          style={{
+            fontSize: 11,
+            fontFamily: "Inter_500Medium",
+            color: colors.textTertiary,
+          }}
+        >
+          {meta.label}
+        </Text>
+        {announcement.date ? (
+          <Text style={{ fontSize: 11, color: colors.textTertiary }}>
+            · {announcement.date}
           </Text>
+        ) : null}
+      </View>
 
-          {/* Subtitle preview + date */}
-          <Text
-            className="text-xs leading-5"
-            style={{ color: colors.textSecondary }}
-            numberOfLines={2}
-          >
-            {announcement.subtitle}
-          </Text>
+      {/* Title */}
+      <Text
+        className="text-sm mb-1"
+        style={{ color: colors.textPrimary, fontFamily: "Inter_500Medium" }}
+        numberOfLines={2}
+      >
+        {announcement.title}
+      </Text>
 
-          {/* Footer row */}
-          <View className="flex-row items-center justify-between mt-2.5">
-            {announcement.date && (
-              <Text
-                className="text-[10px]"
-                style={{ color: colors.textTertiary }}
-              >
-                {announcement.date}
-              </Text>
-            )}
-            <View className="flex-row items-center ml-auto">
-              <Text
-                className="text-[10px] font-semibold mr-1"
-                style={{ color: meta.accent }}
-              >
-                {announcement.actionLabel || "Read More"}
-              </Text>
-              <Ionicons name="chevron-forward" size={10} color={meta.accent} />
-            </View>
-          </View>
-        </View>
+      {/* Subtitle preview */}
+      <Text
+        style={{
+          fontSize: 13,
+          lineHeight: 19,
+          fontFamily: "Inter_400Regular",
+          color: colors.textSecondary,
+        }}
+        numberOfLines={2}
+      >
+        {announcement.subtitle}
+      </Text>
+
+      {/* Action hint */}
+      <View className="flex-row items-center justify-end mt-2">
+        <Text
+          style={{
+            fontSize: 12,
+            fontFamily: "Inter_500Medium",
+            color: colors.textSecondary,
+            marginRight: 4,
+          }}
+        >
+          {announcement.actionLabel || "Read more"}
+        </Text>
+        <Ionicons
+          name="chevron-forward"
+          size={14}
+          color={colors.textTertiary}
+        />
       </View>
     </TouchableOpacity>
   );

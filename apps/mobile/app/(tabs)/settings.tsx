@@ -1,8 +1,9 @@
 /**
- * Settings — Library, Data & Storage, Playback, Support & Community.
+ * Settings — playback, downloads, streaming source and support.
  *
- * Navigation hub for the app: storage management, default server preference,
- * and support resources with clean, consistent spacing.
+ * Navigation hub for the app: media preference, storage management, default
+ * source, and support resources. Rows are single-line wherever the label is
+ * enough, so the page reads as four short groups instead of a wall of cards.
  */
 
 import React, {
@@ -24,7 +25,6 @@ import {
   Linking,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeNavigation } from "@/lib/navigation";
 import { useSettings } from "../../lib/settings";
@@ -40,6 +40,15 @@ import { trackFeatureUsed } from "../../lib/telemetry";
 import { useSlotImpression } from "../../hooks/useSlotImpression";
 import { AdSlot } from "../../lib/ads";
 
+const GITHUB_URL = "https://github.com/anonymous260260a-arch/filmsnaps";
+const WEBSITE_URL = "https://filmsnap-pro.netlify.app/";
+
+// Row geometry — one icon column, one gap, one divider inset everywhere.
+const ROW_PADDING_H = 16;
+const ICON_BOX = 20;
+const ICON_GAP = 12;
+const DIVIDER_INSET = ROW_PADDING_H + ICON_BOX + ICON_GAP;
+
 function formatBytes(bytes: number): string {
   if (!bytes || bytes === 0) return "0 B";
   const k = 1024;
@@ -52,7 +61,7 @@ function formatBytes(bytes: number): string {
   return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${sizes[i]}`;
 }
 
-function SectionCard({
+function Section({
   title,
   children,
 }: {
@@ -60,14 +69,13 @@ function SectionCard({
   children: React.ReactNode;
 }) {
   return (
-    <View style={{ marginBottom: 20 }}>
+    <View style={{ marginBottom: 28 }}>
       <Text
         style={{
-          fontSize: 11,
-          fontFamily: "Inter_600SemiBold",
+          fontSize: 12,
+          fontFamily: "Inter_500Medium",
           color: colors.textTertiary,
-          textTransform: "uppercase",
-          letterSpacing: 0.8,
+          letterSpacing: 0.2,
           paddingHorizontal: 4,
           marginBottom: 8,
         }}
@@ -76,7 +84,7 @@ function SectionCard({
       </Text>
       <View
         style={{
-          backgroundColor: colors.bgCard,
+          backgroundColor: colors.bgSurface,
           borderRadius: 14,
           borderWidth: 0.5,
           borderColor: colors.borderSubtle,
@@ -89,88 +97,110 @@ function SectionCard({
   );
 }
 
-function SettingsRow({
+function ListRow({
   icon,
   label,
   subtitle,
-  color,
+  value,
   right,
+  chevron,
   onPress,
-  footer,
 }: {
-  icon?: keyof typeof Ionicons.glyphMap;
+  icon: keyof typeof Ionicons.glyphMap;
   label: string;
   subtitle?: string;
-  color?: string;
+  value?: string;
   right?: React.ReactNode;
+  chevron?: boolean;
   onPress?: () => void;
-  footer?: React.ReactNode;
 }) {
-  const Content = onPress ? TouchableOpacity : View;
+  const Container: React.ComponentType<any> = onPress ? TouchableOpacity : View;
   return (
-    <Content
-      onPress={() => {
-        if (onPress) {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
-            () => {},
-          );
-          onPress();
-        }
-      }}
-      activeOpacity={onPress ? 0.75 : 1}
+    <Container
+      onPress={
+        onPress
+          ? () => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                () => {},
+              );
+              onPress();
+            }
+          : undefined
+      }
+      activeOpacity={onPress ? 0.7 : 1}
       style={{
         flexDirection: "row",
         alignItems: "center",
+        minHeight: 52,
+        paddingHorizontal: ROW_PADDING_H,
         paddingVertical: 14,
-        paddingHorizontal: 16,
-        backgroundColor: colors.bgCard,
       }}
     >
-      {icon && (
-        <View
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 8,
-            alignItems: "center",
-            justifyContent: "center",
-            marginRight: 12,
-            backgroundColor: color ? `${color}18` : "rgba(255, 255, 255, 0.06)",
-          }}
-        >
-          <Ionicons
-            name={icon}
-            size={17}
-            color={color || colors.textSecondary}
-          />
-        </View>
-      )}
-      <View style={{ flex: 1, marginRight: 8 }}>
+      <View
+        style={{
+          width: ICON_BOX,
+          alignItems: "center",
+          marginRight: ICON_GAP,
+        }}
+      >
+        <Ionicons name={icon} size={18} color={colors.zinc500} />
+      </View>
+
+      <View style={{ flex: 1 }}>
         <Text
           style={{
-            fontFamily: "Inter_600SemiBold",
-            fontSize: 14,
+            fontSize: 15,
+            lineHeight: 20,
+            fontFamily: "Inter_500Medium",
             color: colors.textPrimary,
           }}
         >
           {label}
         </Text>
-        {subtitle && (
+        {subtitle ? (
           <Text
             style={{
-              fontSize: 11,
+              fontSize: 12,
+              lineHeight: 16,
+              marginTop: 2,
               fontFamily: "Inter_400Regular",
               color: colors.textTertiary,
-              marginTop: 2,
             }}
           >
             {subtitle}
           </Text>
-        )}
-        {footer}
+        ) : null}
       </View>
-      {right}
-    </Content>
+
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
+          marginLeft: 12,
+        }}
+      >
+        {value ? (
+          <Text
+            style={{
+              fontSize: 13,
+              fontFamily: "Inter_400Regular",
+              color: colors.textSecondary,
+            }}
+          >
+            {value}
+          </Text>
+        ) : null}
+        {right}
+        {chevron ? (
+          <Ionicons
+            name="chevron-forward"
+            size={16}
+            color={colors.textTertiary}
+          />
+        ) : null}
+      </View>
+    </Container>
   );
 }
 
@@ -180,86 +210,30 @@ function Divider() {
       style={{
         height: 0.5,
         backgroundColor: colors.borderSubtle,
-        marginLeft: 60,
+        marginLeft: DIVIDER_INSET,
       }}
     />
   );
 }
 
-function CollapsibleSection({
-  title,
-  subtitle,
-  children,
+function Toggle({
+  value,
+  onChange,
 }: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
+  value: boolean;
+  onChange: (next: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
   return (
-    <View style={{ marginBottom: 20 }}>
-      <TouchableOpacity
-        onPress={() => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
-            () => {},
-          );
-          setOpen(!open);
-        }}
-        activeOpacity={0.75}
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          paddingHorizontal: 4,
-          marginBottom: 8,
-        }}
-      >
-        <View style={{ flex: 1 }}>
-          <Text
-            style={{
-              fontSize: 11,
-              fontFamily: "Inter_600SemiBold",
-              color: colors.textTertiary,
-              textTransform: "uppercase",
-              letterSpacing: 0.8,
-            }}
-          >
-            {title}
-          </Text>
-          {subtitle && (
-            <Text
-              style={{
-                fontSize: 11,
-                fontFamily: "Inter_400Regular",
-                color: colors.gold,
-                marginTop: 2,
-              }}
-            >
-              {subtitle}
-            </Text>
-          )}
-        </View>
-        <Ionicons
-          name={open ? "chevron-up" : "chevron-down"}
-          size={14}
-          color={colors.textTertiary}
-          style={{ marginLeft: 8 }}
-        />
-      </TouchableOpacity>
-      {open && (
-        <View
-          style={{
-            backgroundColor: colors.bgCard,
-            borderRadius: 14,
-            borderWidth: 0.5,
-            borderColor: colors.borderSubtle,
-            overflow: "hidden",
-          }}
-        >
-          {children}
-        </View>
-      )}
-    </View>
+    <Switch
+      value={value}
+      onValueChange={(next) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        onChange(next);
+      }}
+      trackColor={{ false: colors.zinc800, true: colors.gold }}
+      thumbColor={value ? colors.bg : colors.zinc400}
+      ios_backgroundColor={colors.zinc800}
+    />
   );
 }
 
@@ -279,6 +253,7 @@ export default function SettingsScreen() {
   const storageCalculated = useRef(false);
   const [showLangSheet, setShowLangSheet] = useState(false);
   const [showSpeedSheet, setShowSpeedSheet] = useState(false);
+  const [sourceOpen, setSourceOpen] = useState(false);
 
   const totalDownloadSize = useMemo(() => {
     return downloads
@@ -306,8 +281,8 @@ export default function SettingsScreen() {
 
   const handleClearCache = useCallback(() => {
     Alert.alert(
-      "Clear Cache",
-      "This will clear temporary streaming cache. Downloaded titles and saved bookmarks will remain safe.",
+      "Clear cache",
+      "This clears temporary streaming cache. Downloads and bookmarks stay on your device.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -318,7 +293,7 @@ export default function SettingsScreen() {
             Haptics.notificationAsync(
               Haptics.NotificationFeedbackType.Success,
             ).catch(() => {});
-            Alert.alert("Cache Cleared", "Temporary cache has been cleared.");
+            Alert.alert("Cache cleared");
           },
         },
       ],
@@ -328,7 +303,7 @@ export default function SettingsScreen() {
   const handleShareApp = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     Share.share({
-      message: `🎬 Watch movies & TV shows free on FilmSnaps\nhttps://filmsnap-pro.netlify.app/download`,
+      message: `Watch movies and TV shows on FilmSnaps\nhttps://filmsnap-pro.netlify.app/download`,
     });
   }, []);
 
@@ -344,10 +319,12 @@ export default function SettingsScreen() {
   const speedLimitKBps = settings.downloadSpeedLimitKBps ?? 0;
   const speedLabel = speedLimitKBps > 0 ? formatSpeed(speedLimitKBps) : "Off";
   const selectedProviderName = useMemo(() => {
-    if (!selectedServer) return "Auto (Recommended)";
+    if (!selectedServer) return "Automatic";
     const p = serverProviders.find((sp) => sp.id === selectedServer);
     return p ? p.displayName || p.name : selectedServer;
   }, [selectedServer, serverProviders]);
+
+  const analyticsOn = settings.analyticsEnabled !== false;
 
   return (
     <View
@@ -360,15 +337,16 @@ export default function SettingsScreen() {
       {/* Header */}
       <View
         style={{
-          paddingHorizontal: 16,
+          paddingHorizontal: 20,
           paddingTop: 16,
-          paddingBottom: 12,
+          paddingBottom: 20,
         }}
       >
         <Text
           style={{
             fontFamily: "PlayfairDisplay_700Bold",
             fontSize: 24,
+            lineHeight: 28,
             color: colors.textPrimary,
           }}
         >
@@ -378,65 +356,49 @@ export default function SettingsScreen() {
 
       <ScrollView
         contentContainerStyle={{
-          paddingHorizontal: 16,
-          paddingBottom: 80 + insets.bottom,
-          paddingTop: 4,
+          paddingHorizontal: 20,
+          paddingBottom: 40 + insets.bottom,
         }}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── 0. Content Mode ── */}
-        <SectionCard title="Catalog Mode">
+        {/* ── Playback ── */}
+        <Section title="Playback">
           <View
             style={{
               flexDirection: "row",
               alignItems: "center",
+              minHeight: 52,
+              paddingHorizontal: ROW_PADDING_H,
               paddingVertical: 14,
-              paddingHorizontal: 16,
-              backgroundColor: colors.bgCard,
             }}
           >
             <View
               style={{
-                width: 32,
-                height: 32,
-                borderRadius: 8,
+                width: ICON_BOX,
                 alignItems: "center",
-                justifyContent: "center",
-                marginRight: 12,
-                backgroundColor: "rgba(255, 255, 255, 0.06)",
+                marginRight: ICON_GAP,
               }}
             >
-              <Ionicons name="sparkles-outline" size={17} color={colors.gold} />
+              <Ionicons name="film-outline" size={18} color={colors.zinc500} />
             </View>
-            <View style={{ flex: 1, marginRight: 8 }}>
+            <View style={{ flex: 1 }}>
               <Text
                 style={{
-                  fontFamily: "Inter_600SemiBold",
-                  fontSize: 14,
+                  fontSize: 15,
+                  lineHeight: 20,
+                  fontFamily: "Inter_500Medium",
                   color: colors.textPrimary,
                 }}
               >
-                Media Preference
-              </Text>
-              <Text
-                style={{
-                  fontSize: 11,
-                  fontFamily: "Inter_400Regular",
-                  color: colors.textTertiary,
-                  marginTop: 2,
-                }}
-              >
-                Switch between Cinema & Anime
+                Catalog
               </Text>
             </View>
             <View
               style={{
                 flexDirection: "row",
-                borderRadius: 9999,
                 padding: 2,
-                borderWidth: 0.5,
-                borderColor: colors.borderSubtle,
-                backgroundColor: colors.bgElevated,
+                borderRadius: 8,
+                backgroundColor: colors.white04,
               }}
             >
               {(["movie_tv", "anime"] as const).map((m) => {
@@ -456,693 +418,358 @@ export default function SettingsScreen() {
                       );
                       updateSetting("mode", m);
                     }}
-                    activeOpacity={0.75}
+                    activeOpacity={0.7}
                     style={{
                       paddingHorizontal: 12,
-                      paddingVertical: 5,
-                      borderRadius: 9999,
-                      backgroundColor: active ? colors.gold : "transparent",
+                      paddingVertical: 6,
+                      borderRadius: 6,
+                      backgroundColor: active ? colors.bgSubtle : "transparent",
                     }}
                   >
                     <Text
                       style={{
-                        fontSize: 11,
-                        fontFamily: "Inter_600SemiBold",
-                        color: active ? colors.bg : colors.textSecondary,
+                        fontSize: 12,
+                        fontFamily: "Inter_500Medium",
+                        color: active
+                          ? colors.textPrimary
+                          : colors.textTertiary,
                       }}
                     >
-                      {m === "anime" ? "Anime" : "Movies"}
+                      {m === "anime" ? "Anime" : "Movies & TV"}
                     </Text>
                   </TouchableOpacity>
                 );
               })}
             </View>
           </View>
-        </SectionCard>
-
-        {/* ── 1. Playback & Experience ── */}
-        <SectionCard title="Playback & Interface">
-          <SettingsRow
+          <Divider />
+          <ListRow
             icon="language-outline"
-            label="Audio Language"
-            subtitle="Preferred audio for source ranking"
-            color={colors.gold}
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
-                () => {},
-              );
-              setShowLangSheet(true);
-            }}
-            right={
-              <View
-                style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
-              >
-                <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
-                  {{
-                    auto: "Auto",
-                    multi: "Multi audio",
-                    hindi: "Hindi",
-                    english: "English",
-                  }[settings.preferredAudioLanguage ?? "auto"] ?? "Auto"}
-                </Text>
-                <Ionicons
-                  name="chevron-forward"
-                  size={16}
-                  color={colors.textTertiary}
-                />
-              </View>
+            label="Audio language"
+            value={
+              {
+                auto: "Auto",
+                multi: "Multi audio",
+                hindi: "Hindi",
+                english: "English",
+              }[settings.preferredAudioLanguage ?? "auto"] ?? "Auto"
             }
+            chevron
+            onPress={() => setShowLangSheet(true)}
           />
           <Divider />
-          <SettingsRow
+          <ListRow
             icon="grid-outline"
-            label="Customize Home Layout"
-            subtitle="Reorder discovery rows and carousels"
-            color={colors.gold}
+            label="Home layout"
+            value="Reorder rows"
+            chevron
             onPress={() => nav.push("/home-layout")}
-            right={
-              <Ionicons
-                name="chevron-forward"
-                size={16}
-                color={colors.textTertiary}
-              />
-            }
           />
           <Divider />
-          <SettingsRow
+          <ListRow
             icon="information-circle-outline"
-            label="Streaming Source Tips"
-            subtitle="Show performance tips below video player"
-            color={colors.info}
+            label="Streaming tips"
+            subtitle="Notes below the player"
             right={
-              <Switch
+              <Toggle
                 value={settings.showServerNotes}
-                onValueChange={(v) => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
-                    () => {},
-                  );
-                  updateSetting("showServerNotes", v);
-                }}
-                trackColor={{
-                  false: colors.zinc800,
-                  true: colors.goldBadge,
-                }}
-                thumbColor={
-                  settings.showServerNotes ? colors.gold : colors.textTertiary
-                }
+                onChange={(v) => updateSetting("showServerNotes", v)}
               />
             }
           />
-        </SectionCard>
+        </Section>
 
-        {/* ── 2. Data & Storage ── */}
-        <SectionCard title="Data & Storage">
-          <SettingsRow
+        {/* ── Downloads ── */}
+        <Section title="Downloads">
+          <ListRow
             icon="trash-outline"
-            label="Clear Streaming Cache"
-            subtitle={
-              cacheSize != null
-                ? `${formatBytes(cacheSize)} temporary cache`
-                : "Reclaim temporary cache space"
+            label="Clear streaming cache"
+            value={
+              calculatingStorage
+                ? undefined
+                : cacheSize != null
+                  ? formatBytes(cacheSize)
+                  : "Empty"
             }
-            color={colors.error}
-            onPress={handleClearCache}
             right={
               calculatingStorage ? (
-                <ActivityIndicator size="small" color={colors.gold} />
-              ) : (
-                <Ionicons
-                  name="chevron-forward"
-                  size={16}
-                  color={colors.textTertiary}
-                />
-              )
+                <ActivityIndicator size="small" color={colors.zinc500} />
+              ) : undefined
             }
+            chevron
+            onPress={handleClearCache}
           />
           <Divider />
-          <SettingsRow
+          <ListRow
             icon="folder-open-outline"
-            label="Downloads Storage"
-            subtitle={
-              totalDownloadSize > 0
-                ? `${formatBytes(totalDownloadSize)} used on device`
-                : "Manage downloaded offline media"
+            label="Downloads storage"
+            value={
+              totalDownloadSize > 0 ? formatBytes(totalDownloadSize) : "Manage"
             }
-            color={colors.gold}
+            chevron
             onPress={() => nav.push("/downloads")}
-            right={
-              <Ionicons
-                name="chevron-forward"
-                size={16}
-                color={colors.textTertiary}
-              />
-            }
           />
           <Divider />
-          <SettingsRow
+          <ListRow
             icon="speedometer-outline"
-            label="Download Speed Limit"
-            subtitle={
-              speedLimitKBps > 0
-                ? `Capped at ${formatSpeed(speedLimitKBps)}`
-                : "No cap — tap to set a limit"
-            }
-            color={colors.info}
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
-                () => {},
-              );
-              setShowSpeedSheet(true);
-            }}
-            right={
-              <View
-                style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
-              >
-                <View
-                  style={{
-                    paddingHorizontal: 8,
-                    paddingVertical: 3,
-                    borderRadius: 9999,
-                    backgroundColor:
-                      speedLimitKBps > 0
-                        ? colors.goldBadge
-                        : "rgba(255,255,255,0.05)",
-                    borderWidth: 0.5,
-                    borderColor:
-                      speedLimitKBps > 0
-                        ? "rgba(212,162,55,0.4)"
-                        : colors.borderSubtle,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 11,
-                      fontFamily: "Inter_600SemiBold",
-                      color:
-                        speedLimitKBps > 0 ? colors.gold : colors.textSecondary,
-                    }}
-                  >
-                    {speedLabel}
-                  </Text>
-                </View>
-                <Ionicons
-                  name="chevron-forward"
-                  size={16}
-                  color={colors.textTertiary}
-                />
-              </View>
-            }
+            label="Speed limit"
+            value={speedLabel}
+            chevron
+            onPress={() => setShowSpeedSheet(true)}
           />
-        </SectionCard>
+        </Section>
 
-        {/* ── 3. Default Source ── */}
-        <CollapsibleSection
-          title="Default Streaming Source"
-          subtitle={selectedProviderName}
-        >
-          <View
-            style={{
-              paddingHorizontal: 16,
-              paddingTop: 12,
-              paddingBottom: 10,
-              borderBottomWidth: 0.5,
-              borderColor: colors.borderSubtle,
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 11,
-                fontFamily: "Inter_400Regular",
-                color: colors.textTertiary,
-                lineHeight: 16,
-              }}
-            >
-              When playing a movie or show, FilmSnaps will prioritize your
-              preferred provider first.
-            </Text>
-          </View>
-
-          {/* Auto option */}
+        {/* ── Streaming source ── */}
+        <View style={{ marginBottom: 28 }}>
           <TouchableOpacity
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
                 () => {},
               );
-              updateSetting("defaultServer", "");
+              setSourceOpen(!sourceOpen);
             }}
-            activeOpacity={0.75}
+            activeOpacity={0.7}
             style={{
               flexDirection: "row",
               alignItems: "center",
-              paddingVertical: 12,
-              paddingHorizontal: 16,
-              backgroundColor: colors.bgCard,
+              justifyContent: "space-between",
+              paddingHorizontal: 4,
+              marginBottom: 8,
             }}
           >
-            <View
+            <Text
               style={{
-                width: 16,
-                height: 16,
-                borderRadius: 8,
-                borderWidth: 1.5,
-                borderColor:
-                  selectedServer === "" ? colors.gold : colors.borderMuted,
-                alignItems: "center",
-                justifyContent: "center",
-                marginRight: 12,
+                fontSize: 12,
+                fontFamily: "Inter_500Medium",
+                color: colors.textTertiary,
+                letterSpacing: 0.2,
               }}
             >
-              {selectedServer === "" && (
-                <View
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 4,
-                    backgroundColor: colors.gold,
-                  }}
-                />
-              )}
-            </View>
-            <View style={{ flex: 1 }}>
+              Streaming source
+            </Text>
+            <View
+              style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+            >
               <Text
                 style={{
-                  fontSize: 13,
-                  fontFamily: "Inter_600SemiBold",
-                  color:
-                    selectedServer === "" ? colors.gold : colors.textPrimary,
-                }}
-              >
-                Auto Select (Recommended)
-              </Text>
-              <Text
-                style={{
-                  fontSize: 10,
+                  fontSize: 12,
                   fontFamily: "Inter_400Regular",
-                  color: colors.textTertiary,
-                  marginTop: 1,
+                  color: colors.textSecondary,
                 }}
               >
-                Picks the fastest available provider automatically
+                {selectedProviderName}
               </Text>
+              <Ionicons
+                name={sourceOpen ? "chevron-up" : "chevron-down"}
+                size={14}
+                color={colors.textTertiary}
+              />
             </View>
           </TouchableOpacity>
 
-          {serverProviders.map((p) => {
-            const isSelected = selectedServer === p.id;
-            return (
-              <View key={p.id}>
-                <Divider />
-                <TouchableOpacity
-                  onPress={() => {
-                    Haptics.impactAsync(
-                      Haptics.ImpactFeedbackStyle.Light,
-                    ).catch(() => {});
-                    updateSetting("defaultServer", isSelected ? "" : p.id);
-                  }}
-                  activeOpacity={0.75}
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    paddingVertical: 12,
-                    paddingHorizontal: 16,
-                    backgroundColor: colors.bgCard,
-                  }}
-                >
-                  <View
-                    style={{
-                      width: 16,
-                      height: 16,
-                      borderRadius: 8,
-                      borderWidth: 1.5,
-                      borderColor: isSelected
-                        ? colors.gold
-                        : colors.borderMuted,
-                      alignItems: "center",
-                      justifyContent: "center",
-                      marginRight: 12,
-                    }}
-                  >
-                    {isSelected && (
-                      <View
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: 4,
-                          backgroundColor: colors.gold,
-                        }}
-                      />
-                    )}
+          {sourceOpen && (
+            <View
+              style={{
+                backgroundColor: colors.bgSurface,
+                borderRadius: 14,
+                borderWidth: 0.5,
+                borderColor: colors.borderSubtle,
+                overflow: "hidden",
+              }}
+            >
+              <SourceRow
+                label="Automatic"
+                detail="Fastest available"
+                selected={selectedServer === ""}
+                onPress={() => updateSetting("defaultServer", "")}
+              />
+              {serverProviders.map((p) => {
+                const isSelected = selectedServer === p.id;
+                return (
+                  <View key={p.id}>
+                    <Divider />
+                    <SourceRow
+                      label={p.displayName || p.name}
+                      selected={isSelected}
+                      onPress={() =>
+                        updateSetting("defaultServer", isSelected ? "" : p.id)
+                      }
+                    />
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text
-                      style={{
-                        fontSize: 13,
-                        fontFamily: "Inter_500Medium",
-                        color: isSelected ? colors.gold : colors.textPrimary,
-                      }}
-                    >
-                      {p.displayName || p.name}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              </View>
-            );
-          })}
-        </CollapsibleSection>
+                );
+              })}
+            </View>
+          )}
+        </View>
 
-        {/* ── 4. Support & Legal ── */}
-        <SectionCard title="Support & Legal">
-          <SettingsRow
+        {/* ── Support ── */}
+        <Section title="Support">
+          <ListRow
             icon="help-circle-outline"
-            label="User Guide"
-            subtitle="How to watch, switch servers, and download"
-            color={colors.gold}
+            label="User guide"
+            chevron
             onPress={() => nav.push("/guide")}
-            right={
-              <Ionicons
-                name="chevron-forward"
-                size={16}
-                color={colors.textTertiary}
-              />
-            }
           />
           <Divider />
-          <SettingsRow
+          <ListRow
             icon="shield-checkmark-outline"
-            label="Transparency & Security"
-            subtitle="Ad-blocking, sandboxed streaming & how it works"
-            color={colors.info}
+            label="Transparency & security"
+            chevron
             onPress={() => nav.push("/transparency")}
-            right={
-              <Ionicons
-                name="chevron-forward"
-                size={16}
-                color={colors.textTertiary}
-              />
-            }
           />
           <Divider />
-          <SettingsRow
+          <ListRow
             icon="lock-closed-outline"
-            label="Privacy Policy"
-            subtitle="Anonymous stats you can turn off · No personal data"
-            color={colors.successGreen}
+            label="Privacy policy"
+            chevron
             onPress={() => nav.push("/privacy")}
-            right={
-              <Ionicons
-                name="chevron-forward"
-                size={16}
-                color={colors.textTertiary}
-              />
-            }
+          />
+          <Divider />
+          <ListRow
+            icon="document-text-outline"
+            label="Legal & DMCA"
+            chevron
+            onPress={() => nav.push("/legal")}
+          />
+          <Divider />
+          <ListRow
+            icon="megaphone-outline"
+            label="Announcements"
+            chevron
+            onPress={() => nav.push("/announcements")}
+          />
+          <Divider />
+          <ListRow
+            icon="chatbubble-ellipses-outline"
+            label="Feedback & bug reports"
+            chevron
+            onPress={() => nav.push("/feedback")}
           />
           <Divider />
           {settings.analyticsGrandfathered && (
-            <View
-              className="mx-4 mb-3 rounded-xl px-4 py-3"
-              style={{ backgroundColor: "rgba(91,156,246,.12)" }}
+            <Text
+              style={{
+                paddingHorizontal: ROW_PADDING_H,
+                paddingTop: 14,
+                fontSize: 12,
+                lineHeight: 18,
+                fontFamily: "Inter_400Regular",
+                color: colors.textSecondary,
+              }}
             >
-              <Text
-                className="text-xs leading-5"
-                style={{ color: colors.textSecondary }}
-              >
-                We've updated our privacy controls — anonymous usage statistics
-                are now off by default. You can re-enable them anytime with the
-                toggle below.
-              </Text>
-            </View>
+              Usage statistics are off by default. Turn them back on below.
+            </Text>
           )}
-          <SettingsRow
+          <ListRow
             icon="bar-chart-outline"
-            label="Anonymous usage statistics"
-            subtitle="Helps us fix crashes and improve streaming sources. No personal data — one random ID, deleted when turned off."
-            color={colors.info}
-            footer={
-              <TouchableOpacity
-                onPress={() => nav.push("/privacy")}
-                activeOpacity={0.7}
-                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-              >
-                <Text
-                  className="mt-2 text-xs"
-                  style={{
-                    color: colors.info,
-                    fontFamily: "Inter_500Medium",
-                    textDecorationLine: "underline",
-                  }}
-                >
-                  Learn more
-                </Text>
-              </TouchableOpacity>
-            }
+            label="Usage statistics"
+            subtitle="Anonymous, no personal data"
             right={
-              <Switch
-                value={settings.analyticsEnabled !== false}
-                onValueChange={(v) => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
-                    () => {},
-                  );
-                  updateSetting("analyticsEnabled", v);
-                }}
-                trackColor={{
-                  false: colors.zinc800,
-                  true: colors.goldBadge,
-                }}
-                thumbColor={
-                  settings.analyticsEnabled !== false
-                    ? colors.gold
-                    : colors.textTertiary
-                }
+              <Toggle
+                value={analyticsOn}
+                onChange={(v) => updateSetting("analyticsEnabled", v)}
               />
             }
           />
-          <Divider />
-          <SettingsRow
-            icon="document-text-outline"
-            label="Legal & DMCA Disclaimer"
-            subtitle="Content disclaimer and terms of use"
-            color={colors.textSecondary}
-            onPress={() => nav.push("/legal")}
-            right={
-              <Ionicons
-                name="chevron-forward"
-                size={16}
-                color={colors.textTertiary}
-              />
-            }
-          />
-          <Divider />
-          <SettingsRow
-            icon="megaphone-outline"
-            label="Announcements"
-            subtitle="Latest features, news, and server updates"
-            color={colors.gold}
-            onPress={() => nav.push("/announcements")}
-            right={
-              <Ionicons
-                name="chevron-forward"
-                size={16}
-                color={colors.textTertiary}
-              />
-            }
-          />
-          <Divider />
-          <SettingsRow
-            icon="chatbubble-ellipses-outline"
-            label="Feedback & Bug Reports"
-            subtitle="Report broken links or request features"
-            color={colors.gold}
-            onPress={() => nav.push("/feedback")}
-            right={
-              <Ionicons
-                name="chevron-forward"
-                size={16}
-                color={colors.textTertiary}
-              />
-            }
-          />
-          <Divider />
-          <SettingsRow
-            icon="share-social-outline"
-            label="Share FilmSnaps"
-            subtitle="Share the app with friends"
-            color={colors.info}
-            onPress={handleShareApp}
-            right={
-              <Ionicons
-                name="chevron-forward"
-                size={16}
-                color={colors.textTertiary}
-              />
-            }
-          />
-        </SectionCard>
+        </Section>
 
-        {/* ── 5. Community ── */}
-        <SectionCard title="Community & Open Source">
-          <SettingsRow
-            icon="logo-github"
-            label="GitHub Repository"
-            subtitle="Contribute code, view roadmap, star the project"
-            color={colors.textPrimary}
-            onPress={() =>
-              Linking.openURL(
-                "https://github.com/anonymous260260a-arch/filmsnaps",
-              )
-            }
-            right={
-              <Ionicons
-                name="open-outline"
-                size={15}
-                color={colors.textTertiary}
-              />
-            }
-          />
-          <Divider />
-          <SettingsRow
-            icon="globe-outline"
-            label="Official Website"
-            subtitle="filmsnap-pro.netlify.app"
-            color={colors.info}
-            onPress={() => Linking.openURL("https://filmsnap-pro.netlify.app/")}
-            right={
-              <Ionicons
-                name="open-outline"
-                size={15}
-                color={colors.textTertiary}
-              />
-            }
-          />
-        </SectionCard>
-
-        {/* ── Star on GitHub ── */}
+        {/* Support the project */}
         <View
           style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 12,
+            backgroundColor: colors.bgSurface,
             borderRadius: 14,
-            overflow: "hidden",
             borderWidth: 0.5,
             borderColor: colors.borderSubtle,
+            padding: 16,
             marginBottom: 24,
           }}
         >
-          <LinearGradient
-            colors={["rgba(212,162,55,0.18)", "rgba(212,162,55,0.04)"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-          >
-            <View
+          <Ionicons name="star-outline" size={18} color={colors.gold} />
+          <View style={{ flex: 1 }}>
+            <Text
               style={{
-                alignItems: "center",
-                paddingVertical: 22,
-                paddingHorizontal: 16,
+                fontSize: 15,
+                lineHeight: 20,
+                fontFamily: "Inter_500Medium",
+                color: colors.textPrimary,
               }}
             >
-              <View
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 12,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  marginBottom: 10,
-                  backgroundColor: "rgba(212,162,55,0.15)",
-                  borderWidth: 0.5,
-                  borderColor: "rgba(212,162,55,0.3)",
-                }}
-              >
-                <Ionicons name="star" size={20} color={colors.gold} />
-              </View>
-              <Text
-                style={{
-                  color: colors.textPrimary,
-                  fontFamily: "Inter_600SemiBold",
-                  fontSize: 15,
-                  marginBottom: 4,
-                }}
-              >
-                Enjoying FilmSnaps?
-              </Text>
-              <Text
-                style={{
-                  color: colors.textSecondary,
-                  fontSize: 12,
-                  fontFamily: "Inter_400Regular",
-                  textAlign: "center",
-                  lineHeight: 18,
-                  marginBottom: 14,
-                  paddingHorizontal: 8,
-                }}
-              >
-                If you love using FilmSnaps, starring our open-source repo on
-                GitHub helps more movie and anime fans discover it.
-              </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
-                    () => {},
-                  );
-                  Linking.openURL(
-                    "https://github.com/anonymous260260a-arch/filmsnaps",
-                  );
-                }}
-                activeOpacity={0.8}
-                style={{
-                  backgroundColor: colors.gold,
-                  paddingHorizontal: 22,
-                  paddingVertical: 10,
-                  borderRadius: 9999,
-                  flexDirection: "row",
-                  alignItems: "center",
-                }}
-              >
-                <Ionicons name="star" size={14} color={colors.bg} />
-                <Text
-                  style={{
-                    color: colors.bg,
-                    fontFamily: "Inter_600SemiBold",
-                    fontSize: 12,
-                    marginLeft: 6,
-                  }}
-                >
-                  Star on GitHub
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </LinearGradient>
+              Support FilmSnaps
+            </Text>
+            <Text
+              style={{
+                fontSize: 12,
+                lineHeight: 16,
+                marginTop: 2,
+                fontFamily: "Inter_400Regular",
+                color: colors.textTertiary,
+              }}
+            >
+              Star the repository to help others find it
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+                () => {},
+              );
+              Linking.openURL(GITHUB_URL);
+            }}
+            activeOpacity={0.8}
+            style={{
+              paddingHorizontal: 14,
+              paddingVertical: 8,
+              borderRadius: 8,
+              backgroundColor: colors.gold,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 13,
+                fontFamily: "Inter_500Medium",
+                color: colors.bg,
+              }}
+            >
+              Star
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* M2 — candidate footer ad slot (above the app-info footer). */}
-        <AdSlot slot="settings_footer" bottomMargin={8} />
+        <AdSlot slot="settings_footer" bottomMargin={16} />
 
-        {/* ── App Info & Privacy Assurance ── */}
-        <View
-          style={{
-            alignItems: "center",
-            paddingVertical: 12,
-            paddingHorizontal: 16,
-          }}
-        >
+        {/* ── Footer ── */}
+        <View style={{ alignItems: "center", gap: 12, paddingBottom: 8 }}>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <FooterLink label="Share" onPress={handleShareApp} />
+            <Text style={{ color: colors.zinc600 }}>·</Text>
+            <FooterLink
+              label="GitHub"
+              onPress={() => Linking.openURL(GITHUB_URL)}
+            />
+            <Text style={{ color: colors.zinc600 }}>·</Text>
+            <FooterLink
+              label="Website"
+              onPress={() => Linking.openURL(WEBSITE_URL)}
+            />
+          </View>
           <Text
             style={{
               color: colors.textTertiary,
               fontSize: 11,
-              fontFamily: "Inter_500Medium",
-              textAlign: "center",
-              lineHeight: 16,
-              marginBottom: 4,
-            }}
-          >
-            "We believe privacy is a fundamental right, not a premium feature."
-          </Text>
-          <Text
-            style={{
-              color: colors.textTertiary,
-              fontSize: 10,
               fontFamily: "Inter_400Regular",
-              marginTop: 4,
             }}
           >
-            FilmSnaps v{appVersion} · Open Source
+            FilmSnaps {appVersion} · Open source
           </Text>
         </View>
       </ScrollView>
@@ -1171,5 +798,89 @@ export default function SettingsScreen() {
         onClose={() => setShowSpeedSheet(false)}
       />
     </View>
+  );
+}
+
+function SourceRow({
+  label,
+  detail,
+  selected,
+  onPress,
+}: {
+  label: string;
+  detail?: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        onPress();
+      }}
+      activeOpacity={0.7}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        minHeight: 52,
+        paddingHorizontal: ROW_PADDING_H,
+        paddingVertical: 14,
+      }}
+    >
+      <View style={{ flex: 1 }}>
+        <Text
+          style={{
+            fontSize: 15,
+            lineHeight: 20,
+            fontFamily: "Inter_500Medium",
+            color: colors.textPrimary,
+          }}
+        >
+          {label}
+        </Text>
+        {detail ? (
+          <Text
+            style={{
+              fontSize: 12,
+              lineHeight: 16,
+              marginTop: 2,
+              fontFamily: "Inter_400Regular",
+              color: colors.textTertiary,
+            }}
+          >
+            {detail}
+          </Text>
+        ) : null}
+      </View>
+      {selected ? (
+        <Ionicons name="checkmark" size={18} color={colors.gold} />
+      ) : null}
+    </TouchableOpacity>
+  );
+}
+
+function FooterLink({
+  label,
+  onPress,
+}: {
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+    >
+      <Text
+        style={{
+          fontSize: 13,
+          fontFamily: "Inter_500Medium",
+          color: colors.textSecondary,
+        }}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
   );
 }

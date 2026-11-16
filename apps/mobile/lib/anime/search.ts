@@ -10,6 +10,7 @@
  */
 
 import { getApiBaseUrl } from "../api";
+import { getClientHeaders } from "../clientHeaders";
 
 /** Slim result shape returned by /api/anime/search. */
 export interface AnimeResult {
@@ -43,6 +44,7 @@ export async function animeSearch(
   const base = getApiBaseUrl();
   const res = await fetch(
     `${base}/api/anime/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+    { headers: getClientHeaders() },
   );
   if (!res.ok) throw new Error(`anime search failed (${res.status})`);
   return res.json();

@@ -492,11 +492,10 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   rowHeaderText: {
-    color: colors.textSecondary,
+    color: colors.textTertiary,
     fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0.3,
-    textTransform: "uppercase",
+    fontWeight: "500",
+    letterSpacing: 0.2,
   },
   fitRow: {
     flexDirection: "row",
