@@ -27,6 +27,9 @@ import { NextResponse } from "next/server";
 
 const MAX_DAYS = 90;
 const DAY_MS = 86_400_000;
+// Must match VERSION_SAMPLE_ONE_IN in apps/web/worker.mjs and
+// 'sample_one_in' in migrations/004_version_ping.sql.
+const VERSION_SAMPLE_ONE_IN = 10;
 
 /**
  * D1 binding lookup. In production (OpenNext on Workers) this reads the real
@@ -488,6 +491,34 @@ export async function GET(req: Request) {
       .bind(...allParams)
       .all();
 
+    // ── Version breakdown (sampled /api/* request accounting, table
+    //    version_ping_sample — see migrations/004_version_ping.sql).
+    //    app_version '' = pre-telemetry builds ("old app" bucket). Users are
+    //    distinct anon_ids scaled by the inverse sample rate; requests too. ──
+    const vpRowsRes = await db
+      .prepare(
+        `SELECT client, app_version AS appVersion,
+                SUM(requests) AS sampledRequests,
+                COUNT(DISTINCT anon_id) AS sampledUsers
+         FROM version_ping_sample
+         WHERE day >= ?1 AND day <= ?2
+         GROUP BY client, app_version
+         ORDER BY sampledRequests DESC`,
+      )
+      .bind(fromDay, toDay)
+      .all();
+    const vpDayRes = await db
+      .prepare(
+        `SELECT day, client, app_version AS appVersion,
+                SUM(requests) * ${VERSION_SAMPLE_ONE_IN} AS requests
+         FROM version_ping_sample
+         WHERE day >= ?1 AND day <= ?2
+         GROUP BY day, client, app_version
+         ORDER BY day`,
+      )
+      .bind(fromDay, toDay)
+      .all();
+
     const daily: Record<string, Record<string, number>> = {};
     let total = 0;
     for (const row of dailyRes.results ?? []) {
@@ -659,6 +690,28 @@ export async function GET(req: Request) {
         },
         totals: byName(totalsRes.results, "name"),
         totalUsers,
+        versions: {
+          note: "Sampled 1-in-10 /api/* requests (Analytics Engine holds exact counts; these D1 estimates scale by the inverse rate). appVersion '(none)' = pre-telemetry app builds + untagged clients.",
+          sampleOneIn: VERSION_SAMPLE_ONE_IN,
+          rows: (vpRowsRes.results ?? []).map((r: any) => ({
+            client: String(r.client ?? "unknown"),
+            appVersion:
+              r.appVersion === "" || r.appVersion == null
+                ? "(none)"
+                : String(r.appVersion),
+            requests: Number(r.sampledRequests ?? 0) * VERSION_SAMPLE_ONE_IN,
+            users: Number(r.sampledUsers ?? 0) * VERSION_SAMPLE_ONE_IN,
+          })),
+          byDay: (vpDayRes.results ?? []).map((r: any) => ({
+            day: String(r.day),
+            client: String(r.client ?? "unknown"),
+            appVersion:
+              r.appVersion === "" || r.appVersion == null
+                ? "(none)"
+                : String(r.appVersion),
+            requests: Number(r.requests ?? 0),
+          })),
+        },
         filters: {
           appVersion: appVersion ?? null,
           anonId: anonId ?? null,

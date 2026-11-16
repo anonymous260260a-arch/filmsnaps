@@ -16,7 +16,7 @@ import type { Dashboard, DrillState, Range } from "./components/types";
 import { dayStr, sum } from "./components/utils";
 import { GOLD } from "./components/constants";
 import { Section, Card, Skeleton, NoData } from "./components/shared";
-import { apiUrl } from "@/lib/tmdb";
+import { apiUrl, apiClientHeaders } from "@/lib/tmdb";
 
 // Section components
 import { DashboardHeader } from "./components/DashboardHeader";
@@ -29,6 +29,7 @@ import { ReliabilitySection } from "./components/ReliabilitySection";
 import { AdoptionSection } from "./components/AdoptionSection";
 import { AdSlotImpressions } from "./components/AdSlotImpressions";
 import { EventVolume } from "./components/EventVolume";
+import { VersionBreakdown } from "./components/VersionBreakdown";
 import { DrillDrawer } from "./components/DrillDrawer";
 import { FilterBar } from "./components/FilterBar";
 
@@ -83,9 +84,11 @@ export default function AdminPage() {
       const [curRes, prevRes] = await Promise.all([
         fetch(q(from, to, filterStr ? `&${filterStr}` : ""), {
           credentials: "same-origin",
+          headers: apiClientHeaders(),
         }),
         fetch(q(prevFrom, prevTo, filterStr ? `&${filterStr}` : ""), {
           credentials: "same-origin",
+          headers: apiClientHeaders(),
         }),
       ]);
 
@@ -292,6 +295,9 @@ export default function AdminPage() {
 
             {/* ── 7. Total Event Volume ── */}
             <EventVolume cur={cur} openDrill={openDrill} />
+
+            {/* ── 8. App version breakdown ── */}
+            <VersionBreakdown cur={cur} />
           </>
         )}
       </main>

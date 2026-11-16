@@ -27,7 +27,7 @@ import "video.js/dist/video-js.css";
 import { Clapperboard, RefreshCw } from "lucide-react";
 import { WebCodecsPlayer, type WebCodecsPlayerHandle } from "./WebCodecsPlayer";
 import { checkHevcSupport } from "@/lib/streamingMkvParser";
-import { apiUrl } from "@/lib/tmdb";
+import { apiUrl, apiClientHeaders } from "@/lib/tmdb";
 import { createLocalStorageAdapter, useWatchHistory } from "@filmsnaps/shared";
 import type { PlaybackTimeSample } from "@/hooks/usePlaybackRecorder";
 
@@ -175,7 +175,9 @@ export function FalixPlayer({
       `[Falix] Step 1: Fetching metadata for tmdbId=${tmdbId}, mediaType=${mediaType}, season=${selectedSeason}, episode=${activeEpisode}`,
     );
 
-    fetch(apiUrl(`/api/player/falix?id=${tmdbId}`))
+    fetch(apiUrl(`/api/player/falix?id=${tmdbId}`), {
+      headers: apiClientHeaders(),
+    })
       .then((res) => {
         if (!res.ok) throw new Error(`Falix API returned ${res.status}`);
         console.log(`[Falix] Step 1a: API responded with status ${res.status}`);
@@ -649,7 +651,9 @@ export function FalixPlayer({
     setActiveAudioIdx(0);
     setAudioLabels(["Default"]);
 
-    fetch(apiUrl(`/api/player/falix?id=${tmdbId}`))
+    fetch(apiUrl(`/api/player/falix?id=${tmdbId}`), {
+      headers: apiClientHeaders(),
+    })
       .then((res) => {
         if (!res.ok) throw new Error(`Falix API returned ${res.status}`);
         return res.json() as Promise<FalixApiData>;

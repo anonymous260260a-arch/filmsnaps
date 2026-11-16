@@ -48,6 +48,22 @@ export type Dashboard = {
   };
   totals: Record<string, number>;
   totalUsers: number;
+  /** Sampled /api/* request accounting by client + app version (004 migration). */
+  versions?: {
+    sampleOneIn: number;
+    rows: {
+      client: string;
+      appVersion: string;
+      requests: number;
+      users: number;
+    }[];
+    byDay: {
+      day: string;
+      client: string;
+      appVersion: string;
+      requests: number;
+    }[];
+  };
   /** M1 — candidate ad-slot impression aggregates (measurement only). */
   impressions?: {
     note?: string;

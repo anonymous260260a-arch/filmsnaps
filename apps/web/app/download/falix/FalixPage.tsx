@@ -47,7 +47,7 @@ import {
   useDownloadList,
 } from "@/lib/downloadStore";
 import { formatBytes } from "@/lib/format";
-import { tmdbApi, apiUrl } from "@/lib/tmdb";
+import { tmdbApi, apiUrl, apiClientHeaders } from "@/lib/tmdb";
 
 // ── API ──
 
@@ -370,6 +370,7 @@ export default function FalixDownloadPage() {
       : async (q) => {
           const res = await fetch(
             apiUrl(`/api/player/falix?id=${encodeURIComponent(q)}`),
+            { headers: apiClientHeaders() },
           );
           if (res.status === 404) throw new Error("404 not found");
           if (!res.ok) throw new Error(`Falix lookup failed (${res.status})`);

@@ -28,6 +28,12 @@
 			"remote": true
 		}
 	],
+	"analytics_engine_datasets": [
+		{
+			"binding": "AE_REQUESTS",
+			"dataset": "filmsnaps_api_requests"
+		}
+	],
 	"observability": {
 		"enabled": true
 	},

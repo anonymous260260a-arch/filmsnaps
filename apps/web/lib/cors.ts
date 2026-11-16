@@ -46,7 +46,8 @@ export function getCorsHeaders(
   return {
     "Access-Control-Allow-Origin": allowedOrigin,
     "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers":
+      "Content-Type, Authorization, X-Client, X-App-Version, X-Anon-Id",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };

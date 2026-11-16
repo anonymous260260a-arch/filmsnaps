@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import type { DrillState, RawRow } from "./types";
 import { fmtDay } from "./utils";
 import { label, GOLD } from "./constants";
-import { apiUrl } from "@/lib/tmdb";
+import { apiUrl, apiClientHeaders } from "@/lib/tmdb";
 
 interface DrillDrawerProps {
   state: NonNullable<DrillState>;
@@ -48,6 +48,7 @@ export function DrillDrawer({
       apiUrl(
         `/api/telemetry/dashboard?mode=raw&event=${encodeURIComponent(state.event)}${fromParam}${toParam}${avParam}${aidParam}&limit=100`,
       ),
+      { headers: apiClientHeaders() },
     )
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);

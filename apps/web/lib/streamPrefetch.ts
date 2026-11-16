@@ -28,7 +28,7 @@ import {
   isProviderAvailableOn,
   resolveInitialProviderId,
 } from "@filmsnaps/shared";
-import { apiUrl } from "./tmdb";
+import { apiUrl, apiClientHeaders } from "./tmdb";
 import { isElectronNow } from "./platform";
 import { getSettings } from "@/hooks/useSettings";
 import { probeUrls } from "./probeCache";
@@ -115,7 +115,9 @@ async function fetchHop(
   if (type === "tv" && episode) params.set("episode", String(episode));
 
   try {
-    const res = await fetch(apiUrl(`/api/player/direct?${params.toString()}`));
+    const res = await fetch(apiUrl(`/api/player/direct?${params.toString()}`), {
+      headers: apiClientHeaders(),
+    });
     if (!res.ok) return null;
     const data = (await res.json()) as DirectChainData | null;
     if (!data || typeof data !== "object") return null;

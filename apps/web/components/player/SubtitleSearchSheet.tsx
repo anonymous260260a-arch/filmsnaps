@@ -12,7 +12,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { X, Search, Loader2, Captions, Download } from "lucide-react";
-import { apiUrl } from "@/lib/tmdb";
+import { apiUrl, apiClientHeaders } from "@/lib/tmdb";
 import { prettyReleaseName, englishFirst } from "@/lib/subtitleName";
 
 interface SubtitleEntry {
@@ -70,7 +70,9 @@ export function SubtitleSearchSheet({
       if (season != null) params.set("season_number", String(season));
       if (episode != null) params.set("episode_number", String(episode));
     }
-    fetch(apiUrl(`/api/subtitles?${params.toString()}`))
+    fetch(apiUrl(`/api/subtitles?${params.toString()}`), {
+      headers: apiClientHeaders(),
+    })
       .then((r) =>
         r.json().then((data) => ({ ok: r.ok, status: r.status, data })),
       )

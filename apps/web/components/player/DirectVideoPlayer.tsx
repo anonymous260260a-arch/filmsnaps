@@ -81,7 +81,7 @@ import {
   type DetectedFormat,
   type DecoderType,
 } from "@/lib/formatDetection";
-import { apiUrl } from "@/lib/tmdb";
+import { apiUrl, apiClientHeaders } from "@/lib/tmdb";
 import {
   getPrefetchedDirectMedia,
   prefetchDirectMedia,
@@ -499,7 +499,9 @@ export function DirectVideoPlayer({
     }
 
     const fetchMeta = (): Promise<DirectApiData> =>
-      fetch(apiUrl(`/api/player/direct?${params.toString()}`)).then((res) => {
+      fetch(apiUrl(`/api/player/direct?${params.toString()}`), {
+        headers: apiClientHeaders(),
+      }).then((res) => {
         if (!res.ok) throw new Error(`Direct API returned ${res.status}`);
         return res.json() as Promise<DirectApiData>;
       });
@@ -1412,6 +1414,7 @@ export function DirectVideoPlayer({
           apiUrl(
             `/api/subtitles/download?url=${encodeURIComponent(url)}&format=${encodeURIComponent(entry.format || "")}`,
           ),
+          { headers: apiClientHeaders() },
         );
         const data = await res.json().catch(() => null);
         if (!res.ok || !data?.content) {

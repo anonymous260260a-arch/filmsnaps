@@ -44,7 +44,7 @@ import {
   useDownloadList,
 } from "@/lib/downloadStore";
 import { isGatewayUrl } from "@/lib/nxshaLinks";
-import { tmdbApi, apiUrl, getImageUrl } from "@/lib/tmdb";
+import { tmdbApi, apiUrl, apiClientHeaders, getImageUrl } from "@/lib/tmdb";
 import { useSettings } from "@/hooks/useSettings";
 import {
   buildDownloadFileName,
@@ -240,7 +240,9 @@ export default function HdHubDownloadPage() {
       qs.set("episode", String(effectiveEpisode));
     }
 
-    fetch(apiUrl(`/api/player/direct?${qs.toString()}`))
+    fetch(apiUrl(`/api/player/direct?${qs.toString()}`), {
+      headers: apiClientHeaders(),
+    })
       .then(async (res) => {
         const body = (await res.json().catch(() => null)) as {
           links?: StreamLink[];

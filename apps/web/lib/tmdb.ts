@@ -28,10 +28,53 @@ const getBaseUrl = () => {
 /** Build a full API URL — prefixes NEXT_PUBLIC_API_URL (CF Worker) when set. */
 export const apiUrl = (path: string) => `${getBaseUrl()}${path}`;
 
+const ANON_ID_KEY = "filmsnaps:client-id:v1";
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+let cachedWebAnonId: string | null = null;
+
+function webAnonId(): string | null {
+  if (typeof window === "undefined") return null;
+  if (cachedWebAnonId) return cachedWebAnonId;
+  try {
+    let stored = window.localStorage.getItem(ANON_ID_KEY);
+    if (!stored || !UUID_RE.test(stored)) {
+      stored = crypto.randomUUID();
+      window.localStorage.setItem(ANON_ID_KEY, stored);
+    }
+    cachedWebAnonId = stored;
+    return stored;
+  } catch {
+    return null;
+  }
+}
+
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0";
+
+/**
+ * Identifying headers for OUR API only. Never attach these to requests for
+ * third-party hosts.
+ */
+export const apiClientHeaders = (): Record<string, string> => {
+  if (typeof window !== "undefined") {
+    const headers: Record<string, string> = {
+      "x-client": "web",
+      "x-app-version": APP_VERSION,
+    };
+    const id = webAnonId();
+    if (id) headers["x-anon-id"] = id;
+    return headers;
+  }
+  return { "x-client": "ssr", "x-app-version": APP_VERSION };
+};
+
 const apiFetch = async (path: string) => {
   const baseUrl = getBaseUrl();
 
-  const res = await fetch(`${baseUrl}/api/tmdb${path}`);
+  const res = await fetch(`${baseUrl}/api/tmdb${path}`, {
+    headers: apiClientHeaders(),
+  });
 
   if (!res.ok) {
     throw new Error("Failed to fetch TMDB data");

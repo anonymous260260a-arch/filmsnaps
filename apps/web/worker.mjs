@@ -17,26 +17,163 @@ import { default as handler } from "./.open-next/worker.js";
 const RETENTION_DAYS = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export default {
-  fetch: handler.fetch,
+// ── Version telemetry (per-request app/client accounting) ──────────────────
+// Every /api/* request is counted into Analytics Engine (AE_REQUESTS, exact
+// aggregate counts per client/version/route) and, at a 1-in-N sample rate,
+// upserted into the D1 version_ping_sample table so the admin dashboard can
+// estimate DISTINCT installs per app version. Must match the
+// 'sample_one_in' row in migrations/004_version_ping.sql.
+const VERSION_SAMPLE_ONE_IN = 10;
+const VERSION_PING_RETENTION_DAYS = 120;
 
-  async scheduled(_event, env, _ctx) {
-    const db = env && env.TELEMETRY_DB;
-    if (!db) {
-      console.error("[retention] TELEMETRY_DB binding missing — skipping purge");
-      return;
+const KNOWN_CLIENTS = new Set([
+  "mobile-android",
+  "mobile-ios",
+  "desktop",
+  "web",
+  "ssr",
+]);
+
+function routeClassOf(pathname) {
+  const p = pathname.replace(/^\/api\//, "");
+  if (p.startsWith("tmdb")) return "tmdb";
+  if (p.startsWith("telemetry")) return "telemetry";
+  if (p.startsWith("stream")) return "stream";
+  if (p.startsWith("player")) return "player";
+  if (p.startsWith("anime")) return "anime";
+  if (p.startsWith("subtitles")) return "subtitles";
+  if (p.startsWith("blocklist")) return "blocklist";
+  return p.split("/")[0] || "root";
+}
+
+function headerVal(request, name, maxLen) {
+  const raw = request.headers.get(name);
+  if (!raw) return "";
+  const v = raw.trim();
+  return v.length > maxLen ? v.slice(0, maxLen) : v;
+}
+
+function recordRequest(env, request, status, durationMs, ctx) {
+  try {
+    if (!env || !env.AE_REQUESTS) return;
+    const url = new URL(request.url);
+    if (!url.pathname.startsWith("/api/")) return;
+
+    const clientRaw = headerVal(request, "x-client", 32);
+    const client = KNOWN_CLIENTS.has(clientRaw) ? clientRaw : "unknown";
+    const appVersion = headerVal(request, "x-app-version", 32);
+    const routeClass = routeClassOf(url.pathname);
+
+    env.AE_REQUESTS.writeDataPoint({
+      indexes: [client],
+      blobs: [client, appVersion, routeClass, url.pathname.slice(0, 128)],
+      doubles: [status || 0, durationMs],
+    });
+
+    const sampledRow = {
+      day: new Date().toISOString().slice(0, 10),
+      client,
+      appVersion,
+      anonId: headerVal(request, "x-anon-id", 64),
+    };
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(insertVersionSample(env, sampledRow));
+    } else {
+      void insertVersionSample(env, sampledRow);
     }
-    const cutoffMs = Date.now() - RETENTION_DAYS * DAY_MS;
-    try {
-      const result = await db
-        .prepare("DELETE FROM telemetry_events WHERE ts < ?")
-        .bind(cutoffMs)
-        .run();
-      console.log(
-        `[retention] purged ${result.meta.changes} telemetry_events older than ${RETENTION_DAYS} days`,
-      );
-    } catch (err) {
-      console.error("[retention] purge failed", err);
+  } catch {
+    // Never let accounting break the request pipeline.
+  }
+}
+
+async function insertVersionSample(env, row) {
+  try {
+    if (!env.TELEMETRY_DB) return;
+    if (Math.random() >= 1 / VERSION_SAMPLE_ONE_IN) return;
+    await env.TELEMETRY_DB.prepare(
+      `INSERT INTO version_ping_sample
+         (day, client, app_version, anon_id, requests, updated_at)
+       VALUES (?1, ?2, ?3, ?4, 1, ?5)
+       ON CONFLICT (day, client, app_version, anon_id)
+         DO UPDATE SET requests = requests + 1, updated_at = ?5`,
+    )
+      .bind(
+        row.day,
+        row.client,
+        row.appVersion,
+        row.anonId,
+        Date.now(),
+      )
+      .run();
+  } catch {
+    // Sampled accounting is best-effort only.
+  }
+}
+
+async function purgeVersionSamples(env) {
+  const db = env && env.TELEMETRY_DB;
+  if (!db) return;
+  const cutoff = new Date(
+    Date.now() - VERSION_PING_RETENTION_DAYS * DAY_MS,
+  )
+    .toISOString()
+    .slice(0, 10);
+  try {
+    const result = await db
+      .prepare("DELETE FROM version_ping_sample WHERE day < ?")
+      .bind(cutoff)
+      .run();
+    console.log(
+      `[retention] purged ${result.meta.changes} version_ping_sample rows older than ${VERSION_PING_RETENTION_DAYS} days`,
+    );
+  } catch (err) {
+    console.error("[retention] version_ping_sample purge failed", err);
+  }
+}
+
+async function wrappedFetch(request, env, ctx) {
+  const startMs = Date.now();
+  try {
+    const res = await handler.fetch(request, env, ctx);
+    recordRequest(env, request, res && res.status, Date.now() - startMs, ctx);
+    return res;
+  } catch (err) {
+    recordRequest(env, request, 0, Date.now() - startMs, ctx);
+    throw err;
+  }
+}
+
+export default {
+  fetch: wrappedFetch,
+
+  async scheduled(event, env, ctx) {
+    const runPurge = async () => {
+      const db = env && env.TELEMETRY_DB;
+      if (!db) {
+        console.error("[retention] TELEMETRY_DB binding missing — skipping purge");
+        return;
+      }
+      const cutoffMs = Date.now() - RETENTION_DAYS * DAY_MS;
+      try {
+        const result = await db
+          .prepare("DELETE FROM telemetry_events WHERE ts < ?")
+          .bind(cutoffMs)
+          .run();
+        console.log(
+          `[retention] purged ${result.meta.changes} telemetry_events older than ${RETENTION_DAYS} days`,
+        );
+      } catch (err) {
+        console.error("[retention] purge failed", err);
+      }
+      await purgeVersionSamples(env);
+    };
+
+    if (event && typeof event.waitUntil === "function") {
+      event.waitUntil(runPurge());
+    } else if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(runPurge());
+    } else {
+      await runPurge();
     }
   },
 };

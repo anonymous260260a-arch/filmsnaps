@@ -10,7 +10,7 @@ import { ChevronUp } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { GlassButton } from "@/components/ui/glass-button";
 import { MediaFilter } from "@/components/MediaFilter";
-import { apiUrl } from "@/lib/tmdb";
+import { apiUrl, apiClientHeaders } from "@/lib/tmdb";
 
 interface TVResponse {
   page: number;
@@ -94,7 +94,9 @@ export default function TVClient({
       if (selectedGenres.length) params.set("genres", selectedGenres.join(","));
       if (language) params.set("language", language);
 
-      const res = await fetch(apiUrl(`/api/tv?${params.toString()}`));
+      const res = await fetch(apiUrl(`/api/tv?${params.toString()}`), {
+        headers: apiClientHeaders(),
+      });
       if (!res.ok) throw new Error("Failed to fetch TV shows");
       return res.json();
     },

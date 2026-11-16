@@ -18,6 +18,9 @@ if (process.env.BUILD_FOR_DESKTOP !== "true") {
 const IS_DESKTOP = process.env.BUILD_FOR_DESKTOP === "true";
 
 const nextConfig = {
+  env: {
+    NEXT_PUBLIC_APP_VERSION: require("./package.json").version,
+  },
   // Desktop: static export (no Node.js server, <200ms cold start in Electron).
   // Web/mobile: default server mode (SSR + API routes).
   output: IS_DESKTOP ? "export" : undefined,
