@@ -26,6 +26,9 @@ import { Fraunces_700Bold } from "@expo-google-fonts/fraunces";
 import * as SplashScreen from "expo-splash-screen";
 import { Image as ExpoImage } from "expo-image";
 import { UpdateOverlay } from "../components/UpdateOverlay";
+import { FeedbackPrompt } from "../components/FeedbackPrompt";
+import { registerAppOpenAndShouldPrompt } from "../lib/feedbackPrompt";
+import { flushFeedbackOutbox } from "../lib/feedbackOutbox";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { DownloadInfraProvider, useDownloadQueue } from "../lib/download";
 import { migrateDownloads, isMigrationDone } from "../lib/download/migration";
@@ -490,6 +493,41 @@ function AppContent() {
     }
   }, [pathname]);
 
+  // Occasional in-app rating prompt — once per cold start at most, after the
+  // legal gate, and never while the player is open. Frequency rules live in
+  // lib/feedbackPrompt.ts (7-day install age, 14-day cooldown, two-dismissal
+  // stop).
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+  const [feedbackPromptOpen, setFeedbackPromptOpen] = useState(false);
+  useEffect(() => {
+    if (!settings.legalAccepted) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (pathnameRef.current.startsWith("/watch/")) return;
+      registerAppOpenAndShouldPrompt()
+        .then((due) => {
+          if (!cancelled && due) setFeedbackPromptOpen(true);
+        })
+        .catch(() => {});
+    }, 4000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [settings.legalAccepted]);
+
+  // Feedback outbox — re-sends drafts the server could not accept (spent
+  // daily D1 allowance, offline). Runs on launch and on every resume.
+  useEffect(() => {
+    if (!settings.legalAccepted) return;
+    void flushFeedbackOutbox();
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") void flushFeedbackOutbox();
+    });
+    return () => sub.remove();
+  }, [settings.legalAccepted]);
+
   // P3 — session lifecycle: session_start on foreground resume,
   // session_end on background. iOS "inactive" fires mid-transition and
   // would end the session early, so only "background" counts as a leak.
@@ -748,6 +786,11 @@ function AppContent() {
       </Stack>
 
       <UpdateOverlay />
+
+      <FeedbackPrompt
+        visible={feedbackPromptOpen}
+        onClose={() => setFeedbackPromptOpen(false)}
+      />
 
       {/* Global toast overlay for download events — always-on-top via zIndex */}
       <DownloadToastView />

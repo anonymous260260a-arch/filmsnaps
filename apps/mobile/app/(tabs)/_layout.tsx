@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Platform, View, Text, StyleSheet } from "react-native";
 import { BlurView } from "expo-blur";
 import DownloadBanner from "../../components/DownloadBanner";
+import { FeedbackReplyToast } from "../../components/FeedbackReplyToast";
 import { colors } from "../../theme/colors";
 
 /**
@@ -159,6 +160,8 @@ export default function TabLayout() {
       </Tabs>
       {/* Download banner floats above the tab bar */}
       <DownloadBanner />
+      {/* Team replies share that slot; stays until dismissed */}
+      <FeedbackReplyToast />
     </View>
   );
 }

@@ -120,7 +120,9 @@ export type FeatureName =
   | "caption_autosync"
   | "screen_fit_contain"
   | "screen_fit_cover"
-  | "screen_fit_fill";
+  | "screen_fit_fill"
+  | "feedback_rate"
+  | "feedback_submit";
 /** E6 — usable context enum (same-class details for a few features). */
 /** P4 — the screen the app was on when the session ended. */
 export type FeatureContext =
