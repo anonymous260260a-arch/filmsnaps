@@ -111,9 +111,12 @@ export async function GET(req: NextRequest) {
 
 async function fetchKitsuRail(params: string): Promise<SlimAnimeResult[]> {
   const url = `${KITSU_BASE}?page%5Blimit%5D=${KITSU_MAX_LIMIT}&include=mappings&${params}`;
-  const res = await fetchWithTimeout(url, {
-    headers: { Accept: "application/vnd.api+json" },
-  });
+  const res = await fetchWithTimeout(
+    url,
+    { headers: { Accept: "application/vnd.api+json" } },
+    undefined,
+    900,
+  );
   if (!res.ok) throw new Error(`kitsu rail ${res.status}`);
   const parsed = parseKitsuToSlim(await res.json());
   return parsed?.results ?? [];
@@ -142,9 +145,12 @@ async function fetchFromKitsuHome(limit: number): Promise<HomeBundle | null> {
 // ── Link 2: Shikimori ──────────────────────────────────────────────────
 
 async function fetchShikimoriRail(params: string): Promise<SlimAnimeResult[]> {
-  const res = await fetchWithTimeout(`${SHIKIMORI_BASE}/animes?${params}`, {
-    headers: { "User-Agent": "Filmsnaps/2.2 (anime feed)" },
-  });
+  const res = await fetchWithTimeout(
+    `${SHIKIMORI_BASE}/animes?${params}`,
+    { headers: { "User-Agent": "Filmsnaps/2.2 (anime feed)" } },
+    undefined,
+    900,
+  );
   if (!res.ok) throw new Error(`shikimori rail ${res.status}`);
   const parsed = parseShikimoriToSlim(await res.json());
   return parsed?.results ?? [];
@@ -292,7 +298,7 @@ async function fetchTmdbRail(
   limit: number,
 ): Promise<SlimAnimeResult[]> {
   const url = `https://api.themoviedb.org/3${path}${path.includes("?") ? "&" : "?"}api_key=${apiKey}&page=1`;
-  const res = await fetchWithTimeout(url, {});
+  const res = await fetchWithTimeout(url, {}, undefined, 900);
   if (!res.ok) throw new Error(`tmdb rail ${res.status}`);
   const payload = await res.json();
   const items: Array<Record<string, any>> = path.startsWith("/trending")

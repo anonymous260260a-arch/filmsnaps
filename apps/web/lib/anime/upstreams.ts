@@ -17,6 +17,7 @@
  */
 
 import { lookupMal } from "./resolve";
+import { edgeCache } from "../edge-cache";
 
 export interface SlimAnimeResult {
   malId: number;
@@ -58,11 +59,13 @@ export async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   ms = 9000,
+  cacheTtl?: number,
 ): Promise<Response> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
-    return await fetch(url, { ...init, signal: ctrl.signal });
+    const cacheInit = cacheTtl ? edgeCache(cacheTtl) : {};
+    return await fetch(url, { ...init, ...cacheInit, signal: ctrl.signal });
   } finally {
     clearTimeout(t);
   }

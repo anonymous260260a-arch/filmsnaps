@@ -1,5 +1,6 @@
 // lib/tmdb.server.ts
 import "server-only";
+import { edgeCache } from "./edge-cache";
 
 const BASE = "https://api.themoviedb.org/3";
 const KEY = process.env.TMDB_API_KEY;
@@ -61,6 +62,7 @@ export async function tmdb(path: string) {
   try {
     const res = await fetch(`${BASE}${path}${separator}api_key=${apiKey}`, {
       next: { revalidate: getRevalidate(path) },
+      ...edgeCache(getRevalidate(path)),
     });
 
     if (!res.ok) {

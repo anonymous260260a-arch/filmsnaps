@@ -5,6 +5,10 @@ import { getCorsHeaders, handleOptions } from "@/lib/cors";
 
 export const revalidate = 86400; // 24 hours
 
+const cacheHeaders = {
+  "Cache-Control": "public, s-maxage=600, stale-while-revalidate=3600",
+};
+
 export async function OPTIONS(request: Request) {
   return handleOptions(request);
 }
@@ -38,7 +42,9 @@ export async function GET(req: NextRequest) {
       language,
     });
 
-    return NextResponse.json(tvShows, { headers: getCorsHeaders(origin) });
+    return NextResponse.json(tvShows, {
+      headers: { ...cacheHeaders, ...getCorsHeaders(origin) },
+    });
   } catch (err) {
     console.error(err);
     return NextResponse.json(

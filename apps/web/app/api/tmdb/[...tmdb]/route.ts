@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCorsHeaders, handleOptions } from "@/lib/cors";
 import { desktopSkip } from "../../desktop-skip";
+import { edgeCache } from "@/lib/edge-cache";
 
 // ponytail: force-static removed — it cached the handler at build time so web
 // search never ran the handler at runtime (got stale/empty response). The
@@ -19,6 +20,20 @@ const BASE_URL = "https://api.themoviedb.org/3";
 const cacheHeaders = {
   "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=86400",
 };
+
+function edgeTtl(endpointPath: string): number {
+  if (/^\/search\//.test(endpointPath)) return 600;
+  if (
+    /(trending|popular|upcoming|top_rated|now_playing|airing_today|on_the_air)/.test(
+      endpointPath,
+    )
+  ) {
+    return 600;
+  }
+  if (/\/external_ids$/.test(endpointPath)) return 604800;
+  if (/^\/(movie|tv|person)\/\d+/.test(endpointPath)) return 86400;
+  return 3600;
+}
 
 export async function OPTIONS(request: Request) {
   return handleOptions(request);
@@ -250,6 +265,7 @@ export async function GET(
       headers: {
         "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
       },
+      ...edgeCache(edgeTtl(`/${tmdb.join("/")}`), 300),
     },
   );
 

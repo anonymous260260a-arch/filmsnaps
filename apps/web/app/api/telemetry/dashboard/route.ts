@@ -185,7 +185,8 @@ export async function GET(req: Request) {
       .all();
 
     // ── Audience: distinct anonymous installs (random per-install UUIDs,
-    //    aggregate-only). Unique viewers per day + totals for the range. ──
+    //    aggregate-only). Unique viewers per day + totals for the range.
+    //    Range totals and totalUsers share one scan (same COUNT DISTINCT). ──
     const audienceDayRes = await db
       .prepare(
         `SELECT (ts / 86400000) * 86400000 AS dayStart,
@@ -204,6 +205,7 @@ export async function GET(req: Request) {
       )
       .bind(...allParams)
       .first();
+    const totalUsers = Number(audienceTotalRes?.uniques ?? 0);
 
     // ── watch_end by surface (direct native vs embed webview) — the
     //    "hours watched" numbers used to be embed-blind. ──
@@ -244,17 +246,6 @@ export async function GET(req: Request) {
       )
       .bind(...allParams)
       .all();
-
-    // Total distinct users in range (for adoption rate denominator).
-    const totalUsersRes = await db
-      .prepare(
-        `SELECT COUNT(DISTINCT anon_id) AS totalUsers
-         FROM telemetry_events
-         WHERE ${rangeWhere} AND anon_id IS NOT NULL${filterSql}`,
-      )
-      .bind(...allParams)
-      .first();
-    const totalUsers = Number(totalUsersRes?.totalUsers ?? 0);
 
     // ── watch funnel: watch_opened by surface ──
     const funnelRes = await db

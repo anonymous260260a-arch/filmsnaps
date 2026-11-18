@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCorsHeaders, handleOptions } from "@/lib/cors";
 import { desktopSkip } from "../desktop-skip";
+import { edgeCache } from "@/lib/edge-cache";
 // revalidate=1: satisfies output:'export' (static 410 via desktopSkip) while
 // keeping web builds live — matches player/direct + player/falix pattern.
 export const revalidate = 1;
@@ -130,7 +131,7 @@ async function fetchFromSubdl(
     if (episode) q.set("episode_number", episode);
   }
 
-  const res = await fetch(`${SUBDL_API_URL}?${q.toString()}`);
+  const res = await fetch(`${SUBDL_API_URL}?${q.toString()}`, edgeCache(3600));
   if (res.status === 429)
     throw new ProviderError("rate_limited", 429, "Subdl rate limited");
   if (!res.ok)
@@ -201,7 +202,7 @@ async function fetchFromWyzie(
     if (episode) q.set("episode", episode);
   }
 
-  const res = await fetch(`${WYZIE_API_URL}?${q.toString()}`);
+  const res = await fetch(`${WYZIE_API_URL}?${q.toString()}`, edgeCache(3600));
   if (res.status === 429)
     throw new ProviderError("rate_limited", 429, "Wyzie rate limited");
   if (!res.ok)
