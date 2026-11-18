@@ -1,20 +1,19 @@
 {
   "announcements": [
     {
-      "id": "welcome-to-filmsnaps",
-      "type": "feature",
-      "title": "Welcome to FilmSnaps",
-      "subtitle": "Stream movies and TV shows for free. No sign-up required.",
+      "id": "report-issues-in-app",
+      "type": "info",
+      "title": "Found a bug? Report it right in the app",
+      "subtitle": "Bugs, ideas and questions all go to Settings → Feedback & bug reports. Our reply appears on the same screen — no email or account needed.",
       "body": [
-        "FilmSnaps lets you watch thousands of movies and TV shows instantly — no account, no subscription, no payment needed.",
-        "Browse trending titles, search for your favorites, or explore by category. Tap any title to see available streaming sources and start watching.",
-        "You can also download content to watch offline, track your watch history, and save titles to your personal list."
+        "If something breaks, looks wrong, or you have an idea that would make FilmSnaps better, open Settings → Feedback & bug reports and send it to us.",
+        "Pick Bug, Idea or Question, describe it in your own words and tap Send. No account and no email address are required — adding an email is optional, and only needed if you want a reply by mail.",
+        "Everything lands in one inbox that we read directly. When we answer, our reply appears inside the app under your message. You can mark that reply helpful or not helpful, and your message history stays available on the same screen.",
+        "You may also see a quick star rating every once in a while. Ratings go to the same place — they help us understand how the app is doing without asking you to leave it."
       ],
-      "detailRoute": "/announcement/welcome-to-filmsnaps",
-      "actionLabel": "Get Started",
-      "date": "July 29, 2026",
-      "dismissible": true,
-      "expiresAt": "2026-12-31T00:00:00Z"
+      "detailRoute": "/announcement/report-issues-in-app",
+      "date": "November 18, 2026",
+      "dismissible": true
     },
     {
       "id": "v2-anime-support",
