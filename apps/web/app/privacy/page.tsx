@@ -29,14 +29,15 @@ export default function PrivacyPage() {
       }
     >
       <p className="mb-2 text-sm font-medium text-faint">
-        Last updated: September 28, 2026
+        Last updated: November 18, 2026
       </p>
 
       <Section title="The Short Version">
         <Bullet text="FilmSnaps has no accounts — we don't know who you are." />
         <Bullet text="Your watch history, bookmarks, progress, and settings never leave your device." />
         <Bullet text="The Android app can send anonymous usage statistics and crash reports — on by default, off anytime in Settings." />
-        <Bullet text="We never collect anything that can identify you: no identifiers, no IP addresses, no search text, no titles by name." />
+        <Bullet text="Nothing stored on our servers identifies you: no accounts, no device identifiers, no stored IP addresses, no search text, no titles by name." />
+        <Bullet text="If you send feedback, we keep that message and our in-app reply." />
       </Section>
 
       <Section title="What Stays on Your Device">
@@ -89,14 +90,31 @@ export default function PrivacyPage() {
         </Body>
       </Section>
 
+      <Section title="Feedback You Send Us">
+        <Body>
+          Bug reports, ideas, questions and star ratings you send from the app
+          are stored with the text you wrote, the app version and platform, and
+          a random token created on your device for this install — it is not
+          your device ID and is not derived from your hardware or IP. That token
+          is what lets you read our reply and your message history in the app.
+        </Body>
+        <Body extraMargin>
+          To stop spam and duplicate sends we also keep a one-time challenge
+          code and a hash of your own message. A request&apos;s IP address is
+          read in memory to apply these limits but is never stored. Feedback,
+          replies and ratings are deleted after 12 months.
+        </Body>
+      </Section>
+
       <Section title="What We Never Collect">
         <Body>
-          No names, emails, or accounts (there are none) · no device,
-          advertising, or contact identifiers · no IP addresses (we never read
-          or store them) · no search queries · no titles by name · no location ·
-          no advertising or tracking SDKs. The one random statistics ID
-          described above is the only identifier that exists, and it is deleted
-          when you turn statistics off.
+          No names or accounts (there are none) · no device, advertising, or
+          contact identifiers · no stored IP addresses · no search queries · no
+          titles by name · no location · no advertising or tracking SDKs. The
+          one random statistics ID described above is the only identifier that
+          exists, and it is deleted when you turn statistics off. A
+          request&apos;s IP address is read in memory to apply abuse limits; it
+          is never written to our database, logs or analytics.
         </Body>
       </Section>
 
@@ -110,9 +128,12 @@ export default function PrivacyPage() {
       <Section title="How Long We Keep It">
         <Body>
           Anonymous statistics are kept for up to 12 months, then deleted
-          automatically. Crash reports follow Sentry&apos;s standard retention.
-          The random statistics ID is not linked to you in any way — there is no
-          profile of you on our side to expire.
+          automatically. Feedback messages, our replies and ratings are also
+          deleted after 12 months. Anti-abuse records (challenge codes and
+          temporary mutes) expire within hours or a day. Crash reports follow
+          Sentry&apos;s standard retention. The random statistics ID is not
+          linked to you in any way — there is no profile of you on our side to
+          expire.
         </Body>
       </Section>
 
@@ -120,9 +141,9 @@ export default function PrivacyPage() {
         <Body>
           Everything personal to you is already in your hands — history,
           bookmarks, and settings live on your device, and clearing app data
-          removes them. Because nothing we collect is linked to you, there is
-          nothing of yours on our servers to access, correct, or delete — and
-          turning statistics off stops all future collection instantly.
+          removes them. Clearing app data also severs the feedback token, so
+          earlier messages and replies can no longer be reached from that
+          install. Turning statistics off stops all future collection instantly.
         </Body>
       </Section>
 
