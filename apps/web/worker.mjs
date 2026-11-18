@@ -76,6 +76,7 @@ function edgeCacheOpts(ttl, negativeTtl = 60) {
         "200-299": ttl,
         "404": negativeTtl,
         "403": 0,
+        "401": 0,
         "429": 0,
         "500-599": 0,
       },
@@ -263,7 +264,7 @@ async function handleTmdb(request, url, apiKey) {
   const query = sp.toString();
 
   const endpoint = `/${segs.join("/")}`;
-  const upstreamPath = `${TMDB_BASE}${endpoint}${query ? "&" : "?"}api_key=${apiKey}`;
+  const upstreamPath = `${TMDB_BASE}${endpoint}${query ? `?${query}&` : "?"}api_key=${apiKey}`;
 
   const res = await fetch(upstreamPath, {
     headers: {
