@@ -96,6 +96,12 @@ export function DashboardHeader({
       </div>
 
       <div className="flex items-center gap-4">
+        <a
+          href="/admin/feedback"
+          className="px-3 py-1.5 text-xs font-medium text-white/70 hover:text-white bg-elevated border border-white/[0.08] hover:border-primary/40 rounded-xl transition-all"
+        >
+          Feedback inbox
+        </a>
         {updatedAt && (
           <div className="text-xs text-white/30 font-mono hidden md:inline-block">
             Updated {updatedAt.toLocaleTimeString()}
