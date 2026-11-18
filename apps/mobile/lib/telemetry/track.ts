@@ -430,6 +430,10 @@ export function trackSeekLatency(dims: {
   providerId?: string;
   mediaType?: "movie" | "tv";
 }): void {
+  // 1-in-5 sampling: this is the single hottest event (~22% of all D1
+  // writes); uniform sampling keeps the latency distribution and percentiles
+  // unbiased while cutting its volume 5x. Divide counts by 0.2 when reading.
+  if (Math.random() >= 0.2) return;
   enqueue(
     "seek_latency",
     {

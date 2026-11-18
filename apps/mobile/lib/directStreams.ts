@@ -107,7 +107,7 @@ const BUNDLED_CONFIG: StreamProvidersConfig = {
 // entry cached on a device is ignored, so the dead dl.falixmovies.com base
 // can't linger in AsyncStorage for a full TTL window.
 const CONFIG_CACHE_KEY = "@filmsnaps/stream-providers/v2";
-const CONFIG_TTL_MS = 30 * 60 * 1000; // 30 min
+const CONFIG_TTL_MS = 6 * 60 * 60 * 1000; // 6h — host-death recovery vs API load; bump key to force-invalidate
 
 function getConfigUrl(): string {
   return `${getApiBaseUrl().replace(/\/$/, "")}/stream-providers.json`;

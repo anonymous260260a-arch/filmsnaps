@@ -31,8 +31,8 @@ import {
 import { getAnonId, initAnonId } from "./anonId";
 
 const MAX_QUEUE = 400;
-const BATCH_SIZE = 20;
-const FLUSH_INTERVAL_MS = 30_000;
+const BATCH_SIZE = 40;
+const FLUSH_INTERVAL_MS = 120_000;
 const QUEUE_KEY = "telemetry:queue:v1";
 const SESSION_KEY = "telemetry:session:v1";
 
@@ -435,7 +435,7 @@ async function sendFromQueue(max: number): Promise<void> {
 
 /** Timer/batch flush: bounded so the JS thread is never blocked long. */
 export async function flushNow(): Promise<void> {
-  await sendFromQueue(25);
+  await sendFromQueue(BATCH_SIZE);
 }
 
 /**
