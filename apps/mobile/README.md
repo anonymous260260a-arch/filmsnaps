@@ -174,5 +174,5 @@ entry as well, so used-space accounting stays accurate.
 
 ## Feedback
 
-The settings page links to the deployed feedback portal (`@filmsnaps/feedback`),
-loaded in-app via webview.
+The settings page opens the native Feedback screen — bug reports, ideas,
+questions and star ratings, with replies from the team shown in-app.

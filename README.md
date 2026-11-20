@@ -9,19 +9,18 @@ watchlist, track watch history, and stream through provider players that are
 hardened against ads, trackers, and popups on every platform.
 
 This repository is a **pnpm + Turborepo monorepo**: a Next.js web app, an
-Electron desktop app that wraps the web app with a native hardened player, an
-Expo/React Native mobile app, and a feedback portal.
+Electron desktop app that wraps the web app with a native hardened player, and
+an Expo/React Native mobile app.
 
 ---
 
 ## Apps
 
-| App                                 | Package               | Stack                               | Description                                              |
-| ----------------------------------- | --------------------- | ----------------------------------- | -------------------------------------------------------- |
-| [Web](apps/web/README.md)           | `@filmsnaps/web`      | Next.js 16 (App Router) + Tailwind  | Discovery UI, watch pages, API routes                    |
-| [Desktop](apps/desktop/README.md)   | `@filmsnaps/desktop`  | Electron 43 + Next.js static export | Web UI + native hardened player (WebContentsView hybrid) |
-| [Mobile](apps/mobile/README.md)     | `@filmsnaps/mobile`   | Expo SDK 55 / React Native 0.83     | Phone app with downloads + native player                 |
-| [Feedback](apps/feedback/README.md) | `@filmsnaps/feedback` | Next.js 16 + Cloudflare Workers/D1  | Public feedback portal                                   |
+| App                               | Package              | Stack                               | Description                                              |
+| --------------------------------- | -------------------- | ----------------------------------- | -------------------------------------------------------- |
+| [Web](apps/web/README.md)         | `@filmsnaps/web`     | Next.js 16 (App Router) + Tailwind  | Discovery UI, watch pages, API routes                    |
+| [Desktop](apps/desktop/README.md) | `@filmsnaps/desktop` | Electron 43 + Next.js static export | Web UI + native hardened player (WebContentsView hybrid) |
+| [Mobile](apps/mobile/README.md)   | `@filmsnaps/mobile`  | Expo SDK 55 / React Native 0.83     | Phone app with downloads + native player                 |
 
 ## Packages
 

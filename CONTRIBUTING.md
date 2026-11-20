@@ -28,7 +28,6 @@ FilmSnaps is a pnpm + Turborepo monorepo. Read
 | `apps/web`                 | `@filmsnaps/web`             | Next.js web app (discovery + watch UI).                  |
 | `apps/desktop`             | `@filmsnaps/desktop`         | Electron app wrapping the web app + hardened player.     |
 | `apps/mobile`              | `@filmsnaps/mobile`          | Expo / React Native app.                                 |
-| `apps/feedback`            | `@filmsnaps/feedback`        | Feedback portal (Cloudflare Workers + D1).               |
 | `packages/shared`          | `@filmsnaps/shared`          | Shared guards, provider registry, types, state.          |
 | `packages/adblock-config`  | `@filmsnaps/adblock-config`  | v5 `providers.json` + `filters.txt` schema + validation. |
 | `packages/filter-compiler` | `@filmsnaps/filter-compiler` | `@ghostery/adblocker` engine + mobile pattern export.    |
@@ -78,12 +77,6 @@ pnpm dev:desktop    # starts web dev server + Electron
 
 Desktop builds bundle a Next.js **static export** and a compiled filter
 engine — see `apps/desktop/README.md`.
-
-### Feedback
-
-```bash
-cd apps/feedback && pnpm dev   # http://localhost:3001
-```
 
 ---
 

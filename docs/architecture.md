@@ -15,8 +15,7 @@ filmsnaps/
 ├── apps/
 │   ├── web/                  @filmsnaps/web   — Next.js web app (discovery + watch UI)
 │   ├── desktop/              @filmsnaps/desktop — Electron wrapper (watch UI + hardened player)
-│   ├── mobile/               @filmsnaps/mobile — React Native / Expo app (Android + iOS)
-│   └── feedback/             @filmsnaps/feedback — Next.js feedback portal (Cloudflare Workers + D1)
+│   └── mobile/               @filmsnaps/mobile — React Native / Expo app (Android + iOS)
 ├── packages/
 │   ├── shared/               @filmsnaps/shared — shared UI logic, security bundles, state, providers
 │   ├── adblock-config/       @filmsnaps/adblock-config — providers.json + filters.txt v5 schema + validation
@@ -83,14 +82,6 @@ filmsnaps/
   app and survive uninstall; an `OfflineFileProvider` bridge feeds them back to
   the in-app `expo-video` player. Older Android keeps app-private files.
 - **Builds:** EAS (`apps/mobile/eas.json`), `.github/workflows/mobile.yml`.
-
-### `apps/feedback` — Feedback portal
-
-- **Stack:** Next.js 16 + Cloudflare Workers (OpenNext) + Cloudflare D1.
-- **Role:** public bug reports, feature requests, roadmap, changelog, FAQ —
-  account-free, Turnstile-protected, offline queue.
-- **Docs:** its own `apps/feedback/docs/` tree (linked from its README).
-- **Deploys:** Cloudflare Workers via `apps/feedback` wrangler config.
 
 ## Packages
 

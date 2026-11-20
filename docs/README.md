@@ -26,12 +26,11 @@ commit.
 
 ## App documentation
 
-| App      | README                                                  |
-| -------- | ------------------------------------------------------- |
-| Web      | [`apps/web/README.md`](../apps/web/README.md)           |
-| Desktop  | [`apps/desktop/README.md`](../apps/desktop/README.md)   |
-| Mobile   | [`apps/mobile/README.md`](../apps/mobile/README.md)     |
-| Feedback | [`apps/feedback/README.md`](../apps/feedback/README.md) |
+| App     | README                                                |
+| ------- | ----------------------------------------------------- |
+| Web     | [`apps/web/README.md`](../apps/web/README.md)         |
+| Desktop | [`apps/desktop/README.md`](../apps/desktop/README.md) |
+| Mobile  | [`apps/mobile/README.md`](../apps/mobile/README.md)   |
 
 ## Other top-level docs
 
