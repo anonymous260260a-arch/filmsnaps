@@ -7,7 +7,8 @@ commit.
 | Document                        | Contents                                                                                                                                                                          |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Architecture](architecture.md) | Repository layout, apps, packages, data flow, builds, CI.                                                                                                                         |
-| [Security](security.md)         | The full security stack: threat model, R0–R8 cascade, L2–L8 desktop layers, mobile native protection, `providers.json` + `filters.txt` v5 config, Ed25519 OTA, audit diagnostics. |
+| [Desktop](desktop.md)           | The Windows desktop app: dev setup, bundling, releases, updates, window state, performance table.                                                                                 |
+| [Security](security.md)         | The full security stack: threat model, desktop network/cosmetic filtering and privilege isolation, mobile native protection, `providers.json` + `filters.txt` v5 config, Ed25519. |
 | [Packages](packages.md)         | The internal workspace packages (`shared`, `adblock-config`, `filter-compiler`) and how to add a new one.                                                                         |
 
 ## Player & streaming (mobile)
@@ -20,17 +21,18 @@ commit.
 
 ## Architecture decision records (ADR)
 
-| Doc                                  | Decision                                                            |
-| ------------------------------------ | ------------------------------------------------------------------- |
-| [ADR 0002](adr/0002-auth-removal.md) | Remove the no-op web auth scaffolding — the app is fully anonymous. |
+| Doc                                  | Decision                                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------------------------- |
+| [ADR 0002](adr/0002-auth-removal.md) | Remove the no-op web auth scaffolding — the app is fully anonymous.                         |
+| [ADR 0003](adr/0003-tauri-beta.md)   | Move the desktop app from Electron to Tauri (superseded: this is now the only desktop app). |
 
 ## App documentation
 
-| App     | README                                                |
-| ------- | ----------------------------------------------------- |
-| Web     | [`apps/web/README.md`](../apps/web/README.md)         |
-| Desktop | [`apps/desktop/README.md`](../apps/desktop/README.md) |
-| Mobile  | [`apps/mobile/README.md`](../apps/mobile/README.md)   |
+| App     | README                                              |
+| ------- | --------------------------------------------------- |
+| Web     | [`apps/web/README.md`](../apps/web/README.md)       |
+| Desktop | [docs/desktop.md](desktop.md)                       |
+| Mobile  | [`apps/mobile/README.md`](../apps/mobile/README.md) |
 
 ## Other top-level docs
 

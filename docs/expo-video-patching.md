@@ -16,7 +16,7 @@ on this repo). The design of the vendored extractor itself is documented in
 | `apps/mobile/package.json` → `expo.autolinking.buildFromSource: ["expo-video"]` | Forces expo-modules-autolinking to compile the module from source. Without it Expo consumes the **prebuilt AAR** shipped in the npm package and the patch is never compiled into the app — silently. |
 
 After a successful build, confirm the "Using expo modules" Gradle output shows
-`expo-video` **without** the boxed `[📦]` prebuilt marker.
+`expo-video` **without** the `[prebuilt]` marker.
 
 ## Edit workflow
 

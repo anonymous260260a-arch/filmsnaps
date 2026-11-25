@@ -1,300 +1,124 @@
-# Contributing to FilmSnaps
+# Contributing
 
-Thanks for helping out! This guide covers how to set up the repo, develop, add
-a provider, and ship changes across web, desktop, and mobile.
+## Set up
 
-## Table of contents
-
-1. [Repository overview](#repository-overview)
-2. [Setting up](#setting-up)
-3. [Development workflow](#development-workflow)
-4. [Project structure](#project-structure)
-5. [Adding a new provider](#adding-a-new-provider)
-6. [Editing `providers.json` + `filters.txt` (v5)](#editing-providersjson--filterstxt-v5)
-7. [Testing](#testing)
-8. [Code style](#code-style)
-9. [Common pitfalls](#common-pitfalls)
-
----
-
-## Repository overview
-
-FilmSnaps is a pnpm + Turborepo monorepo. Read
-[docs/architecture.md](docs/architecture.md) for the full picture, and
-[docs/security.md](docs/security.md) before touching anything security-related.
-
-| Directory                  | Package                      | What it is                                               |
-| -------------------------- | ---------------------------- | -------------------------------------------------------- |
-| `apps/web`                 | `@filmsnaps/web`             | Next.js web app (discovery + watch UI).                  |
-| `apps/desktop`             | `@filmsnaps/desktop`         | Electron app wrapping the web app + hardened player.     |
-| `apps/mobile`              | `@filmsnaps/mobile`          | Expo / React Native app.                                 |
-| `packages/shared`          | `@filmsnaps/shared`          | Shared guards, provider registry, types, state.          |
-| `packages/adblock-config`  | `@filmsnaps/adblock-config`  | v5 `providers.json` + `filters.txt` schema + validation. |
-| `packages/filter-compiler` | `@filmsnaps/filter-compiler` | `@ghostery/adblocker` engine + mobile pattern export.    |
-
----
-
-## Setting up
-
-**Prerequisites:** Node ≥ 18, pnpm 10 (`corepack enable`).
+Requires Node.js 18 or newer and pnpm 10 (`corepack enable`).
 
 ```bash
-pnpm install        # installs all workspaces; builds @filmsnaps/shared via postinstall
+pnpm install
+cp .env.example apps/web/.env.local   # then set TMDB_API_KEY
 ```
 
-If you change a filter/blocklist config, regenerate the adblock artifacts:
+`pnpm install` builds `@filmsnaps/shared` through the postinstall hook.
+
+## Run
+
+| Command            | Runs                             |
+| ------------------ | -------------------------------- |
+| `pnpm dev:web`     | Web app at http://localhost:3000 |
+| `pnpm dev:mobile`  | Expo dev server                  |
+| `pnpm dev:desktop` | Windows desktop app              |
+
+The desktop app serves the web app's static export, so build that export first.
+[The desktop guide](docs/desktop.md) has the exact commands, the libmpv setup and
+the signing key.
+
+Native mobile changes need a full rebuild (`pnpm android`, `pnpm ios`).
+
+## Test and lint
 
 ```bash
-pnpm build:filters  # recompiles compiled-engine.bin + android-adblock-patterns.json
+pnpm test              # Vitest: shared packages
+pnpm test:desktop      # Rust: desktop app
+pnpm lint              # Turbo lint
+pnpm typecheck:desktop # cargo check
+pnpm format            # Prettier
 ```
 
----
+Add a test when you change the provider registry, the navigation guard, the guard
+bundle, or the desktop adblock and player logic.
 
-## Development workflow
+## Branches, commits and pull requests
 
-### Web
+1. Branch from `main`, one logical change per branch.
+2. Write imperative commit subjects under about 72 characters; explain why in the
+   body when it is not obvious.
+3. Run the tests and lint for the apps you touched.
+4. Open the pull request against `main` and describe what changed and why. Link
+   the issue it fixes.
 
-```bash
-pnpm dev:web        # http://localhost:3000
-```
+Review looks at behaviour, not only style: does the change hold for an empty
+list, a slow network, a cancelled request, and a second provider?
 
-Env: `TMDB_API_KEY` (server-only, see `apps/web/README.md`).
+## Add a provider
 
-### Mobile
+1. Register it in `packages/shared/src/providers/registry.ts`:
 
-```bash
-pnpm dev:mobile     # Expo dev server
-```
+   ```ts
+   {
+     id: 'myprovider',
+     name: 'MyProvider',
+     displayName: 'Server XX',
+     baseUrl: 'https://example.com',
+     mediaTypes: ['movie_tv'],
+     embed: {
+       movie: (id: string) => `/embed/movie/${id}`,
+       tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}`,
+     },
+   }
+   ```
 
-Uses the native `player-webview` module and `with-filmsnaps-downloader` plugin —
-native changes need a full native rebuild (`pnpm android` / `pnpm ios`).
+   Anime providers are keyed by MAL/AniList IDs instead of TMDB. Set
+   `animeOnly: true` and `mediaTypes: ['anime']` so they appear only in anime
+   sessions.
 
-### Desktop
+2. Add its domains to `providers.json`: `embedDomains`, `cdnDomains`, and a
+   `providerProfiles` entry listing the scripts, frames and images it may load.
+3. Add `filters.txt` rules if the provider needs allowlists or blocks.
+4. Run `pnpm build:filters` and `pnpm sign:providers`.
+5. Play a title on web, desktop and mobile. On desktop, confirm stderr does not
+   print `[adblock] network filtering unavailable`.
 
-```bash
-pnpm dev:desktop    # starts web dev server + Electron
-```
+Never weaken a shared guard to make one provider work. Add a per-provider entry
+in `providers.json` instead.
 
-Desktop builds bundle a Next.js **static export** and a compiled filter
-engine — see `apps/desktop/README.md`.
+## Edit `providers.json` and `filters.txt`
 
----
+`providers.json` is Ed25519-signed; `providers.json.sig` must match it.
 
-## Project structure
+1. Edit the files.
+2. `pnpm build:filters` — regenerates the mobile patterns. The desktop app reads
+   both files directly.
+3. `pnpm sign:providers`.
+4. Commit the config and its signature together.
 
-```
-apps/
-  web/                 Next.js app — app/ (routes + API), components/, lib/
-  desktop/             Electron — src/main.ts, src/preload/, src/security/
-  mobile/              Expo — app/ (routes), components/, lib/, modules/player-webview/
-  feedback/            Next.js + Workers + D1
-packages/
-  shared/              shared logic (security bundles, providers, state)
-  adblock-config/      providers.json + filters.txt v5 schema + validation
-  filter-compiler/     @ghostery/adblocker engine + mobile pattern export
-providers.json          v5 config (providers) — single source of truth, Ed25519-signed
-providers.json.sig      Ed25519 signature over providers.json
-filters.txt             v5 config (uBO/EasyList rules)
-blocklist.json          legacy v4 fallback (backward compat)
-```
+Rules that prevent outages:
 
----
+- Never put a real video CDN in `rules.alwaysBlock`.
+- `allowedCdnHosts` is global: every entry bypasses filtering on every provider.
+- `allowServerRedirects` is only for redirect-mesh providers (vidsrc→viduki.net,
+  videasy→videasy.to).
 
-## Adding a new provider
+## Code conventions
 
-### Step 1 — Register in `@filmsnaps/shared`
+- TypeScript formatted with Prettier.
+- Never reference a server-only secret such as `TMDB_API_KEY` from a client
+  component.
+- Security code opens with a comment explaining why the layer exists and how it
+  fails.
+- The desktop app is Rust plus the static export. Logic it re-implements lives in
+  `src-tauri/src/` with a comment pointing at the canonical TypeScript source.
+- Never commit `.env` or `.dev.vars`. If a key leaks, rotate it.
 
-**File:** `packages/shared/src/providers/registry.ts`
+## Report a bug
 
-```ts
-{
-  id: 'myprovider',                    // unique ID, used in URLs & code
-  name: 'MyProvider',                  // internal name
-  displayName: 'Server XX',            // shown in UI (mask the real name)
-  baseUrl: 'https://example.com',      // embed base
-  mediaTypes: ['movie_tv'],            // ['movie_tv'] (default) or add 'anime'; providers without it default to movie/TV
-  animeOnly: false,                    // true for MAL/AniList-keyed anime-only sources (excluded from movie/TV pickers)
-  embed: {
-    movie: (id: string) => `/embed/movie/${id}`,
-    tv: (id, season, episode) => `/embed/tv/${id}/${season}/${episode}`,
-  }
-}
-```
+Open an issue with the app and its version, what you expected, what happened, and
+the steps to reproduce. For security problems follow [SECURITY.md](SECURITY.md)
+instead of opening a public issue.
 
-> **Anime providers** are keyed by MAL/AniList IDs, not TMDB. Mark them
-> `animeOnly: true` (and `mediaTypes: ['anime']`) so they're excluded from
-> movie/TV server pickers and selected only in anime sessions via
-> `filterAnimeProviders` / `getProvidersForMode('anime')`. If an anime source
-> should also carry regular movie/TV (hybrid), set `mediaTypes: ['movie_tv', 'anime']`
-> (e.g. nxsha, screenscape) and add it to `ANIME_PROVIDER_IDS` if it should appear
-> in anime sessions.
+## Documentation
 
-### Step 2 — Add its domains to `providers.json` (v5)
-
-**File:** `providers.json` (repo root, schema v5)
-
-```json
-{
-  "version": 5,
-  "providers": [
-    {
-      "id": "myprovider",
-      "embedDomains": ["example.com", "www.example.com"],
-      "cdnDomains": ["cdn.example.com"],
-      "enabled": true,
-      "allowServerRedirects": false,
-      "blockHomePaths": ["/go-home"],
-      "apiIntercepts": [],
-      "cosmeticRules": [],
-      "adblockDisabled": false
-    }
-  ],
-  "providerProfiles": {
-    "example.com": {
-      "scripts": ["https://example.com/script.js"],
-      "iframes": ["https://cdn.example.com/frame.html"],
-      "images": ["https://example.com/image.png"]
-    }
-  },
-  "navigationGuard": {
-    "universalBlockPaths": ["/"]
-  },
-  "rules": {
-    "videoDetection": {
-      "extensions": [".mp4", ".m3u8", ".ts"],
-      "pathPatterns": ["seg-", "init-", "chunk-"],
-      "enableSessionTrust": true,
-      "trustTTLMs": 900000
-    },
-    "alwaysBlock": {
-      "domains": [],
-      "pathPatterns": []
-    }
-  }
-}
-```
-
-### Step 3 — Add `filters.txt` entries (optional, for ad blocking)
-
-**File:** `filters.txt` (repo root)
-
-Standard uBO/EasyList syntax. Example rules:
-
-```
-@@||example.com^              # allowlist the embed domain
-||google-analytics.com^$3p   # block 3rd-party trackers
-##.ad-banner                  # cosmetic rule
-```
-
-### Step 4 — Regenerate compiler artifacts
-
-```bash
-pnpm build:filters  # rebuilds compiled-engine.bin + android-adblock-patterns.json
-```
-
-### Step 5 — Test on each platform
-
-- **Web** — iframe mounts the embed; check the video plays without 404s.
-- **Desktop** — full R0–R8 cascade + L5 preload. Verify with
-  `FILMSNAPS_AUDIT=1` (see `docs/security.md` → Audit & diagnostics).
-- **Mobile** — native `PlayerWebView` + `shouldInterceptRequest`. Verify no ads,
-  popups, or fullscreen issues.
-
-### Step 6 — Sign the config (for OTA)
-
-Run the signing step to generate `providers.json.sig`:
-
-```bash
-pnpm sign:providers  # Ed25519-signs providers.json; .key in .keys/ (gitignored), .pub committed
-```
-
-### Providers needing custom handling
-
-If the provider doesn't work with the standard pipeline (Cloudflare challenge,
-custom auth), document **why** in the code, add provider-specific handling in
-the mobile `VideoWebView.tsx` / `PlayerWebViewOverlayView.kt` and the desktop
-preload, then test on all platforms. Do **not** weaken shared guards to make a
-provider work — prefer per-provider allowlist entries.
-
----
-
-## Editing `providers.json` + `filters.txt` (v5)
-
-> The v5 config lives in `providers.json` (app logic) + `filters.txt` (uBO
-> syntax), both Ed25519-signed (`providers.json.sig`). A legacy `blocklist.json`
-> (v4) is kept for backward compatibility.
-
-**Workflow:**
-
-1. Edit `providers.json` (add/update provider entries, allowlists, nav-guard,
-   apiIntercepts, cosmetics, `allowServerRedirects`).
-2. Edit `filters.txt` (uBO/EasyList rules — exact/suffix matching only, e.g.
-   `@@||cloudfront.net^`, `||doubleclick.net^$3p`, `##.ad-banner`).
-3. Run `pnpm build:filters` — regenerates `compiled-engine.bin` (desktop) and
-   `android-adblock-patterns.json` (mobile).
-4. Run `pnpm sign:providers` — Ed25519-signs `providers.json` → `providers.json.sig`.
-5. Commit all four files. OTA clients will pull and verify the updated config.
-
-**Safety rules:**
-
-- Never put a real video-CDN host in `rules.alwaysBlock` (R5) unless you're
-  sure it never serves content.
-- `allowedCdnHosts` is a **global allowlist** — adding a domain lets it bypass
-  the cascade on every provider.
-- `blockHomePaths` are per-provider deny-lists — append new home-page shapes as
-  discovered.
-- `allowServerRedirects: true` is only for redirect-mesh providers (vidsrc→viduki.net,
-  videasy→videasy.to). Enabling it on a non-redirect provider could let an ad
-  redirect through.
-
----
-
-## Testing
-
-```bash
-pnpm test           # Vitest suites (shared + desktop security)
-pnpm lint           # Turbo lint across all apps
-pnpm typecheck:desktop   # desktop tsc --noEmit (other apps: cd <app> && pnpm typecheck)
-```
-
-Current suites:
-
-- `packages/shared/src/providers/registry.test.ts`
-- `packages/shared/src/security/navigation-home.test.ts`
-- `packages/shared/src/security/playerGuard.test.ts`
-- `apps/desktop/src/security/blocklist.test.ts`
-
-If you change the R0–R8 cascade or the navigation guard, add/extend tests in
-these files.
-
----
-
-## Code style
-
-- TypeScript, Prettier-formatted (`pnpm format`).
-- Server-only secrets (e.g. `TMDB_API_KEY`) never referenced from client
-  components.
-- Security code carries a header comment explaining **why** a layer exists and
-  how it fails. Match that style.
-- ESM/CJS boundary: desktop main is CommonJS and never imports `@filmsnaps/*`
-  at runtime — reproduce shared logic there with a comment pointing at the
-  canonical source (see `provider-config.ts`, `navigation-guard.ts`).
-
----
-
-## Common pitfalls
-
-- **Forgetting `pnpm build:filters`** after editing `providers.json` or
-  `filters.txt` — the desktop engine and mobile patterns go stale.
-- **Forgetting `pnpm sign:providers`** after editing `providers.json` — OTA
-  clients will reject the unsigned config and keep the last-known-good version.
-- **Adding a provider to only one platform.** Registration lives in
-  `@filmsnaps/shared`; each app consumes the same registry.
-- **Weakening guards.** If a provider breaks, investigate the allowlist /
-  per-provider config first — never disable a shared layer.
-- **`.env` / `.dev.vars`** — never commit secrets. `TMDB_API_KEY` was
-  historically committed in `.dev.vars`; if you see it anywhere, untrack it and
-  rotate the key.
-- **No server-side provider proxy.** Provider players load via sandboxed
-  cross-origin iframes with a parent-enforced CSP (`buildIframeCSP`); there is
-  no server-side proxy route. Don't reintroduce one without an ADR-style note.
+Update the doc covering what you changed: [docs/desktop.md](docs/desktop.md) for
+the desktop app, [docs/security.md](docs/security.md) for a security layer,
+[docs/architecture.md](docs/architecture.md) for structure. If a doc becomes
+wrong, fix or delete it in the same change.

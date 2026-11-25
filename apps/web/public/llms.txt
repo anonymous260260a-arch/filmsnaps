@@ -20,5 +20,5 @@
 
 - FilmSnaps is an open-source project. The repository is at https://github.com/anonymous260260a-arch/filmsnaps
 - Content metadata (posters, backdrops, ratings, cast) is provided by The Movie Database (TMDB).
-- The desktop app is built with Electron; the web app with Next.js; the mobile app with React Native (Expo).
+- The desktop app is built with Tauri (Rust) and plays video with libmpv; the web app with Next.js; the mobile app with React Native (Expo).
 - FilmSnaps blocks ads and trackers using a layered system: a native network-level engine (Aho-Corasick pattern matching over EasyList/EasyPrivacy/AdGuard-derived lists), cosmetic CSS filtering, runtime guard scripts, anti-anti-adblock scriptlets, and provider-specific rules.

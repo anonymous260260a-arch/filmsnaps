@@ -2,201 +2,127 @@
 
 FilmSnaps streams content from third-party streaming providers inside embedded
 webviews/iframes. Those providers inject ads, trackers, popups, and malicious
-scripts into the player surface. This document is the authoritative reference
-for the security stack that keeps the player functional while blocking that
-behavior. It reflects the **actual implementation** — every layer named here
-maps to real code.
+scripts into the player surface. This document is the authoritative reference for
+the security stack that keeps the player functional while blocking that behavior.
+It reflects the **actual implementation** — every layer named here maps to real
+code.
 
-> **Documentation contract:** this file describes what the code does today. If
-> a layer's behavior changes, update this document in the same commit.
-
----
-
-## Table of contents
-
-1. [Threat model](#threat-model)
-2. [The core principle](#the-core-principle)
-3. [Shared building blocks](#shared-building-blocks)
-4. [Desktop: R0–R8 rule cascade](#desktop-r0r8-rule-cascade)
-5. [Desktop: L2–L8 defense layers](#desktop-l2l8-defense-layers)
-6. [Mobile (Android/iOS) security](#mobile-androidios-security)
-7. [Web security](#web-security)
-8. [Configuration: `providers.json` + `filters.txt` v5](#configuration-providersjson--filterstxt-v5)
-9. [Audit & diagnostics](#audit--diagnostics)
-10. [Threat matrix](#threat-matrix)
+> **Documentation contract:** this file describes what the code does today. If a
+> layer's behavior changes, update this document in the same commit.
 
 ---
 
 ## Threat model
 
-| Threat                       | Example                                        | Consequence if unblocked              |
-| ---------------------------- | ---------------------------------------------- | ------------------------------------- |
-| **Popup / popunder ads**     | `window.open("https://ads.example")`           | New windows, redirect chains          |
-| **Navigation hijack**        | `location.href = "https://ads.example"`        | Player escapes to ad page             |
-| **Ad iframes / overlays**    | Injected `<iframe>` / fixed-position div       | Ads covering the video                |
-| **Tracking beacons**         | `fetch`/`XHR` to ad network                    | User fingerprinting                   |
-| **Malware / fake downloads** | Auto-triggered `.apk`/`.exe` download          | Drive-by install                      |
-| **Service-worker abuse**     | `navigator.serviceWorker.register()`           | Request interception, push spam       |
-| **Code injection**           | `eval()` / `new Function()` of packed payloads | Arbitrary script execution            |
-| **WebView detection**        | `navigator.webdriver` / `window.chrome` probes | Provider blocks playback              |
-| **Anti-hotlink CDN gating**  | CDN rejects requests missing `Referer`         | Stream stalls before playback         |
-| **Home-page escape**         | Provider error UI "Go Home" → `provider.com/`  | Player frame escapes to provider home |
+| Threat                       | Example                                        | Consequence if unblocked               |
+| ---------------------------- | ---------------------------------------------- | -------------------------------------- |
+| **Popup / popunder ads**     | `window.open("https://ads.example")`           | New windows, redirect chains           |
+| **Navigation hijack**        | `location.href = "https://ads.example"`        | Player escapes to ad page              |
+| **Ad iframes / overlays**    | Injected `<iframe>` / fixed-position div       | Ads covering the video                 |
+| **Tracking beacons**         | `fetch`/`XHR` to ad network                    | User fingerprinting                    |
+| **Malware / fake downloads** | Auto-triggered `.apk`/`.exe` download          | Drive-by install                       |
+| **Code injection**           | `eval()` / `new Function()` of packed payloads | Arbitrary script execution             |
+| **Tampered configuration**   | Edited `providers.json` / `filters.txt`        | Attacker-chosen blocking and providers |
+| **Tampered update**          | Replaced installer on the delivery path        | Arbitrary code on the user's machine   |
 
-**Adversary model:** the third-party provider page is _untrusted content_. It
-may run scripts we did not author, on domains we did not choose. Everything it
-requests must be treated as potentially hostile until proven otherwise.
+**Adversary model:** the third-party provider page is _untrusted content_. It may
+run scripts we did not author, on domains we did not choose. Everything it
+requests is treated as potentially hostile until proven otherwise.
 
 ---
 
 ## The core principle
 
-> **Block at the network/navigation layer, not through aggressive DOM
-> manipulation. Let the page load normally; intercept hostile actions.**
+> **Block at the network layer first. Let the page load normally; intercept
+> hostile requests.**
 
-The most effective layers run **before any page JavaScript executes** — in the
-native process or the platform's request pipeline. DOM-level scriptlets and
-cosmetic filters are defense-in-depth for the cases those layers miss (e.g.
-same-origin ads), not the primary mechanism.
-
-A second, load-bearing principle: **coverage must not depend on timing or on a
-single delivery mechanism.** Every page must be protected _by construction_,
-across reloads, cross-site navigations, process swaps, and programmatically
-created frames. This is why desktop layers overlap (L5 session preload + L7b
-frame sweep) and why they are idempotent behind a shared guard.
+The load-bearing layer runs **before any page JavaScript executes**, in the
+WebView2 request pipeline. Cosmetic rules and scriptlets are defense-in-depth for
+what the network layer cannot see (same-origin ads), not the primary mechanism.
 
 ---
 
-## Shared building blocks
+## Desktop (`apps/desktop-tauri`)
 
-All three platforms consume the same guard logic from `@filmsnaps/shared`:
+### Network filtering
 
-| Module                                 | Purpose                                                                  |
-| -------------------------------------- | ------------------------------------------------------------------------ |
-| `src/security/playerGuard.ts`          | 15-layer popup/ad-blocking injection bundle (pure string builder).       |
-| `src/security/scriptlets.ts`           | uBlock Origin–style anti-anti-adblock scriptlets.                        |
-| `src/security/navigation-home.ts`      | Path-level home-page escape detection (pure function).                   |
-| `src/providers/registry.ts`            | Provider registry — the single source of truth for provider definitions. |
-| `src/theme/`, `src/state/`, `src/api/` | Shared design tokens, watch-history state, TMDB API.                     |
+`src-tauri/src/adblock/hook.rs` attaches to the provider webview after it is
+created and registers `AddWebResourceRequestedFilter("*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)`.
+Every request is checked against the `adblock` engine built from `filters.txt`
+plus the provider host rules; blocked requests are answered with a **403 before
+they leave the process**, so no page script can observe or bypass the decision.
 
-The player guard bundle is built by `buildAllScriptsWithScriptlets()` and
-injected:
+If the hook cannot be attached the app logs
+`[adblock] network filtering unavailable: <reason>` and keeps running without
+network blocking. That is a visible failure, not a silent one.
 
-- **Mobile** — directly into the WebView via `injectedJavaScriptBeforeContentLoaded`.
-- **Desktop** — baked into `provider-preload.js` at build time by
-  `apps/desktop/scripts/build-provider-preload.mjs`, then delivered by the
-  session preload (L5) and frame sweep (L7b).
+### Cosmetic rules and scriptlets
 
----
+`src-tauri/src/adblock/inpage.rs` builds an initialization script from the same
+engine and injects it into the provider webview, so `##selector` rules and
+host-scoped cosmetic CSS are in place at document-start. `cosmetic.rs` turns the
+engine's resources into CSS text and JS string literals; nothing is interpolated
+unescaped.
 
-## Desktop: R0–R8 rule cascade
+### Privilege isolation
 
-**File:** `apps/desktop/src/security/rule-cascade.ts`
+- The `electronAPI` bridge is injected **only** into the main webview
+  (`src-tauri/src/bridge.rs`).
+- `capabilities/default.json` grants permissions to the `main` window and webview
+  only. The provider webview has no capability, no IPC surface and no access to
+  any command.
+- `withGlobalTauri` is `false`, so no Tauri API is exposed on any page's `window`
+  beyond the bridge.
+- There is no Node.js runtime in the renderer; file and network work happens in
+  Rust behind explicit commands.
 
-The central blocking decision-maker. Every request in the provider session
-passes through `shouldBlockRequest()`. Rules are evaluated in a fixed order,
-fastest-to-most-expensive, with **block rules before allow rules** where it
-matters — an operator-declared always-block can never be overridden by trust or
-an allowlist (`deny-by-exception`).
+### Configuration integrity
 
-| Rule         | What it does                                                                                                | Why                                                                                                                                                                                                                                                                   |
-| ------------ | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **R5**       | Always-block domains (`rules.alwaysBlock.domains` in `providers.json`) — **checked first, unconditionally** | Operator-declared blocks win over any trust/allowlist (fixes `googletagmanager`/`cloudflareinsights` leaking through R0).                                                                                                                                             |
-| **R6**       | Always-block path patterns (`rules.alwaysBlock.pathPatterns`) — substring match on the URL                  | Blocks ad paths that rotate domains.                                                                                                                                                                                                                                  |
-| **R0 / R0b** | Session trust — allow, scoped to the verified video path                                                    | Once a host actually serves video (`.ts`, `.m3u8`, `.mp4`, disguised segments), its _video directory_ bypasses the cascade. **Path-scoped, never whole-host** — a video host may also serve ads. TTL 15 min (sliding window, MIME-based).                             |
-| **R1**       | Provider allowlist + `adblockDisabled` bypass                                                               | Provider's known CDN/embed domains clear early. When a provider has `adblockDisabled: true`, the filter engine is skipped but R5–R7 still run.                                                                                                                        |
-| **R2**       | Global CDN allowlist                                                                                        | Known-good CDN domains from `allowedCdnHosts`.                                                                                                                                                                                                                        |
-| **R3**       | Provider embed domain                                                                                       | The provider's own hostname always loads.                                                                                                                                                                                                                             |
-| **R3.5**     | Per-provider profile allowlist (`providerProfiles`)                                                         | Mobile-parity: any `script`/`iframe`/`image` whose host is **not** in the provider's profile is blocked. Rotation-proof — a rotating ad-orchestrator subdomain is blocked by definition. Never blocks the main frame or media.                                        |
-| **R7a**      | Same-origin ad paths (`SAME_ORIGIN_AD_PATH`)                                                                | Blocks `/ads/`, `/banners/`, `/popup/`, `/tracking/` etc. **served from the provider's own host** — invisible to cross-origin filter rules.                                                                                                                           |
-| **R4b**      | Mobile-parity URL-substring block                                                                           | Whole-URL substring trie fed from the **same `android-adblock-patterns.json`** mobile uses. Catches rotating ad orchestrators `@ghostery/adblocker` can't (their subdomains aren't in compiled lists). Guards: never blocks the main frame or video-looking requests. |
-| **R4**       | `@ghostery/adblocker` FiltersEngine (migrated from `@cliqz/adblocker` — same Rust core, same API)           | Aho-Corasick O(L) matching against EasyList/EasyPrivacy/AdGuard/uBO compiled patterns from `filters.txt`.                                                                                                                                                             |
-| **R7**       | Legacy `blocklist.ts` fallback                                                                              | Flat keyword/domain scan + download-URL detection; kept as a backstop.                                                                                                                                                                                                |
-| **R8**       | Default allow                                                                                               | Anything that cleared every rule above loads.                                                                                                                                                                                                                         |
+`src-tauri/src/config.rs` verifies `providers.json` against `providers.json.sig`
+with Ed25519 at startup:
 
-### Session trust granularity (R0)
+- Signature present and valid → config loads.
+- Signature present and invalid → `ConfigError::BadSignature`, the app refuses to
+  load a tampered config.
+- No public key in the bundle → loads with
+  `[config] no Ed25519 public key found — providers.json is NOT signature-verified`
+  printed to stderr, which is visible in a terminal but easy to miss. The public
+  key is bundled, so a packaged build should never take this path.
 
-`apps/desktop/src/security/session-trust.ts` — a host is **not** trusted as a
-whole. Trust is recorded as `(hostname, pathPrefix)` and applies only when:
+### Update integrity
 
-1. the request is a **media-type resource** (`media`, `video`, `audio`, `fetch`), **or**
-2. the request path falls **under the verified video directory**.
+Updates are signed with the minisign key whose public half is pinned in
+`tauri.conf.json` (`plugins.updater.pubkey`). An artifact that does not verify is
+rejected; the failure appears as `[updater] download failed: <reason>`. Updates
+are fetched over HTTPS from a fixed GitHub release tag.
 
-Disguised HLS/DASH segments are recognized (`seg-…`, `init-…`, `chunk-…`,
-`part-…` with non-video extensions like `.woff2`, `.png`, `.css`, `.js`) and
-grant trust so the substring backstop (R4b) doesn't kill real streams.
+### Proxied API requests
 
----
+`api_fetch` in `src-tauri/src/commands.rs` proxies Worker calls that the page
+cannot make directly because of CORS:
 
-## Desktop: L2–L8 defense layers
+- Only `http://` and `https://` URLs are accepted.
+- `origin`, `referer`, `host` and `content-length` headers are stripped so the
+  upstream applies neither a second CORS check nor a spoofed host.
+- Responses to `/api/player/direct` are filtered for expired presigned links
+  (`src-tauri/src/expiry.rs`) before the page sees them.
 
-These are the operational layers installed across the Electron main process and
-the provider `<webview>` session. **Layer numbers appear in code comments —
-this table is the map.**
+### Known gaps
 
-| Layer   | Mechanism                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | File                                              | Load-bearing?                                   |
-| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------- |
-| **L2**  | R0–R8 cascade via `session.webRequest.onBeforeRequest` — runs in the main process **before any renderer JS**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `request-filter.ts`                               | ✅ primary network gate                         |
-| **L3**  | CSP + security headers via `onHeadersReceived` (installed at startup, before any webview exists)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `request-filter.ts` (`setupSecurityHeaders`)      | ✅ closes the "first commit had no headers" gap |
-| **L4**  | Main-process navigation/popup/redirect guard: `setWindowOpenHandler` (deny all popups), `will-navigate`, `will-redirect`, + path-level home-escape guard                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `navigation-guard.ts`                             | ✅ cannot be bypassed by page JS                |
-| **L5**  | Session-level provider preload (`session.registerPreloadScript({ type: 'frame' })`) — runs at document-start in the **main frame and every child frame**, survives cross-site navigations and process swaps                                                                                                                                                                                                                                                                                                                                                                                                                   | `preload/provider-preload.ts`                     | ✅ **primary in-page protection**               |
-| **L6**  | Cosmetic CSS + engine-derived scriptlets applied by the preload (posts class/id/href tokens to the engine)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `cosmetic-filter.ts` + preload                    | ✅                                              |
-| **L7**  | CDP verification — probes each live frame to _confirm_ the preload guard is active. **Does not inject** (a stethoscope, not a shield)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | `provider-security.ts` (`attachProviderSecurity`) | verification only                               |
-| **L7b** | Fail-closed per-frame sweep (no CDP): injects the protection bundle into `about:`/`srcdoc:`/`blob:`/`data:` hole frames, and if a committed frame lacks the guard, **stops that frame only** (never the whole webview)                                                                                                                                                                                                                                                                                                                                                                                                        | `provider-security.ts` (`verifyPreloadInFrames`)  | ✅ fail-closed                                  |
-| **L8**  | HTML‑bytes injection at `document_start` via `Page.addScriptToEvaluateOnNewDocument` — injects the guard IIFE and engine‑derived cosmetic CSS before any page JS executes. **Replaces the old `Fetch` domain approach** (which paused every network request including HLS segments and caused playback stutter and Cloudflare 403s). Runs in the same debugger session as L7 verification — one attach total, zero network overhead. Defense in depth (idempotent via the GUARD sentinel): L5 session preload + L7b frame sweep + L8 HTML‑bytes injection form three independent delivery paths, any of which alone suffices. | `provider-security.ts` (`attachProviderSecurity`) | ✅ active — L5/L6/L8 triple‑guarantee           |
+These are real and deliberate, not oversights:
 
-### L8: HTML‑bytes injection at `document_start`
+| Gap                                                | Consequence                                                                  | Why it is acceptable for now                                                                                         |
+| -------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| No CSP (`"csp": null` in `tauri.conf.json`)        | An XSS in the bundled UI would not be mitigated by a policy                  | The UI is a first-party static export with no user-authored content; the provider page never loads the app's scripts |
+| `api_fetch` accepts any host                       | The proxy can reach any host the app can                                     | It is driven only by first-party code; adding a host allowlist is the next hardening step                            |
+| No session trust or R0–R8 cascade                  | There is no allow/deny cascade beyond the filter engine; no CDP verification | The Electron app's cascade was removed with it. Network blocking plus cosmetic rules is the shipped model            |
+| Provider webview shares the app's WebView2 profile | Cookies and storage span providers                                           | Simpler than a partition; the provider page has no IPC capability either way                                         |
 
-L8 is now **active**, running via `Page.addScriptToEvaluateOnNewDocument` in the
-same debugger session as L7 verification. This injects the guard IIFE and
-engine‑derived cosmetic CSS as part of the document's HTML bytes at
-document-start — before any page JS executes, with **zero network overhead** and
-**zero Cloudflare 403 risk** (headers are preserved because no re-issuance is
-performed).
+### Network-facing user agent
 
-The old `Fetch` domain approach (`session.protocol.handle` → `session.fetch()`)
-is left in place as unused diagnostic code (the handler at
-`html-injector.ts:147‑154`). It is retained so re‑arming is a one‑line uncomment
-if a future use case strictly requires HTML‑body rewriting; but it is **not
-enabled by default** because `Fetch.enable` with `urlPattern: '*'` pauses every
-network request including HLS `.ts`/DASH `.m4s` segments, causing 5–20ms IPC
-round‑trips per segment that destroy playback buffers and spike CPU on low-end
-devices. L5 + L7b + L8 together form a triple‑guarantee: any single layer
-suffices for coverage.
-
-### Why the old `Fetch` domain is disabled
-
-`html-injector.ts` ends with a V8 diagnostic (2026-08-04): intercepting every
-`https`/`http` request and re-issuing it via `session.fetch()` from the main
-process **drops the renderer-context headers Chromium adds** (`Sec-Fetch-*`,
-`Accept`, `Accept-Language`, `Origin`, POST `Content-Type`). Cloudflare then
-403s provider token POSTs even with a clean UA. The handler is left in place
-(unused) so re-arming is a one-line uncomment. **L5 + L7b + L8** (the new
-`addScriptToEvaluateOnNewDocument` approach) remain the fail‑closed gate —
-protection coverage does not depend on the disabled `Fetch` domain.
-
-### Webview lockdown
-
-`apps/desktop/src/main.ts` — on `will-attach-webview`, only the
-`persist:filmsnaps-provider` partition is accepted, and `webPreferences` are
-hard-forced: `sandbox: true` (strips Node APIs from the preload scope),
-`contextIsolation: false` + `nodeIntegrationInSubFrames: true` (required for the
-preload to reach every frame's main world), `webSecurity: true`,
-`nodeIntegration: false`, `allowRunningInsecureContent: false`, no `allowpopups`.
-
-### Provider session lifecycle
-
-`apps/desktop/src/security/request-filter.ts` — the provider session
-(`persist:filmsnaps-provider`, `cache: false`) is **pre-created at app startup**
-so R0–R8 filters, CSP, the preload, and the clean User-Agent are armed before
-the first webview navigates. The `onBeforeRequest` handler is installed
-**once** (idempotency guard) and reads the mutable `_currentBlockingProviderId`
-so provider switches don't reinstall handlers or wipe session trust. `provider:clear`
-wipes storage (cookies, localStorage, IndexedDB, service workers, cache) and trust.
-
-The provider partition uses a **clean desktop-Chrome User-Agent** derived from
-`process.versions.chrome` — Electron's default UA embeds the app identity
-(`@filmsnaps/desktop/1.0.3 ... Electron/42.4.1`), which Cloudflare bot-management
-flags at the edge (403 on provider token APIs → player stall).
+Requests from the app identify themselves as
+`FilmSnaps/<version>` (or a desktop-Chrome UA for provider page loads) so the
+Worker and providers do not see a browser string that misrepresents the client.
 
 ---
 
@@ -218,148 +144,114 @@ generic `react-native-webview` for the actual provider surface.
 ### In-page guard bundle
 
 `apps/mobile/components/VideoWebView.tsx` builds the consolidated injection via
-`buildAllScriptsWithScriptlets()` from `@filmsnaps/shared` (15-layer guard +
-uBO scriptlets + provider cosmetic CSS) and injects it through the native
-module at `document-start`. A DOM sweeper (`MutationObserver` + periodic
-interval) removes overlay ads and re-applies protection to frames created after
-load.
+`buildAllScriptsWithScriptlets()` from `@filmsnaps/shared` (15-layer guard + uBO
+scriptlets + provider cosmetic CSS) and injects it through the native module at
+`document-start`. A DOM sweeper (`MutationObserver` + periodic interval) removes
+overlay ads and re-applies protection to frames created after load.
 
 ### Mobile rule layers (in the overlay view)
 
 Mirrored in Kotlin, keyed to the same `providers.json`:
 
 - **Rule 5 / profile allowlist** — any page-facing `script`/`iframe`/`image`
-  whose host is not in the provider's `providerProfiles` is blocked (rotation-proof).
-  Provider profiles are rotation-proof per-embed-domain allowlists keyed by the
-  provider's `embedDomains` (mobile Rule 5 parity).
+  whose host is not in the provider's `providerProfiles` is blocked
+  (rotation-proof). Provider profiles are per-embed-domain allowlists keyed by
+  the provider's `embedDomains`.
 - **Session trust (v5)** — MIME-type-first trust acquisition (`Content-Type` is
-  `video/*`, `application/dash+xml`, `application/vnd.apple.mpegurl`, etc.) with
-  a 15-minute sliding window (`trustTTLMs`, default 900000ms). Pausing playback
-  does not expire trust; resuming loads the next segment without re-verification.
+  `video/*`, `application/dash+xml`, `application/vnd.apple.mpegurl`, etc.) with a
+  15-minute sliding window (`trustTTLMs`, default 900000ms). Pausing playback does
+  not expire trust.
 - **`shouldInterceptRequest` filtering** — every resource request is matched
   against the native `AdblockEngine` (allowlist → blocklist → Aho-Corasick →
   allow).
 - **NavGuard server-redirect fix** — `allowServerRedirects` flag on redirect-mesh
   providers (vidsrc→viduki.net, videasy→videasy.to) lets the provider's initial
-  301/302/307/308 redirect pass during the bootstrap window, instead of `ERR_FAILED`.
+  301/302/307/308 redirect pass during the bootstrap window instead of `ERR_FAILED`.
 - **API synthetic interception** — `apiIntercepts` rules (e.g. screenscape
   `/api/ads/cycles`) short-circuit ad-orchestrator APIs with synthetic responses.
-- **Cosmetic rules** — `cosmeticRules` from `providers.json` injected as static
-  CSS at HTML-bytes level (L8-style), plus periodic DOM sweeper for React-created
-  elements.
-- **Navigation gating** — top-level navigations are vetted; `intent://` deep
-  links always blocked.
-- **disable-devtool neutralization** — providers ship a `disable-devtool`
-  script that detects tampering and redirects to its 404 page; each detector is
-  neutralized by name (DefineId, Performance, DateToString, FuncToString,
-  closeWindow).
-- **Home-page escape guard** — the path-level `isHomeEscape` logic ported from
+- **Cosmetic rules** — `cosmeticRules` from `providers.json` injected as static CSS
+  at HTML-bytes level, plus a periodic DOM sweeper for React-created elements.
+- **Navigation gating** — top-level navigations are vetted; `intent://` deep links
+  always blocked.
+- **disable-devtool neutralization** — providers ship a `disable-devtool` script
+  that detects tampering and redirects to its 404 page; each detector is
+  neutralized by name.
+- **Home-page escape guard** — the path-level `isHomeEscape` logic from
   `packages/shared/src/security/navigation-home.ts`.
-
-### iOS
-
-`PlayerWebView.swift` implements the same protection contract for WKWebView.
-Both platforms consume the shared guard bundle, so behavior is consistent.
 
 ---
 
 ## Web security
 
-The web app (`apps/web`) is a Next.js (App Router) app. Because a browser
-iframe is a sandboxed guest, web-layer protection is necessarily lighter than
-native:
+The web app (`apps/web`) is a Next.js (App Router) app. Because a browser iframe
+is a sandboxed guest, web-layer protection is necessarily lighter than native:
 
 - **`next.config` / Netlify headers** — `X-Frame-Options`, `X-Content-Type-Options`,
   `Referrer-Policy`, `X-DNS-Prefetch-Control`, `Permissions-Policy` (see
   `netlify.toml`).
 - **Provider iframe CSP** — the watch page (`apps/web/app/watch/WatchClient.tsx`)
   mounts provider embeds in a sandboxed cross-origin iframe whose `csp=` attribute
-  is set from `lib/movieProviders/cspBuilder.ts` (`buildIframeCSP`), enforcing
+  comes from `lib/movieProviders/cspBuilder.ts` (`buildIframeCSP`), enforcing
   `worker-src 'none'`, restricted `connect-src`, and `object-src 'none'` in the
-  browser — no server-side proxy required.
-- **Watch page** — `apps/web/app/watch/WatchClient.tsx` mounts provider
-  embeds in a `<DesktopSecureWebview>` / sandboxed iframe with the shared
-  protection script.
+  browser.
+- **Watch page** — `apps/web/app/watch/WatchClient.tsx` mounts provider embeds in
+  a `<DesktopSecureWebview>` / sandboxed iframe with the shared protection script.
 
-The web app is primarily a **discovery/UI layer**; the hardened player
-experience lives in the desktop and mobile apps.
+The web app is primarily a **discovery/UI layer**; the hardened player experience
+lives in the desktop and mobile apps.
 
 ---
 
 ## Configuration: `providers.json` + `filters.txt` v5
 
-**The config is now split into two files that travel together:**
-
 ### `providers.json` (repo root, schema v5)
 
-- Ed25519-signed (`providers.json.sig`) — public key committed to repo, private key in `.keys/` (gitignored).
-- Per-provider logic that uBO syntax can't express:
-  - `embedDomains` / `cdnDomains` (exact/suffix matching)
-  - `enabled`, `allowServerRedirects`, `blockHomePaths`
-  - `apiIntercepts` (synthetic API responses, e.g. screenscape `/api/ads/cycles`)
-  - `cosmeticRules` (CSS injected at HTML-bytes level)
-  - `adblockDisabled` (true for providers whose ad scripts double as video auth)
+- Ed25519-signed (`providers.json.sig`) — public key committed to the repo,
+  private key in `.keys/` (gitignored).
+- Per-provider logic that uBO syntax cannot express: `embedDomains` /
+  `cdnDomains`, `enabled`, `allowServerRedirects`, `blockHomePaths`,
+  `apiIntercepts`, `cosmeticRules`, `adblockDisabled`.
 - **Anime providers** (e.g. **MegaPlay**) are `animeOnly` — their embed URLs are
   keyed by **MAL/AniList IDs**, not TMDB. They are excluded from movie/TV pickers
-  (`getNonAnimeProviders`) and selected only in anime sessions (`filterAnimeProviders`
-  / `getProvidersForMode('anime')`). MegaPlay relies on a **Referer-presence gate**
-  on its 410 path, so the player keeps the provider base URL as the referrer (no
-  stripping) and auto-falls-back to the alternate ID space (MAL ↔ AniList) on a 410.
-- OTA: signed fetch on launch + every 2h; signature verified before apply; ring-buffer rollback (3 configs); 3×-failure watchdog → `heal-events.log`
-- V5 schema fields: `version`, `providers[]`, `providerProfiles`, `navigationGuard`, `rules.videoDetection`, `rules.alwaysBlock`, `allowedCdnHosts`, `providerRootHosts`
+  and selected only in anime sessions. MegaPlay relies on a referer-presence gate
+  on its 410 path, so the player keeps the provider base URL as the referrer and
+  falls back to the alternate ID space on a 410.
+- V5 schema fields: `version`, `providers[]`, `providerProfiles`,
+  `navigationGuard`, `rules.videoDetection`, `rules.alwaysBlock`,
+  `allowedCdnHosts`, `providerRootHosts`.
 
 ### `filters.txt` (repo root)
 
-- Standard **uBO/EasyList** syntax
-- **Exact/suffix matching** only (`@@||domain^` — never substring)
-- Example rules:
-  ```
-  @@||cloudfront.net^              # exact/suffix, not substring
-  @@||viduki.net^$document       # allowlist for redirect-mesh upstreams
-  ||doubleclick.net^$3p          # block 3rd-party trackers
-  ##.ad-banner                   # cosmetic
-  ```
-- Compiled by `@filmsnaps/filter-compiler` into `compiled-engine.bin` (desktop R4)
-  and `android-adblock-patterns.json` (mobile R4b/R5b).
-
-The two files travel together and are signed by the same Ed25519 key. The app
-never applies an OTA update without signature verification.
-
-### Old `blocklist.json`
-
-- Still present at repo root for backward compatibility.
-- Read by `provider-config.ts` when `providers.json` is absent (v4 fallback).
-- Deprecated: new OTA updates should only target `providers.json` + `filters.txt`.
+- Standard **uBO/EasyList** syntax.
+- **Exact/suffix matching** only (`@@||domain^` — never substring).
+- Compiled by `@filmsnaps/filter-compiler` into `android-adblock-patterns.json`
+  for the mobile engine. The desktop app parses `filters.txt` directly in Rust.
 
 ---
 
-## Audit & diagnostics
+## Verifying a build
 
-Security layers emit structured logs. Enable them with env vars on the desktop
-app:
+Checks that do not need a provider page:
 
-| Env var                | What it logs                                                                                                                                                                                                                               |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `FILMSNAPS_AUDIT=1`    | ALLOW-side `[ReqLog]` lines (which rule let a request through — the highest-value diagnostic), `[STREAM-AUDIT]` (player stream provisioning), `[PROTECTION]` (what the injected bundle intercepted), `[NavGuard]` home-escape evaluations. |
-| `FILMSNAPS_AUDITNET=1` | CDP `[NET]` request/response header samples (Referer, Cookie, Authorization) for auth-relevant requests.                                                                                                                                   |
-
-These are opt-in; production runs quiet (only blocks are logged).
+1. Launch from a terminal and confirm the config loaded without a
+   `NOT signature-verified` line.
+2. Confirm `[adblock] network filtering unavailable` does **not** appear; if it
+   does, network blocking is off and cosmetic rules are the only protection.
+3. Confirm the provider webview cannot call IPC: `src-tauri/capabilities/default.json`
+   lists only the `main` window and webview.
 
 ---
 
 ## Threat matrix
 
-| Threat                    | Primary mitigation                                           | Supporting layers                       |
-| ------------------------- | ------------------------------------------------------------ | --------------------------------------- |
-| Popup / popunder ads      | L4 `setWindowOpenHandler` (deny)                             | JS guard `window.open` override         |
-| Navigation hijack         | L4 `will-navigate`/`will-redirect`                           | JS location freeze, mobile nav gating   |
-| Ad iframes / overlays     | R4b/R3.5 block + L7b hole-frame injection                    | DOM sweeper (mobile + desktop periodic) |
-| Tracking beacons          | R5/R6/R4 block at network layer                              | JS fetch/XHR interception               |
-| Fake downloads            | R7 `isDownloadUrl`                                           | JS download-link blocking               |
-| Service-worker abuse      | Session `cache:false` + clearStorageData on close            | JS SW unregister/block                  |
-| Code injection            | JS `eval`/`Function` size-gated blocking                     | R4 on fetched payloads                  |
-| WebView detection         | Clean desktop-Chrome UA (desktop), CF-bypass script (mobile) | Fingerprint spoofing in guard bundle    |
-| Anti-hotlink CDN gating   | `Referrer-Policy: origin` (L3) — _not_ `no-referrer`         | Provider partition UA                   |
-| Home-page escape          | L4 path-level `isHomeEscape` + reload-once-then-error        | Mobile Kotlin port of the same guard    |
-| Rotating ad orchestrators | R3.5 profile allowlist + R4b substring trie (rotation-proof) | Always-block R5/R6                      |
-| Cross-provider tracking   | Isolated partition, `cache:false`, storage wiped on close    | Per-session trust, no cookie sharing    |
+| Threat                  | Desktop mitigation                                                   | Mobile mitigation                   |
+| ----------------------- | -------------------------------------------------------------------- | ----------------------------------- |
+| Popup / popunder ads    | `window.open` neutralised in the provider page                       | Navigation gating + guard bundle    |
+| Navigation hijack       | Provider webview has no IPC; navigation goes where the page sends it | Kotlin nav gating + `isHomeEscape`  |
+| Ad iframes / overlays   | Cosmetic CSS at document-start                                       | DOM sweeper + cosmetic CSS          |
+| Tracking beacons        | `WebResourceRequested` 403 at the network layer                      | `shouldInterceptRequest` engine     |
+| Fake downloads          | Not fetched — the provider page cannot reach the app                 | Download-URL blocking               |
+| Code injection          | Provider page has no capability or bridge access                     | Guard bundle + scriptlets           |
+| Tampered configuration  | Ed25519 signature over `providers.json`                              | Ed25519-verified OTA loader         |
+| Tampered update         | minisign public key pinned in `tauri.conf.json`                      | Platform app signing                |
+| Cross-provider tracking | Shared WebView2 profile (known gap)                                  | Single provider surface per session |
