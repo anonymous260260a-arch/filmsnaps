@@ -169,6 +169,29 @@ export default function LegalPage() {
         </Body>
       </Section>
 
+      <Section title="Third-party licences">
+        <Body>
+          FilmSnaps redistributes two third-party components:{" "}
+          <Bold>libmpv 0.42.0</Bold>, the playback engine, under the GNU Lesser
+          General Public License 2.1 or later, and the <Bold>Geist</Bold> fonts
+          under the SIL Open Font License 1.1. Both ship as separate files, so
+          you can replace them.
+        </Body>
+        <Body>
+          Every licence text is included in the desktop install folder under{" "}
+          <code>mpv/licenses/</code>, next to{" "}
+          <code>THIRD_PARTY_NOTICES.md</code>. The full list, sources and texts
+          are on the{" "}
+          <Link
+            href="/licenses"
+            className="text-primary underline-offset-2 hover:underline"
+          >
+            Third-party licences
+          </Link>{" "}
+          page.
+        </Body>
+      </Section>
+
       <Section title="Abuse Reports">
         <Body>
           While we cannot remove content from third-party servers, if you

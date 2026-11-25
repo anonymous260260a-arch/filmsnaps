@@ -76,6 +76,33 @@ export const LEGAL_GATE_SECTIONS: LegalSection[] = [
     ),
   },
   {
+    key: "licenses",
+    title: "Third-party licences",
+    body: (
+      <div>
+        <p className="text-sm leading-6 text-foreground">
+          Video plays through <strong className="font-semibold">libmpv</strong>{" "}
+          0.42.0, licensed under the GNU Lesser General Public License 2.1 or
+          later. The interface and overlays use the{" "}
+          <strong className="font-semibold">Geist</strong> fonts, licensed under
+          the SIL Open Font License 1.1.
+        </p>
+        <p className="mt-2 text-sm leading-6 text-foreground">
+          libmpv ships as a separate DLL next to the app, so you can replace it
+          with your own build. Every licence text is included in the install
+          folder under <code>mpv/licenses/</code>, and summarised on the{" "}
+          <a
+            href="/licenses"
+            className="text-primary underline-offset-2 hover:underline"
+          >
+            third-party licences page
+          </a>
+          .
+        </p>
+      </div>
+    ),
+  },
+  {
     key: "warranty",
     title: "No Warranty",
     body: (
