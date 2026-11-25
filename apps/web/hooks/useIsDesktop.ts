@@ -29,6 +29,24 @@ function getInitialValue(minWidth: number): boolean {
   return window.matchMedia(`(min-width: ${minWidth}px)`).matches;
 }
 
+/**
+ * The desktop window has a native minimum width (960px), so a viewport this
+ * narrow can only be the transient size Windows reports while the window is
+ * minimized. Acting on it forks every responsive layout for a size nobody ever
+ * sees, which unmounts the watch tree and its mpv session — playback then
+ * restarts from scratch on restore. Only transitions are filtered: a device
+ * that genuinely boots narrow still renders the narrow layout.
+ */
+const TRANSIENT_MAX_WIDTH = 640;
+
+function isTransientMinimize(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.electronAPI?.isDesktop === true &&
+    window.innerWidth < TRANSIENT_MAX_WIDTH
+  );
+}
+
 export function useIsDesktop(minWidth: number = 1280): boolean {
   const [isDesktop, setIsDesktop] = useState(() => getInitialValue(minWidth));
 
@@ -36,7 +54,10 @@ export function useIsDesktop(minWidth: number = 1280): boolean {
     const mq = window.matchMedia(`(min-width: ${minWidth}px)`);
 
     // Listen for changes
-    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    const handler = (e: MediaQueryListEvent) => {
+      if (!e.matches && isTransientMinimize()) return;
+      setIsDesktop(e.matches);
+    };
     mq.addEventListener("change", handler);
 
     return () => mq.removeEventListener("change", handler);

@@ -76,14 +76,15 @@ scaffolding was removed (see [ADR 0002](../../docs/adr/0002-auth-removal.md)).
 ## Desktop Player Integration
 
 The web app renders the **React player UI** (VideoZone, ServerDropdown, PlayerControlOverlay).
-In Electron desktop, the provider embed loads in a native `WebContentsView` (not iframe):
+In the desktop app the provider embed loads in a native WebView2 surface (not an
+iframe), so the React UI reserves its rect instead of owning it:
 
-- `DesktopSecureWebview.tsx` reserves a rect and syncs bounds via `player:set-bounds` IPC
-- React overlays (server dropdown, CPU warning, error) drive `overlayActive` → `player:set-visible=false`
-- Fullscreen: `PlayerProvider.toggleFullscreen` → IPC `player:setFullscreen` → window-level fullscreen
-- All security layers run in Electron main process on the native view
+- `DesktopSecureWebview.tsx` reserves a rect and syncs it to the native surface
+- React overlays (server dropdown, CPU warning, error) hide the surface while open
+- Fullscreen goes through `electronAPI` to window-level fullscreen
+- Ad blocking runs in the Rust shell (`src-tauri/src/adblock/`)
 
-See [Desktop README](../desktop/README.md#webcontentsview-hybrid-phase-3) for architecture.
+See [docs/desktop.md](../../docs/desktop.md) for the desktop architecture.
 
 ## Provider embed security
 

@@ -133,6 +133,24 @@ export class MpvPlayerAdapter {
       return;
     }
     this.unsubEvent = mpv.onEvent((ev: any) => this.handleEvent(ev));
+    // The event stream starts at subscription time; a pre-warm start may have
+    // already emitted its initial pause/position changes. Seed from the
+    // player's cached snapshot so the UI doesn't stay stuck on "paused".
+    mpv
+      .getState?.()
+      .then((s: any) => {
+        if (!s || this.destroyed) return;
+        if (typeof s.paused === "boolean") this._paused = s.paused;
+        if (typeof s.position === "number") this._position = s.position;
+        if (typeof s.duration === "number") this._duration = s.duration;
+        if (typeof s.volume === "number")
+          this._volume = Math.min(1, Math.max(0, s.volume / 100));
+        if (typeof s.muted === "boolean") this._muted = s.muted;
+        if (typeof s.speed === "number") this._speed = s.speed;
+        this.playPauseListeners.forEach((cb) => cb());
+        this.timeListeners.forEach((cb) => cb());
+      })
+      .catch(() => {});
     this.frameRaf = requestAnimationFrame(this.frameTick);
   }
 

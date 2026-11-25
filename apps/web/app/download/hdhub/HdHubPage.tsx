@@ -39,9 +39,11 @@ import {
 import { Header } from "@/components/Header";
 import { PageShell } from "@/components/PageShell";
 import {
+  clearDownload,
   isDownloadAvailable,
   startDownload,
   useDownloadList,
+  type DownloadTask,
 } from "@/lib/downloadStore";
 import { isGatewayUrl } from "@/lib/nxshaLinks";
 import { tmdbApi, apiUrl, apiClientHeaders, getImageUrl } from "@/lib/tmdb";
@@ -97,7 +99,7 @@ interface HdHubRow {
   gateway: boolean;
 }
 
-type RowState = "completed" | "active" | "idle";
+type RowState = "completed" | "active" | "failed" | "idle";
 
 /** Title context for the hero — everything TMDB details gives us in one shot. */
 interface TitleMeta {
@@ -342,12 +344,22 @@ export default function HdHubDownloadPage() {
   const activeFilterCount =
     (qualityFilter ? 1 : 0) + (sizeFilter ? 1 : 0) + (languageFilter ? 1 : 0);
 
+  /** The newest task for a link, so a retry is not shadowed by the failed one. */
+  const latestFor = useCallback(
+    (url: string): DownloadTask | undefined =>
+      downloads
+        .filter((t) => t.url === url)
+        .sort((a, b) => b.createdAt - a.createdAt)[0],
+    [downloads],
+  );
+
   const getRowState = useCallback(
     (link: StreamLink): RowState => {
       const task = downloads.find((t) => t.url === link.url);
       if (!task) return "idle";
       if (task.state === "completed") return "completed";
       if (task.state === "active" || task.state === "paused") return "active";
+      if (task.state === "failed") return "failed";
       return "idle";
     },
     [downloads],
@@ -365,6 +377,15 @@ export default function HdHubDownloadPage() {
       });
 
       if (available) {
+        // Drop the failed attempt (and its partial bytes) before retrying, so
+        // the row follows the new task instead of the dead one.
+        const previous = latestFor(row.link.url);
+        if (
+          previous &&
+          (previous.state === "failed" || previous.state === "canceled")
+        ) {
+          clearDownload(previous.id, true);
+        }
         startDownload({
           url: row.link.url,
           title: filename,
@@ -377,7 +398,16 @@ export default function HdHubDownloadPage() {
         window.open(row.link.url, "_blank");
       }
     },
-    [available, id, title, type, isTV, effectiveSeason, effectiveEpisode],
+    [
+      available,
+      id,
+      title,
+      type,
+      isTV,
+      effectiveSeason,
+      effectiveEpisode,
+      latestFor,
+    ],
   );
 
   const openInBrowser = (url: string) => {
@@ -674,6 +704,7 @@ export default function HdHubDownloadPage() {
                     key={`${row.link.url}-${idx}`}
                     row={row}
                     progress={state === "active" ? progress : undefined}
+                    errorText={state === "failed" ? task?.error : undefined}
                     action={
                       <button
                         onClick={() => downloadFile(row)}
@@ -681,13 +712,17 @@ export default function HdHubDownloadPage() {
                         className={`shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-all disabled:opacity-60 ${
                           state === "completed"
                             ? "bg-success/15 text-success"
-                            : "bg-primary text-background hover:bg-primary-dim"
+                            : state === "failed"
+                              ? "bg-destructive/15 text-destructive hover:bg-destructive/25"
+                              : "bg-primary text-background hover:bg-primary-dim"
                         }`}
                       >
                         {state === "completed" ? (
                           <CheckCircle2 size={14} />
                         ) : state === "active" ? (
                           <Loader2 size={14} className="animate-spin" />
+                        ) : state === "failed" ? (
+                          <RefreshCw size={14} />
                         ) : (
                           <Download size={14} />
                         )}
@@ -695,7 +730,9 @@ export default function HdHubDownloadPage() {
                           ? "Saved"
                           : state === "active"
                             ? `${Math.round(progress * 100)}%`
-                            : "Download"}
+                            : state === "failed"
+                              ? "Retry"
+                              : "Download"}
                       </button>
                     }
                   />
@@ -777,10 +814,12 @@ function FileRowView({
   row,
   action,
   progress,
+  errorText,
 }: {
   row: HdHubRow;
   action: React.ReactNode;
   progress?: number;
+  errorText?: string;
 }) {
   const segments = downloadMetaSegments(row.details);
 
@@ -802,6 +841,12 @@ function FileRowView({
             </span>
           ))}
         </p>
+
+        {errorText && (
+          <p className="mt-1.5 text-[11px] leading-relaxed text-destructive break-words">
+            Download failed — {errorText}
+          </p>
+        )}
 
         {progress !== undefined && (
           <div className="mt-2 h-1 rounded-full bg-white/[0.06] overflow-hidden">

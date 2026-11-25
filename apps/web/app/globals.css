@@ -163,20 +163,6 @@
   background: transparent;
 }
 
-/* â”€â”€ Frameless Window Drag Regions â”€â”€
- * Electron requires -webkit-app-region to move a frameless window.
- * These were referenced by WatchTopBar/DesktopTitleBar but never defined,
- * so the window could not be dragged. `.no-drag` must be applied to every
- * interactive element inside a drag region or clicks get swallowed. */
-@layer utilities {
-  .drag-region {
-    -webkit-app-region: drag;
-    app-region: drag;
-  }
-  .no-drag {
-    -webkit-app-region: no-drag;
-  }
-}
 
 /* â”€â”€ Desktop Shell Scope â”€â”€
  * Under the desktop shell the top bar is in-flow, so the per-page

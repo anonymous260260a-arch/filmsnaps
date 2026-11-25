@@ -66,12 +66,14 @@ const nextConfig = {
         runtimeChunk: "single",
         splitChunks: {
           chunks: "all",
+          // No forced `vendors` group: `test: node_modules` + `name` + the
+          // `all` chunk scope merges even lazy-only libraries into one chunk
+          // that every page preloads — including the mpv player stack
+          // (movi-player, dashjs, shaka), which only /watch imports. That put
+          // ~5 MB of JavaScript on the startup path of every launch. Next's
+          // defaults keep async-only dependencies in the chunk that imports
+          // them.
           cacheGroups: {
-            vendor: {
-              test: /[\\/]node_modules[\\/]/,
-              name: "vendors",
-              priority: 10,
-            },
             common: {
               minChunks: 2,
               priority: 5,

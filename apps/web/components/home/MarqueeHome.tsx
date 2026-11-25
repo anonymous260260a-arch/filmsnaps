@@ -79,7 +79,8 @@ function MarqueeHero({ movies }: { movies: any[] }) {
   const movie = movies[idx];
   const title = movie.title || movie.name;
   const overview = movie.overview || "";
-  const backdrop = getImageUrl(movie.backdrop_path, "original");
+  // Same rule as the swipe hero: w1280 instead of the full-size original.
+  const backdrop = getImageUrl(movie.backdrop_path, "w1280");
   const year = (movie.release_date || movie.first_air_date || "").slice(0, 4);
   const rating = movie.vote_average || 0;
   const runtime = movie.runtime;

@@ -294,9 +294,15 @@ export function SearchPalette({
   // the top bar's -webkit-app-region: drag element. A no-drag child inside a
   // drag parent is unreliable in Electron (the region hit-test can still win);
   // mounting on body makes the backdrop/panel unconditionally clickable.
+  //
+  // The z-index must clear the desktop chrome: the top bar sits at z-[100000]
+  // (and owns the window drag region), so a lower overlay is painted under it
+  // and a click near the top of the screen lands on the bar instead of the
+  // backdrop — which swallows the close and makes it look like the palette
+  // needs two clicks.
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-start justify-center"
+      className="fixed inset-0 z-[200000] flex items-start justify-center"
       style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       role="dialog"
       aria-modal="true"

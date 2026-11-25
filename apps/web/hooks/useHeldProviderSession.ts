@@ -63,6 +63,14 @@ export function useHeldProviderSession(
     // exhausted) — hold the session instead of initializing with "".
     if (!embedUrl) return;
 
+    // The desktop shell has no provider session layer to install (no trust),
+    // so there is nothing to wait for and the embed can mount right away.
+    if (window.electronAPI.sessionTrust === false) {
+      setSessionReady(true);
+      setAppliedEmbedUrl(embedUrl);
+      return;
+    }
+
     // Same provider as the currently-initialised one (episode/season/refresh
     // change): rules already installed — apply the new URL immediately.
     if (initRef.current === providerId) {

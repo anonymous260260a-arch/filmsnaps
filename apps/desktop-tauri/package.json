@@ -1,0 +1,24 @@
+{
+  "name": "@filmsnaps/desktop-tauri",
+  "version": "3.0.0",
+  "private": true,
+  "description": "FilmSnaps desktop app (Windows) — Tauri shell with in-process libmpv.",
+  "scripts": {
+    "dev": "tauri dev",
+    "dev:perf": "tauri dev --features perf",
+    "bundle": "tauri build",
+    "bundle:perf": "tauri build --features perf",
+    "bundle:debug": "tauri build --debug --no-bundle",
+    "tauri": "tauri",
+    "icons": "tauri icon ../../logo.png",
+    "check": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "fetch:libmpv": "node scripts/fetch-libmpv.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.9.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0"
+  }
+}

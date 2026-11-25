@@ -76,7 +76,7 @@ Verified byte-level by downloading the head and tail of the failing files with H
 | Primary SeekHead           | 52 – 74           | one entry: `SeekID=SeekHead`, `SeekPosition=0x94A965ED` = 2,494,129,645                                               |
 | Void / Tracks              | 74 / 118          |                                                                                                                       |
 | Tags                       | 2,494,129,608     |                                                                                                                       |
-| **Secondary SeekHead**     | **2,494,129,697** | = 52 + 2,494,129,645 ✓ exactly where the Seek entry points                                                            |
+| **Secondary SeekHead**     | **2,494,129,697** | = 52 + 2,494,129,645 exactly where the Seek entry points                                                              |
 | **Cues**                   | **2,494,093,721** | = 52 + 2,494,093,669 from the secondary SeekHead's entry; byte-verified; ~36 KB of CuePoints ending right before Tags |
 
 `YN2QmC7Q` and the 3.6 GB variant have the identical layout with different offsets. The working file `mHT6Sh2p` is Layout A.
@@ -177,7 +177,7 @@ node_modules/expo-video/local-maven-repo/host/exp/exponent/expo.modules.video/55
 By default, Expo autolinking resolves the module as the Maven artifact `host.exp.exponent:expo.modules.video:55.0.18` from that local repo — **the Java/Kotlin sources in `node_modules/expo-video/android/` are never compiled**, and any patch to them is silently ignored no matter how often caches are cleared. Gradle signals this with the boxed marker in the "Using expo modules" list:
 
 ```
-- [📦] expo-video (55.0.18)     ← prebuilt AAR: patch NOT in the build
+- [prebuilt] expo-video (55.0.18)  ← prebuilt AAR: patch NOT in the build
 - expo-video (55.0.18)          ← built from source: patch in effect
 ```
 

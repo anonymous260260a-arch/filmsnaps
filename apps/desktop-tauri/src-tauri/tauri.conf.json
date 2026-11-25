@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "FilmSnaps",
+  "version": "3.0.0",
+  "identifier": "com.filmsnaps.desktop",
+  "build": {
+    "frontendDist": "../../../apps/web/out"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "resources": {
+      "../../../filters.txt": "filters.txt",
+      "../../../providers.json": "providers.json",
+      "../../../providers.json.sig": "providers.json.sig",
+      "../../../.keys/filmsnaps-ed25519.pub": "filmsnaps-ed25519.pub",
+      "vendor/mpv/*": "mpv/",
+      "vendor/mpv/scripts/*": "mpv/scripts/",
+      "vendor/mpv/fonts/*": "mpv/fonts/",
+      "vendor/mpv/licenses/*": "mpv/licenses/",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/desktop/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQwNEE0QjkxOEREQjhGNTEKUldSUmo5dU5rVXRLMERMcXo0NDV3RW9mWXlwcmoya25oZExJUld1a3JpSnJoWDhFM2hVeG1jMUgK"
+    }
+  }
+}

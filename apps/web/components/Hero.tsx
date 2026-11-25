@@ -65,7 +65,10 @@ export function Hero({ movies = [] }: { movies: any[] }) {
         {movies.map((movie, idx) => {
           const title = movie.title || movie.name;
           const overview = movie.overview || "";
-          const backdrop = getImageUrl(movie.backdrop_path, "original");
+          // w1280 is ~1/5 the bytes of `original` and still wider than the
+          // largest window the app allows; the hero is darkened and gradient
+          // masked, so the extra source resolution was never visible.
+          const backdrop = getImageUrl(movie.backdrop_path, "w1280");
           const year = (movie.release_date || movie.first_air_date || "").slice(
             0,
             4,

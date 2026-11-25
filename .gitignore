@@ -107,3 +107,8 @@ expertResponseFiles_TEMP/
 .freebuff/
 androidx/
 apps/web/.wrangler/
+
+# Desktop app (Tauri)
+apps/desktop-tauri/src-tauri/target/
+apps/desktop-tauri/src-tauri/vendor/mpv/*.dll
+apps/desktop-tauri/src-tauri/gen/

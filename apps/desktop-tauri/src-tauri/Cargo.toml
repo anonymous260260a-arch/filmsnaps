@@ -1,0 +1,64 @@
+[package]
+name = "filmsnaps-desktop-tauri"
+version = "3.0.0"
+description = "FilmSnaps — Tauri desktop app"
+authors = ["FilmSnaps"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "filmsnaps_desktop_tauri_lib"
+crate-type = ["staticlib", "rlib"]
+
+[features]
+# Timing marks to filmsnaps.log. Off by default: a shipping build must carry no
+# diagnostics. `pnpm --filter @filmsnaps/desktop-tauri dev:perf` turns it on.
+perf = []
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["unstable"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+adblock = "0.13"
+ed25519-dalek = "2"
+base64 = "0.22"
+libloading = "0.8"
+thiserror = "2"
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls",
+  "gzip",
+  "brotli",
+  "deflate",
+  "blocking",
+] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Power",
+  "Win32_System_Com",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+] }
+webview2-com = "0.39"
+
+[profile.dev]
+# Faster incremental rebuilds: line tables only, no full debug info.
+debug = 1
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

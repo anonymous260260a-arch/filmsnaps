@@ -1,6 +1,7 @@
 /**
- * Type declarations for FilmSnaps Desktop's Electron API.
- * These are available only when running inside the Electron wrapper.
+ * Type declarations for the desktop bridge (`window.electronAPI`).
+ * The name is historical: the shell is Tauri, and the bridge is installed only
+ * inside the desktop app.
  */
 
 type UpdateStatus =
@@ -22,6 +23,12 @@ interface ElectronAPI {
   platform: string;
   appVersion: string;
   /**
+   * False when the shell has no provider session layer (the desktop app), so
+   * there is no session install to wait for before mounting the embed.
+   * Other shells leave it undefined.
+   */
+  sessionTrust?: boolean;
+  /**
    * Initialize a provider session with R0-R8 network-level filtering.
    * The session partition is created once per provider and applies
    * to the <webview> element's partition attribute.
@@ -42,6 +49,8 @@ interface ElectronAPI {
   quitAndInstall: () => void;
   /** Window controls */
   minimize: () => Promise<void>;
+  /** Begin moving the window; call from a mousedown in the title bar */
+  startDragging: () => Promise<void>;
   maximize: () => Promise<void>;
   close: () => Promise<void>;
   /** Query whether the window is currently maximized */
@@ -51,6 +60,8 @@ interface ElectronAPI {
   /** Navigation controls */
   reload: () => Promise<void>;
   devtools: () => Promise<void>;
+  /** Timing marks written to the shell's log file (desktop only). */
+  diag?: (event: string, data?: Record<string, unknown>) => void;
   goBack: () => Promise<void>;
   goForward: () => Promise<void>;
   /** Whether a back / forward step is possible in the current history */
@@ -187,7 +198,11 @@ interface ElectronAPI {
   mpv?: {
     start: () => Promise<{ ready: boolean }>;
     destroy: () => Promise<void>;
-    play: (url: string) => Promise<{ success: boolean }>;
+    /** Headers mpv must send with the file and its segments (desktop only). */
+    play: (
+      url: string,
+      headers?: Record<string, string>,
+    ) => Promise<{ success: boolean }>;
     pause: () => Promise<void>;
     resume: () => Promise<void>;
     stop: () => Promise<void>;

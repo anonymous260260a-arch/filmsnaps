@@ -25,6 +25,7 @@ import {
   Film,
   Gauge,
   Monitor,
+  RefreshCw,
 } from "lucide-react";
 import { Header } from "@/components/Header";
 import { PageShell } from "@/components/PageShell";
@@ -335,8 +336,26 @@ function DownloadRow({ task }: { task: DownloadTask }) {
         )}
         {task.state === "failed" && (
           <ActionButton
+            label="Retry"
+            onClick={() => {
+              // Clear first so the retry is not shadowed by the failed entry.
+              clearDownload(task.id, true);
+              startDownload({
+                url: task.url,
+                title: task.title,
+                tmdbId: task.tmdbId,
+                mediaType: task.mediaType,
+                season: task.season,
+                episode: task.episode,
+              });
+            }}
+            icon={<RefreshCw size={14} />}
+          />
+        )}
+        {(task.state === "failed" || task.state === "canceled") && (
+          <ActionButton
             label="Remove"
-            onClick={() => clearDownload(task.id)}
+            onClick={() => clearDownload(task.id, true)}
             icon={<Trash2 size={14} />}
             danger
           />

@@ -14,7 +14,7 @@ the data flow for content discovery and playback, and how builds/deploys work.
 filmsnaps/
 ├── apps/
 │   ├── web/                  @filmsnaps/web   — Next.js web app (discovery + watch UI)
-│   ├── desktop/              @filmsnaps/desktop — Electron wrapper (watch UI + hardened player)
+│   ├── desktop-tauri/        @filmsnaps/desktop-tauri — Windows desktop app (Tauri + in-process libmpv)
 │   └── mobile/               @filmsnaps/mobile — React Native / Expo app (Android + iOS)
 ├── packages/
 │   ├── shared/               @filmsnaps/shared — shared UI logic, security bundles, state, providers
@@ -49,18 +49,19 @@ filmsnaps/
   `lib/movieProviders/cspBuilder.ts` (`buildIframeCSP`). The desktop/mobile apps
   enforce the equivalent protection natively.
 
-### `apps/desktop` — Electron desktop app
+### `apps/desktop-tauri` — desktop app (Windows)
 
-- **Stack:** Electron 43 + a Next.js **static export** of the web app
-  (`BUILD_FOR_DESKTOP=true` → `out/`) served via `app://` protocol (no Node.js server).
-- **Role:** the web UI with a native, hardened provider player inside a
-  `WebContentsView` on an isolated `persist:filmsnaps-provider` partition.
-- **Security:** see [docs/security.md](security.md) — R0–R8 cascade, L2–L8 layers,
-  Ed25519-verified OTA config, `@ghostery/adblocker` engine.
-- **Key dirs:** `src/main.ts` (main process), `src/preload/`, `src/security/`
-  (rule cascade, navigation guard, provider security, filter engine),
-  `scripts/` (build-provider-preload.mjs, build-web.mjs).
-- **Packaging:** `electron-builder`; `apps/desktop/release/` output.
+- **Stack:** Tauri v2 (WebView2) + the Next.js static export + in-process libmpv
+  loaded at runtime.
+- **Role:** the desktop product. Installs as "FilmSnaps"
+  (`com.filmsnaps.desktop`) and ships signed updates from the `desktop` GitHub
+  release.
+- **Security:** network filtering in the WebView2 request pipeline, cosmetic
+  rules at document-start, Ed25519-signed config, minisign-signed updates. See
+  [security.md](security.md) and [desktop.md](desktop.md).
+- **Key dirs:** `src-tauri/src/player/` (libmpv + native surface),
+  `src-tauri/src/adblock/` (network hook, cosmetic, in-page),
+  `src-tauri/src/downloads.rs`, `src-tauri/src/config.rs` (signed config).
 
 ### `apps/mobile` — React Native / Expo app
 
@@ -108,16 +109,18 @@ imports for consumers.
 ### `packages/adblock-config` — `@filmsnaps/adblock-config`
 
 Schema + validator for v5 `providers.json` + `filters.txt`. Provides `loadBlocklistConfig` and a
-`validate-cli` for CI. Desktop has a CJS replica of the loader
-(`apps/desktop/src/security/provider-config.ts`) because Electron main is CJS
-and never imports `@filmsnaps/*` at runtime.
+`validate-cli` for CI. The desktop app reads the same files through a Rust
+loader (`apps/desktop-tauri/src-tauri/src/config.rs`) that must stay in sync with
+the schema here.
 
 ### `packages/filter-compiler` — `@filmsnaps/filter-compiler`
 
 Turns `filters.txt` + uBO filter lists into deployable artifacts:
 
-- `compiled-engine.bin` — serialized `@ghostery/adblocker` FiltersEngine (desktop R4).
-- `android-adblock-patterns.json` — Aho-Corasick trie for mobile `AdblockEngine` (R4b/R5b) + desktop R5b fallback.
+- `compiled-engine.bin` — serialized `@ghostery/adblocker` FiltersEngine (built
+  for the removed Electron engine; the desktop app now parses `filters.txt`
+  directly in Rust).
+- `android-adblock-patterns.json` — Aho-Corasick trie for mobile `AdblockEngine`.
 - `minimal-guard` — a stripped-down guard variant.
 
 ## Data flow: content discovery
@@ -141,14 +144,13 @@ apps/web / apps/mobile
 watch page
     │  embed URL (provider.com/embed/movie/{id})
     ▼
-desktop: WebContentsView on persist:filmsnaps-provider
-    │  R0–R8 cascade (network) + L5 preload (in-page) + L4 nav guard
-    │  L8 addScriptToEvaluateOnNewDocument (HTML-bytes injection)
+desktop: provider webview (no IPC capability)
+    │  WebResourceRequested 403 (network) + cosmetic CSS at document-start
     ▼
 provider page loads → token API → .m3u8/.mpd manifest → video segments
-    │  session trust (R0) earns on first video response (MIME-based, 15-min TTL)
+    │  libmpv plays them in a native child surface under our own OSC
     ▼
-video plays; overlays/popups/trackers blocked by guard bundle + sweepers
+video plays; blocked requests never leave the process and overlays stay hidden
 ```
 
 Mobile follows the same shape with `PlayerWebView` (native
@@ -159,19 +161,20 @@ Web uses a sandboxed iframe.
 
 Root scripts (`package.json`) drive everything through Turborepo:
 
-| Command                                  | What it runs                                              |
-| ---------------------------------------- | --------------------------------------------------------- |
-| `pnpm dev`                               | `turbo dev` — all apps in dev mode.                       |
-| `pnpm build`                             | `turbo build` — all apps/packages.                        |
-| `pnpm lint`                              | `turbo lint`.                                             |
-| `pnpm test`                              | Vitest (root config) — see `vitest.config.ts`.            |
-| `pnpm cf:deploy`                         | Build + deploy web to Cloudflare Pages.                   |
-| `pnpm dist:desktop`                      | Desktop installer (web static export + electron-builder). |
-| `pnpm compile:filters` / `build:filters` | Regenerate filter artifacts.                              |
+| Command                                  | What it runs                                                                 |
+| ---------------------------------------- | ---------------------------------------------------------------------------- |
+| `pnpm dev`                               | `turbo dev` — all apps in dev mode.                                          |
+| `pnpm build`                             | `turbo build` — all apps/packages.                                           |
+| `pnpm lint`                              | `turbo lint`.                                                                |
+| `pnpm test`                              | Vitest (root config) — see `vitest.config.ts`.                               |
+| `pnpm cf:deploy`                         | Build + deploy web to Cloudflare Pages.                                      |
+| `pnpm build:desktop`                     | Desktop installer (web static export + Tauri bundle; needs the signing key). |
+| `pnpm compile:filters` / `build:filters` | Regenerate filter artifacts.                                                 |
 
 GitHub Actions (`.github/workflows/`): `ci.yml` (lint + typecheck + test),
 `cloudflare.yml` (web → Cloudflare Pages), `netlify.yml` (web → Netlify),
-`mobile.yml` (EAS builds), `release.yml` (desktop release).
+`mobile.yml` (EAS builds), `release.yml` (web release on `v*` tags),
+`desktop.yml` (desktop Rust tests on Windows).
 
 ## Tests
 
@@ -180,6 +183,6 @@ Vitest is configured at the root (`vitest.config.ts`). Current suites:
 - `packages/shared/src/providers/registry.test.ts`
 - `packages/shared/src/security/navigation-home.test.ts`
 - `packages/shared/src/security/playerGuard.test.ts`
-- `apps/desktop/src/security/blocklist.test.ts`
 
-Run all: `pnpm test`.
+Run all: `pnpm test`. The desktop app's Rust tests run with
+`pnpm test:desktop`.

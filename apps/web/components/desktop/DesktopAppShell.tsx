@@ -34,6 +34,7 @@ import {
 import { GlobalTopBar } from "./GlobalTopBar";
 import { Sidebar } from "./Sidebar";
 import { useIsDesktop } from "@/hooks/useIsDesktop";
+import { diag, reportBoot } from "@/lib/diag";
 
 export function DesktopAppShell({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
@@ -44,20 +45,16 @@ export function DesktopAppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setMounted(true);
-    // Couch-distance scaling (readability verdict Q3): rem utilities resolve
-    // against the ROOT font-size, so the bump must land on <html>, not on a
-    // shell div. Web/browser pages keep the default 16px root.
-    if (
-      typeof window !== "undefined" &&
-      window.electronAPI?.isDesktop === true
-    ) {
-      document.documentElement.classList.add("fs-desktop");
-    }
+    // Boot cost, into the shell's log file: hydration and first paint are only
+    // measurable from here, and this runs once per document.
+    reportBoot();
+    diag("shell-ready");
   }, []);
 
   // Close drawer on navigation (single source of truth in chrome-store)
   useEffect(() => {
     closeWatchNavDrawer();
+    diag("route", { path: pathname ?? "" });
   }, [pathname]);
 
   // Fullscreen playback (immersive): the OS window IS the screen — the page

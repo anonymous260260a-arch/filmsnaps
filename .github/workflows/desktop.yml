@@ -1,0 +1,43 @@
+name: Desktop tests (Windows)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared package
+        run: pnpm --filter @filmsnaps/shared build
+
+      # tauri-build refuses to compile while the configured frontendDist is
+      # missing, and the Rust tests link the app crate.
+      - name: Build web static export
+        run: pnpm --filter @filmsnaps/web build
+        env:
+          BUILD_FOR_DESKTOP: 'true'
+          NEXT_PUBLIC_TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+
+      - name: Rust tests
+        run: cargo test --manifest-path apps/desktop-tauri/src-tauri/Cargo.toml
