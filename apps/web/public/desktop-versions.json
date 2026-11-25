@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "3.0.0",
+      "date": "2026-11-25",
+      "releaseNotes": "v3.0.0 — A rebuilt desktop core: faster start, lighter download, safer updates\n\n The desktop app now runs on a new native shell with the playback engine built in, instead of a browser runtime plus a separate helper\n Startup JavaScript dropped from roughly 6.6 MB to roughly 1.5 MB, and the bundled logo from 864 KB to 49 KB — the app opens with far less work before first paint\n Resume now opens the file at your saved position instead of loading it and then seeking, so continue-watching starts where it is meant to\n Updates download quietly in the background and only install when you press Restart, so an episode is never interrupted by a surprise relaunch\n Ad blocking runs inside the app itself — network filtering plus cosmetic rules — and downloads, window state and signing all moved into the new shell\n New Licences page for the software that ships inside the app (libmpv under LGPL 2.1 or later, Geist fonts under OFL 1.1), with the full texts available offline and a note on replacing the bundled player library\n Release builds carry no timing marks, debug logging or console noise\n\nThis release is a Windows x64 installer.",
+      "platforms": {
+        "win": {
+          "downloadUrl": "https://github.com/anonymous260260a-arch/filmsnaps/releases/download/v3.0.0-desktop/FilmSnaps_3.0.0_x64-setup.exe",
+          "size": "~48 MB"
+        }
+      }
+    },
+    {
       "version": "2.3.1",
       "date": "2026-11-16",
       "releaseNotes": "v2.3.1 — Fixes:\n Fixed the endless skeleton screen when clicking 'Watch Now' for the first time or opening a Continue Watching card — pages inside the app could wait forever for content that never arrived. Navigation now completes reliably, so re-opening the app after the bug hit is no longer needed\n Simplified Settings layout — the page is calmer and easier to scan, with the same controls",
