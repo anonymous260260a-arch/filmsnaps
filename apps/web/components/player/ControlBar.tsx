@@ -268,9 +268,6 @@ export function ControlBar({
     subtitleTracks?.length ||
     onPlaybackRateChange;
 
-  // ── Strip variant (mpv mode) — YouTube-style two rows:
-  //    Row 1: seek bar (flex-1) + time readout pinned right.
-  //    Row 2: playback cluster | status | settings cluster.
   if (layout === "strip") {
     return (
       <div

@@ -948,8 +948,9 @@ export const PROVIDERS: ProviderDefinition[] = [
   // Direct playback backed by core.justanime.to's scraper API, one request per
   // server+audio track returning HLS/mp4 + vtt subtitle sidecars. Keyed by MAL
   // id (the {episode} in the URL is MAL-relative, NOT TMDB-seasonal). Mobile
-  // only: the media/CDN requests require a Referer that a browser can't attach,
-  // so web/desktop default anime sessions to the megaplay embed instead.
+  // and desktop: the media/CDN requests require a Referer that a browser can't
+  // attach, so the desktop shell resolves the API through the Worker and hands
+  // the headers to mpv. Plain web keeps defaulting to the megaplay embed.
   // The API request itself needs Referer/Origin https://justanime.to — wired
   // as streamSources[].headers (no `selection` — the mobile anime pipeline
   // ranks this pool with its own lightweight ranker, not the movie/TV one).
@@ -960,7 +961,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     note: "Anime · 3 servers",
     type: "direct",
     order: 1,
-    platforms: ["mobile"],
+    platforms: ["mobile", "desktop"],
     mediaTypes: ["anime"],
     animeOnly: true,
     baseUrl: "",
@@ -1109,13 +1110,13 @@ export const PLATFORM_DEFAULT_PROVIDER_IDS = {
 export type { ProviderPlatform };
 
 /** Anime sessions default to a dedicated anime-only source — but WHICH one
- *  depends on what the platform can actually play. Desktops/browsers cannot
- *  attach a Referer to media requests, so they keep the megaplay embed;
- *  mobile plays justanime's header-gated HLS/mp4 natively. */
+ *  depends on what the platform can actually play. Browsers cannot attach a
+ *  Referer to media requests, so web keeps the megaplay embed; mobile plays
+ *  justanime natively and the desktop shell lets mpv send the headers. */
 export const ANIME_DEFAULT_PROVIDER_IDS = {
   mobile: "justanime",
   web: "megaplay",
-  desktop: "megaplay",
+  desktop: "justanime",
 } as const;
 
 /** Back-compat: web/desktop anime default (all platforms prior to v2026.09). */
@@ -1266,7 +1267,12 @@ export function getEnabledProviders(
  * order (expert verdict: servers 1 + 3 carry some anime; megaplay is the
  * dedicated anime source). Intersected with each platform's own rules.
  */
-export const ANIME_PROVIDER_IDS = ["nxsha", "screenscape", "megaplay"];
+export const ANIME_PROVIDER_IDS = [
+  "justanime",
+  "nxsha",
+  "screenscape",
+  "megaplay",
+];
 
 /**
  * Intersect a platform-filtered provider list with the anime allowlist.

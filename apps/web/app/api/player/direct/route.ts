@@ -241,6 +241,9 @@ export async function GET(request: NextRequest) {
   // through the shared tiered pipeline — no IMDB conversion needed when the
   // upstream keys titles by TMDB id (spacedom does).
   const providerId = searchParams.get("provider");
+  // Desktop mpv can attach per-link headers (Referer/Origin); a browser cannot,
+  // so header-gated pools stay hidden unless the caller asks for them.
+  const keepHeaders = searchParams.get("headers") === "1";
   if (providerId && providerId !== "direct") {
     const def = getProvider(providerId);
     if (def?.streamSources && def.streamSources.length > 0) {
@@ -255,7 +258,7 @@ export async function GET(request: NextRequest) {
           // Browsers cannot attach custom headers (Referer…) to media
           // requests — header-gated links (e.g. heron's file CDN) would
           // 403, so they don't count as playable and are dropped.
-          linkFilter: (link) => !link.headers,
+          linkFilter: keepHeaders ? () => true : (link) => !link.headers,
         },
         async (source, ctx) => {
           const url = buildStreamSourceUrl(source, ctx);
@@ -299,7 +302,7 @@ export async function GET(request: NextRequest) {
         links: orderedLinks.map((l, idx) => ({
           ...l,
           id: String(idx),
-          headers: undefined,
+          headers: keepHeaders ? l.headers : undefined,
         })),
       });
     }

@@ -67,6 +67,8 @@ export interface PlayerShellProps {
   /** Native video surface (mpv): controls sit in a dedicated strip below the
    *  video window, so they must never auto-hide into an untouchable area. */
   alwaysShowControls?: boolean;
+  /** mpv draws its own overlay controls; hide the HTML strip entirely. */
+  hideControlBar?: boolean;
   /** Fired when an HTML overlay opens/closes over the video (settings panel).
    *  Native-window decoders (mpv) use this to hide the video window. */
   onOverlayChange?: (open: boolean) => void;
@@ -99,6 +101,7 @@ export function PlayerShell({
   onSourcePicker,
   onBack,
   alwaysShowControls,
+  hideControlBar,
   onOverlayChange,
   keyboardEnabled = true,
   speedBoostEnabled = true,
@@ -116,10 +119,10 @@ export function PlayerShell({
   const [seekIndicator, setSeekIndicator] = useState<SeekIndicator>(null);
   const seekKeyRef = useRef(0);
 
-  // Fullscreen strip = immersive: the bar must auto-hide so the video window
-  // can claim the whole screen. `alwaysShowControls` only pins the bar while
-  // NOT fullscreen (windowed strip has no overlay layer to reveal it on move).
-  const hideableStrip = layout === "strip" && fullscreen === true;
+  // The strip never auto-hides. A native video surface cannot be overlaid, so
+  // a hidden bar would leave fullscreen with no reachable controls; keeping it
+  // in flow also stops the video rect resizing on every mouse move.
+  const hideableStrip = false;
   const forceVisible =
     isSeeking ||
     isSettingsOpen ||
@@ -397,7 +400,7 @@ export function PlayerShell({
           black background blends seamlessly with mpv's internal letterbox, so
           the video window edge is invisible — it reads as overlay controls on
           a full-screen video. */}
-      {player && (
+      {player && !hideControlBar && (
         <div
           data-mpv-control-bar
           className={

@@ -58,6 +58,8 @@ interface StreamPickerSheetProps {
   /** Human-readable reason the source was auto-picked (e.g. "1080p · mp4 · multi"). */
   selectionReason?: string;
   onRetest?: () => void;
+  /** Desktop: dock to the right so the playing video stays visible. */
+  docked?: boolean;
   onSelect: (index: number) => void;
   onClose: () => void;
 }
@@ -167,6 +169,7 @@ export function StreamPickerSheet({
   onRetest,
   onSelect,
   onClose,
+  docked = false,
 }: StreamPickerSheetProps) {
   const [languageFilter, setLanguageFilter] = useState<LanguageFilter>("all");
 
@@ -212,16 +215,24 @@ export function StreamPickerSheet({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end md:items-center justify-center"
-      onClick={onClose}
+      className={
+        docked
+          ? "fixed inset-0 z-50 flex items-stretch justify-end p-3 pointer-events-none"
+          : "fixed inset-0 z-50 flex items-end md:items-center justify-center"
+      }
+      onClick={docked ? undefined : onClose}
     >
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60" />
+      {/* Backdrop — a docked panel leaves the video visible, so it gets none */}
+      {!docked && <div className="absolute inset-0 bg-black/60" />}
 
       {/* Panel — centred dialog at md+ (desktop), bottom sheet below it so a
           thumb can reach every row on a phone. */}
       <div
-        className="relative bg-elevated rounded-t-2xl md:rounded-2xl w-full md:w-[440px] max-h-[75vh] md:max-h-[80vh] flex flex-col border-x border-t md:border border-white/[0.08] shadow-2xl overflow-hidden"
+        className={
+          docked
+            ? "relative pointer-events-auto bg-elevated rounded-2xl w-[420px] max-w-full h-full flex flex-col border border-white/[0.08] shadow-2xl overflow-hidden"
+            : "relative bg-elevated rounded-t-2xl md:rounded-2xl w-full md:w-[440px] max-h-[75vh] md:max-h-[80vh] flex flex-col border-x border-t md:border border-white/[0.08] shadow-2xl overflow-hidden"
+        }
         style={{ paddingBottom: "max(0px, env(safe-area-inset-bottom))" }}
         onClick={(e) => e.stopPropagation()}
       >

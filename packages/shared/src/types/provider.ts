@@ -38,8 +38,8 @@ export interface EmbedOptions {
  * surface should branch on — never provider-id string matching.
  *
  * - `'embed'` — URL from `embed.*` loads in SecureIframe (web), VideoWebView
- *   (mobile) or WebContentsView (desktop). Stream URLs come from inside the
- *   iframe via postMessage.
+ *   (mobile) or the native provider surface (desktop). Stream URLs come from
+ *   inside the frame via postMessage.
  * - `'direct'` — native video player (DirectVideoPlayer / HevcPlayer / mpv).
  *   Stream URLs are resolved externally via the provider's `streamSources`.
  */

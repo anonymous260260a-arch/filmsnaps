@@ -1,9 +1,9 @@
 /**
  * DownloadButton — entry point on movie/TV detail pages for offline downloads.
  *
- * Opens a small source picker with falix listed as the PRIMARY source
- * (direct HEVC files we control end-to-end) and nxsha as the SECONDARY
- * fallback, routing to their respective download pages. The DownloadBadge
+ * Opens a small source picker listing the sources that work (HDHub for direct
+ * CDN files, Falix for direct HEVC files), routing to their download pages.
+ * The DownloadBadge
  * next to it remains the live "downloads in progress" indicator; this button
  * is how downloads get started.
  *
@@ -16,7 +16,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, Download, FileVideo, Server } from "lucide-react";
+import { ChevronDown, Download, FileVideo } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface DownloadButtonProps {
@@ -56,7 +56,6 @@ export default function DownloadButton({
   }, [open]);
 
   const hdhubHref = `/download/hdhub?type=${mediaType}&id=${tmdbId}`;
-  const nxshaHref = `/download/nxsha?type=${mediaType}&id=${tmdbId}`;
   const falixHref = `/download/falix?type=${mediaType}&id=${tmdbId}`;
 
   const sources = [
@@ -78,15 +77,6 @@ export default function DownloadButton({
       tag: "Secondary",
       tagClass: "border-white/[0.08] text-faint",
       desc: "Direct HEVC files · bulk seasons",
-    },
-    {
-      href: nxshaHref,
-      icon: Server,
-      iconClass: "text-faint",
-      name: "Nxsha",
-      tag: "Backup",
-      tagClass: "border-white/[0.08] text-faint",
-      desc: "Multi-server direct links",
     },
   ];
 

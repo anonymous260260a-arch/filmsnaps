@@ -28,8 +28,6 @@ import { ModeSplitToggle } from "@/components/ModeSplitToggle";
 
 /* ── Constants ─────────────────────────────────────────────────────────── */
 
-const DRAG = { WebkitAppRegion: "drag" } as React.CSSProperties;
-const NO_DRAG = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
 const WIN_CLOSE_RED = "#e81123";
 
 /* ── Page-title map ────────────────────────────────────────────────────── */
@@ -205,6 +203,25 @@ export function GlobalTopBar() {
     return () => window.removeEventListener("filmsnaps:open-search", open);
   }, []);
 
+  /* ── Window drag ──
+     WebView2 ignores `-webkit-app-region`, so the bar starts the drag through
+     the shell. `data-no-drag` wraps everything interactive, and the second
+     mousedown of a double-click is left to the maximize handler. */
+
+  const onDragMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || e.detail > 1) return;
+    if ((e.target as HTMLElement).closest("[data-no-drag]")) return;
+    window.electronAPI?.startDragging?.();
+  }, []);
+
+  const onDragDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if ((e.target as HTMLElement).closest("[data-no-drag]")) return;
+      window.electronAPI?.maximize?.();
+    },
+    [],
+  );
+
   /* ── Derived title ── */
 
   const seasonLabel =
@@ -239,12 +256,13 @@ export function GlobalTopBar() {
               "h-0 min-h-0 overflow-hidden border-b-transparent opacity-0 pointer-events-none"
             : "h-12 opacity-100"
         }`}
-      style={DRAG}
+      onMouseDown={onDragMouseDown}
+      onDoubleClick={onDragDoubleClick}
     >
       {/* ── Left: navigation cluster ── */}
       <div
         className="relative z-10 flex items-center gap-0.5 py-1.5 pl-3 pr-2"
-        style={NO_DRAG}
+        data-no-drag
       >
         <button
           onClick={handleBack}
@@ -292,10 +310,7 @@ export function GlobalTopBar() {
       <div className="flex-1" />
 
       {/* ── Right: search trigger + window controls ── */}
-      <div
-        className="relative z-10 flex items-center gap-1 pr-1"
-        style={NO_DRAG}
-      >
+      <div className="relative z-10 flex items-center gap-1 pr-1" data-no-drag>
         <button
           onClick={() => setSearchOpen(true)}
           className="group flex cursor-pointer items-center gap-2 rounded-lg border border-white/[0.07]
@@ -322,7 +337,7 @@ export function GlobalTopBar() {
       {!isMac && (
         <div
           className="relative z-10 flex self-stretch items-stretch"
-          style={NO_DRAG}
+          data-no-drag
         >
           <div className="mx-1.5 h-5 w-px self-center bg-white/[0.07]" />
           <button
@@ -365,7 +380,7 @@ export function GlobalTopBar() {
       {/* ── True-center title (absolute overlay, doesn't affect flex layout) ── */}
       <div
         className="pointer-events-none absolute inset-x-0 top-0 flex h-full items-center justify-center"
-        style={NO_DRAG}
+        data-no-drag
       >
         <button
           onClick={handleTitleClick}

@@ -113,6 +113,8 @@ interface DirectVideoEntry {
   size?: string;
   url: string; // Direct video URL — could be .mp4, .m3u8, .mpd, .mkv, etc.
   type: string; // Container type: "mkv" | "mp4" | etc.
+  /** Sent with the file by mpv (desktop only; browser pools drop them). */
+  headers?: Record<string, string>;
   _meta?: {
     codec: string;
     audio: string;
@@ -318,6 +320,20 @@ export function DirectVideoPlayer({
   const [decoder, setDecoder] = useState<DecoderType | null>(null);
 
   // ── Source fallback chain ──
+  // Desktop only: the source sheet docks beside the video instead of covering
+  // it, so playback never has to be hidden to pick a source.
+  const [dockPicker, setDockPicker] = useState(false);
+  useEffect(() => {
+    const isDesktop = !!(window as any).electronAPI?.isDesktop;
+    const check = () => setDockPicker(isDesktop && window.innerWidth >= 1100);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+  // mpv's native surface must be hidden behind a centered modal; HTML video
+  // decoders can keep the docked panel so playback stays visible.
+  const pickerDocked = dockPicker && decoder === "movi";
+
   const [failedLinks, setFailedLinks] = useState<Set<number>>(new Set());
   // Mirror of failedLinks for stable reads — fallbackToNextLink must NOT
   // depend on the failedLinks state object: a new Set per failure would give
@@ -434,6 +450,9 @@ export function DirectVideoPlayer({
   }, [getProgress]);
   const resumeTargetRef = useRef<number | null>(null);
   const resumeDoneRef = useRef(false);
+  // The read is awaited by the player before it loads, so the offset can ride
+  // along as mpv's own start option instead of a seek after the load.
+  const resumePendingRef = useRef<Promise<void> | null>(null);
 
   // True once REAL frames rendered (mpv playback-restart / loadeddata) —
   // drives the stall watchdog and the source-memory loop. mpv.play() merely
@@ -497,6 +516,10 @@ export function DirectVideoPlayer({
       params.set("season", String(selectedSeason));
       params.set("episode", String(activeEpisode));
     }
+
+    // mpv can send the Referer a header-gated pool (justanime) requires; a
+    // browser cannot, so web keeps asking the route to drop those links.
+    if (window.electronAPI?.isDesktop) params.set("headers", "1");
 
     const fetchMeta = (): Promise<DirectApiData> =>
       fetch(apiUrl(`/api/player/direct?${params.toString()}`), {
@@ -836,16 +859,20 @@ export function DirectVideoPlayer({
     let cancelled = false;
     resumeTargetRef.current = null;
     resumeDoneRef.current = false;
-    void getProgressRef
+    resumePendingRef.current = getProgressRef
       .current(tmdbId, mediaType, selectedSeason, activeEpisode)
       .then((p) => {
         if (cancelled) return;
         // Seed only a meaningful, unfinished position — the store
-        // auto-completes at 95% and completed titles restart from 0.
-        resumeTargetRef.current =
-          p && !p.completed && p.currentTime > 5
-            ? Math.floor(p.currentTime)
-            : -1;
+        // auto-completes at 95% and completed titles restart from 0. A
+        // target in the final stretch would re-complete the title, so it
+        // starts fresh; entries saved without a duration keep their offset.
+        const resumable =
+          p &&
+          !p.completed &&
+          p.currentTime > 5 &&
+          (!(p.duration > 0) || p.currentTime < p.duration - 15);
+        resumeTargetRef.current = resumable ? Math.floor(p.currentTime) : -1;
       })
       .catch(() => {
         if (!cancelled) resumeTargetRef.current = -1;
@@ -879,6 +906,34 @@ export function DirectVideoPlayer({
         return `Trying ${label}`;
       })()
     : undefined;
+
+  // ── Host-side mpv OSC state ──
+  useEffect(() => {
+    if (decoder !== "mpv" || !mpvVideoActive) return;
+    (window as any).electronAPI?.mpv?.setOscSource?.(mpvSourceLabel);
+  }, [decoder, mpvVideoActive, mpvSourceLabel]);
+
+  useEffect(() => {
+    if (decoder !== "mpv") return;
+    const mpv = (window as any).electronAPI?.mpv;
+    if (!mpv?.setOscStatus) return;
+    if (switchingLabel) mpv.setOscStatus("switching", switchingLabel);
+    else if (mpvBuffering) mpv.setOscStatus("buffering");
+    else if (mpvVideoActive) mpv.setOscStatus("playing");
+    else mpv.setOscStatus("idle");
+  }, [decoder, mpvBuffering, mpvVideoActive, switchingLabel]);
+
+  useEffect(() => {
+    if (decoder !== "mpv") return;
+    const mpv = (window as any).electronAPI?.mpv;
+    if (!mpv?.onEvent) return;
+    return mpv.onEvent((ev: any) => {
+      const raw = ev?.raw ?? ev;
+      if (raw?.type !== "osc-request") return;
+      if (raw.request === "source-picker") setShowPicker(true);
+      else if (raw.request === "sub-search") setShowSubSearch(true);
+    });
+  }, [decoder]);
 
   // ── Probe active link FIRST, then rest in background ──
   // Verdicts come from the shared probeCache: a link probed while hovering a
@@ -1664,8 +1719,11 @@ export function DirectVideoPlayer({
     return () => {
       // Fast Refresh re-runs this effect WITHOUT a navigation, and StrictMode
       // double-invokes it in dev — destroying mpv there killed playback and
-      // the import.meta.hot check never detected Turbopack. Defer the destroy
-      // a beat: if another mount of this effect follows, it's a hot reload —
+      // the import.meta.hot check never detected Turbopack. Defer the destroy a
+      // generous beat: if another mount of this effect follows, mpv is
+      // preserved. A window restore that collapses the viewport for a moment
+      // also remounts the layout branch, and a tear-down there restarted mpv
+      // and reloaded the file — the grace period covers that window too.
       // keep the process (start() below is idempotent). A real unmount (SPA
       // navigation, provider switch) has no follow-up mount, so the destroy
       // fires and mpv stops playing over other pages.
@@ -1684,7 +1742,7 @@ export function DirectVideoPlayer({
         // process and its transparent video window live in the main process —
         // without this they keep playing over every page after navigation.
         mpv.destroy?.().catch(() => {});
-      }, 150);
+      }, 1000);
     };
   }, [decoder]);
 
@@ -1703,13 +1761,26 @@ export function DirectVideoPlayer({
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    function doPlay(retryCount = 0) {
+    // Consumed by whichever load actually starts playing; the progress effect
+    // below then never seeks a second time.
+    const resumeStart = () => {
+      if (resumeDoneRef.current) return null;
+      const target = resumeTargetRef.current;
+      return target !== null && target > 5 ? target : null;
+    };
+
+    async function doPlay(retryCount = 0) {
       if (!currentEntry?.url) return;
+      // The position is read in parallel with the metadata fetch, so waiting
+      // for it costs nothing here and lets mpv open the file at the offset.
+      await resumePendingRef.current;
+      if (cancelled) return;
+      const start = resumeStart();
       console.log(
-        `[Direct] mpv: play()${retryCount > 0 ? ` (retry ${retryCount})` : ""} → ${currentEntry.url.slice(0, 80)}`,
+        `[Direct] mpv: play()${retryCount > 0 ? ` (retry ${retryCount})` : ""} → ${currentEntry.url.slice(0, 80)}${start ? ` @${start}s` : ""}`,
       );
       mpv
-        .play(currentEntry.url)
+        .play(currentEntry.url, currentEntry.headers, start)
         .then((result: any) => {
           if (cancelled) return;
           // IPC handler returns { success: false } as a resolved promise
@@ -1722,6 +1793,7 @@ export function DirectVideoPlayer({
             return;
           }
           console.log("[Direct] mpv: play() resolved");
+          if (start !== null) resumeDoneRef.current = true;
           // Re-arm the switch timeout from this moment and VERIFY playback by
           // watching the position advance (a poll — mpv event delivery to the
           // renderer is unreliable for proxied streams; file-loaded /
@@ -1787,7 +1859,7 @@ export function DirectVideoPlayer({
           `[Direct] mpv:play — ${msg || "transient"}, retrying in ${delay}ms`,
         );
         retryTimer = setTimeout(() => {
-          if (!cancelled) doPlay(retryCount + 1);
+          if (!cancelled) void doPlay(retryCount + 1);
         }, delay);
         return;
       }
@@ -1804,7 +1876,7 @@ export function DirectVideoPlayer({
       });
     }
 
-    doPlay();
+    void doPlay();
 
     return () => {
       cancelled = true;
@@ -1838,7 +1910,7 @@ export function DirectVideoPlayer({
     const mpv = (window as any).electronAPI?.mpv;
     if (!mpv?.hideVideo) return;
     const shouldHide = !!(
-      showPicker ||
+      (showPicker && !pickerDocked) ||
       mpvOverlayOpen ||
       error ||
       exhausted ||
@@ -1866,6 +1938,7 @@ export function DirectVideoPlayer({
         )}`,
       );
     }
+    mpv.setOscPanel?.(shouldHide);
     if (shouldHide) {
       mpv.hideVideo();
     } else {
@@ -1874,6 +1947,7 @@ export function DirectVideoPlayer({
   }, [
     decoder,
     showPicker,
+    pickerDocked,
     mpvOverlayOpen,
     error,
     exhausted,
@@ -2141,11 +2215,24 @@ export function DirectVideoPlayer({
       console.log("[Direct] poster-gate: mpv.onEvent MISSING — no bridge");
       return;
     }
+    let cancelled = false;
     setMpvVideoActive(false);
+    // mpv outlives this component: after a remount (window restore, layout
+    // branch switch) the file is already open, so `file-loaded` never arrives
+    // again and the gate would stay closed on a playing video.
+    mpv
+      .getState?.()
+      .then((state: any) => {
+        if (cancelled) return;
+        if (state?.url && state.url === currentEntry?.url) {
+          setMpvVideoActive(true);
+        }
+      })
+      .catch(() => {});
     console.log(
       `[Direct] poster-gate: event subscription active (decoder=mpv)`,
     );
-    return mpv.onEvent((ev: any) => {
+    const offEvent = mpv.onEvent((ev: any) => {
       const raw = ev?.raw ?? ev;
       const t = raw?.event ?? ev?.event;
       // Event-chain diagnostics: what the renderer actually parsed out of
@@ -2184,6 +2271,10 @@ export function DirectVideoPlayer({
         }
       }
     });
+    return () => {
+      cancelled = true;
+      offEvent?.();
+    };
   }, [decoder]);
 
   // ── Rebuffer detection (never breaks playback) ──
@@ -2462,6 +2553,7 @@ export function DirectVideoPlayer({
           </div>
         </div>
         <StreamPickerSheet
+          docked={pickerDocked}
           open={showPicker}
           links={videoEntries}
           activeIndex={activeLinkIdx}
@@ -2559,6 +2651,7 @@ export function DirectVideoPlayer({
           </div>
         </div>
         <StreamPickerSheet
+          docked={pickerDocked}
           open={showPicker}
           links={videoEntries}
           activeIndex={activeLinkIdx}
@@ -2623,6 +2716,7 @@ export function DirectVideoPlayer({
           layout="strip"
           fullscreen={isFullscreen}
           alwaysShowControls
+          hideControlBar
           player={mpvAdapter}
           // useMpvDesktopShortcuts owns K/J/L/arrows/M/F for mpv — ControlBar's
           // useKeyboardShortcuts must stay off or one press fires twice.
@@ -2690,6 +2784,7 @@ export function DirectVideoPlayer({
           {playerToast && <PlayerToast toast={playerToast} />}
         </PlayerShell>
         <StreamPickerSheet
+          docked={pickerDocked}
           open={showPicker}
           links={videoEntries}
           activeIndex={activeLinkIdx}
@@ -2942,6 +3037,7 @@ export function DirectVideoPlayer({
           />
         )}
         <StreamPickerSheet
+          docked={pickerDocked}
           open={showPicker}
           links={videoEntries}
           activeIndex={activeLinkIdx}
