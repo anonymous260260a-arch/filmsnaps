@@ -611,7 +611,7 @@ function DownloadItem({
               className="rounded px-1.5 py-0.5"
               style={{ backgroundColor: "rgba(212,162,55,0.10)" }}
             >
-              <Text className="text-amber-400 text-[8px] font-bold">
+              <Text className="text-amber-400 text-[10px] font-bold">
                 {lang}
               </Text>
             </View>
@@ -622,7 +622,7 @@ function DownloadItem({
               className="rounded px-1.5 py-0.5"
               style={{ backgroundColor: "rgba(59,130,246,0.12)" }}
             >
-              <Text className="text-blue-400 text-[8px] font-bold">{ex}</Text>
+              <Text className="text-blue-400 text-[10px] font-bold">{ex}</Text>
             </View>
           ))}
           {link.mirrorCount > 1 && (
@@ -630,13 +630,13 @@ function DownloadItem({
               className="rounded px-1.5 py-0.5"
               style={{ backgroundColor: "rgba(255,255,255,0.06)" }}
             >
-              <Text className="text-zinc-400 text-[8px] font-bold">
+              <Text className="text-zinc-400 text-[10px] font-bold">
                 +{link.mirrorCount - 1} mirrors
               </Text>
             </View>
           )}
         </View>
-        <Text className="text-zinc-600 text-[8px] mt-0.5" numberOfLines={1}>
+        <Text className="text-zinc-600 text-[10px] mt-0.5" numberOfLines={1}>
           {subtitle}
         </Text>
         {/* Progress bar for active downloads */}

@@ -33,6 +33,7 @@ import { getProvidersForMode, isProviderAvailableOn } from "@filmsnaps/shared";
 import { getInfoAsync, documentDirectory } from "expo-file-system/legacy";
 import Constants from "expo-constants";
 import { colors } from "../../theme/colors";
+import { tabBarClearance } from "../../theme/layout";
 import * as Haptics from "expo-haptics";
 import { LanguagePromptSheet } from "../../components/player/LanguagePromptSheet";
 import { SpeedLimitSheet, formatSpeed } from "../../components/SpeedLimitSheet";
@@ -357,7 +358,7 @@ export default function SettingsScreen() {
       <ScrollView
         contentContainerStyle={{
           paddingHorizontal: 20,
-          paddingBottom: 40 + insets.bottom,
+          paddingBottom: tabBarClearance(insets.bottom),
         }}
         showsVerticalScrollIndicator={false}
       >

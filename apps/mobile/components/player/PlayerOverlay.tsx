@@ -19,7 +19,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  Dimensions,
   useWindowDimensions,
 } from "react-native";
 import Animated, {
@@ -50,8 +49,6 @@ import { audioTrackTitle, audioChipLabel } from "../../lib/audioLanguage";
 import { trackFeatureUsed, trackSeekLatency } from "../../lib/telemetry";
 import { useSettings } from "../../lib/settings";
 import type { IntroDbResponse } from "../../lib/introDetect";
-
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 /** Single source of truth for chrome motion — replaces the 180/220/250/300 zoo. */
 const CHROME_FADE_MS = 200;
@@ -226,10 +223,11 @@ export function PlayerOverlay({
     useState<OverlayState>("CONTROLS_VISIBLE");
   const overlayOpacity = useSharedValue(1);
   // Live width of the gesture surface (updates on rotation/fullscreen), used
-  // by the double-tap worklet. SCREEN_WIDTH is captured once at module load
-  // and goes stale in fullscreen landscape — left-zone taps then classify as
-  // middle and wrongly seek +10.
+  // by the double-tap worklet. Falls back to the live window width until the
+  // first onLayout fires; a module-level Dimensions read went stale in
+  // fullscreen landscape, so left-zone taps classified as middle.
   const gestureSurfaceWidth = useSharedValue(0);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const autoHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 2X Speed Hold state
@@ -617,9 +615,7 @@ export function PlayerOverlay({
       // surface's live width (falls back to the captured screen width until
       // the first onLayout fires).
       const width =
-        gestureSurfaceWidth.value > 0
-          ? gestureSurfaceWidth.value
-          : SCREEN_WIDTH;
+        gestureSurfaceWidth.value > 0 ? gestureSurfaceWidth.value : windowWidth;
       const threshold = width * 0.4;
       if (e.x < threshold) {
         runOnJS(handleSideDoubleTap)("left");
@@ -722,7 +718,6 @@ export function PlayerOverlay({
   // never sit under system UI. Physical landscape adds a fixed lift: its
   // bottom inset is often ~0 (gesture nav), which left the progress bar
   // hugging the screen edge.
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isLandscape = windowWidth > windowHeight;
   const paddingTop = Math.max(insets.top, isFullscreen ? 8 : 0);
   const paddingBottom =
@@ -1224,7 +1219,7 @@ const styles = StyleSheet.create({
   },
   iconBadgeText: {
     color: colors.gold,
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: "800",
   },
   title: {

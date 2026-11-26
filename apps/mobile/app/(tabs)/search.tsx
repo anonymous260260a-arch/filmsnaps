@@ -43,6 +43,7 @@ import { ProgressiveImage } from "../../components/ProgressiveImage";
 import type { Movie } from "@filmsnaps/shared";
 import { useSettings } from "@/lib/settings";
 import { colors } from "../../theme/colors";
+import { tabBarClearance } from "../../theme/layout";
 import {
   animeSearch,
   rankAnimeSearchResults,
@@ -1032,7 +1033,7 @@ export default function SearchScreen() {
               keyboardShouldPersistTaps="always"
               contentContainerStyle={{
                 paddingHorizontal: PADDING,
-                paddingBottom: 100 + insets.bottom,
+                paddingBottom: tabBarClearance(insets.bottom),
                 gap: GAP,
               }}
               columnWrapperStyle={{ gap: GAP }}
@@ -1138,7 +1139,7 @@ export default function SearchScreen() {
           keyboardShouldPersistTaps="always"
           contentContainerStyle={{
             paddingHorizontal: PADDING,
-            paddingBottom: 100 + insets.bottom,
+            paddingBottom: tabBarClearance(insets.bottom),
             paddingTop: 8,
             gap: GAP,
           }}
@@ -1250,7 +1251,7 @@ export default function SearchScreen() {
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{
             paddingHorizontal: 16,
-            paddingBottom: 100 + insets.bottom,
+            paddingBottom: tabBarClearance(insets.bottom),
             paddingTop: 8,
           }}
           showsVerticalScrollIndicator={false}

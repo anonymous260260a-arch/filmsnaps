@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   Modal,
   ScrollView,
-  Dimensions,
+  useWindowDimensions,
   Animated,
   PanResponder,
   type GestureResponderEvent,
@@ -45,7 +45,7 @@ export function ServerPickerSheet({
 }: ServerPickerSheetProps) {
   const insets = useSafeAreaInsets();
   const nav = useSafeNavigation();
-  const { height: SCREEN_HEIGHT } = Dimensions.get("window");
+  const { height: SCREEN_HEIGHT } = useWindowDimensions();
 
   // Animated values
   const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;

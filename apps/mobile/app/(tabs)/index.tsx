@@ -89,6 +89,7 @@ import { useAniListHome } from "../../lib/anime/home";
 import type { AniListMedia } from "../../lib/anime/home";
 import { lookupMal, tmdbToAnimeIds } from "../../lib/anime/resolve";
 import { colors } from "../../theme/colors";
+import { tabBarClearance } from "../../theme/layout";
 import { typography } from "../../theme/typography";
 import { SwipeExemptScrollView } from "../../components/SwipeExemptScroll";
 
@@ -292,16 +293,15 @@ export default function HomeScreen() {
 
   // ── Scroll padding (useMemo instead of useRef so it updates reactively) ──
   const bannerHeight = 48;
-  const tabBarHeight = 72;
-  const bottomPadding = Math.max(insets.bottom, 8);
+  const bottomPadding = tabBarClearance(insets.bottom);
   const scrollPaddingStyle = useMemo(
     () => ({
       paddingBottom:
         activeDownloads.length > 0
-          ? tabBarHeight + bannerHeight + 16 + bottomPadding
-          : tabBarHeight + 16 + bottomPadding,
+          ? bottomPadding + bannerHeight + 16
+          : bottomPadding,
     }),
-    [activeDownloads.length, bottomPadding],
+    [activeDownloads.length, bannerHeight, bottomPadding],
   );
 
   // Keep the store's progress in sync after returning from a watch session

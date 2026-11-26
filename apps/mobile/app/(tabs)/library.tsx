@@ -55,6 +55,7 @@ import type { Bookmark } from "../../lib/bookmarks";
 import NetInfo from "@react-native-community/netinfo";
 import type { DownloadTask } from "../../lib/download";
 import { colors } from "../../theme/colors";
+import { tabBarClearance } from "../../theme/layout";
 import * as Haptics from "expo-haptics";
 
 type TabType = "watching" | "saved" | "downloads" | "history";
@@ -354,7 +355,7 @@ export default function LibraryScreen() {
                   >
                     <Text
                       style={{
-                        fontSize: 9,
+                        fontSize: 10,
                         fontFamily: "Inter_700Bold",
                         color: isActive ? colors.bg : colors.textTertiary,
                       }}
@@ -410,7 +411,7 @@ export default function LibraryScreen() {
         style={{ flex: 1 }}
         contentContainerStyle={{
           paddingHorizontal: 16,
-          paddingBottom: 80 + insets.bottom,
+          paddingBottom: tabBarClearance(insets.bottom),
           flexGrow: 1,
         }}
         showsVerticalScrollIndicator={false}

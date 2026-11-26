@@ -43,7 +43,7 @@ export const colors = {
   // ── Text ──
   textPrimary: "#F4F4F5",
   textSecondary: "#A1A1AA",
-  textTertiary: "#52525B",
+  textTertiary: "#8A8A93", // 4.6:1 on bg — WCAG AA for the 10px tab labels
   textDisabled: "#3f3f3f",
   textMuted: "#27272a", // disabled button text
 

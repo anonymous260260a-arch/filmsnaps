@@ -905,7 +905,7 @@ export default function DownloadsScreen() {
                 <Text
                   style={{
                     color,
-                    fontSize: 9,
+                    fontSize: 10,
                     fontFamily: "Inter_600SemiBold",
                   }}
                 >

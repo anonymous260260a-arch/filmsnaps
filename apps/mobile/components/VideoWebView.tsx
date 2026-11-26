@@ -2683,6 +2683,7 @@ export function VideoWebView({
           onMegaplay={onMegaplay}
           audio={audio}
           onAudioChange={changeAudio}
+          hideLoadingOverlay={!isFullscreen && !isPhysicalLandscape}
         />
       )}
 

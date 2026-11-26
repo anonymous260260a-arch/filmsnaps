@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   Modal,
   ScrollView,
-  Dimensions,
+  useWindowDimensions,
   Animated,
   PanResponder,
   Easing,
@@ -74,7 +74,7 @@ export function DownloadSheet({
   onSelectServer,
 }: DownloadSheetProps) {
   const insets = useSafeAreaInsets();
-  const { height: SCREEN_HEIGHT } = Dimensions.get("window");
+  const { height: SCREEN_HEIGHT } = useWindowDimensions();
 
   const translateY = useRef(new Animated.Value(SHEET_TRAVEL)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
@@ -316,7 +316,7 @@ export function DownloadSheet({
                   }}
                 >
                   <Text
-                    className="text-[9px] font-bold"
+                    className="text-[10px] font-bold"
                     style={{
                       color:
                         server.key === "falix"

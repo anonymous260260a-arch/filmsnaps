@@ -13,7 +13,7 @@ import {
   Modal,
   ScrollView,
   FlatList,
-  Dimensions,
+  useWindowDimensions,
   ActivityIndicator,
   Animated,
   PanResponder,
@@ -56,7 +56,7 @@ export function EpisodeRail({
   onClose,
 }: EpisodeRailProps) {
   const insets = useSafeAreaInsets();
-  const { height: SCREEN_HEIGHT } = Dimensions.get("window");
+  const { height: SCREEN_HEIGHT } = useWindowDimensions();
   const [pickerSeason, setPickerSeason] = useState(currentSeason);
   const nextUpFound = useRef(false);
 
@@ -616,7 +616,7 @@ export function EpisodeRail({
                             <Text
                               style={{
                                 color: colors.gold,
-                                fontSize: 9,
+                                fontSize: 10,
                                 fontWeight: "700",
                               }}
                             >
@@ -635,7 +635,7 @@ export function EpisodeRail({
                             <Text
                               style={{
                                 color: colors.gold,
-                                fontSize: 9,
+                                fontSize: 10,
                                 fontWeight: "700",
                               }}
                             >

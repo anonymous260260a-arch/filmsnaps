@@ -16,12 +16,12 @@ import {
   Text,
   TouchableOpacity,
   ActivityIndicator,
-  Dimensions,
   Animated as RNAnimated,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "../../theme/colors";
+import { MAX_CHROME_FONT_SCALE } from "../../theme/layout";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -58,6 +58,12 @@ interface PlayerControlOverlayProps {
   onMegaplay?: boolean;
   audio?: "sub" | "dub";
   onAudioChange?: (next: "sub" | "dub") => void;
+  /**
+   * Portrait embed: the Android player WebView is a native window overlay
+   * drawn above this tree, so the loading veil would only paint as a stray
+   * strip below the video. Skip it there instead of rendering it out of place.
+   */
+  hideLoadingOverlay?: boolean;
 }
 
 // ── Component ──
@@ -83,10 +89,9 @@ export function PlayerControlOverlay({
   onMegaplay,
   audio = "sub",
   onAudioChange,
+  hideLoadingOverlay,
 }: PlayerControlOverlayProps) {
   const insets = useSafeAreaInsets();
-  const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } =
-    Dimensions.get("window");
 
   const isLoadingState =
     loadState.type === "LOADING" || loadState.type === "SLOW";
@@ -212,7 +217,9 @@ export function PlayerControlOverlay({
         className="absolute top-0 left-0 right-0 z-30"
         style={{
           opacity: overlayOpacity,
-          paddingTop: (isFullscreen ? 12 : insets.top) + 4,
+          // The host reserves exactly one bar height (40) above the video box;
+          // matching it keeps the buttons off the native overlay WebView.
+          paddingTop: isFullscreen ? 16 : insets.top,
           paddingLeft: sidePaddingLeft,
           paddingRight: sidePaddingRight,
         }}
@@ -298,6 +305,7 @@ export function PlayerControlOverlay({
                     >
                       <Text
                         className="text-xs font-bold uppercase"
+                        maxFontSizeMultiplier={MAX_CHROME_FONT_SCALE}
                         style={{
                           color: active ? colors.bg : colors.zinc300,
                           fontFamily: "Inter_600SemiBold",
@@ -390,7 +398,7 @@ export function PlayerControlOverlay({
                 style={{ backgroundColor: colors.goldBadge }}
               >
                 <Text
-                  className="text-[9px] font-bold tracking-wider"
+                  className="text-[10px] font-bold tracking-wider"
                   style={{ color: colors.gold }}
                 >
                   AUDIT
@@ -403,7 +411,7 @@ export function PlayerControlOverlay({
       </RNAnimated.View>
 
       {/* ── Loading overlay (only in LOADING or SLOW states) ── */}
-      {isLoadingState && (
+      {isLoadingState && !hideLoadingOverlay && (
         <View
           className="absolute inset-0 z-20 items-center justify-center"
           style={{ backgroundColor: "rgba(7, 7, 8, 0.85)" }}

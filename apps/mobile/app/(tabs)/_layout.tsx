@@ -7,6 +7,7 @@ import { BlurView } from "expo-blur";
 import DownloadBanner from "../../components/DownloadBanner";
 import { FeedbackReplyToast } from "../../components/FeedbackReplyToast";
 import { colors } from "../../theme/colors";
+import { MAX_CHROME_FONT_SCALE, TAB_BAR_HEIGHT } from "../../theme/layout";
 
 /**
  * Tab bar styled per the cinematic design system:
@@ -44,6 +45,8 @@ function TabIcon({
         color={focused ? colors.gold : colors.textTertiary}
       />
       <Text
+        numberOfLines={1}
+        maxFontSizeMultiplier={MAX_CHROME_FONT_SCALE}
         style={{
           fontSize: 10,
           fontFamily: "Inter_500Medium",
@@ -87,7 +90,7 @@ export default function TabLayout() {
             borderTopWidth: 0.5,
             paddingBottom: bottomInset + 4,
             paddingTop: 8,
-            height: 72 + bottomInset,
+            height: TAB_BAR_HEIGHT + bottomInset,
           },
           tabBarActiveTintColor: colors.gold,
           tabBarInactiveTintColor: colors.textTertiary,
