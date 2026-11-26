@@ -25,10 +25,6 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "https://filmsnap-pro.netlify.app/download",
   },
-  robots: {
-    index: true,
-    follow: true,
-  },
 };
 
 export default function DownloadLayout({

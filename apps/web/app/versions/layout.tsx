@@ -23,10 +23,6 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "https://filmsnap-pro.netlify.app/versions",
   },
-  robots: {
-    index: true,
-    follow: true,
-  },
 };
 
 export default function VersionsLayout({
